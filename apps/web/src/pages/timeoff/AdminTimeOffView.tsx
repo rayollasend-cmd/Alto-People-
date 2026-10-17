@@ -52,6 +52,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
 import { Avatar } from '@/components/ui/Avatar';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { useTerm } from '@/lib/auth';
 
 const TABS: { key: TimeOffRequestStatus | 'ALL'; label: string }[] = [
   { key: 'PENDING', label: 'Pending' },
@@ -93,6 +94,7 @@ export const isInsufficient = (r: TimeOffRequest) =>
   r.balanceMinutes < r.requestedMinutes;
 
 export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
+  const term = useTerm();
   const [tab, setTab] = useState<TimeOffRequestStatus | 'ALL'>('PENDING');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -320,8 +322,8 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
             <SearchInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search associate…"
-              aria-label="Search by associate name"
+              placeholder={`Search ${term('worker').toLowerCase()}…`}
+              aria-label={`Search by ${term('worker').toLowerCase()} name`}
               wrapperClassName="w-full sm:w-56"
             />
           </div>
@@ -407,7 +409,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                 columns={[
                   {
                     key: 'associate',
-                    header: 'Associate',
+                    header: term('worker'),
                     accessor: (r) => r.associateName ?? '—',
                     sortable: true,
                     primary: true,
@@ -549,7 +551,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       <DecisionDialog
         open={denyTarget !== null}
         title="Deny request"
-        description="The associate will see your note in their request history."
+        description={`The ${term('worker').toLowerCase()} will see your note in their request history.`}
         noteRequired
         confirmLabel="Deny"
         destructive
@@ -562,7 +564,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       <DecisionDialog
         open={bulkDenyOpen}
         title={`Deny ${selected.size} request${selected.size === 1 ? '' : 's'}`}
-        description="One note is applied to every selected request; each associate will see it in their history."
+        description={`One note is applied to every selected request; each ${term('worker').toLowerCase()} will see it in their history.`}
         noteRequired
         confirmLabel="Deny selected"
         destructive

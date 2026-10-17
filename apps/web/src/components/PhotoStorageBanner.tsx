@@ -3,7 +3,9 @@ import { ImageOff } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui';
+import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { useTenant } from '@/lib/auth';
 import { clearMissingProfilePhotos, getProfilePhotoHealth } from '@/lib/orgApi';
 import { useConfirm } from '@/lib/confirm';
 
@@ -16,6 +18,7 @@ import { useConfirm } from '@/lib/confirm';
 export function PhotoStorageBanner() {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const operator = useTenant().id === PLATFORM_OPERATOR_TENANT_ID;
   const [busy, setBusy] = useState(false);
   const { data } = useQuery({
     queryKey: ['profile-photos', 'health'],
@@ -55,10 +58,13 @@ export function PhotoStorageBanner() {
       <div className="min-w-0 flex-1 space-y-1">
         {!data.durable && (
           <p>
-            Profile photos and documents are being saved to the server&rsquo;s
-            temporary disk, which is wiped on every deploy. Ask whoever runs
-            hosting to attach a volume (<code>UPLOAD_DIR</code>) or switch to
-            S3 storage — see apps/api/STORAGE.md.
+            Photos and documents aren&rsquo;t being kept between deploys — contact support.
+            {operator && (
+              <>
+                {' '}Uploads are on the server&rsquo;s temporary disk: attach a volume
+                (<code>UPLOAD_DIR</code>) or switch to S3 storage — see apps/api/STORAGE.md.
+              </>
+            )}
           </p>
         )}
         {data.missing > 0 && (

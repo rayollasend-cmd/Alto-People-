@@ -4,31 +4,22 @@ import { Briefcase, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucid
 import {
   applyTerms,
   DASHBOARD_NAV,
-  groupLabel,
-  visibleModules,
+  navShapeFor,
   useActiveNavPath,
-  type ModuleGroup,
+  visibleModules,
   type ModuleNav,
 } from '@/lib/modules';
-import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
+import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { prefetchRoute } from '@/lib/prefetch';
-import { useApprovalsCount } from '@/lib/useApprovalsCount';
+import { useInbox } from '@/lib/inboxApi';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { LANGS, LANG_LABELS, useI18n, type Lang } from '@/lib/i18n';
 import { useTheme, type ThemePreference } from '@/lib/theme';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
 
-const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
-  'workforce-management',
-  'operations',
-  'compliance',
-  'payroll-finance',
-  'client-services',
-  'platform',
-];
 
 interface MobileNavProps {
   open: boolean;
@@ -44,7 +35,15 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const term = useTerm();
   const { lang, setLang, t } = useI18n();
   const { preference, setTheme } = useTheme();
-  const approvalsCount = useApprovalsCount();
+  // The same counts the desktop rail shows, from the one inbox request.
+  const inbox = useInbox();
+  const countByPath = new Map<string, number>();
+  for (const src of inbox.data?.sources ?? []) {
+    const path = src.path.split('?')[0] ?? src.path;
+    countByPath.set(path, (countByPath.get(path) ?? 0) + src.count);
+  }
+  const badgeFor = (m: ModuleNav): number | null =>
+    m.key === 'inbox' ? (inbox.data?.total ?? null) : (countByPath.get(m.path) ?? null);
   const { pinned } = usePinnedModules();
   const recents = useRecentModules();
   const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules);
@@ -63,21 +62,12 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  const grouped: Partial<Record<ModuleGroup, ModuleNav[]>> = {};
-  for (const m of visible) {
-    (grouped[m.group] ??= []).push(m);
-  }
-
-  // Mirror the desktop Sidebar: the headerless 'core' group (My profile,
-  // Messages, the relay) renders under the dashboard. The GROUP_ORDER loop
-  // below skips 'core'. The client portal keeps its own chrome, and the
-  // portal / region keys belong to its BottomTabBar, so both are excluded.
-  const coreItems =
-    user?.role === 'CLIENT_PORTAL'
-      ? []
-      : visible.filter(
-          (m) => m.group === 'core' && !m.key.startsWith('portal') && m.key !== 'region',
-        );
+  // The same shape as the desktop Sidebar (lib/modules.navShapeFor): the
+  // always-on rows, then the doors as headed sections. The client portal
+  // keeps its own chrome, and the portal / region keys belong to its
+  // BottomTabBar, so its rows are left to that.
+  const shape = navShapeFor(visible, user?.role, term);
+  const coreItems = user?.role === 'CLIENT_PORTAL' ? [] : shape.rows;
 
   // Stay mounted through the closing animation. `if (!open) return null`
   // made the menu vanish between two frames — the one piece of chrome in
@@ -222,7 +212,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   active={activePath === m.path}
                   label={m.label}
                   icon={MODULE_ICONS[m.key]}
-                  badge={m.key === 'approvals' ? approvalsCount : null}
+                  badge={badgeFor(m)}
                 />
               ))}
             </div>
@@ -239,7 +229,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   active={activePath === m.path}
                   label={m.label}
                   icon={MODULE_ICONS[m.key]}
-                  badge={m.key === 'approvals' ? approvalsCount : null}
+                  badge={badgeFor(m)}
                 />
               ))}
             </div>
@@ -256,32 +246,46 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   active={activePath === m.path}
                   label={m.label}
                   icon={MODULE_ICONS[m.key]}
-                  badge={m.key === 'approvals' ? approvalsCount : null}
+                  badge={badgeFor(m)}
                 />
               ))}
             </div>
           )}
-          {GROUP_ORDER.map((group) => {
-            const items = grouped[group];
-            if (!items || items.length === 0) return null;
-            return (
-              <div key={group} className="mt-3">
-                <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
-                  {groupLabel(group, term, tenant.modules)}
+          {user?.role !== 'CLIENT_PORTAL' &&
+            shape.doors.map((door) => {
+              const single = door.children.length === 1 && door.target.key === door.children[0]!.key;
+              if (single) {
+                return (
+                  <div key={door.key} className="mt-1">
+                    <MobileLink
+                      to={door.target.path}
+                      active={activePath === door.target.path}
+                      label={door.label}
+                      icon={DOOR_ICONS[door.key]}
+                      badge={badgeFor(door.target)}
+                    />
+                  </div>
+                );
+              }
+              const items = door.children.includes(door.target) ? door.children : [door.target, ...door.children];
+              return (
+                <div key={door.key} className="mt-3">
+                  <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
+                    {door.label}
+                  </div>
+                  {items.map((m) => (
+                    <MobileLink
+                      key={m.key}
+                      to={m.path}
+                      active={activePath === m.path}
+                      label={m.label}
+                      icon={MODULE_ICONS[m.key]}
+                      badge={badgeFor(m)}
+                    />
+                  ))}
                 </div>
-                {items.map((m) => (
-                  <MobileLink
-                    key={m.key}
-                    to={m.path}
-                    active={activePath === m.path}
-                    label={m.label}
-                    icon={MODULE_ICONS[m.key]}
-                    badge={m.key === 'approvals' ? approvalsCount : null}
-                  />
-                ))}
-              </div>
-            );
-          })}
+              );
+            })}
         </nav>
 
         {/* Language + theme switchers — the drawer is the one nav surface

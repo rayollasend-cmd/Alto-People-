@@ -38,6 +38,7 @@ vi.mock('@/lib/documentsApi', () => ({
   downloadAllDocumentsUrl: () => '/api/documents/admin/all.zip',
   isPreviewable: () => true,
   rejectDocument: vi.fn(),
+  DOCUMENT_KIND_LABEL: { ID: 'ID', I9_SUPPORTING: 'I-9 supporting' },
 }));
 // HR_ADMINISTRATOR holds both manage:onboarding (Section 2 verify) and
 // manage:documents (per-document reject).

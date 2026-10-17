@@ -38,7 +38,7 @@ const TRAININGS = [
   ['FOOD_HANDLER', 'Food handler'],
   ['OSHA_SAFETY', 'OSHA safety'],
   ['EEO_HARASSMENT', 'Harassment prevention'],
-  ['WALMART_CADE', 'Walmart CADE'],
+  ['WALMART_CADE', 'Customer-required training'],
 ] as const;
 const KIND_LABEL: Record<RequirementKind, string> = { VACCINATION: 'Vaccination', TRAINING: 'Training', QUALIFICATION: 'Qualification' };
 

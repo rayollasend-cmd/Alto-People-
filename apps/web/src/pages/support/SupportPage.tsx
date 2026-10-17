@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -117,7 +118,7 @@ export function SupportPage() {
                   <Badge variant={STATUS[r.status].variant} size="sm">
                     {STATUS[r.status].label}
                   </Badge>
-                  <span className="ml-auto text-xs text-silver">{r.createdAt.slice(0, 10)}</span>
+                  <span className="ml-auto text-xs text-silver">{fmtDate(r.createdAt)}</span>
                 </div>
                 {r.reply && <p className="mt-1 whitespace-pre-wrap text-silver">{r.reply}</p>}
               </li>

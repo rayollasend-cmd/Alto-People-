@@ -153,6 +153,8 @@ function renderPage(
     isOffline: false,
     user: {
       id: 'u',
+      // The greeting uses the account's first name, never the mailbox.
+      firstName: 'Dana',
       email: 'dana.reyes@altohr.com',
       role,
       status: 'ACTIVE' as const,
@@ -427,7 +429,7 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
     });
     expect(await screen.findByText("You're running Dana's shift today")).toBeInTheDocument();
     expect(
-      screen.getByText(/Clock in at the store tablet with your PIN — the shift's SOP opens for you, and it's yours to submit/),
+      screen.getByText(/Clock in at the store tablet with your clock-in number — the shift’s SOP opens for you, and it’s yours to submit/),
     ).toBeInTheDocument();
     // They punch at the tablet only — no clock button in the app.
     expect(screen.queryByRole('button', { name: 'Clock in' })).not.toBeInTheDocument();
@@ -435,7 +437,7 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
 
   it('off the clock on an ordinary day: where to clock in, never a clock button', async () => {
     renderPage({ role: 'FLOOR_SUPERVISOR', clockedIn: false, floorTeam: floorTeam() });
-    expect(await screen.findByText(/Clock in at the store tablet with your PIN — you help on Dana's SOP/)).toBeInTheDocument();
+    expect(await screen.findByText(/Clock in at the store tablet with your clock-in number — you help on Dana’s SOP/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clock in' })).not.toBeInTheDocument();
   });
 

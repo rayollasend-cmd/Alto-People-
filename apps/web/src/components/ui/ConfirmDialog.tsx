@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { hapticConfirm } from '@/lib/haptics';
+import { useI18n } from '@/lib/i18n';
 import {
   Dialog,
   DialogContent,
@@ -20,7 +21,31 @@ import { Textarea } from './Input';
  *
  * The destructive flag swaps the primary button to the alert color so users
  * never lose context that the action removes/cancels something.
+ *
+ * Button labels. `confirmLabel` and `cancelLabel` stay optional (28+ call
+ * sites). When neither is given the cancel button says "Cancel" and the
+ * confirm button says "Confirm" — except for a destructive dialog, where a
+ * button that only says "Confirm" next to a title like "Cancel shift?" is
+ * the classic two-cancels trap. There the verb is derived from the title:
+ * "Cancel shift?" → "Cancel shift", "Delete this payment record?" →
+ * "Delete this payment record". Pass `confirmLabel` whenever the title is
+ * not itself the action ("Are you sure?"). Both defaults go through `t()`.
  */
+
+/**
+ * "Cancel shift?" → "Cancel shift". Returns null when the title does not
+ * read as an action (too long for a button, or no question mark to strip)
+ * so the caller can fall back to the generic label.
+ */
+export function confirmVerbFromTitle(title: string): string | null {
+  const verb = title.replace(/[?¿!…\s]+$/u, '').replace(/^¿/u, '').trim();
+  if (!verb || verb.length > 40) return null;
+  // Three words of context is plenty on a button; longer titles are
+  // sentences ("Reject 12 candidates and notify them?") and read better
+  // with an explicit confirmLabel.
+  if (verb.split(/\s+/).length > 5) return null;
+  return verb;
+}
 
 interface BaseProps {
   open: boolean;
@@ -68,11 +93,15 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
     onOpenChange,
     title,
     description,
-    confirmLabel = 'Confirm',
-    cancelLabel = 'Cancel',
+    confirmLabel: confirmLabelProp,
+    cancelLabel: cancelLabelProp,
     destructive = false,
     busy = false,
   } = props;
+  const { t } = useI18n();
+  const cancelLabel = cancelLabelProp ?? t('common.cancel');
+  const confirmLabel =
+    confirmLabelProp ?? (destructive ? confirmVerbFromTitle(title) : null) ?? t('common.confirm');
 
   const isReason = props.requireReason === true || props.requireReason === 'optional';
   const reasonOptional = props.requireReason === 'optional';
@@ -147,7 +176,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
                 className="text-xs2 uppercase tracking-wider text-silver"
               >
                 {reasonProps?.reasonLabel ??
-                  (reasonOptional ? 'Notes (optional)' : 'Reason')}
+                  (reasonOptional ? t('confirm.notesOptional') : t('confirm.reason'))}
               </label>
               <Textarea
                 id={reasonFieldId}
@@ -167,7 +196,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
                 htmlFor={numericFieldId}
                 className="text-xs2 uppercase tracking-wider text-silver"
               >
-                {numericProps?.numericLabel ?? 'Value'}
+                {numericProps?.numericLabel ?? t('confirm.value')}
               </label>
               <input
                 id={numericFieldId}

@@ -1,4 +1,5 @@
 import { ApiError } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { Button } from './Button';
 import { ErrorBanner } from './ErrorBanner';
 
@@ -17,7 +18,8 @@ import { ErrorBanner } from './ErrorBanner';
  *
  * `what` completes the sentence "Couldn't load ___", so write it as the
  * user would name the thing, lowercase: "today's rides", "the fleet",
- * "this driver's stops".
+ * "this driver's stops". On an associate-facing screen pass it through
+ * `t()` too — the sentence around it is already in their language.
  */
 export function QueryError({
   what,
@@ -28,22 +30,23 @@ export function QueryError({
   query: { error: unknown; refetch: () => unknown; isFetching?: boolean };
   className?: string;
 }) {
+  const { t } = useI18n();
   const { error } = query;
   // ApiError carries the server's own sentence, which is almost always
   // more useful than a generic one. Anything else (a NetworkError, a
   // parse failure) gets the plain-language fallback rather than a raw
   // stringified exception in front of a store manager.
-  const detail = error instanceof ApiError ? error.message : 'The request didn’t get through.';
+  const detail = error instanceof ApiError ? error.message : t('queryError.detail');
   return (
     <ErrorBanner
       className={className}
       action={
         <Button size="xs" variant="secondary" loading={query.isFetching} onClick={() => query.refetch()}>
-          Retry
+          {t('common.retry')}
         </Button>
       }
     >
-      Couldn’t load {what}. {detail}
+      {t('queryError.title', { what })} {detail}
     </ErrorBanner>
   );
 }

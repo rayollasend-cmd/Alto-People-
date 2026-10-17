@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { rejectDocument } from '@/lib/documentsApi';
+import { DOCUMENT_KIND_LABEL, rejectDocument } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -97,7 +97,7 @@ export function RejectDocumentDialog({
                 {doc.filename}
               </div>
               <div className="text-silver mt-0.5">
-                {doc.kind.replace(/_/g, ' ')}
+                {DOCUMENT_KIND_LABEL[doc.kind] ?? doc.kind}
               </div>
             </div>
             <div className="flex flex-wrap gap-1.5">

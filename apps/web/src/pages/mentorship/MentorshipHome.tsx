@@ -13,7 +13,7 @@ import {
   type MentorshipStatus,
 } from '@/lib/mentorship112Api';
 import { listSkills, type SkillCatalogEntry } from '@/lib/skills111Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
 import {
@@ -41,6 +41,7 @@ import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { downloadCsv } from '@/lib/csv';
+import { pickOne } from '@/lib/validationCopy';
 
 const STATUSES: MentorshipStatus[] = [
   'PROPOSED',
@@ -349,6 +350,7 @@ function NewPairingDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [mentor, setMentor] = useState<PickedAssociate | null>(initialMentor);
   const [mentee, setMentee] = useState<PickedAssociate | null>(initialMentee);
   const [skillId, setSkillId] = useState(initialSkillId);
@@ -375,7 +377,7 @@ function NewPairingDrawer({
 
   const submit = async () => {
     if (!mentor || !mentee) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     setSaving(true);
@@ -459,6 +461,7 @@ function SuggestDrawer({
   onClose: () => void;
   onPropose: (prefill: PairingPrefill) => void;
 }) {
+  const term = useTerm();
   const [mentee, setMentee] = useState<PickedAssociate | null>(null);
   const [skillId, setSkillId] = useState('');
   const [skillsError, setSkillsError] = useState<string | null>(null);
@@ -484,7 +487,7 @@ function SuggestDrawer({
 
   const submit = async () => {
     if (!mentee) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (!skillId) {

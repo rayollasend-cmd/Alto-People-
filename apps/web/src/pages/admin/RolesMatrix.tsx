@@ -178,6 +178,7 @@ function Holders({ role, canManage }: { role: TenantRoleRow; canManage: boolean 
 
 function ScimGroups({ roles }: { roles: TenantRoleRow[] }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const roleLabel = useRoleLabel();
   const q = useQuery({ queryKey: ['tenant-roles', 'scim-groups'], queryFn: getScimGroups });
   const [groupName, setGroupName] = useState('');
@@ -196,9 +197,19 @@ function ScimGroups({ roles }: { roles: TenantRoleRow[] }) {
       toast.error(message(err));
     }
   };
-  const remove = async (id: string) => {
+  const remove = async (m: { id: string; groupName: string; archetype: Role; tenantRoleName?: string | null }, members: number | null) => {
+    const roleName = m.tenantRoleName ?? roleLabel(m.archetype);
+    const holders = members === null ? 'People who hold it today keep it' : `The ${members} ${members === 1 ? 'person' : 'people'} in the group keep it`;
+    const ok = await confirm({
+      title: `Remove the mapping for ${m.groupName}?`,
+      description: `The directory stops granting ${roleName} to this group. ${holders} until an admin changes their role.`,
+      confirmLabel: 'Remove mapping',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
-      await unmapScimGroup(id);
+      await unmapScimGroup(m.id);
+      toast.success(`Mapping removed. ${m.groupName} no longer grants ${roleName}.`);
       await qc.invalidateQueries({ queryKey: ['tenant-roles'] });
     } catch (err) {
       toast.error(message(err));
@@ -225,7 +236,7 @@ function ScimGroups({ roles }: { roles: TenantRoleRow[] }) {
                     {m.groupName} → {m.tenantRoleName ?? roleLabel(m.archetype)}
                     <span className="ml-2 text-xs text-silver">{pushed ? `${pushed.members} in the group` : 'not pushed yet'}</span>
                   </span>
-                  <Button size="sm" variant="ghost" aria-label={`Remove mapping for ${m.groupName}`} onClick={() => void remove(m.id)}>
+                  <Button size="sm" variant="ghost" aria-label={`Remove mapping for ${m.groupName}`} onClick={() => void remove(m, pushed ? pushed.members : null)}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </li>
@@ -263,6 +274,7 @@ export function RolesMatrix() {
   const [selected, setSelected] = useState<string>('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<Set<string> | null>(null);
+  const [saving, setSaving] = useState(false);
   const roles = q.data?.roles ?? [];
   const role = roles.find((r) => r.id === selected) ?? roles.find((r) => !r.system) ?? roles[0];
   const ceiling = useMemo(() => new Set(roles.find((r) => role && r.id === `system:${role.archetype}`)?.capabilities ?? []), [roles, role]);
@@ -277,7 +289,8 @@ export function RolesMatrix() {
     setDraft(null);
   };
   const save = async () => {
-    if (!draft) return;
+    if (!draft || saving) return;
+    setSaving(true);
     try {
       await updateTenantRole(role.id, { capabilities: [...draft] });
       toast.success(role.holders ? `Saved. ${role.holders} ${role.holders === 1 ? 'person has' : 'people have'} the new set on their next click.` : 'Saved.');
@@ -285,6 +298,8 @@ export function RolesMatrix() {
       await qc.invalidateQueries({ queryKey: ['tenant-roles'] });
     } catch (err) {
       toast.error(message(err));
+    } finally {
+      setSaving(false);
     }
   };
   const remove = async () => {
@@ -340,8 +355,8 @@ export function RolesMatrix() {
               {!role.offered && <Badge variant="pending">Module off</Badge>}
               {editable && draft && (
                 <>
-                  <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Discard</Button>
-                  <Button size="sm" onClick={() => void save()}>Save changes</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setDraft(null)} disabled={saving}>Discard</Button>
+                  <Button size="sm" onClick={() => void save()} loading={saving}>Save changes</Button>
                 </>
               )}
               {editable && !draft && (

@@ -54,7 +54,9 @@ import { listClientLocations } from '@/lib/clientsApi';
 import { useClients } from '@/lib/useClients';
 import { useStoreScope } from '@/lib/storeScope';
 import { usePersistentState } from '@/lib/usePersistentState';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
+import { errorText } from '@/lib/errorText';
+import { pickOne } from '@/lib/validationCopy';
 import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
 import { leaveFromOverlay } from '@/lib/useOverlayBackButton';
 import { useConfirm, usePrompt } from '@/lib/confirm';
@@ -99,6 +101,7 @@ const NO_PINS: KioskPin[] = [];
 
 export function KioskAdmin() {
   const { user } = useAuth();
+  const term = useTerm();
   const canManage = user ? hasCapability(user.role, 'manage:time') : false;
   // Active tab lives in ?tab= so views are linkable ("check the punch log")
   // and a refresh doesn't dump HR back on Devices. Replace-writes keep tab
@@ -153,9 +156,9 @@ export function KioskAdmin() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="space-y-5"
-        title="Kiosk admin"
-        subtitle="Register tablets, issue 4-digit employee numbers, and review the punch log."
-        breadcrumbs={[{ label: 'Time' }, { label: 'Kiosk' }]}
+        title={term('nav.kiosk')}
+        subtitle="Register tablets, issue 4-digit clock-in numbers, and review the punch log."
+        breadcrumbs={[{ label: term('nav.time') }, { label: term('nav.kiosk') }]}
     >
       {canManage && <PinHealthBanner onTab={() => setTab('pins')} bump={badgeBump} />}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -169,7 +172,7 @@ export function KioskAdmin() {
             ) : null}
           </TabsTrigger>
           <TabsTrigger value="pins">
-            <Key className="mr-2 h-4 w-4" /> Employee numbers
+            <Key className="mr-2 h-4 w-4" /> Clock-in numbers
           </TabsTrigger>
           <TabsTrigger value="review">
             <AlertTriangle className="mr-2 h-4 w-4" /> Review
@@ -234,41 +237,57 @@ function PinHealthBanner({ onTab, bump }: { onTab: () => void; bump: number }) {
           <ul className="mt-1 space-y-0.5 text-silver">
             {wontClockIn > 0 && (
               <li>
-                <span className="font-medium text-alert">{wontClockIn}</span> code
-                {wontClockIn === 1 ? '' : 's'} won&rsquo;t clock in — the PIN secret
-                (<span className="font-mono text-xs">KIOSK_PIN_SECRET</span>) changed.
+                <span className="font-medium text-alert">{wontClockIn}</span> number
+                {wontClockIn === 1 ? '' : 's'} stopped working after a security reset — re-issue
+                {wontClockIn === 1 ? ' it' : ' them'}.
               </li>
             )}
             {unreadable > 0 && (
               <li>
-                <span className="font-medium text-warning">{unreadable}</span> code
-                {unreadable === 1 ? '' : 's'} can&rsquo;t be displayed and likely
-                won&rsquo;t clock in — the encryption key
-                (<span className="font-mono text-xs">PAYOUT_ENCRYPTION_KEY</span>) changed.
+                <span className="font-medium text-warning">{unreadable}</span> number
+                {unreadable === 1 ? '' : 's'} can&rsquo;t be displayed and likely won&rsquo;t clock in
+                after a security reset — re-issue {unreadable === 1 ? 'it' : 'them'}.
               </li>
             )}
             {legacy > 0 && (
               <li>
-                <span className="font-medium text-warning">{legacy}</span> code
-                {legacy === 1 ? '' : 's'} show{legacy === 1 ? 's' : ''} a dash —
-                issued before number display existed, so only a one-way hash is
-                stored. They still clock in fine; rotate them to make the
-                numbers visible (rotation issues NEW numbers — tell the
-                associates).
+                <span className="font-medium text-warning">{legacy}</span> number
+                {legacy === 1 ? '' : 's'} show{legacy === 1 ? 's' : ''} a dash — issued before
+                numbers could be displayed. They still clock in fine; re-issue them to make the
+                numbers visible (re-issuing hands out NEW numbers — tell the people affected).
               </li>
             )}
           </ul>
           <div className="mt-1.5 text-xs text-silver">
-            Lock those secrets in your host so they can&rsquo;t drift again, then{' '}
             <Button
               variant="link"
               onClick={onTab}
               className="text-xs text-white underline underline-offset-2 hover:text-gold"
             >
-              Employee numbers → Rotate all
+              Clock-in numbers → Rotate all
             </Button>{' '}
-            to re-issue the affected codes. {healthy} of {total} are healthy.
+            re-issues the affected numbers. {healthy} of {total} are healthy.
           </div>
+          {(wontClockIn > 0 || unreadable > 0) && (
+            <details className="mt-1.5 text-xs text-silver">
+              <summary className="cursor-pointer select-none">Details</summary>
+              <p className="mt-1">
+                {wontClockIn > 0 && (
+                  <>
+                    Numbers that won&rsquo;t clock in: the server&rsquo;s kiosk number secret changed
+                    since they were issued, so their stored hashes no longer match.{' '}
+                  </>
+                )}
+                {unreadable > 0 && (
+                  <>
+                    Numbers that can&rsquo;t be displayed: the server&rsquo;s encryption key changed, so
+                    the stored numbers can no longer be read.{' '}
+                  </>
+                )}
+                Pin those secrets in the host so they can&rsquo;t change again, then re-issue.
+              </p>
+            </details>
+          )}
         </div>
       </div>
     </div>
@@ -481,7 +500,7 @@ function DevicesTab({
             <EmptyState
               icon={Tablet}
               title="No kiosks"
-              description="Register a tablet to enable PIN-based clock in/out."
+              description="Register a tablet so people can clock in and out with their clock-in number."
             />
           ) : (visibleRows ?? []).length === 0 ? (
             // A refresh can resolve the problem set while its filter is
@@ -560,7 +579,7 @@ function DevicesTab({
                                     setShowToken(r.deviceToken);
                                     refresh();
                                   } catch (err) {
-                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                    toast.error(errorText(err, "Couldn't rotate the kiosk token."));
                                   }
                                 }}
                               >
@@ -579,7 +598,7 @@ function DevicesTab({
                                     toast.success('Kiosk revoked.');
                                     refresh();
                                   } catch (err) {
-                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                    toast.error(errorText(err, "Couldn't revoke the kiosk."));
                                   }
                                 }}
                               >
@@ -597,7 +616,7 @@ function DevicesTab({
                                   toast.success('Kiosk deleted.');
                                   refresh();
                                 } catch (err) {
-                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  toast.error(errorText(err, "Couldn't delete the kiosk."));
                                 }
                               }}
                             >
@@ -708,7 +727,7 @@ function NewDeviceDrawer({
       const r = await createKioskDevice({ locationId, name: name.trim() });
       onSaved(r.deviceToken);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't register the kiosk."));
     } finally {
       setSaving(false);
     }
@@ -835,7 +854,7 @@ function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => v
 // the existing "no selection" guards (!clientId) keep working.
 const ALL_CLIENTS = '__all__';
 
-// Employee numbers are sensitive — a shared admin screen or a screen-share
+// Clock-in numbers are sensitive — a shared admin screen or a screen-share
 // shouldn't leak every code at a glance — but admins on this manage:time
 // page do need to read them, so we show the code by default and offer a
 // per-row eye to HIDE one (e.g. while screen-sharing), plus a one-tap copy.
@@ -863,7 +882,7 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
         size="icon-sm"
         onClick={() => setRevealed((r) => !r)}
         className="-my-1.5 can-hover:opacity-60 group-hover:opacity-100"
-        aria-label={revealed ? 'Hide employee number' : 'Show employee number'}
+        aria-label={revealed ? 'Hide clock-in number' : 'Show clock-in number'}
         title={revealed ? 'Hide' : 'Show'}
       >
         {revealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
@@ -877,7 +896,7 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
           window.setTimeout(() => setCopied(false), 1200);
         }}
         className="-my-1.5 can-hover:opacity-60 group-hover:opacity-100"
-        aria-label="Copy employee number"
+        aria-label="Copy clock-in number"
         title="Copy"
       >
         {copied ? (
@@ -919,7 +938,7 @@ function FaceConsentCell({
         : {
             title: `Mark ${pin.associateName} as declined?`,
             description:
-              'Records that they opted out of face verification (e.g. they told you directly). Their stored selfies and face template are deleted immediately; they clock in PIN-only.',
+              'Records that they opted out of face verification (e.g. they told you directly). Their stored selfies and face template are deleted immediately; they clock in with their number only.',
             destructive: true,
           },
     );
@@ -930,7 +949,7 @@ function FaceConsentCell({
       toast.success(action === 'RESET' ? 'Will re-ask at next punch.' : 'Marked declined — biometrics scrubbed.');
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't update face verification."));
     } finally {
       setBusy(false);
     }
@@ -1263,12 +1282,12 @@ function PinsTab({
         )}
         {canManage && (
           <Button variant="ghost" onClick={() => setShowDiagnose(true)}>
-            <Stethoscope className="mr-2 h-4 w-4" /> Diagnose PIN
+            <Stethoscope className="mr-2 h-4 w-4" /> Diagnose a number
           </Button>
         )}
         {canManage && clientId && clientId !== ALL_CLIENTS && (
           <Button onClick={() => { setIssueFor(null); setShowNew(true); }}>
-            <Plus className="mr-2 h-4 w-4" /> Issue employee number
+            <Plus className="mr-2 h-4 w-4" /> Issue clock-in number
           </Button>
         )}
         {canManage && effectiveView === 'with' && emailableRows.length > 0 && (
@@ -1310,8 +1329,8 @@ function PinsTab({
                 !(await confirm({
                   title: `Re-issue ${n} broken number${n === 1 ? '' : 's'}?`,
                   description:
-                    `These codes are broken — either they can't be displayed (encryption key drifted) or they display fine but won't clock in (PIN secret drifted). Re-issuing is the only fix. ` +
-                    `Each associate gets a NEW number and their current one stops working immediately. ` +
+                    `These numbers stopped working after a security reset — re-issuing is the only fix. ` +
+                    `Each person gets a NEW number and their current one stops working immediately. ` +
                     `You'll be offered to email everyone their new number right after.`,
                   destructive: true,
                 }))
@@ -1521,13 +1540,13 @@ function PinsTab({
         <CardContent className="p-0">
           {!clientId ? (
             <div className="p-6 text-sm text-silver">
-              Pick a client to manage employee numbers.
+              Pick a client to manage clock-in numbers.
             </div>
           ) : loadError ? (
             <div className="p-6">
               <ErrorBanner>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>Couldn't load employee numbers.</span>
+                  <span>Couldn't load clock-in numbers.</span>
                   <Button size="sm" variant="ghost" onClick={refresh}>
                     Retry
                   </Button>
@@ -1541,12 +1560,12 @@ function PinsTab({
               <EmptyState
                 icon={Check}
                 title="Everyone's covered"
-                description="Every PIN-eligible associate at this client already has an employee number."
+                description="Everyone eligible at this client already has a clock-in number."
               />
             ) : (
               <DataGrid<(typeof missing)[number]>
                 id="kiosk-missing-numbers"
-                caption="Associates missing employee numbers"
+                caption="Associates missing clock-in numbers"
                 rows={missing}
                 rowKey={(a) => a.id}
                 search={{ placeholder: 'Name, email…' }}
@@ -1588,7 +1607,7 @@ function PinsTab({
           ) : rows.length === 0 ? (
             <EmptyState
               icon={Key}
-              title="No employee numbers"
+              title="No clock-in numbers"
               description="Issue a 4-digit number to each associate after they finish onboarding so they can clock in via the kiosk."
             />
           ) : filteredRows.length === 0 ? (
@@ -1601,7 +1620,7 @@ function PinsTab({
             // what's hidden.
             <DataGrid<(typeof filteredRows)[number]>
               id="kiosk-employee-numbers"
-              caption="Kiosk employee numbers"
+              caption="Kiosk clock-in numbers"
               rows={filteredRows.slice(0, 150)}
               rowKey={(pn) => pn.id}
               search={false}
@@ -1644,7 +1663,7 @@ function PinsTab({
                     <div className="flex items-center gap-2">
                       <EmployeeNumberCell value={pn.employeeNumber} />
                       {pn.wontClockIn && (
-                        <Badge variant="destructive" title="The stored hash no longer matches the current PIN secret — this number fails at every kiosk. Rotate to fix.">
+                        <Badge variant="destructive" title="This number stopped working after a security reset — it fails at every kiosk. Re-issue it.">
                           won&rsquo;t clock in
                         </Badge>
                       )}
@@ -1728,14 +1747,14 @@ function PinsTab({
                               size="xs"
                               className="text-silver hover:text-alert"
                               onClick={async () => {
-                                if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
+                                if (!(await confirm({ title: 'Revoke this clock-in number?', destructive: true }))) return;
                                 try {
                                   await deleteKioskPin(pn.id);
                                   toast.success('Code revoked.');
                                   refresh();
                                   onChanged?.();
                                 } catch (err) {
-                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  toast.error(errorText(err, "Couldn't revoke the clock-in number."));
                                 }
                               }}
                             >
@@ -1778,7 +1797,7 @@ function PinsTab({
       {showPin && (
         <Drawer open={true} onOpenChange={(o) => !o && setShowPin(null)}>
           <DrawerHeader>
-            <DrawerTitle>Employee number issued</DrawerTitle>
+            <DrawerTitle>Clock-in number issued</DrawerTitle>
           </DrawerHeader>
           <DrawerBody className="space-y-4 text-center">
             <div className="text-sm text-silver">
@@ -1861,7 +1880,7 @@ function DiagnoseDrawer({
 
   const onSubmit = async () => {
     if (mode === 'number' && !/^\d{4}$/.test(number)) {
-      setErr('Enter a 4-digit employee number.');
+      setErr('Enter a 4-digit clock-in number.');
       return;
     }
     if (mode === 'name' && name.trim().length < 2) {
@@ -1894,11 +1913,11 @@ function DiagnoseDrawer({
       }
     >
       <DrawerHeader>
-        <DrawerTitle>Diagnose a kiosk PIN</DrawerTitle>
+        <DrawerTitle>Diagnose a clock-in number</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <p className="text-sm text-silver">
-          When an associate reports "Wrong PIN" at the kiosk, look them
+          When someone reports "Wrong number" at the kiosk, look them
           up here. Search by their 4-digit number, or by name / email
           if the number isn't known.
         </p>
@@ -1918,7 +1937,7 @@ function DiagnoseDrawer({
                 : 'text-silver hover:text-white'
             }`}
           >
-            By employee number
+            By clock-in number
           </Button>
           <Button
             type="button"
@@ -1940,7 +1959,7 @@ function DiagnoseDrawer({
         </div>
         {mode === 'number' ? (
           <div>
-            <Label>Employee number</Label>
+            <Label>Clock-in number</Label>
             <Input
               className="mt-1 font-mono text-2xl tracking-widest text-center"
               value={number}
@@ -2003,7 +2022,7 @@ function DiagnoseDrawer({
                 {result.matchedPin.currentEmployeeNumber && (
                   <div className="mb-3 pb-3 border-b border-navy-secondary text-center">
                     <div className="text-xs uppercase tracking-widest text-silver">
-                      Actual employee number on file
+                      Actual clock-in number on file
                     </div>
                     <div className="text-3xl font-mono tracking-[0.4em] text-white mt-1">
                       {result.matchedPin.currentEmployeeNumber}
@@ -2011,7 +2030,7 @@ function DiagnoseDrawer({
                   </div>
                 )}
                 <div>
-                  <span className="text-silver">PIN holder:</span>{' '}
+                  <span className="text-silver">Number holder:</span>{' '}
                   <span className="text-white font-medium">
                     {result.matchedPin.associateName}
                   </span>{' '}
@@ -2020,7 +2039,7 @@ function DiagnoseDrawer({
                   </span>
                 </div>
                 <div>
-                  <span className="text-silver">PIN issued under:</span>{' '}
+                  <span className="text-silver">Number issued under:</span>{' '}
                   <span className="text-white">
                     {result.matchedPin.pinClientName ?? result.matchedPin.pinClientId}
                   </span>
@@ -2042,7 +2061,7 @@ function DiagnoseDrawer({
                   </span>
                 </div>
                 <div>
-                  <span className="text-silver">Active kiosks at PIN's client:</span>{' '}
+                  <span className="text-silver">Active kiosks at the number's client:</span>{' '}
                   <span className="text-white">
                     {result.devicesAtPinClient?.length ?? 0}
                   </span>
@@ -2086,6 +2105,7 @@ function NewPinDrawer({
   const handPicked = useRef(false);
   const [pin, setPin] = useState('');
   const [saving, setSaving] = useState(false);
+  const term = useTerm();
 
   // Everyone who can be issued a number here (placed at the client, worked
   // yet or not), plus who's still onboarding so HR can see who's there and
@@ -2121,7 +2141,7 @@ function NewPinDrawer({
 
   const onSubmit = async () => {
     if (!associateId) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (pin && !/^\d{4}$/.test(pin)) {
@@ -2140,7 +2160,7 @@ function NewPinDrawer({
         : 'Associate';
       onSaved(name, r.employeeNumber);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't issue the clock-in number."));
     } finally {
       setSaving(false);
     }
@@ -2152,7 +2172,7 @@ function NewPinDrawer({
       confirmDiscard={() => pin.length > 0}
     >
       <DrawerHeader>
-        <DrawerTitle>Issue or rotate employee number</DrawerTitle>
+        <DrawerTitle>Issue or rotate clock-in number</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
@@ -2206,7 +2226,7 @@ function NewPinDrawer({
           )}
         </div>
         <div>
-          <Label>Employee number (optional — leave empty to auto-generate)</Label>
+          <Label>Clock-in number (optional — leave empty to auto-generate)</Label>
           <Input
             className="mt-1 font-mono text-2xl tracking-widest text-center"
             value={pin}
@@ -2319,9 +2339,9 @@ function humanRejectReason(reason: string | null): string | null {
   if (!reason) return null;
   switch (reason.replace(/_preflight$/, '')) {
     case 'pin_wrong_client':
-      return 'Wrong site — PIN is under another client';
+      return 'Wrong site — number is under another client';
     case 'pin_not_recognized':
-      return 'Unrecognized PIN';
+      return 'Unrecognized number';
     case 'associate_inactive':
       return 'Inactive associate';
     default:
@@ -2612,8 +2632,8 @@ function LogTab() {
           aria-label="Filter by reject reason"
         >
           <option value="">Any reject reason</option>
-          <option value="wrong_client">Wrong site (PIN under another client)</option>
-          <option value="not_recognized">Unrecognized PIN</option>
+          <option value="wrong_client">Wrong site (number under another client)</option>
+          <option value="not_recognized">Unrecognized number</option>
           <option value="inactive">Inactive associate</option>
         </Select>
         <Select
@@ -2771,7 +2791,7 @@ function LogTab() {
                       <div className="flex items-center gap-2">
                         <span className={pu.rejectReason ? 'text-warning' : ''}>{humanRejectReason(pu.rejectReason) ?? '—'}</span>
                         {pu.associateName && (
-                          <Button variant="ghost" size="xs" className="gap-1 text-silver hover:text-white" onClick={() => setDiagnoseFor(pu.associateName!)} title="Look up this associate's PIN and where it's filed">
+                          <Button variant="ghost" size="xs" className="gap-1 text-silver hover:text-white" onClick={() => setDiagnoseFor(pu.associateName!)} title="Look up this person's clock-in number and where it's filed">
                             <Stethoscope className="h-3 w-3" /> Diagnose
                           </Button>
                         )}
@@ -2884,7 +2904,7 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                               refresh();
                               toast.success('Reference cleared.');
                             } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                              toast.error(errorText(err, "Couldn't clear the face reference."));
                             }
                           }}
                         >
@@ -2975,7 +2995,7 @@ function ReviewTab({
       toast.success(decision === 'APPROVED' ? 'Approved.' : 'Rejected & voided.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't record the review."));
     } finally {
       setBusy(null);
     }
@@ -3009,7 +3029,7 @@ function ReviewTab({
       toast.success(msg);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't record the reviews."));
     } finally {
       setBulkBusy(false);
     }

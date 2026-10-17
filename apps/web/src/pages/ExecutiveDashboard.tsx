@@ -23,7 +23,7 @@ import {
 import { ArrowDownRight, ArrowUpRight, Download, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
@@ -32,6 +32,7 @@ import { cn } from '@/lib/cn';
 import { DecisionRoom } from '@/components/DecisionRoom';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { LiveNow } from '@/components/ui/LiveNow';
@@ -240,15 +241,16 @@ const TOOLTIP_STYLE = {
 } as const;
 
 /** WoW delta chip — green up / red down, with margin semantics. */
-function Delta({ now, prev, money }: { now: number; prev: number; money?: boolean }) {
+function Delta({ now, prev, money, upIsBad = false }: { now: number; prev: number; money?: boolean; upIsBad?: boolean }) {
   if (!Number.isFinite(prev) || prev === 0) return null;
   const pct = ((now - prev) / Math.abs(prev)) * 100;
   if (Math.abs(pct) < 0.05) return null;
   const up = pct > 0;
   const Icon = up ? ArrowUpRight : ArrowDownRight;
+  const good = up !== upIsBad;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 text-xs font-medium tabular-nums ${up ? 'text-success' : 'text-alert'}`}
+      className={`inline-flex items-center gap-0.5 text-xs font-medium tabular-nums ${good ? 'text-success' : 'text-alert'}`}
       title={`vs prior week: ${money ? fmtMoney(prev) : prev.toFixed(1)}`}
     >
       <Icon className="h-3.5 w-3.5" />
@@ -271,6 +273,7 @@ const CATEGORY_LABEL: Record<string, string> = {
  * glance, with the full board one click away.
  */
 function OpsPulseCard() {
+  const term = useTerm();
   const dataQuery = useQuery({
     queryKey: ['OpsPulseCard', 'data'],
     queryFn: () => getOpsScorecard(4),
@@ -290,7 +293,7 @@ function OpsPulseCard() {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Store operations — last 4 weeks</CardTitle>
+        <CardTitle className="text-base">{term('site')} operations — last 4 weeks</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 tabular-nums">
@@ -633,24 +636,26 @@ function RateCalculator({
         <div className="flex flex-wrap items-end gap-4">
           <label className="text-xs text-silver">
             Bill rate ($/h)
-            <input
+            <Input
               type="number"
               step="0.25"
               min="0"
+              size="sm"
               value={bill}
               onChange={(e) => setBill(num(e.target.value, rates.billRate))}
-              className="mt-1 block h-9 w-28 rounded border border-navy-secondary bg-navy-secondary/60 px-2 text-sm text-white tabular-nums focus:border-gold focus:outline-none"
+              className="mt-1 w-28 tabular-nums"
             />
           </label>
           <label className="text-xs text-silver">
             Pay rate ($/h)
-            <input
+            <Input
               type="number"
               step="0.25"
               min="0"
+              size="sm"
               value={pay}
               onChange={(e) => setPay(num(e.target.value, rates.payRate))}
-              className="mt-1 block h-9 w-28 rounded border border-navy-secondary bg-navy-secondary/60 px-2 text-sm text-white tabular-nums focus:border-gold focus:outline-none"
+              className="mt-1 w-28 tabular-nums"
             />
           </label>
           <div className="min-w-[180px]">
@@ -726,6 +731,14 @@ interface PortalEngagement {
 
 
 export function ExecutiveDashboard() {
+  // Brief 2-1b: a direct employer bills no one. The margin story, the
+  // client league, receivables, the portal and the J-1 cliff are the
+  // staffing company's cards; a hotel's chairman leads with labor cost.
+  const { moduleOn } = useTenant();
+  const billRates = moduleOn('billRates');
+  const clientPortal = moduleOn('clientPortal');
+  const programs = moduleOn('programs');
+  const term = useTerm();
   const greet = useGreeting();
   const { user } = useAuth();
   const [packBusy, setPackBusy] = useState(false);
@@ -749,6 +762,7 @@ export function ExecutiveDashboard() {
   const recvQuery = useQuery({
     queryKey: ['ExecutiveDashboard', 'receivables'],
     queryFn: () => apiFetch<Receivables>('/executive/receivables'),
+    enabled: billRates && clientPortal,
   });
   const targetsQuery = useQuery({
     queryKey: ['ExecutiveDashboard', 'targets'],
@@ -757,6 +771,7 @@ export function ExecutiveDashboard() {
   const prospectsQuery = useQuery({
     queryKey: ['ExecutiveDashboard', 'prospects'],
     queryFn: () => apiFetch<ProspectsResponse>('/executive/prospects'),
+    enabled: clientPortal,
   });
   const briefQuery = useQuery({
     queryKey: ['ExecutiveDashboard', 'briefing'],
@@ -769,6 +784,7 @@ export function ExecutiveDashboard() {
   const engagementQuery = useQuery({
     queryKey: ['ExecutiveDashboard', 'portal-engagement'],
     queryFn: () => apiFetch<PortalEngagement>('/executive/portal-engagement'),
+    enabled: clientPortal,
   });
   const summary = summaryQuery.data ?? null;
   const floor = floorQuery.data ?? null;
@@ -825,6 +841,7 @@ export function ExecutiveDashboard() {
         week: w.start.slice(5, 10),
         billed: w.estBilled,
         margin: w.estMargin,
+        laborCost: w.estLaborCost,
         hours: Math.round(w.workedHours * 10) / 10,
         ot: Math.round(w.otHours * 10) / 10,
         regular: Math.round((w.workedHours - w.otHours) * 10) / 10,
@@ -843,31 +860,36 @@ export function ExecutiveDashboard() {
   const onFloor = floor ? floor.rows.reduce((n, r) => n + r.clockedIn, 0) : null;
   const expected = floor ? floor.rows.reduce((n, r) => n + (r.expected ?? 0), 0) : null;
   const otRisk = ot ? ot.rows.filter((r) => r.projectedOtMinutes > 0) : null;
-  // The hero (§4.1): the margin story with its eight-week arc behind it.
-  const marginHero = summary ? (
+  // The one number (§4.1), with its eight-week arc behind it: the margin
+  // story when the tenant bills clients; the labor-cost story otherwise.
+  const workersLc = term('workers').toLowerCase();
+  const heroCard = summary ? (
     <Card className="overflow-hidden">
       <CardContent className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-xs uppercase tracking-wider text-silver/70">
-              Estimated margin — last week
+              {billRates ? 'Estimated margin — last week' : 'Labor cost — last week'}
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="text-4xl font-semibold tabular-nums text-white">
-                {fmtMoney(summary.lastWeek.estMargin)}
+                {fmtMoney(billRates ? summary.lastWeek.estMargin : summary.lastWeek.estLaborCost)}
               </span>
-              {prevWeek && (
-                <Delta now={summary.lastWeek.estMargin} prev={prevWeek.estMargin} money />
-              )}
+              {prevWeek &&
+                (billRates ? (
+                  <Delta now={summary.lastWeek.estMargin} prev={prevWeek.estMargin} money />
+                ) : (
+                  <Delta now={summary.lastWeek.estLaborCost} prev={prevWeek.estLaborCost} money upIsBad />
+                ))}
             </div>
             <div className="mt-1 text-sm text-silver">
-              on {fmtMoney(summary.lastWeek.estBilled)} billed ·{' '}
-              {summary.lastWeek.workedHours.toFixed(1)}h worked by{' '}
-              {summary.lastWeek.headsWorked} associates
+              {billRates && <>on {fmtMoney(summary.lastWeek.estBilled)} billed · </>}
+              {summary.lastWeek.workedHours.toFixed(1)}h worked by {summary.lastWeek.headsWorked} {workersLc}
+              {!billRates && <> · {summary.lastWeek.otHours.toFixed(1)}h overtime</>}
             </div>
           </div>
           <Link to="/labor-costs" className="text-xs text-gold hover:text-gold-bright">
-            Open the live margin board
+            {billRates ? 'Open the live margin board' : 'Open the labor board'}
           </Link>
         </div>
         <div className="mt-4 h-44">
@@ -896,40 +918,60 @@ export function ExecutiveDashboard() {
               <Tooltip
                 formatter={(value, name) => [
                   fmtMoney(Number(value)),
-                  name === 'billed' ? 'Est. billed' : 'Est. margin',
+                  name === 'billed' ? 'Est. billed' : name === 'margin' ? 'Est. margin' : 'Labor cost',
                 ]}
                 labelFormatter={(l) => `Week of ${l}`}
                 contentStyle={TOOLTIP_STYLE}
               />
-              <Area
-                type="monotone"
-                dataKey="billed"
-                stroke={GOLD}
-                strokeWidth={2}
-                fill="url(#execBilled)"
-              />
-              <Area
-                type="monotone"
-                dataKey="margin"
-                stroke="rgb(var(--color-success))"
-                strokeWidth={2}
-                fill="transparent"
-              />
+              {billRates ? (
+                <>
+                  <Area
+                    type="monotone"
+                    dataKey="billed"
+                    stroke={GOLD}
+                    strokeWidth={2}
+                    fill="url(#execBilled)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="margin"
+                    stroke="rgb(var(--color-success))"
+                    strokeWidth={2}
+                    fill="transparent"
+                  />
+                </>
+              ) : (
+                <Area
+                  type="monotone"
+                  dataKey="laborCost"
+                  stroke={GOLD}
+                  strokeWidth={2}
+                  fill="url(#execBilled)"
+                />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>
         <div className="mt-1 flex gap-4 text-2xs text-silver/70">
-          <span className="flex items-center gap-1.5">
-            <span className="h-1.5 w-4 rounded-full bg-gold" /> Est. billed
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-1.5 w-4 rounded-full bg-success" /> Est. margin
-          </span>
+          {billRates ? (
+            <>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-4 rounded-full bg-gold" /> Est. billed
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-4 rounded-full bg-success" /> Est. margin
+              </span>
+            </>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-4 rounded-full bg-gold" /> Labor cost, fully loaded
+            </span>
+          )}
         </div>
       </CardContent>
     </Card>
-
   ) : null;
+  const openDecisions = brief ? brief.decisions.filter((d) => d.status === 'open').length : 0;
   const maxPlaced = summary
     ? Math.max(1, ...summary.clients.map((c) => c.activeAssociates))
     : 1;
@@ -941,7 +983,8 @@ export function ExecutiveDashboard() {
     <HomeTemplate
       title={
         <>
-          <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user, '')}</span>
+          <LiveNow render={(now) => greet(now.getHours())} />
+          {greetingName(user, '') && <>, <span className="text-accent">{greetingName(user, '')}</span></>}.
         </>
       }
       topbarTitle="Home"
@@ -970,22 +1013,31 @@ export function ExecutiveDashboard() {
           </ErrorBanner>
         ) : undefined
       }
+      // Decisions first (Principle 1: the person sees decisions), then the
+      // one number, then the long tail of cards.
       hero={
-        marginHero ??
-        (error ? (
-          <EmptyState icon={TrendingUp} title="Estimated margin" description="The summary did not load. Retry above." />
-        ) : (
-          <Skeleton className="h-[260px]" />
-        ))
-      }
-      decisions={
-        brief
-          ? {
-              title: 'Needs you',
-              count: brief.decisions.filter((d) => d.status === 'open').length,
-              content: <DecisionQueueCard decisions={brief.decisions} onChanged={load} headless />,
+        <section aria-labelledby="exec-needs-you" className="space-y-3">
+          <SectionTitle
+            id="exec-needs-you"
+            title={
+              <>
+                Needs you
+                {openDecisions > 0 && (
+                  <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">
+                    {openDecisions}
+                  </span>
+                )}
+              </>
             }
-          : undefined
+          />
+          {brief ? (
+            <DecisionQueueCard decisions={brief.decisions} onChanged={load} headless />
+          ) : briefQuery.isError ? (
+            <EmptyState title="Nothing to decide loaded" description="The chairman's queue did not load. Retry above." className="py-6" />
+          ) : (
+            <Skeleton className="h-24" />
+          )}
+        </section>
       }
       changes={
         summary && summary.narrative.length > 0
@@ -997,6 +1049,18 @@ export function ExecutiveDashboard() {
       }
       assistant={<HugoSeat />}
     >
+      {heroCard ??
+        (error ? (
+          <EmptyState
+            icon={TrendingUp}
+            title={billRates ? 'Estimated margin' : 'Labor cost'}
+            description="The summary did not load. Retry above."
+            className="py-6"
+          />
+        ) : (
+          <Skeleton className="h-[260px]" />
+        ))}
+
       {!summary && !error && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -1092,18 +1156,29 @@ export function ExecutiveDashboard() {
                     {LONG_DAY_FMT.format(new Date())}
                   </p>
                 </div>
-                <div className="text-right">
-                  <div className="text-xl font-semibold tabular-nums text-white">
-                    {fmtMoney(brief.today.estBilledToday)}
+                {billRates && (
+                  <div className="text-right">
+                    <div className="text-xl font-semibold tabular-nums text-white">
+                      {fmtMoney(brief.today.estBilledToday)}
+                    </div>
+                    <div className="text-2xs text-silver/70">est. billed today</div>
                   </div>
-                  <div className="text-2xs text-silver/70">est. billed today</div>
-                </div>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
               {/* Coverage gauge. */}
               {brief.today.shiftsTotal === 0 ? (
-                <p className="text-sm text-silver">No shifts published today.</p>
+                <EmptyState
+                  title="No shifts published today"
+                  description="Publish the schedule and coverage shows here."
+                  action={
+                    <Link to="/scheduling" className="text-xs text-gold hover:text-gold-bright">
+                      Open scheduling
+                    </Link>
+                  }
+                  className="py-6"
+                />
               ) : (
                 <div>
                   <div className="flex items-baseline justify-between">
@@ -1239,7 +1314,7 @@ export function ExecutiveDashboard() {
                           className={`shrink-0 ${inc.kind === 'NO_CALL_NO_SHOW' ? 'text-alert' : 'text-warning'}`}
                         >
                           {inc.kind.toLowerCase().replace(/_/g, ' ')}
-                          {inc.clientName ? ` · ${inc.clientName.replace(/^Walmart /, '')}` : ''}
+                          {inc.clientName ? ` · ${inc.clientName}` : ''}
                         </span>
                       </li>
                     ))}
@@ -1263,7 +1338,7 @@ export function ExecutiveDashboard() {
           {/* KPI band with week-over-week direction. */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Tile
-              label="Active associates"
+              label={`Active ${workersLc}`}
               value={String(summary.workforce.active)}
               sub={`${summary.workforce.deactivated} paused · ${summary.workforce.onboardingInFlight} onboarding`}
               to="/people"
@@ -1300,39 +1375,48 @@ export function ExecutiveDashboard() {
                 ) : undefined
               }
             />
-            <Tile
-              label="Est. billed last week"
-              value={fmtMoney(summary.lastWeek.estBilled)}
-              sub="at standard SOW rates"
-              to="/clients"
-              delta={
-                prevWeek ? (
-                  <Delta now={summary.lastWeek.estBilled} prev={prevWeek.estBilled} money />
-                ) : undefined
-              }
-            />
+            {billRates && (
+              <Tile
+                label="Est. billed last week"
+                value={fmtMoney(summary.lastWeek.estBilled)}
+                sub="at standard SOW rates"
+                to="/clients"
+                delta={
+                  prevWeek ? (
+                    <Delta now={summary.lastWeek.estBilled} prev={prevWeek.estBilled} money />
+                  ) : undefined
+                }
+              />
+            )}
             <Tile
               label="Labor cost last week"
               value={fmtMoney(summary.lastWeek.estLaborCost)}
               sub="fully loaded"
               to="/labor-costs"
+              delta={
+                !billRates && prevWeek ? (
+                  <Delta now={summary.lastWeek.estLaborCost} prev={prevWeek.estLaborCost} money upIsBad />
+                ) : undefined
+              }
             />
             <Tile
               label="This week so far"
               value={`${summary.thisWeek.workedHours.toFixed(1)}h`}
-              sub={`est. billed ${fmtMoney(summary.thisWeek.estBilled)}`}
+              sub={billRates ? `est. billed ${fmtMoney(summary.thisWeek.estBilled)}` : `${fmtMoney(summary.thisWeek.estLaborCost)} labor so far`}
               to="/labor-costs"
             />
-            <Tile
-              label="Receivables outstanding"
-              value={recv ? fmtMoney(recv.totals.outstandingAmount) : '—'}
-              sub={
-                recv
-                  ? `${recv.totals.outstandingCount} statement${recv.totals.outstandingCount === 1 ? '' : 's'}${recv.totals.avgDaysToPay !== null ? ` · pays in ~${recv.totals.avgDaysToPay}d` : ''}`
-                  : undefined
-              }
-              to="/clients/statements"
-            />
+            {billRates && clientPortal && (
+              <Tile
+                label="Receivables outstanding"
+                value={recv ? fmtMoney(recv.totals.outstandingAmount) : '—'}
+                sub={
+                  recv
+                    ? `${recv.totals.outstandingCount} statement${recv.totals.outstandingCount === 1 ? '' : 's'}${recv.totals.avgDaysToPay !== null ? ` · pays in ~${recv.totals.avgDaysToPay}d` : ''}`
+                    : undefined
+                }
+                to="/clients/statements"
+              />
+            )}
             <Tile
               label="Turnover cost (90d)"
               value={fmtMoney(summary.turnover.estCost90d)}
@@ -1365,7 +1449,7 @@ export function ExecutiveDashboard() {
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {targets.targets.revenueTarget !== null && (
+                    {billRates && targets.targets.revenueTarget !== null && (
                       <TargetBar
                         label="Revenue"
                         actual={targets.actuals.revenueQtd}
@@ -1374,7 +1458,7 @@ export function ExecutiveDashboard() {
                         fmt={fmtMoney}
                       />
                     )}
-                    {targets.targets.marginTarget !== null && (
+                    {billRates && targets.targets.marginTarget !== null && (
                       <TargetBar
                         label="Margin"
                         actual={targets.actuals.marginQtd}
@@ -1418,6 +1502,7 @@ export function ExecutiveDashboard() {
               </CardContent>
             </Card>
 
+            {billRates && clientPortal && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Receivables aging</CardTitle>
@@ -1473,14 +1558,18 @@ export function ExecutiveDashboard() {
                 )}
               </CardContent>
             </Card>
+            )}
           </div>
 
-          {/* Store league + concentration & pipeline. */}
+          {/* Site league (margin per site) + client concentration & pipeline:
+              the staffing company's cards. */}
+          {(billRates || clientPortal) && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {billRates && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Store league — last 4 weeks</CardTitle>
+                  <CardTitle className="text-base">{term('site')} league — last 4 weeks</CardTitle>
                   <Link to="/labor-costs" className="text-xs text-gold hover:text-gold-bright">
                     Labor board
                   </Link>
@@ -1488,7 +1577,16 @@ export function ExecutiveDashboard() {
               </CardHeader>
               <CardContent>
                 {summary.league.length === 0 ? (
-                  <p className="text-sm text-silver">No worked time in the window.</p>
+                  <EmptyState
+                    title="No worked time in the window"
+                    description="Approved hours over the last four weeks rank every site here."
+                    action={
+                      <Link to="/labor-costs" className="text-xs text-gold hover:text-gold-bright">
+                        Open the labor board
+                      </Link>
+                    }
+                    className="py-6"
+                  />
                 ) : (
                   <ul className="divide-y divide-navy-secondary/60">
                     {summary.league.slice(0, 3).map((r, i) => (
@@ -1512,7 +1610,9 @@ export function ExecutiveDashboard() {
                 )}
               </CardContent>
             </Card>
+            )}
 
+            {clientPortal && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Concentration & pipeline</CardTitle>
@@ -1585,10 +1685,12 @@ export function ExecutiveDashboard() {
                 </div>
               </CardContent>
             </Card>
+            )}
           </div>
+          )}
 
-          {/* Portal engagement: are the store and market managers using it. */}
-          {engagement && engagement.accounts.length > 0 && (
+          {/* Portal engagement: are the client's site managers using it. */}
+          {clientPortal && engagement && engagement.accounts.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1639,8 +1741,9 @@ export function ExecutiveDashboard() {
           )}
 
           {/* Client health + capacity & the J-1 cliff. */}
-          {brief && (
+          {brief && (clientPortal || programs) && (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {clientPortal && (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Client health</CardTitle>
@@ -1651,7 +1754,16 @@ export function ExecutiveDashboard() {
                 </CardHeader>
                 <CardContent>
                   {brief.clientHealth.length === 0 ? (
-                    <p className="text-sm text-silver">No client activity in the window.</p>
+                    <EmptyState
+                      title="No client activity in the window"
+                      description="Filled shifts, reliability and payments over four weeks score each client here."
+                      action={
+                        <Link to="/clients" className="text-xs text-gold hover:text-gold-bright">
+                          Open clients
+                        </Link>
+                      }
+                      className="py-6"
+                    />
                   ) : (
                     <ul className="space-y-3">
                       {brief.clientHealth.map((c) => (
@@ -1702,7 +1814,9 @@ export function ExecutiveDashboard() {
                   )}
                 </CardContent>
               </Card>
+              )}
 
+              {programs && (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Capacity & the J-1 cliff</CardTitle>
@@ -1731,7 +1845,7 @@ export function ExecutiveDashboard() {
                       <div className="text-lg font-semibold tabular-nums text-white">
                         {brief.capacity.j1Active}
                       </div>
-                      <div className="text-2xs text-silver/70">J-1 associates</div>
+                      <div className="text-2xs text-silver/70">J-1 {workersLc}</div>
                     </div>
                   </div>
                   {brief.capacity.j1Cliff.length > 0 ? (
@@ -1773,6 +1887,7 @@ export function ExecutiveDashboard() {
                   )}
                 </CardContent>
               </Card>
+              )}
             </div>
           )}
 
@@ -1790,7 +1905,11 @@ export function ExecutiveDashboard() {
                       Hardest workers — last 4 weeks, clean record
                     </div>
                     {brief.people.topPerformers.length === 0 ? (
-                      <p className="text-sm text-silver">No qualifying hours yet.</p>
+                      <EmptyState
+                        title="No qualifying hours yet"
+                        description="Four clean weeks of approved hours put someone on this list."
+                        className="py-6"
+                      />
                     ) : (
                       <ul className="space-y-2">
                         {brief.people.topPerformers.map((p, i) => (
@@ -1843,8 +1962,8 @@ export function ExecutiveDashboard() {
               </Card>
             )}
 
-          {/* What-if rate model on real hours. */}
-          <RateCalculator rates={summary.rates} trend={summary.trend} />
+          {/* What-if rate model on real hours — only where there is a bill rate. */}
+          {billRates && <RateCalculator rates={summary.rates} trend={summary.trend} />}
 
           {/* Infographics row: hours composition + workforce donut. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -1967,7 +2086,7 @@ export function ExecutiveDashboard() {
                         <li key={r.locationId}>
                           <div className="flex items-center justify-between text-sm">
                             <span className="min-w-0 truncate text-white">
-                              {r.clientName} — {r.locationName}
+                              {clientPortal ? `${r.clientName} — ${r.locationName}` : r.locationName}
                             </span>
                             <span className="tabular-nums text-silver">
                               {r.clockedIn}
@@ -2027,7 +2146,8 @@ export function ExecutiveDashboard() {
             </Card>
           )}
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className={cn('grid grid-cols-1 gap-4', clientPortal && 'lg:grid-cols-2')}>
+            {clientPortal && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
@@ -2039,7 +2159,16 @@ export function ExecutiveDashboard() {
               </CardHeader>
               <CardContent>
                 {summary.clients.length === 0 ? (
-                  <p className="text-sm text-silver">No open site placements on record.</p>
+                  <EmptyState
+                    title="No open placements on record"
+                    description="Placements appear here as people are assigned to a client's sites."
+                    action={
+                      <Link to="/clients" className="text-xs text-gold hover:text-gold-bright">
+                        Open clients
+                      </Link>
+                    }
+                    className="py-6"
+                  />
                 ) : (
                   <ul className="space-y-2.5">
                     {summary.clients.slice(0, 6).map((c) => (
@@ -2069,6 +2198,7 @@ export function ExecutiveDashboard() {
                 )}
               </CardContent>
             </Card>
+            )}
 
             <Card>
               <CardHeader className="pb-2">
@@ -2122,7 +2252,7 @@ export function ExecutiveDashboard() {
                       </span>
                       <span className="tabular-nums text-silver">
                         {(r.projectedOtMinutes / 60).toFixed(1)}h OT projected
-                        {r.estOtBilled !== null ? ` · ${fmtMoney(r.estOtBilled)} billed` : ''}
+                        {billRates && r.estOtBilled !== null ? ` · ${fmtMoney(r.estOtBilled)} billed` : ''}
                       </span>
                     </li>
                   ))}
@@ -2132,8 +2262,10 @@ export function ExecutiveDashboard() {
           )}
 
           <p className="text-xs text-silver/70">
-            Dollar figures are estimates at org standard rates; finalized client statements
-            are the invoice-grade record. Weeks run Saturday to Friday, Florida time.
+            {billRates
+              ? 'Dollar figures are estimates at org standard rates; finalized client statements are the invoice-grade record. '
+              : 'Dollar figures are estimates at standard rates; payroll is the record. '}
+            Weeks run Saturday to Friday, Florida time.
           </p>
         </>
       )}

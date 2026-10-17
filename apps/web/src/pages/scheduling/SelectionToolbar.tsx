@@ -553,7 +553,7 @@ export function SelectionToolbar({ selected, onClear, onSelectOnly, onAfterActio
           loading={busy === 'cancel'}
           disabled={cancellableCount === 0 || busy !== null}
           className="text-alert hover:text-alert"
-          title="Cancel — keeps a CANCELLED record"
+          title="Cancel — the shifts stay on the record as cancelled"
         >
           <Trash2 className="h-3.5 w-3.5" />
           Cancel ({cancellableCount})

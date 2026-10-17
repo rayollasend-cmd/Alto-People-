@@ -5,7 +5,9 @@ import { unreadMessages } from '@/lib/messagesApi';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import {
+  BarChart3,
   Briefcase,
+  Building2,
   Bus,
   Calendar,
   CalendarOff,
@@ -14,6 +16,7 @@ import {
   Inbox,
   Menu,
   MessageSquare,
+  ShieldCheck,
   Store,
   Timer,
   UserPlus,
@@ -47,7 +50,7 @@ import { cn } from '@/lib/cn';
  * keyboard, and inherits the shell's safe-area handling.
  */
 
-interface TabDef {
+export interface TabDef {
   path: string;
   /** i18n key when one exists… */
   labelKey?: MessageKey;
@@ -84,16 +87,26 @@ const DRIVER_TABS: TabDef[] = [
 
 /** The Transportation Director: the command center (home), and messages. */
 const TRANSPORT_TABS: TabDef[] = [
-  { path: DASHBOARD_NAV.path, label: 'Command center', icon: Bus, requires: null },
+  { path: DASHBOARD_NAV.path, labelKey: 'tabs.commandCenter', icon: Bus, requires: null },
   { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
 ];
 
 /** Ops daily loop for anyone who runs a schedule (supervisor/manager/admin). */
+// Finance's day is payday: the runs, the hours sheets they sign off, and the
+// messenger. Their sidebar calls the hours surface Timesheets (/timesheets),
+// so the phone does too — the rail-consistency test holds the two together.
+const FINANCE_TABS: TabDef[] = [
+  HOME_TAB,
+  { path: '/payroll', labelKey: 'tabs.pay', icon: DollarSign, requires: 'view:payroll' },
+  { path: '/timesheets', label: 'Timesheets', icon: Timer, requires: 'view:time' },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
+];
+
 const SCHEDULER_TABS: TabDef[] = [
   HOME_TAB,
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
-  { path: '/approvals', label: 'Approvals', icon: Inbox, requires: 'manage:scheduling' },
-  { path: '/time-attendance', label: 'Time', icon: Timer, requires: 'view:time' },
+  { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling' },
+  { path: '/time-attendance', labelKey: 'tabs.time', icon: Timer, requires: 'view:time' },
 ];
 
 /** The recruiter: their day on Home, the pipeline, messages, and the new
@@ -102,9 +115,9 @@ const SCHEDULER_TABS: TabDef[] = [
  *  their own pipeline was behind More. */
 const RECRUITER_TABS: TabDef[] = [
   HOME_TAB,
-  { path: '/recruiting', label: 'Recruiting', icon: UserPlus, requires: 'view:recruiting' },
+  { path: '/recruiting', labelKey: 'tabs.recruiting', icon: UserPlus, requires: 'view:recruiting' },
   { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
-  { path: '/onboarding', label: 'Onboarding', icon: ClipboardList, requires: 'view:onboarding' },
+  { path: '/onboarding', labelKey: 'tabs.onboarding', icon: ClipboardList, requires: 'view:onboarding' },
 ];
 
 /** The shift supervisor's floor, the store manager's grammar: the floor
@@ -113,15 +126,15 @@ const SUPERVISOR_TABS: TabDef[] = [
   { path: DASHBOARD_NAV.path, labelKey: 'floor.title', icon: Store, requires: null },
   { path: '/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
-  { path: '/approvals', label: 'Approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
+  { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
 ];
 
 /** Executive loop: numbers, clients, compliance — never a punch clock. */
 const EXEC_TABS: TabDef[] = [
   HOME_TAB,
-  { path: '/analytics', label: 'Analytics', icon: DollarSign, requires: 'view:analytics' },
-  { path: '/clients', label: 'Clients', icon: Calendar, requires: 'view:clients' },
-  { path: '/compliance', label: 'Compliance', icon: Timer, requires: 'view:compliance' },
+  { path: '/analytics', label: 'Analytics', icon: BarChart3, requires: 'view:analytics' },
+  { path: '/clients', label: 'Clients', icon: Building2, requires: 'view:clients' },
+  { path: '/compliance', label: 'Compliance', icon: ShieldCheck, requires: 'view:compliance' },
 ];
 
 /** The floor supervisor: the shift supervisor's floor, watch-only — their
@@ -129,7 +142,7 @@ const EXEC_TABS: TabDef[] = [
 const FLOOR_TABS: TabDef[] = [
   { path: DASHBOARD_NAV.path, labelKey: 'floor.title', icon: Store, requires: null },
   { path: '/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
-  { path: '/time-attendance', label: 'Live board', icon: Timer, requires: 'view:time' },
+  { path: '/time-attendance', labelKey: 'tabs.liveBoard', icon: Timer, requires: 'view:time' },
   { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
 ];
 
@@ -156,6 +169,41 @@ const DEFAULT_TABS: TabDef[] = [
   { path: '/payroll', labelKey: 'tabs.pay', icon: DollarSign, requires: 'view:payroll' },
 ];
 
+
+/**
+ * Which tabs a role gets. Exported so a test can hold the phone and the
+ * desktop rail to the same menu: every tab here is a destination the
+ * sidebar also shows that role (see __tests__/lib/navCoverage.test.ts).
+ */
+export function tabSetFor(
+  user: { role: string; regionId?: string | null; clientId?: string | null } | null | undefined,
+  can: (c: Capability) => boolean,
+): TabDef[] {
+  return user?.role === 'ASSOCIATE'
+    ? ASSOCIATE_TABS
+    : user?.role === 'DRIVER'
+      ? DRIVER_TABS
+      : user?.role === 'TRANSPORTATION_DIRECTOR'
+        ? TRANSPORT_TABS
+        : user?.role === 'EXECUTIVE_CHAIRMAN'
+          ? EXEC_TABS
+          : user?.role === 'FLOOR_SUPERVISOR'
+            ? FLOOR_TABS
+            : user?.role === 'SHIFT_SUPERVISOR'
+              ? SUPERVISOR_TABS
+              : user?.role === 'CLIENT_PORTAL'
+                ? user.regionId && !user.clientId
+                  ? REGION_TABS
+                  : PORTAL_TABS
+                : user?.role === 'INTERNAL_RECRUITER'
+                  ? RECRUITER_TABS
+                  : user?.role === 'FINANCE_ACCOUNTANT'
+                    ? FINANCE_TABS
+                  : can('manage:scheduling')
+                    ? SCHEDULER_TABS
+                    : DEFAULT_TABS;
+}
+
 /**
  * The width at which the tab bar stops being rendered.
  *
@@ -178,28 +226,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const { t } = useI18n();
   const activePath = useActiveNavPath();
 
-  const tabSet =
-    user?.role === 'ASSOCIATE'
-      ? ASSOCIATE_TABS
-      : user?.role === 'DRIVER'
-        ? DRIVER_TABS
-      : user?.role === 'TRANSPORTATION_DIRECTOR'
-        ? TRANSPORT_TABS
-      : user?.role === 'EXECUTIVE_CHAIRMAN'
-        ? EXEC_TABS
-        : user?.role === 'FLOOR_SUPERVISOR'
-          ? FLOOR_TABS
-          : user?.role === 'SHIFT_SUPERVISOR'
-            ? SUPERVISOR_TABS
-          : user?.role === 'CLIENT_PORTAL'
-            ? user.regionId && !user.clientId
-              ? REGION_TABS
-              : PORTAL_TABS
-            : user?.role === 'INTERNAL_RECRUITER'
-            ? RECRUITER_TABS
-            : can('manage:scheduling')
-            ? SCHEDULER_TABS
-            : DEFAULT_TABS;
+  const tabSet = tabSetFor(user, can);
   // Keep at most 4 destination tabs so every target stays comfortably
   // wide on a 360px screen once "More" is added.
   const tabs = tabSet
@@ -283,7 +310,7 @@ function ApprovalsBadge() {
   const n = useApprovalsCount() ?? 0;
   if (n <= 0) return null;
   return (
-    <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-[10px] font-semibold leading-4 text-on-accent">
+    <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-3xs font-semibold leading-4 text-on-accent" aria-label={`${n} waiting`}>
       {n > 99 ? '99+' : n}
     </span>
   );
@@ -305,7 +332,7 @@ function UnreadMessagesBadge() {
   const n = unread.data?.unread ?? 0;
   if (n <= 0) return null;
   return (
-    <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-[10px] font-semibold leading-4 text-on-accent">
+    <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-3xs font-semibold leading-4 text-on-accent" aria-label={`${n} waiting`}>
       {n > 99 ? '99+' : n}
     </span>
   );

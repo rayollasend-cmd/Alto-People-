@@ -145,7 +145,9 @@ describe('<KioskPage> punch flow', () => {
     renderKiosk();
     await typePin(user);
 
-    expect(await screen.findByText(/wrong pin/i)).toBeInTheDocument();
+    // The credential is the "clock-in number" everywhere — never "PIN".
+    expect(await screen.findByText(/wrong clock-in number/i)).toBeInTheDocument();
+    expect(screen.queryByText(/\bPIN\b/)).not.toBeInTheDocument();
 
     // PIN was cleared — typing 4 fresh digits auto-advances again.
     for (const d of ['5', '6', '7', '8']) {

@@ -30,6 +30,7 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
     expect(new Set(keys)).toEqual(
       new Set<ModuleKey>([
         'me',
+        'inbox',
         'messages',
         'relay',
         'recruiting',
@@ -87,7 +88,7 @@ describe('Fieldglass timesheets — its own sidebar entry', () => {
       expect(keysFor(role), role).not.toContain('fieldglass');
     }
     const entry = MODULES.find((m) => m.key === 'fieldglass')!;
-    expect(entry).toMatchObject({ path: '/time-attendance/timesheets', label: 'Fieldglass timesheets', group: 'workforce-management' });
+    expect(entry).toMatchObject({ path: '/time-attendance/timesheets', label: 'Fieldglass hours', group: 'workforce-management' });
   });
 
   it('Fieldglass setup is its own entry too — finance’s (the packet carries PII), never a supervisor’s', () => {
@@ -115,6 +116,7 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
     expect(new Set(keys)).toEqual(
       new Set<ModuleKey>([
         'me',
+        'inbox',
         'messages',
         'floor-today',
         'scheduling',

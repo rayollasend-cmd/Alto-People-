@@ -17,7 +17,8 @@ import {
   type AssetKind,
   type AssetStatus,
 } from '@/lib/assets108Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -71,6 +72,25 @@ const STATUS_OPTIONS: AssetStatus[] = [
   'LOST',
   'RETIRED',
 ];
+
+const KIND_LABEL: Record<AssetKind, string> = {
+  LAPTOP: 'Laptop',
+  PHONE: 'Phone',
+  TABLET: 'Tablet',
+  BADGE: 'Badge',
+  KEY: 'Key',
+  VEHICLE: 'Vehicle',
+  UNIFORM: 'Uniform',
+  OTHER: 'Other',
+};
+
+const STATUS_LABEL: Record<AssetStatus, string> = {
+  AVAILABLE: 'Available',
+  ASSIGNED: 'Assigned',
+  IN_REPAIR: 'In repair',
+  LOST: 'Lost',
+  RETIRED: 'Retired',
+};
 
 export function AssetsHome() {
   const { user } = useAuth();
@@ -171,7 +191,7 @@ export function AssetsHome() {
             aria-pressed={kindFilter === k}
             onClick={() => setKindFilter(k)}
           >
-            {k === 'ALL' ? 'All' : k}
+            {k === 'ALL' ? 'All' : KIND_LABEL[k]}
           </Button>
         ))}
       </div>
@@ -187,7 +207,7 @@ export function AssetsHome() {
             aria-pressed={statusFilter === s}
             onClick={() => setStatusFilter(s)}
           >
-            {s === 'ALL' ? 'All' : s}
+            {s === 'ALL' ? 'All' : STATUS_LABEL[s]}
           </Button>
         ))}
         <Input
@@ -240,7 +260,7 @@ export function AssetsHome() {
                     return (
                       <div className="flex items-center gap-2 text-sm">
                         <Icon className="h-4 w-4 text-silver" />
-                        {a.kind}
+                        {KIND_LABEL[a.kind] ?? a.kind}
                       </div>
                     );
                   },
@@ -264,7 +284,7 @@ export function AssetsHome() {
                               : 'destructive'
                       }
                     >
-                      {a.status}
+                      {STATUS_LABEL[a.status] ?? a.status}
                     </Badge>
                   ),
                 },
@@ -683,12 +703,13 @@ function AssignDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
     if (!associate) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     setSaving(true);

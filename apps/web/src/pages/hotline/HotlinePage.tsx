@@ -57,7 +57,7 @@ export function HotlinePage() {
     <div className="min-h-screen bg-gradient-to-br from-midnight via-navy to-navy-secondary text-white">
       <div className="max-w-2xl mx-auto px-4 py-12 md:px-6">
         <div className="flex items-center justify-center mb-6">
-          <Logo size="lg" alt="Alto HR" />
+          <Logo size="lg" alt="Company logo" />
         </div>
         <div className="flex items-center gap-3 mb-2">
           <ShieldQuestion className="h-7 w-7 text-gold" />

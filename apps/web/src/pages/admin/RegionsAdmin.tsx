@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { ExternalLink, Map, Plus, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import {
   createRegion,
@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ApproverPicker } from '@/components/ApproverPicker';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
@@ -40,6 +41,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * store here at a glance and can open each store's own site.
  */
 export function RegionsAdmin() {
+  const term = useTerm();
+  const sitesNoun = term('sites').toLowerCase();
   const { can } = useAuth();
   const confirm = useConfirm();
   const canManage = can('manage:org');
@@ -82,6 +85,7 @@ export function RegionsAdmin() {
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHeader
         title="Regions"
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Regions' }]}
         subtitle="The command-center tier: a region is the stores a Manager, Business Operations Support runs. Invite the market manager from their region; they get the command-center note, not the store one."
         primaryAction={
           canManage ? (
@@ -146,7 +150,11 @@ export function RegionsAdmin() {
             </CardHeader>
             <CardContent>
               {r.stores.length === 0 ? (
-                <p className="text-sm text-silver/60">No stores assigned yet.</p>
+                <EmptyState
+                  className="py-6"
+                  title={`No ${sitesNoun} assigned yet`}
+                  description={`Edit the region to pick the ${sitesNoun} that roll up to it.`}
+                />
               ) : (
                 <ul className="flex flex-wrap gap-1.5">
                   {r.stores.map((s) => (

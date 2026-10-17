@@ -15,7 +15,7 @@ import {
   type DisciplineKind,
   type DisciplineStatus,
 } from '@/lib/discipline118Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
@@ -44,6 +44,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
+import { pickOne } from '@/lib/validationCopy';
 
 const KIND_VARIANT: Record<
   DisciplineKind,
@@ -72,6 +73,7 @@ const KIND_ORDER: DisciplineKind[] = [
 ];
 
 export function DisciplineHome() {
+  const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const [filter, setFilter] = useState<DisciplineStatus | 'ALL'>('ACTIVE');
@@ -107,7 +109,7 @@ export function DisciplineHome() {
   const exportCsv = () => {
     downloadCsv(`disciplinary-actions-${ymdLocal()}.csv`, [
       [
-        'Associate',
+        term('worker'),
         'Email',
         'Kind',
         'Status',
@@ -239,7 +241,7 @@ export function DisciplineHome() {
               columns={[
                 {
                   key: 'associate',
-                  header: 'Associate',
+                  header: term('worker'),
                   accessor: (a) => a.associateName,
                   sortable: true,
                   primary: true,
@@ -343,6 +345,7 @@ function NewActionDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<DisciplineKind>('VERBAL_WARNING');
   const today = ymdLocal();
@@ -401,7 +404,7 @@ function NewActionDrawer({
 
   const submit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (!description.trim()) {
@@ -436,7 +439,7 @@ function NewActionDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={assoc} onChange={setAssoc} />
           </div>

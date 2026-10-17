@@ -80,7 +80,7 @@ export function SitesAdmin() {
       <PageHeader
         title={sitesNoun}
         subtitle={`Every place work happens: its time zone, its state for tax and overtime, and the unit of the organizational tree it belongs to.`}
-        breadcrumbs={[{ label: 'Admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: sitesNoun }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: sitesNoun }]}
         primaryAction={
           canManage ? (
             <Button size="sm" onClick={() => setAdding(true)}>

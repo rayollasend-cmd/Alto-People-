@@ -23,7 +23,7 @@ import {
   type EnrollmentStatus,
   type ExpiringEnrollment,
 } from '@/lib/lms94Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { useConfirm } from '@/lib/confirm';
 import { useI18n } from '@/lib/i18n';
@@ -557,6 +557,7 @@ function EnrollDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   // Multi-pick built on the single-value AssociatePicker: the picker's own
   // value stays null so it never collapses into its "selected" chip; each
   // onChange appends to this list (deduped) and selections render as
@@ -599,7 +600,7 @@ function EnrollDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associates</Label>
+          <Label>{term('workers')}</Label>
           <div className="mt-1">
             <AssociatePicker
               value={null}
@@ -655,6 +656,7 @@ function EnrollDrawer({
 const ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
 
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
+  const term = useTerm();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<EnrollmentStatus | 'ALL'>('ALL');
   const [completeId, setCompleteId] = useState<string | null>(null);
@@ -685,7 +687,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
 
   const exportCsv = () => {
     downloadCsv(`enrollments-${ymdLocal()}.csv`, [
-      ['Course', 'Associate', 'Status', 'Completed', 'Expires', 'Score', 'Assigned'],
+      ['Course', term('worker'), 'Status', 'Completed', 'Expires', 'Score', 'Assigned'],
       ...filtered.map((e) => [
         e.courseTitle,
         e.associateName,
@@ -761,7 +763,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
             exportCsv={{ filename: 'enrollments' }}
             columns={[
               { key: 'course', header: 'Course', accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
-              { key: 'associate', header: 'Associate', accessor: (e) => e.associateName, sortable: true, cardMeta: true },
+              { key: 'associate', header: term('worker'), accessor: (e) => e.associateName, sortable: true, cardMeta: true },
               { key: 'status', header: 'Status', accessor: (e) => e.status, sortable: true, cardMeta: true, cell: (e) => <StatusBadge status={e.status} overrides={ENROLL_STATUS_TONES} /> },
               { key: 'completed', header: 'Completed', accessor: (e) => e.completedAt, sortable: true, searchable: false, cell: (e) => fmtDate(e.completedAt) },
               { key: 'expires', header: 'Expires', accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
@@ -859,6 +861,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
 const EXPIRING_WINDOWS = [30, 60, 90] as const;
 
 function ExpiringTab() {
+  const term = useTerm();
   const [days, setDays] = useState<number>(30);
 
   const expiringQuery = useQuery({
@@ -877,7 +880,7 @@ function ExpiringTab() {
 
   const exportCsv = () => {
     downloadCsv(`expiring-${days}d-${ymdLocal()}.csv`, [
-      ['Course', 'Associate', 'Required', 'Expires', 'Days left'],
+      ['Course', term('worker'), 'Required', 'Expires', 'Days left'],
       ...(rows ?? []).map((e) => [
         e.courseTitle,
         e.associateName,
@@ -934,7 +937,7 @@ function ExpiringTab() {
               exportCsv={{ filename: 'expiring-certifications' }}
               columns={[
                 { key: 'course', header: 'Course', accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'associate', header: 'Associate', accessor: (e) => e.associateName, sortable: true, cardMeta: true },
+                { key: 'associate', header: term('worker'), accessor: (e) => e.associateName, sortable: true, cardMeta: true },
                 { key: 'required', header: 'Required', accessor: (e) => (e.isRequired ? 'Required' : ''), sortable: true, searchable: false, cell: (e) => (e.isRequired ? <Badge variant="destructive">Required</Badge> : '—') },
                 { key: 'expires', header: 'Expires', accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
                 { key: 'daysLeft', header: 'Days left', accessor: (e) => e.daysLeft, csv: (e) => `${e.daysLeft}d`, sortable: true, searchable: false, cardMeta: true, cell: (e) => <Badge variant={e.daysLeft <= 7 ? 'destructive' : 'pending'}>{e.daysLeft}d</Badge> },

@@ -17,6 +17,8 @@ import {
   setGarnishmentStatus,
 } from '@/lib/payrollTax91Api';
 import { ApiError } from '@/lib/api';
+import { useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -75,6 +77,7 @@ interface Props {
 }
 
 export function GarnishmentsView({ canProcess }: Props) {
+  const term = useTerm();
   // Persisted status chip — a stored value no longer in STATUS_FILTERS
   // falls back to the default instead of rendering an empty list silently.
   const [filter, setFilter] = usePersistentState<GarnishmentStatus | 'ALL'>(
@@ -184,13 +187,13 @@ export function GarnishmentsView({ canProcess }: Props) {
                 caption="Garnishments"
                 rows={rows}
                 rowKey={(g) => g.id}
-                search={{ placeholder: 'Associate, case, agency…' }}
+                search={{ placeholder: `${term('worker')}, case, agency…` }}
                 urlState={false}
                 exportCsv={{ filename: 'garnishments' }}
                 columns={[
                   {
                     key: 'associate',
-                    header: 'Associate',
+                    header: term('worker'),
                     accessor: (g) => g.associateName,
                     sortable: true,
                     primary: true,
@@ -403,6 +406,7 @@ function CreateGarnishmentDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
 }) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [associateError, setAssociateError] = useState<string | null>(null);
   const [kind, setKind] = useState<GarnishmentKind>('CREDITOR');
@@ -472,7 +476,7 @@ function CreateGarnishmentDialog({
     e.preventDefault();
     if (submitting) return;
     if (!associate) {
-      setAssociateError('Pick an associate.');
+      setAssociateError(pickOne(term));
       return;
     }
     setSubmitting(true);
@@ -513,7 +517,7 @@ function CreateGarnishmentDialog({
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <Label required>Associate</Label>
+              <Label required>{term('worker')}</Label>
               <div className="mt-1">
                 <AssociatePicker
                   value={associate}

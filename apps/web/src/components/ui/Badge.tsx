@@ -2,10 +2,17 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/cn';
 
+// Casing: the default is still uppercase (523 usages across 177 files were
+// written against it); sentence case is the target and `caps` is the path —
+// once every caller that wants shouting opts in, the default flips.
 const badgeVariants = cva(
-  'inline-flex items-center gap-1 rounded-full font-medium uppercase tracking-wider whitespace-nowrap',
+  'inline-flex items-center gap-1 rounded-full font-medium whitespace-nowrap',
   {
     variants: {
+      caps: {
+        true: 'uppercase tracking-wider',
+        false: '',
+      },
       variant: {
         // Neutral / informational.
         default: 'bg-navy-secondary text-silver border border-navy-secondary',
@@ -38,6 +45,7 @@ const badgeVariants = cva(
     defaultVariants: {
       variant: 'default',
       size: 'default',
+      caps: true,
     },
   },
 );
@@ -56,6 +64,11 @@ export interface BadgeProps
    * filter chips or feature tags. Pass `withDot={false}` to opt out.
    */
   withDot?: boolean;
+  /**
+   * Uppercase + letter-spaced label. Defaults to TRUE for now so nothing
+   * shifts; pass `caps={false}` for sentence case ("Approved", "Out today").
+   */
+  caps?: boolean;
 }
 
 const DOT_COLOR: Record<NonNullable<BadgeProps['variant']>, string> = {
@@ -89,6 +102,7 @@ export function Badge({
   variant,
   size,
   withDot,
+  caps,
   children,
   ...props
 }: BadgeProps) {
@@ -96,7 +110,7 @@ export function Badge({
   const s = size ?? 'default';
   const showDot = withDot ?? DOT_DEFAULT[v];
   return (
-    <span className={cn(badgeVariants({ variant, size }), className)} {...props}>
+    <span className={cn(badgeVariants({ variant, size, caps }), className)} {...props}>
       {showDot && (
         <span
           aria-hidden="true"

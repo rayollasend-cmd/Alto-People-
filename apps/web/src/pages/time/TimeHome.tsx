@@ -17,6 +17,7 @@ import { MyWeekHours } from './MyWeekHours';
 export function TimeHome() {
   const { user, can } = useAuth();
   const term = useTerm();
+  const { t } = useI18n();
   const isAssociate = user?.role === 'ASSOCIATE';
   const canManage = can('manage:time');
   const hasAssociateRecord = !!user?.associateId;
@@ -36,8 +37,8 @@ export function TimeHome() {
     if (hasAssociateRecord && searchParams.get('mine') === '1') {
       return (
         <AssociateKioskOnlyView
-          title="My time"
-          body={`Floor supervisors clock in and out at the ${term('site').toLowerCase()} tablet with their 4-digit PIN — not in the app. Your punches land here.`}
+          title={t('time.myTime')}
+          body={t('time.tabletOnlyBody', { role: term('role.floorSupervisor').toLowerCase() })}
           headerActions={
             <Button size="sm" variant="ghost" asChild>
               <Link to="/time-attendance">
@@ -99,7 +100,7 @@ export function TimeHome() {
 /** The viewer's own clock, read-only — for someone who punches at the
  *  store tablet only (a floor supervisor). */
 function TabletClockStrip() {
-  const term = useTerm();
+  const { t } = useI18n();
   const q = useQuery({ queryKey: ['time', 'active'], queryFn: getActiveTimeEntry, staleTime: 30_000 });
   const active = q.data?.active ?? null;
   return (
@@ -120,10 +121,10 @@ function TabletClockStrip() {
               ? `On the clock since ${fmtTime(active.clockInAt)}`
               : 'Not clocked in'}
         </div>
-        <div className="text-xs text-silver">Punch in and out at the {term('site').toLowerCase()} tablet with your PIN.</div>
+        <div className="text-xs text-silver">{t('time.tabletClockHint')}</div>
       </div>
       <Link to="/time-attendance?mine=1" className="text-xs text-gold underline-offset-2 hover:underline">
-        My time →
+        {t('time.myTime')} →
       </Link>
     </section>
   );
@@ -139,7 +140,10 @@ function AssociateKioskOnlyView({
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="mx-auto"
-        title={title ?? t('time.title')}
+        // The person's own view is "My time" — the same words as the home's
+        // quick link and the floor's way back; "Time & attendance" is the
+        // floor's title.
+        title={title ?? t('time.myTime')}
         subtitle={t('time.subtitle')}
         secondaryActions={headerActions}
     >

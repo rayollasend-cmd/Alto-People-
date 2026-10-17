@@ -16,7 +16,7 @@ const SIZE_PX: Record<LogoSize, number> = {
   xl: 96,
 };
 
-export function Logo({ size = 'sm', className, alt = 'Alto HR' }: LogoProps) {
+export function Logo({ size = 'sm', className, alt = 'Company logo' }: LogoProps) {
   const px = SIZE_PX[size];
   return (
     <img

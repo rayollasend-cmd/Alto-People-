@@ -76,7 +76,7 @@ export function AuditIntegrity() {
           {last
             ? last.ok
               ? `Hash chain verified: ${last.rows} rows, last checked ${fmtDateTime(last.checkedAt)}.`
-              : `Hash chain BROKEN at ${last.breaks.slice(0, 3).map((b) => `#${b.seq} (${b.reason})`).join(', ')}, found ${fmtDateTime(last.checkedAt)}.`
+              : `Hash chain broken at ${last.breaks.slice(0, 3).map((b) => `#${b.seq} (${b.reason})`).join(', ')}, found ${fmtDateTime(last.checkedAt)}. Check the chain again; if it is still broken, contact support.`
             : 'Every new row is chained to the one before it. The first check runs with tonight’s controls.'}
         </p>
 

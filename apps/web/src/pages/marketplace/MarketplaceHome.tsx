@@ -16,6 +16,7 @@ import {
   type Qualification,
 } from '@/lib/qualApi';
 import { useAuth } from '@/lib/auth';
+import { errorText } from '@/lib/errorText';
 import { useConfirm } from '@/lib/confirm';
 import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
@@ -677,11 +678,14 @@ function CatalogTab() {
   const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load qualifications.' : null;
   const refresh = () => void refreshQuery.refetch();
 
+  const [saving, setSaving] = useState(false);
   const onSave = async () => {
+    if (saving) return;
     if (!code.trim() || !name.trim()) {
       toast.error('Code and name required.');
       return;
     }
+    setSaving(true);
     try {
       await createQualification({
         code: code.trim(),
@@ -698,7 +702,9 @@ function CatalogTab() {
       setDescription('');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't add the qualification."));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -836,10 +842,12 @@ function CatalogTab() {
           </label>
         </DrawerBody>
         <DrawerFooter>
-          <Button variant="ghost" onClick={() => setShowNew(false)}>
+          <Button variant="ghost" onClick={() => setShowNew(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={onSave}>Save</Button>
+          <Button onClick={onSave} loading={saving} disabled={saving}>
+            Save
+          </Button>
         </DrawerFooter>
       </Drawer>
     </div>

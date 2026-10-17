@@ -221,6 +221,8 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
 
 export function PeopleDirectory() {
   const term = useTerm();
+  // The client column (and its CSV header) exist only where there are clients.
+  const hasClients = useTenant().moduleOn('clientPortal');
   const queryClient = useQueryClient();
   const { user: viewer } = useAuth();
   const canManagePhotos = viewer ? hasCapability(viewer.role, 'manage:org') : false;
@@ -518,12 +520,12 @@ export function PeopleDirectory() {
       } while (cursor);
       if (all.length === 0) return;
       downloadCsv(`people-${ymdLocal()}.csv`, [
-        ['Name', 'Status', 'Email', 'Workplace', 'Type', 'Start date'],
+        ['Name', 'Status', 'Email', ...(hasClients ? ['Client'] : []), 'Type', 'Start date'],
         ...all.map((r) => [
           `${r.firstName} ${r.lastName}`,
           statusLabel(r.status),
           r.email,
-          r.workplaceClientName ?? '',
+          ...(hasClients ? [r.workplaceClientName ?? ''] : []),
           EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
           r.startDate ?? '',
         ]),
@@ -538,9 +540,9 @@ export function PeopleDirectory() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="People directory"
-        subtitle={`Every ${term('worker').toLowerCase()} on record — active, pending onboarding, and inactive — with workplace, pay, and contact in one row.`}
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'People' }]}
+        title={term('nav.people')}
+        subtitle={`Every ${term('worker').toLowerCase()} on record — active, pending onboarding, and inactive — with where they work, pay, and contact in one row.`}
+        breadcrumbs={[{ label: term('nav.people') }]}
         primaryAction={
           <Button asChild>
             <Link to="/onboarding">
@@ -884,7 +886,7 @@ const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
   },
   {
     key: 'workplace',
-    header: 'Workplace',
+    header: 'Client',
     accessor: (r) => r.workplaceClientName,
     sortable: true,
     cardMeta: true,
@@ -975,7 +977,14 @@ function DirectoryTable({
   onSelect: (row: DirectoryEntry) => void;
 }) {
   const term = useTerm();
-  const directoryColumns = useMemo(() => DIRECTORY_COLUMNS.map((c) => (c.key === 'name' ? { ...c, header: term('worker') } : c)), [term]);
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const directoryColumns = useMemo(
+    () =>
+      DIRECTORY_COLUMNS.filter((c) => hasClients || c.key !== 'workplace').map((c) =>
+        c.key === 'name' ? { ...c, header: term('worker') } : c,
+      ),
+    [term, hasClients],
+  );
   return (
     <Card className="p-3">
       <DataGrid<DirectoryEntry>
@@ -1342,7 +1351,7 @@ function ProfileTab({
         )}
         <InfoRow
           icon={<MapPin className="h-3.5 w-3.5" />}
-          label="Location"
+          label={term('site')}
           value={a.currentLocationName ?? '—'}
         />
         <InlineFieldRow
@@ -1498,7 +1507,7 @@ function ProfileTab({
 
       <Section title="On record">
         <InfoRow
-          label="In Alto HR since"
+          label="On record since"
           value={fmtDate(a.createdAt)}
         />
         {a.separatedAt && (
@@ -1659,7 +1668,7 @@ function DeactivationSection({
             </Button>
           </div>
 
-          <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+          <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)} confirmDiscard={() => reason.trim() !== ''}>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>
@@ -1787,7 +1796,11 @@ function DangerZoneSection({
         </Button>
       </div>
 
-      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => !busy && setOpen(o)}
+        confirmDiscard={() => reason.trim() !== '' || confirmName.trim() !== ''}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -2265,8 +2278,8 @@ function PendingActions({
         body:
           `Hi ${associateName.split(' ')[0]},\n\n` +
           'This is a friendly reminder to finish the remaining onboarding ' +
-          "steps so we can get you set up. Sign back into your Alto account to pick up where you left off — it should only take a few minutes.\n\n" +
-          'Thanks,\nAlto HR',
+          'steps so we can get you set up. Sign back in to pick up where you left off — it should only take a few minutes.\n\n' +
+          'Thanks,\nThe HR team',
       });
       setOpen(false);
       toast.success(
@@ -2583,7 +2596,7 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
     <Section title="Kiosk clock-in">
       <InfoRow
         icon={<Key className="h-3.5 w-3.5" />}
-        label="Employee #"
+        label="Clock-in number"
         value={
           isLoading ? (
             '…'
@@ -2784,7 +2797,7 @@ function TransferDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={() => reason.trim() !== '' || notes.trim() !== '' || clientId !== (homeClientId ?? '') || locationId !== (a.currentLocationId ?? '')}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -2866,9 +2879,9 @@ function TransferDialog({
                 are released back to open and pending shift claims expire; their
                 manager, department, cost center, job profile, and pay schedule
                 are cleared for you to re-assign; they leave old shift teams; and
-                their kiosk employee number moves to the new client&apos;s
-                kiosks. Same login, same pay and tax history — Alto stays the
-                employer of record.
+                their kiosk clock-in number moves to the new client&apos;s
+                kiosks. Same login, same pay and tax history — the employer of
+                record does not change.
               </div>
             </div>
           )}
@@ -2891,7 +2904,7 @@ function TransferDialog({
           {assignmentFloorBroken && (
             <p className="text-xs text-rose-300">
               {a.firstName}&apos;s current assignment started on{' '}
-              {a.currentAssignmentStartedAt}. Pick that date or later.
+              {fmtDate(parseYmd(a.currentAssignmentStartedAt))}. Pick that date or later.
             </p>
           )}
 
@@ -3914,7 +3927,7 @@ function NewRateDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={() => notes.trim() !== '' || amount !== (currentRecord?.amount ?? a.payAmount ?? '') || payType !== initialPayType}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Set new rate</DialogTitle>
@@ -4504,14 +4517,14 @@ function PaymentEditorDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={() => files.length > 0 || (!payment && [periodStart, periodEnd, payDate, gross, net, reference, note].some((v) => v.trim() !== ''))}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
             {payment ? 'Edit payment' : 'Record external payment'}
           </DialogTitle>
           <DialogDescription>
-            Document a pay period processed outside Alto and attach the
+            Document a pay period processed outside this system and attach the
             paystub or proof of payment — one save does both.
           </DialogDescription>
         </DialogHeader>
@@ -5315,7 +5328,7 @@ function UploadResultDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={() => file !== null}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Upload result document</DialogTitle>

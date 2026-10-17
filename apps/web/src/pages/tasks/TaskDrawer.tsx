@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Check, ChevronDown, Hand, PlayCircle, X } from 'lucide-react';
-import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type AssignmentReason, type RankedCandidate, type WorkTaskAssignmentView, type WorkTaskDetailView } from '@alto-people/shared';
+import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type AssignmentReason, type WorkTaskEventKind, type RankedCandidate, type WorkTaskAssignmentView, type WorkTaskDetailView } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDateTime } from '@/lib/format';
+import { fmtDateTime, fmtMoney } from '@/lib/format';
 import { getTask, handOffTask, autoAssignTask, recordTaskEvent } from '@/lib/tasksApi';
 import { Badge, Button, Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle, EmptyState, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -18,7 +18,18 @@ import { HolderIcon } from './TasksBoard';
  */
 
 const CAP_LABEL = new Map<string, string>(WORKER_CAPABILITIES.map((c) => [c.code, c.label]));
-const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+const money = (cents: number) => fmtMoney(cents / 100);
+
+const EVENT_KIND_LABEL: Record<WorkTaskEventKind, string> = {
+  ASSIGNED: 'Assigned',
+  QUEUED: 'Queued',
+  STARTED: 'Started',
+  STALLED: 'Stalled',
+  FAILED: 'Failed',
+  HANDED_OFF: 'Handed off',
+  DONE: 'Done',
+  CANCELLED: 'Cancelled',
+};
 
 function ReasonList({ reasons }: { reasons: AssignmentReason[] }) {
   return (
@@ -122,7 +133,7 @@ export function TaskDrawer({ taskId, onClose, onChanged, canManage }: { taskId: 
               {t.reference ? ` · ${t.reference}` : ''}
             </>
           ) : (
-            'Loading…'
+            <Skeleton className="h-4 w-64" />
           )}
         </DrawerDescription>
       </DrawerHeader>
@@ -179,7 +190,7 @@ export function TaskDrawer({ taskId, onClose, onChanged, canManage }: { taskId: 
                   <li key={e.id} className="flex items-baseline gap-3 text-sm">
                     <span className="w-36 shrink-0 text-xs2 tabular-nums text-ink-muted">{fmtDateTime(e.at)}</span>
                     <span className="text-ink">
-                      {e.kind.replace('_', ' ').toLowerCase()}
+                      {EVENT_KIND_LABEL[e.kind] ?? e.kind}
                       {e.note ? <span className="text-ink-muted"> — {e.note}</span> : null}
                     </span>
                   </li>

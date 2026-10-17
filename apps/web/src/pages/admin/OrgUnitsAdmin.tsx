@@ -94,7 +94,7 @@ export function OrgUnitsAdmin() {
       <PageHeader
         title="Organizational tree"
         subtitle={`Divisions, regions, business units and cost centers, each with its ledger code. ${term('sites')} and accounts can be pinned at any level.`}
-        breadcrumbs={[{ label: 'Admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: 'Organizational tree' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: 'Organizational tree' }]}
         primaryAction={
           canManage ? (
             <Button size="sm" onClick={() => setEditing({ unit: null, parentId: null })}>

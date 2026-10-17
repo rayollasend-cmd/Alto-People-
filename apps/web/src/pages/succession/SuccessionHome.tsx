@@ -18,7 +18,7 @@ import {
   type SuccessionSummary,
   updateSuccessionCandidate,
 } from '@/lib/succession115Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -47,6 +47,7 @@ import { Label } from '@/components/ui/Label';
 import { ymdLocal } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { downloadCsv } from '@/lib/csv';
+import { pickOne } from '@/lib/validationCopy';
 
 const READINESS_VARIANT: Record<
   SuccessionReadiness,
@@ -651,6 +652,7 @@ function AddCandidateDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [readiness, setReadiness] = useState<SuccessionReadiness>('READY_1_2_YEARS');
   const [notes, setNotes] = useState('');
@@ -658,7 +660,7 @@ function AddCandidateDrawer({
 
   const submit = async () => {
     if (!associate) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     setSaving(true);

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays, ClipboardCheck, MapPin, Timer, Users } from 'lucide-react';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ApiError, apiFetch } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { boundedClientOf } from '@/lib/roles';
 import { listClientLocations } from '@/lib/clientsApi';
@@ -119,6 +119,7 @@ function plural(n: number, one: string, many: string): string {
 
 export function SupervisorDashboard() {
   const { t } = useI18n();
+  const term = useTerm();
   const greet = useGreeting();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -256,16 +257,17 @@ export function SupervisorDashboard() {
   // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
   // The greeting is the title; the place, its client and address are the
   // subtitle; the live "as of" is the meta line; the floor is the hero.
+  const name = greetingName(user, '');
   const greeting = (
     <>
-      <LiveNow render={(now) => greet(now.getHours())} />,{' '}
-      <span className="text-accent">{greetingName(user)}</span>.
+      <LiveNow render={(now) => greet(now.getHours())} />
+      {name && <>, <span className="text-accent">{name}</span></>}.
     </>
   );
   const clientLine = oneStore
     ? (data?.client.name ?? client?.name)
     : locations.length > 1
-      ? plural(locations.length, 'store', 'stores')
+      ? plural(locations.length, term('site').toLowerCase(), term('sites').toLowerCase())
       : null;
   const subtitle = (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -323,7 +325,7 @@ export function SupervisorDashboard() {
       <Button size="sm" variant="outline" asChild>
         <Link to="/ops">
           <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          Store ops
+          {t('floor.siteOps')}
         </Link>
       </Button>
       {!watchOnly && (
@@ -455,12 +457,10 @@ export function SupervisorDashboard() {
           <ClipboardCheck className="h-6 w-6 shrink-0 text-success" aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-white">
-              Your {sopQuery.data.submitted.windowLabel ?? sopQuery.data.submitted.position} SOP is submitted
+              {t('floor.sopSubmitted', { window: sopQuery.data.submitted.windowLabel ?? sopQuery.data.submitted.position })}
             </div>
             <div className="mt-0.5 text-xs text-silver">
-              {watchOnly
-                ? 'Clock out at the store tablet whenever you’re done.'
-                : 'You can clock out whenever you’re done.'}
+              {watchOnly ? t('floor.clockOutAtTablet') : t('floor.clockOutWhenDone')}
             </div>
           </div>
           {!watchOnly && (
@@ -487,10 +487,10 @@ export function SupervisorDashboard() {
               {/* Floor supervisors punch at the store tablet only (the API
                   refuses app punches) — so no button here, just where. */}
               {coveringToday
-                ? "Clock in at the store tablet with your PIN — the shift's SOP opens for you, and it's yours to submit."
+                ? t('floor.clockInCovering')
                 : watchOnly
-                  ? `Clock in at the store tablet with your PIN — you help on ${leadFirst ? `${leadFirst}'s` : 'your shift’s'} SOP.`
-                  : "Clock in here or at the kiosk — your shift's SOP opens by itself."}
+                  ? t('floor.clockInHelping', { whose: leadFirst ? `${leadFirst}’s` : t('floor.yourShifts') })
+                  : t('floor.clockInHereOrKiosk')}
             </div>
           </div>
           {!watchOnly && (
@@ -669,15 +669,15 @@ export function SupervisorDashboard() {
             <TileLink to="/today">
               <StatTile
                 className="h-full"
-                label="Not in yet"
+                label={t('floor.notInYet')}
                 value={notIn}
-                sub={notIn === 0 ? 'Everyone due is in' : 'Shift started, no punch'}
+                sub={notIn === 0 ? t('floor.everyoneIn') : t('floor.noPunchYet')}
               />
             </TileLink>
             <StatTile
-              label="Unfilled today"
+              label={t('floor.unfilledToday')}
               value={openToday}
-              sub={openToday === 0 ? 'Every slot filled' : 'Open slots on the schedule'}
+              sub={openToday === 0 ? t('floor.everySlotFilled') : t('floor.openSlots')}
             />
             <StatTile
               label="Tomorrow · confirmed"
@@ -693,7 +693,7 @@ export function SupervisorDashboard() {
             <TileLink to={shiftSop ? `/ops?tab=shift&shift=${shiftSop.id}` : '/ops'}>
               <StatTile
                 className="h-full"
-                label="Shift SOP"
+                label={t('floor.shiftSop')}
                 value={shiftSop ? shiftSop.sopDone : '—'}
                 unit={shiftSop ? `/ ${shiftSop.sopTotal}` : undefined}
                 meter={

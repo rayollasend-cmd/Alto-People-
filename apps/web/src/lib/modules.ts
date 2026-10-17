@@ -5,6 +5,8 @@ import type { Role, TenantModule, TenantModules, TermKey } from '@alto-people/sh
 import { PLATFORM_OPERATOR_TENANT_ID, ROLE_MODULE } from '@alto-people/shared';
 
 export type ModuleKey =
+  | 'inbox'
+  | 'settings'
   | 'tenant-profile'
   | 'sign-in'
   | 'employers'
@@ -127,11 +129,11 @@ export type ModuleGroup =
   | 'platform';
 
 export const GROUP_LABEL: Record<Exclude<ModuleGroup, 'core'>, string> = {
-  'workforce-management': 'Workforce Management',
+  'workforce-management': 'Workforce management',
   operations: 'Operations',
   compliance: 'Compliance',
-  'payroll-finance': 'Payroll and Finance',
-  'client-services': 'Client Services',
+  'payroll-finance': 'Payroll and finance',
+  'client-services': 'Client services',
   platform: 'Platform',
 };
 
@@ -163,6 +165,7 @@ export interface ModuleNav {
 export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  'inbox',
   'regions',
   'relay',
   'people',
@@ -236,6 +239,7 @@ const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  settlement, and the time/scheduling inputs that feed them. The
  *  uncurated slice buried these under Pulse/Equity/Volunteer/Career noise. */
 const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'inbox',
   'me',
   'messages',
   'relay',
@@ -271,6 +275,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
 /** The field-leadership nav: the people-supply chain plus the floor —
  *  coverage, standards, safety, the supervisor pipeline. No money pages. */
 const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'inbox',
   'me',
   'messages',
   'regions',
@@ -320,6 +325,7 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
 const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  'inbox',
   // Recruiting is one of the relay's four desks — batons are handed to
   // the recruiter there, so they need the way in like HR, Workforce and
   // Finance have it.
@@ -348,6 +354,7 @@ const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
 const SHIFT_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  'inbox',
   'floor-today', // the face wall — the store manager's Today page, their client
   'scheduling',
   'approvals',
@@ -423,6 +430,20 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   'portal-history': 'clientPortal',
   'portal-requests': 'clientPortal',
   'portal-candidates': 'clientPortal',
+  // The talent and perks long tail — corporate-HR surfaces a frontline or
+  // seasonal operator may switch off (Organization profile).
+  skills: 'talent',
+  career: 'talent',
+  mentorship: 'talent',
+  succession: 'talent',
+  probation: 'talent',
+  ramp: 'talent',
+  'learning-paths': 'talent',
+  'internal-jobs': 'talent',
+  pulse: 'talent',
+  tuition: 'perks',
+  equity: 'perks',
+  volunteer: 'perks',
   region: 'clientPortal',
   regions: 'clientPortal',
   clients: 'clientPortal',
@@ -455,7 +476,7 @@ export const NAV_TERM: Partial<Record<ModuleKey, TermKey>> = {
 
 /** Labels built from a noun rather than read from one key. */
 const NAV_LABEL: Partial<Record<ModuleKey, (term: (key: TermKey) => string) => string>> = {
-  ops: (term) => `${term('site')} Ops`,
+  ops: (term) => `${term('site')} operations`,
   'portal-ops': (term) => `${term('site')} operations`,
   sites: (term) => term('sites'),
 };
@@ -572,6 +593,25 @@ export function visibleModules(
 
 export const MODULES: ModuleNav[] = [
   {
+    key: 'inbox',
+    path: '/inbox',
+    label: 'Inbox',
+    description:
+      'Every decision waiting on you, across the product — approvals, reviews, cases, expiring credentials — counted and linked.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'settings',
+    path: '/admin',
+    label: 'Settings & trust',
+    description:
+      'The organization, its sites and accounts, sign-in, integrations, billing, and the trust evidence — one place.',
+    requires: 'view:hr-admin',
+    requiresAny: ['manage:org', 'view:integrations', 'view:product-analytics'],
+    group: 'platform',
+  },
+  {
     key: 'portal',
     path: '/portal',
     label: 'My store',
@@ -666,7 +706,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'relay',
     path: '/relay',
-    label: 'The relay',
+    label: 'Relay',
     description:
       'The one shared operating picture: first-paycheck lanes through HR, Workforce, and Finance; every cross-department baton with its holder, age, and due date; the Monday pack that writes itself.',
     requires: 'view:org',
@@ -754,7 +794,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'org',
     path: '/org',
-    label: 'Org structure',
+    label: 'Departments & job profiles',
     description:
       'Departments, cost centers, job profiles, and the manager chain that holds approvals + dimensional reporting together.',
     requires: 'view:org',
@@ -763,7 +803,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'org-chart',
     path: '/org/chart',
-    label: 'Org chart',
+    label: 'Reporting chart',
     description:
       'Visual reporting tree across the company. Search by name, title, or department to focus a chain.',
     requires: 'view:org',
@@ -941,7 +981,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'ramp',
     path: '/ramp',
-    label: 'Ramp plans',
+    label: '30/60/90 plans',
     description:
       'New-hire 30/60/90 day milestones. Manager updates status as they progress; achieve / miss is captured for the timeline.',
     requires: 'view:hr-admin',
@@ -977,7 +1017,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'hotline',
     path: '/hotline-admin',
-    label: 'Hotline queue',
+    label: 'Hotline reports',
     description:
       'Anonymous reports filed via the public hotline. Triage, assign, and respond. Public reporters never see internal notes.',
     requires: 'manage:performance',
@@ -1049,7 +1089,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'kiosk',
     path: '/time-attendance/kiosk',
-    label: 'Kiosk & PINs',
+    label: 'Kiosk',
     description:
       'Manage kiosk devices, assign 4-digit clock-in PINs, and review punches.',
     requires: 'manage:time',
@@ -1058,7 +1098,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'time-off',
     path: '/time-off',
-    label: 'Time Off',
+    label: 'Time off',
     description:
       'PTO requests, sick-leave balances, and HR approval queue.',
     requires: 'view:time',
@@ -1216,7 +1256,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'fieldglass',
     path: '/time-attendance/timesheets',
-    label: 'Fieldglass timesheets',
+    label: 'Fieldglass hours',
     // The weekly sheet that gets Alto paid — its own entry, not a button
     // inside Time & attendance. Store-bound roles see the statuses; the
     // money is finance's (the API nulls it for them).
@@ -1410,7 +1450,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'dircomms',
     path: '/directory',
-    label: 'Directory & comms',
+    label: 'Directory & surveys',
     description:
       'Search the people directory, send broadcasts, and run pulse / eNPS / open-ended surveys.',
     // Staff tool: the directory tab exposes every associate's email +
@@ -1422,7 +1462,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'communications',
     path: '/communications',
-    label: 'Communications',
+    label: 'Broadcasts',
     description:
       'SMS, push notifications, broadcast messaging, and templates.',
     requires: 'view:communications',
@@ -1505,7 +1545,7 @@ export const MODULES: ModuleNav[] = [
 /** Sidebar entry for the home dashboard (not a module). */
 export const DASHBOARD_NAV = {
   path: '/',
-  label: 'Dashboard',
+  label: 'Home',
 } as const;
 
 /**
@@ -1543,4 +1583,180 @@ export function useActiveNavPath(): string | null {
     if (hit && (best === null || p.length > best.length)) best = p;
   }
   return best;
+}
+
+
+/* ---------------------------------------------------------------------- */
+/* Doors — the sidebar's shape                                              */
+/* ---------------------------------------------------------------------- */
+
+/**
+ * The sidebar is a dozen rows for every role, not a hundred: a few always-on
+ * rows (Inbox, Messages, Relay), then DOORS — one row each, which open to the
+ * modules behind them. The six Products of the taxonomy survive as the doors
+ * (People, Hiring, Time & scheduling, Pay & finance, Compliance, Operations,
+ * Clients, Communications, Insights, Settings & trust); what changed is the
+ * depth. Every module stays a destination: inside its door, in the palette,
+ * and by URL. A module in no door for a role falls into a trailing "More"
+ * door rather than off the nav — the orphan-route test in
+ * __tests__/lib/navCoverage.test.ts makes that a failing build, not a
+ * silent gap.
+ *
+ * Visibility stays `visibleModules` (capability, tenant module, role
+ * curation). Doors only arrange what is already visible, so a door with
+ * nothing behind it is not drawn.
+ */
+export type DoorKey =
+  | 'me'
+  | 'team'
+  | 'people'
+  | 'hire'
+  | 'time'
+  | 'pay'
+  | 'compliance'
+  | 'operations'
+  | 'transport'
+  | 'clients'
+  | 'comms'
+  | 'insights'
+  | 'settings'
+  | 'my-schedule'
+  | 'my-pay'
+  | 'my-records'
+  | 'more';
+
+export interface NavDoor {
+  key: DoorKey;
+  label: string | ((term: (key: TermKey) => string) => string);
+  /** The door's own page when it has one; otherwise the first visible child. */
+  hub?: ModuleKey;
+  children: ModuleKey[];
+}
+
+/** Always-on rows above the doors, one row each, in this order. */
+export const RAIL_ROWS: readonly ModuleKey[] = ['inbox', 'messages', 'relay', 'floor-today'];
+
+export const DOORS: Record<DoorKey, NavDoor> = {
+  me: { key: 'me', label: 'Me', children: ['me', 'learning', 'help-center', 'career', 'internal-jobs', 'volunteer', 'rides'] },
+  team: { key: 'team', label: 'My team', children: ['team'] },
+  people: {
+    key: 'people',
+    label: (term) => term('nav.people'),
+    children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-paths', 'separations'],
+  },
+  hire: { key: 'hire', label: 'Hiring', children: ['recruiting', 'onboarding'] },
+  time: {
+    key: 'time',
+    label: 'Time & scheduling',
+    children: ['scheduling', 'approvals', 'marketplace', 'time-attendance', 'timesheets', 'kiosk', 'time-off', 'holidays', 'fieldglass', 'labor-costs', 'forecast', 'season-planner', 'emergency'],
+  },
+  pay: {
+    key: 'pay',
+    label: 'Pay & finance',
+    children: ['payroll', 'payroll-tax', 'payrules', 'compensation', 'benefits', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
+  },
+  compliance: {
+    key: 'compliance',
+    label: (term) => term('nav.compliance'),
+    children: ['compliance', 'documents', 'doc-templates', 'expirations', 'vaccinations', 'agreements', 'hr-cases', 'discipline', 'hotline', 'payroll-compliance', 'programs', 'audit'],
+  },
+  operations: { key: 'operations', label: 'Operations', children: ['control-room', 'tasks', 'ops', 'robots'] },
+  transport: { key: 'transport', label: (term) => term('nav.transport'), children: ['transport'] },
+  clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'regions'] },
+  comms: { key: 'comms', label: 'Communications', children: ['communications', 'dircomms', 'pulse'] },
+  insights: { key: 'insights', label: 'Insights', children: ['analytics', 'reports'] },
+  settings: {
+    key: 'settings',
+    label: 'Settings & trust',
+    hub: 'settings',
+    children: ['tenant-profile', 'employers', 'org-units', 'sites', 'branding', 'users', 'sign-in', 'workflows', 'integrations', 'billing', 'trust-center', 'compliance-evidence', 'reliability', 'product-analytics', 'design-system'],
+  },
+  // The associate's doors — the same modules, in the first person.
+  'my-schedule': { key: 'my-schedule', label: 'My schedule', children: ['scheduling', 'marketplace', 'time-off', 'time-attendance'] },
+  'my-pay': { key: 'my-pay', label: 'My pay', children: ['payroll', 'reimbursements'] },
+  'my-records': { key: 'my-records', label: 'My records', children: ['documents', 'agreements', 'hr-cases', 'communications'] },
+  more: { key: 'more', label: 'More', children: [] },
+};
+
+const DEFAULT_RAIL: readonly DoorKey[] = ['me', 'team', 'people', 'hire', 'time', 'pay', 'compliance', 'operations', 'transport', 'clients', 'comms', 'insights', 'settings'];
+
+/**
+ * Which doors a role gets, in order. Most roles take the default and let
+ * module visibility empty the doors they don't use. A role with its own
+ * rail is one whose capabilities say "everything" but whose job doesn't: a
+ * marketing manager holds the admin surface by product policy and does not
+ * need Pay, Compliance or Settings in their menu. With an explicit rail,
+ * what the doors don't name is left out of the menu (reachable by URL and
+ * the palette, as always) instead of piling into "More".
+ */
+const ROLE_RAIL: Partial<Record<Role, readonly DoorKey[]>> = {
+  ASSOCIATE: ['me', 'my-schedule', 'my-pay', 'my-records'],
+  MARKETING_MANAGER: ['me', 'team', 'people', 'hire', 'comms', 'insights'],
+};
+
+export interface NavDoorView {
+  key: DoorKey;
+  label: string;
+  /** Where the door row goes: its hub page, else its first child. */
+  target: ModuleNav;
+  children: ModuleNav[];
+}
+
+export interface NavShape {
+  /** Always-on single rows, in order. */
+  rows: ModuleNav[];
+  doors: NavDoorView[];
+  /** Visible modules an explicit rail chose to leave out of the menu. */
+  dropped: ModuleNav[];
+}
+
+/**
+ * Arrange the visible modules into the role's rail. The client portal keeps
+ * its flat store menu — a partner surface with its own grammar.
+ */
+export function navShapeFor(
+  visible: ModuleNav[],
+  role: string | undefined,
+  term: (key: TermKey) => string,
+): NavShape {
+  if (role === 'CLIENT_PORTAL') return { rows: visible, doors: [], dropped: [] };
+  const byKey = new Map(visible.map((m) => [m.key, m]));
+  const used = new Set<ModuleKey>();
+  const rows: ModuleNav[] = [];
+  for (const key of RAIL_ROWS) {
+    const m = byKey.get(key);
+    if (m) {
+      rows.push(m);
+      used.add(key);
+    }
+  }
+  const own = ROLE_RAIL[role as Role];
+  const rail = own ?? DEFAULT_RAIL;
+  const doors: NavDoorView[] = [];
+  for (const doorKey of rail) {
+    const door = DOORS[doorKey];
+    const hub = door.hub ? byKey.get(door.hub) : undefined;
+    if (hub) used.add(hub.key);
+    const children = door.children.map((k) => byKey.get(k)).filter((m): m is ModuleNav => !!m && !used.has(m.key));
+    for (const c of children) used.add(c.key);
+    const target = hub ?? children[0];
+    if (!target) continue;
+    doors.push({ key: doorKey, label: typeof door.label === 'function' ? door.label(term) : door.label, target, children });
+  }
+  const left = visible.filter((m) => !used.has(m.key));
+  // An explicit rail leaves the rest out on purpose. The default rail has
+  // a safety net: anything visible that no door named still gets a row.
+  if (own) return { rows, doors, dropped: left };
+  if (left.length > 0) doors.push({ key: 'more', label: 'More', target: left[0]!, children: left });
+  return { rows, doors, dropped: [] };
+}
+
+/** The door that owns a path, for opening it when the page inside is active. */
+export function doorKeyForPath(shape: NavShape, pathname: string): DoorKey | null {
+  const key = moduleKeyForPath(pathname);
+  if (!key) return null;
+  for (const d of shape.doors) {
+    if (d.target.key === key || d.children.some((c) => c.key === key)) return d.key;
+  }
+  return null;
 }

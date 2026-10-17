@@ -48,6 +48,8 @@ import {
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
+import { useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 
 /** Start/end of the most recently COMPLETED calendar quarter, as local
  *  "YYYY-MM-DD" — the natural default period for a new review. */
@@ -406,6 +408,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
           <ReviewDetailPanel
             r={drawerTarget}
             canManage={canManage}
+            submitting={pendingId === drawerTarget.id}
             onSubmit={() => {
               setSubmitTarget(drawerTarget);
               setDrawerTarget(null);
@@ -420,10 +423,12 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
 function ReviewDetailPanel({
   r,
   canManage,
+  submitting,
   onSubmit,
 }: {
   r: PerformanceReview;
   canManage: boolean;
+  submitting: boolean;
   onSubmit: () => void;
 }) {
   return (
@@ -466,7 +471,9 @@ function ReviewDetailPanel({
       </DrawerBody>
       {canManage && r.status === 'DRAFT' && (
         <DrawerFooter>
-          <Button onClick={onSubmit}>Submit review</Button>
+          <Button onClick={onSubmit} loading={submitting} disabled={submitting}>
+            Submit review
+          </Button>
         </DrawerFooter>
       )}
     </>
@@ -507,6 +514,7 @@ function CreateReviewDialog({
   onOpenChange,
   onCreated,
 }: CreateReviewDialogProps) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
@@ -537,7 +545,7 @@ function CreateReviewDialog({
     e.preventDefault();
     if (submitting) return;
     if (!associate) {
-      setError('Pick an associate.');
+      setError(pickOne(term));
       return;
     }
     setError(null);

@@ -8801,3 +8801,23 @@ export interface HeadcountOverview {
   byEmploymentType: { employmentType: string; active: number }[];
   reconciliation: ReconciliationSummary | null;
 }
+
+/* ===== Inbox — every decision waiting on the signed-in person ============== */
+
+/** One queue the person may act on, as a count and the link to it. */
+export const InboxSourceSchema = /* @__PURE__ */ (() => z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string(),
+  /** Capped at 999 by the API. */
+  count: z.number().int().min(0).max(999),
+  path: z.string().min(1),
+}))();
+export type InboxSource = z.infer<typeof InboxSourceSchema>;
+
+/** GET /me/inbox — only the sources the caller may see. */
+export const InboxResponseSchema = /* @__PURE__ */ (() => z.object({
+  total: z.number().int().min(0),
+  sources: z.array(InboxSourceSchema),
+}))();
+export type InboxResponse = z.infer<typeof InboxResponseSchema>;

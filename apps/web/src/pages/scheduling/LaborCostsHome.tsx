@@ -49,7 +49,7 @@ import {
   DrawerTitle,
 } from '@/components/ui';
 import { ApiError, apiFetch } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
@@ -1252,7 +1252,7 @@ function TargetsDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
-
+  const term = useTerm();
   const loadTargetsQuery = useQuery({
     queryKey: ['TargetsDrawer', 'locations'],
     queryFn: () => listStaffingTargets(),
@@ -1271,7 +1271,7 @@ function TargetsDrawer({
       </DrawerHeader>
       <DrawerBody>
         <p className="mb-3 text-xs text-silver">
-          The number of associates each store is expected to run. Saving takes
+          The number of {term('workers').toLowerCase()} each {term('site').toLowerCase()} is expected to run. Saving takes
           effect from the chosen date forward — history is kept, so past days
           stay measured against the target that applied then.
         </p>
@@ -1279,7 +1279,7 @@ function TargetsDrawer({
         {locations === null ? (
           <SkeletonRows count={4} />
         ) : locations.length === 0 ? (
-          <p className="text-sm text-silver">No active stores in your scope.</p>
+          <EmptyState title={`No active ${term('sites').toLowerCase()} in your scope`} description="Targets can be set once a location is active." />
         ) : (
           <ul className="divide-y divide-navy-secondary">
             {locations.map((l) => (

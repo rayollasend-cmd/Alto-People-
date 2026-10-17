@@ -14,7 +14,7 @@ import {
   type ProbationStatus,
   type ProbationSummary,
 } from '@/lib/probation116Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { fmtDate } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -41,6 +41,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { StatusBadge } from '@/lib/status';
+import { pickOne } from '@/lib/validationCopy';
 
 // Deliberate departures from the shared vocabulary (visible per the status
 // contract): an ACTIVE probation is a watch state, not a healthy one, so it
@@ -348,6 +349,7 @@ function NewProbationDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [startDate, setStartDate] = useState(
     new Date().toISOString().slice(0, 10),
@@ -366,7 +368,7 @@ function NewProbationDrawer({
 
   const submit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     setSaving(true);

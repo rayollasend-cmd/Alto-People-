@@ -66,7 +66,7 @@ export function EmployersAdmin() {
       <PageHeader
         title="Employers of record"
         subtitle="Who legally employs each person. The W-2 or 1099 employer and the pay statement's company block come from here."
-        breadcrumbs={[{ label: 'Admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: 'Employers' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: 'Employers of record' }]}
         primaryAction={
           canManage ? (
             <Button size="sm" onClick={() => setEditing('new')}>

@@ -8,10 +8,10 @@ import {
   AlertTriangle,
   ArrowRight,
   Calendar,
+  CalendarPlus,
   ChevronDown,
   ChevronUp,
   ClipboardList,
-  Clock,
   DollarSign,
   FileSearch,
   FileText,
@@ -27,6 +27,7 @@ import type {
   TermKey,
 } from '@alto-people/shared';
 import { useAuth, useRoleLabel, useTerm } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import {
   hasCapability,
   type Capability,
@@ -45,11 +46,8 @@ import { LiveNow } from '@/components/ui/LiveNow';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import {
-  CountUpValue,
-  DeltaChip,
-  Sparkline,
-} from '@/components/ui/MetricCard';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
@@ -200,7 +198,8 @@ export function AdminDashboard() {
     : null;
 
   const greet = useGreeting();
-  const greetingName = greetingNameOf(user);
+  const greetingName = greetingNameOf(user, '');
+  const { t } = useI18n();
 
   return (
     <>
@@ -211,8 +210,8 @@ export function AdminDashboard() {
       <HomeTemplate
         title={
           <>
-            <LiveNow render={(now) => greet(now.getHours())} />,{' '}
-            <span className="text-accent">{greetingName}</span>.
+            <LiveNow render={(now) => greet(now.getHours())} />
+            {greetingName && <>, <span className="text-accent">{greetingName}</span></>}.
           </>
         }
         topbarTitle="Home"
@@ -236,12 +235,14 @@ export function AdminDashboard() {
             {error && <ErrorBanner>{error}</ErrorBanner>}
           </>
         }
-        hero={<RoleDecisionQueue />}
-        assistant={<HugoSeat />}
-      >
-        {canAct && (
-          <ActionRequiredSection
+        // ONE counted, ranked "Needs you": the role's decision queue and the
+        // action-required cards together. They used to be two lists — the
+        // queue as the hero, "Needs your attention" a screen below it.
+        hero={
+          <NeedsYou
+            title={t('home.needsYou')}
             kpis={kpis}
+            canAct={canAct}
             canManageOnboarding={can('manage:onboarding')}
             canManageCompliance={canManageCompliance}
             canManageDocuments={can('manage:documents')}
@@ -249,7 +250,9 @@ export function AdminDashboard() {
             ssnRecollectionOutstanding={ssnRecollectionOutstanding}
             openIncidents={openIncidents}
           />
-        )}
+        }
+        assistant={<HugoSeat />}
+      >
         <KpiSection kpis={kpis} role={role} />
         <MyPlanCard />
         {/* J-1 / H-2B dates coming due (Brief 1C-2). Quiet when nothing is. */}
@@ -268,7 +271,7 @@ export function AdminDashboard() {
 }
 
 
-/* ============================ Action required ============================ */
+/* ============================== Needs you ================================ */
 
 interface ActionItem {
   count: number;
@@ -281,8 +284,12 @@ interface ActionItem {
   severity: 'info' | 'attention' | 'urgent';
 }
 
-function ActionRequiredSection({
+const SEVERITY_RANK: Record<ActionItem['severity'], number> = { urgent: 0, attention: 1, info: 2 };
+
+function NeedsYou({
+  title,
   kpis,
+  canAct,
   canManageOnboarding,
   canManageCompliance,
   canManageDocuments,
@@ -290,7 +297,10 @@ function ActionRequiredSection({
   ssnRecollectionOutstanding,
   openIncidents,
 }: {
+  title: string;
   kpis: DashboardKPIs | null;
+  /** Whether this role can act on any of the action-required kinds at all. */
+  canAct: boolean;
   canManageOnboarding: boolean;
   canManageCompliance: boolean;
   canManageDocuments: boolean;
@@ -299,14 +309,9 @@ function ActionRequiredSection({
   openIncidents: number;
 }) {
   const term = useTerm();
-  const hasAnyActionCapability =
-    canManageOnboarding ||
-    canManageCompliance ||
-    canManageDocuments ||
-    canProcessPayroll;
 
   const items: ActionItem[] = useMemo(() => {
-    if (!kpis) return [];
+    if (!kpis || !canAct) return [];
     const xs: ActionItem[] = [];
     // Submitted and waiting for HR. It used to count drafts too — new
     // hires who haven't started their paperwork, nothing to review — and
@@ -389,9 +394,13 @@ function ActionRequiredSection({
         severity: 'urgent',
       });
     }
-    return xs;
+    // Ranked: urgent first, then the bigger pile.
+    return xs.sort((a, b) =>
+      SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.count - a.count,
+    );
   }, [
     kpis,
+    canAct,
     canManageOnboarding,
     canManageCompliance,
     canManageDocuments,
@@ -401,16 +410,29 @@ function ActionRequiredSection({
     term,
   ]);
 
-  // Roles with no manage capabilities at all (EXECUTIVE_CHAIRMAN,
-  // CLIENT_PORTAL view-only) never have actions to take from here —
-  // hide the whole section instead of showing a misleading "all caught
-  // up" green banner.
-  if (!hasAnyActionCapability) return null;
-
-  if (!kpis) {
-    return (
-      <section aria-label="Action required" className="space-y-3">
-        <SectionTitle icon={AlertTriangle}>Needs your attention</SectionTitle>
+  const loading = canAct && !kpis;
+  const total = items.length;
+  return (
+    <section aria-labelledby="home-needs-you" className="space-y-3">
+      <SectionTitle
+        id="home-needs-you"
+        icon={AlertTriangle}
+        title={
+          <>
+            {title}
+            {total > 0 && (
+              <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">
+                {total}
+              </span>
+            )}
+          </>
+        }
+      />
+      {/* The role's decisions first. Its "nothing needs your decision"
+          line stays out while action cards are waiting (or loading), so
+          the section never says all clear above cards that disagree. */}
+      <RoleDecisionQueue title={null} hideWhenEmpty={total > 0 || loading} />
+      {loading && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i}>
@@ -422,20 +444,14 @@ function ActionRequiredSection({
             </Card>
           ))}
         </div>
-      </section>
-    );
-  }
-  // Nothing to act on: the decision queue above already says so in one
-  // line, and a second "caught up" card under it said the same thing twice.
-  if (items.length === 0) return null;
-  return (
-    <section aria-label="Action required" className="space-y-3">
-      <SectionTitle icon={AlertTriangle}>Needs your attention</SectionTitle>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {items.map((item) => (
-          <ActionCard key={item.to + item.label} item={item} />
-        ))}
-      </div>
+      )}
+      {total > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {items.map((item) => (
+            <ActionCard key={item.to + item.label} item={item} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -533,7 +549,7 @@ function KpiSection({
   const term = useTerm();
   return (
     <section aria-label="Workforce metrics" className="space-y-3">
-      <SectionTitle icon={Activity}>Workforce snapshot</SectionTitle>
+      <SectionTitle icon={Activity} title="Workforce snapshot" />
       {/* Two across in the home's main column until xl: four tiles at lg
           clipped their sparkline captions (second design walk). */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -592,7 +608,7 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
       label: `Open shifts · next ${k.windowDays}d`,
       value: fmtInt(k.openShiftsNext30d),
       hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : undefined,
-      icon: Clock,
+      icon: CalendarPlus,
       to: linkTo('/scheduling', 'view:scheduling'),
       // Series is shifts scheduled per week (all non-cancelled statuses).
       trend: withLabel(k.trends?.shiftsScheduled, 'scheduled vs last wk'),
@@ -636,53 +652,27 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
   return xs;
 }
 
+/** The kit's KPI tile; a destination makes it a link. */
 function KpiTile({ kpi }: { kpi: Kpi }) {
-  const Icon = kpi.icon;
-  // Brand-anointed hero metric. The numeric value renders in
-  // gold-bright with a 2px gold/40 left accent on the card so the
-  // dashboard has a clear centre of gravity — every other surface in
-  // the system stays white/silver, so the gold here reads as "this is
-  // the metric that matters." Interactive carries the elev-2 hover.
-  const inner = (
-    <Card
-      interactive={Boolean(kpi.to)}
-      className="border-l-2 border-l-gold/40 group-hover:border-l-gold transition-colors"
-    >
-      <CardContent className="pt-5">
-        <div className="flex items-center justify-between">
-          {/* Canonical KPI label spec (matches MetricCard). */}
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-            {kpi.label}
-          </div>
-          <Icon className="h-3.5 w-3.5 text-gold/70" aria-hidden="true" />
-        </div>
-        <div className="font-display text-3xl md:text-hero text-gold-bright mt-3 leading-none tabular-nums">
-          <CountUpValue value={kpi.value} />
-        </div>
-        {kpi.trend && (
-          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-silver">
-            <Sparkline series={kpi.trend.series} />
-            <DeltaChip
-              delta={kpi.trend.delta}
-              deltaLabel={kpi.trend.deltaLabel}
-            />
-          </div>
-        )}
-        {kpi.hint && (
-          <div className="text-xs text-silver mt-2 truncate">{kpi.hint}</div>
-        )}
-      </CardContent>
-    </Card>
-  );
-  return kpi.to ? (
-    <Link
-      to={kpi.to}
-      className="group block focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-lg"
-    >
-      {inner}
-    </Link>
-  ) : (
-    inner
+  return (
+    <MetricCard
+      label={kpi.label}
+      value={kpi.value}
+      hint={kpi.hint}
+      trend={kpi.trend}
+      wrap={
+        kpi.to
+          ? (card) => (
+              <Link
+                to={kpi.to!}
+                className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              >
+                {card}
+              </Link>
+            )
+          : undefined
+      }
+    />
   );
 }
 
@@ -708,7 +698,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
   if (!kpis) {
     return (
       <section aria-label="Onboarding funnel" className="space-y-3">
-        <SectionTitle icon={ClipboardList}>Onboarding pipeline</SectionTitle>
+        <SectionTitle icon={ClipboardList} title="Onboarding pipeline" />
         <Card>
           <CardContent className="py-6 grid grid-cols-2 md:grid-cols-5 gap-3">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -730,7 +720,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
   if (total === 0) {
     return (
       <section aria-label="Onboarding funnel" className="space-y-3">
-        <SectionTitle icon={ClipboardList}>Onboarding pipeline</SectionTitle>
+        <SectionTitle icon={ClipboardList} title="Onboarding pipeline" />
         <EmptyState
           icon={ClipboardList}
           title="No applications yet"
@@ -751,7 +741,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
   return (
     <section aria-label="Onboarding funnel" className="space-y-3">
       <div className="flex items-end justify-between gap-3">
-        <SectionTitle icon={ClipboardList}>Onboarding pipeline</SectionTitle>
+        <SectionTitle icon={ClipboardList} title="Onboarding pipeline" className="mb-0" />
         <Link
           // "View all" means ALL — the explicit param beats the persisted
           // status chip, which could silently narrow the landing.
@@ -862,7 +852,7 @@ function ActivityFeed({
   return (
     <section aria-label="Recent activity" className="space-y-3">
       <div className="flex items-end justify-between gap-3">
-        <SectionTitle icon={FileText}>Recent activity</SectionTitle>
+        <SectionTitle icon={FileText} title="Recent activity" className="mb-0" />
         <Link
           to="/audit"
           className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
@@ -980,22 +970,5 @@ function ActivityFeed({
         </CardContent>
       </Card>
     </section>
-  );
-}
-
-/* ============================== Section title ============================ */
-
-function SectionTitle({
-  icon: Icon,
-  children,
-}: {
-  icon: LucideIcon;
-  children: React.ReactNode;
-}) {
-  return (
-    <h2 className="text-xs uppercase tracking-[0.18em] text-silver/80 flex items-center gap-2">
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      {children}
-    </h2>
   );
 }

@@ -162,13 +162,13 @@ describe('<RecruiterDashboard>', () => {
     renderPage();
     expect(await screen.findByText(/Nothing waiting on you/)).toBeInTheDocument();
     expect(screen.getByText(/Nothing out with anyone/)).toBeInTheDocument();
-    expect(screen.getByText('No interviews today.')).toBeInTheDocument();
+    expect(screen.getByText('No interviews today')).toBeInTheDocument();
   });
 
   it('offers a retry when it cannot load', async () => {
     vi.mocked(getRecruiterHome).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(EMPTY);
     const user = renderPage();
     await user.click(await screen.findByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('No interviews today.')).toBeInTheDocument();
+    expect(await screen.findByText('No interviews today')).toBeInTheDocument();
   });
 });

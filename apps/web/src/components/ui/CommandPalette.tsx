@@ -27,7 +27,7 @@ import { useRecentModules } from '@/lib/navPersonalization';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
 import { usePeopleSearch, useUniversalSearch } from '@/lib/usePaletteSearch';
-import type { SearchKind } from '@alto-people/shared';
+import type { SearchKind, TermKey } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from './Avatar';
@@ -49,17 +49,43 @@ interface CommandPaletteProps {
   onShowKeyboardShortcuts?: () => void;
 }
 
-/** Heading and icon per record kind the universal search returns. */
-const RECORD_GROUP: Record<SearchKind, { heading: string; icon: LucideIcon }> = {
-  people: { heading: 'People', icon: User },
-  clients: { heading: 'Clients', icon: Building2 },
-  locations: { heading: 'Stores', icon: MapPin },
-  applications: { heading: 'Applications', icon: ClipboardCheck },
-  shifts: { heading: 'Shifts', icon: CalendarDays },
-  documents: { heading: 'Documents', icon: FileText },
-  statements: { heading: 'Statements', icon: Receipt },
-  help: { heading: 'Help center', icon: BookOpen },
+/** Icon per record kind the universal search returns. */
+const RECORD_ICON: Record<SearchKind, LucideIcon> = {
+  people: User,
+  clients: Building2,
+  locations: MapPin,
+  applications: ClipboardCheck,
+  shifts: CalendarDays,
+  documents: FileText,
+  statements: Receipt,
+  help: BookOpen,
 };
+
+/**
+ * Group heading per record kind. Clients and sites are the tenant's own
+ * nouns (a hotel says "Properties", a staffing firm "Stores"), so those two
+ * come from `useTerm` rather than a literal.
+ */
+function recordHeading(kind: SearchKind, term: (key: TermKey) => string): string {
+  switch (kind) {
+    case 'people':
+      return 'People';
+    case 'clients':
+      return term('nav.clients');
+    case 'locations':
+      return term('sites');
+    case 'applications':
+      return 'Applications';
+    case 'shifts':
+      return 'Shifts';
+    case 'documents':
+      return 'Documents';
+    case 'statements':
+      return 'Statements';
+    case 'help':
+      return 'Help center';
+  }
+}
 
 interface PaletteItem {
   id: string;
@@ -477,7 +503,7 @@ export function CommandPalette({
             )}
 
             {showClientsGroup && (
-              <Command.Group heading="Clients" className={GROUP_CLASS}>
+              <Command.Group heading={term('nav.clients')} className={GROUP_CLASS}>
                 {clientMatches.map((c) => (
                   <Command.Item
                     key={c.id}
@@ -503,9 +529,9 @@ export function CommandPalette({
             )}
 
             {extraGroups.map((g) => (
-              <Command.Group key={g.kind} heading={RECORD_GROUP[g.kind].heading} className={GROUP_CLASS}>
+              <Command.Group key={g.kind} heading={recordHeading(g.kind, term)} className={GROUP_CLASS}>
                 {g.hits.map((hit) => {
-                  const Icon = RECORD_GROUP[g.kind].icon;
+                  const Icon = RECORD_ICON[g.kind];
                   return (
                     <Command.Item
                       key={`${g.kind}-${hit.id}`}

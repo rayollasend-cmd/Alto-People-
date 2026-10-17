@@ -173,26 +173,35 @@ messagesRouter.get('/conversations', requireAuth, async (req, res, next) => {
   }
 });
 
+/**
+ * Messages the caller hasn't read, across every thread they're in. Shared
+ * by GET /messages/unread (the badge) and GET /me/inbox so both say the
+ * same number.
+ */
+export async function countUnreadMessages(userId: string): Promise<number> {
+  const rows = await prisma.conversationParticipant.findMany({
+    where: { userId },
+    select: { conversationId: true, lastReadAt: true },
+    take: 500,
+  });
+  const counts = await Promise.all(
+    rows.map((r) =>
+      prisma.message.count({
+        where: {
+          conversationId: r.conversationId,
+          senderId: { not: userId },
+          ...(r.lastReadAt ? { createdAt: { gt: r.lastReadAt } } : {}),
+        },
+      }),
+    ),
+  );
+  return counts.reduce((a, b) => a + b, 0);
+}
+
 messagesRouter.get('/unread', requireAuth, async (req, res, next) => {
   try {
     const user = me(req);
-    const rows = await prisma.conversationParticipant.findMany({
-      where: { userId: user.id },
-      select: { conversationId: true, lastReadAt: true },
-      take: 500,
-    });
-    const counts = await Promise.all(
-      rows.map((r) =>
-        prisma.message.count({
-          where: {
-            conversationId: r.conversationId,
-            senderId: { not: user.id },
-            ...(r.lastReadAt ? { createdAt: { gt: r.lastReadAt } } : {}),
-          },
-        }),
-      ),
-    );
-    res.json({ unread: counts.reduce((a, b) => a + b, 0) });
+    res.json({ unread: await countUnreadMessages(user.id) });
   } catch (err) {
     next(err);
   }

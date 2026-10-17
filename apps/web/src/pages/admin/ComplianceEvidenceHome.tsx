@@ -7,6 +7,8 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getComplianceEvidence, getControlHistory, signOffEvidence } from '@/lib/complianceEvidenceApi';
 import { fmtDateTime } from '@/lib/format';
+
+const EVIDENCE_STATUS_LABEL: Record<string, string> = { PASS: 'Passing', FAIL: 'Failing', WARN: 'Needs attention' };
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -96,7 +98,7 @@ export function ComplianceEvidenceHome() {
       <PageHeader
         title="Compliance evidence"
         subtitle="Every SOC 2 control, its latest evidence and how old it is. Evidence is recorded by the jobs and scripts that run each control and cannot be edited."
-        breadcrumbs={[{ label: 'Admin' }, { label: 'Compliance evidence' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Compliance evidence' }]}
       />
       {q.isError ? <QueryError what="compliance evidence" query={q} /> : null}
       <SecurityContactCard canManage={can('manage:org')} />
@@ -185,7 +187,7 @@ function ControlDialog({ control, onClose }: { control: ComplianceControlView; o
               {history.data!.evidence.slice(0, 20).map((e) => (
                 <li key={e.id} className="py-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={e.status === 'PASS' ? 'success' : e.status === 'FAIL' ? 'destructive' : 'pending'}>{e.status}</Badge>
+                    <Badge variant={e.status === 'PASS' ? 'success' : e.status === 'FAIL' ? 'destructive' : 'pending'}>{EVIDENCE_STATUS_LABEL[e.status] ?? e.status}</Badge>
                     <span className="text-silver">{fmtDateTime(e.collectedAt)}</span>
                     <span className="text-xs text-silver">by {e.collectedBy}</span>
                   </div>

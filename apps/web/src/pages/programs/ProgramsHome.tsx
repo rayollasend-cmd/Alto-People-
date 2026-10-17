@@ -21,7 +21,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
-import { getDocumentVault } from '@/lib/documentsApi';
+import { DOCUMENT_KIND_LABEL, getDocumentVault } from '@/lib/documentsApi';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import {
   createProgram,
@@ -620,7 +620,7 @@ function ProgramDialog(
                       onChange={(e) => set('documentIds', e.target.checked ? [...d.documentIds, doc.id] : d.documentIds.filter((x) => x !== doc.id))}
                     />
                     <span className="text-white">{doc.filename}</span>
-                    <span className="text-xs text-silver">{String(doc.kind).replace(/_/g, ' ').toLowerCase()}</span>
+                    <span className="text-xs text-silver">{DOCUMENT_KIND_LABEL[String(doc.kind)] ?? String(doc.kind)}</span>
                   </label>
                 ))}
               </div>

@@ -307,7 +307,7 @@ export function DecisionRoom({
                     value={stepText}
                     onChange={(e) => setStepText(e.target.value)}
                     maxLength={200}
-                    placeholder='e.g. "Call Walmart AP about the missing check"'
+                    placeholder='e.g. "Call accounts payable about the missing check"'
                     className="h-8 text-sm"
                     autoFocus
                     aria-label="Next step"

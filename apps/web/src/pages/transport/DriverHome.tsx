@@ -267,7 +267,13 @@ export function DriverHome() {
         className="mx-auto max-w-2xl"
         title={
           <>
-            <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
+            <LiveNow render={(now) => greet(now.getHours())} />
+            {greetingName(user, '') ? (
+              <>
+                , <span className="text-accent">{greetingName(user, '')}</span>
+              </>
+            ) : null}
+            .
           </>
         }
         topbarTitle={t('drive.title')}

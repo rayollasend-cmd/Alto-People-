@@ -48,6 +48,8 @@ const MODULE_NOTE: Record<TenantModule, string> = {
   clientPortal: 'Clients, regions, the store and market portals and their digests.',
   robotics: 'The robot worker type and its page.',
   agentBuilder: 'Registering new agents from the Agents page.',
+  talent: 'Skills, career ladders, mentorship, succession, probation, 30/60/90 plans, learning paths, internal jobs and pulse — off, they leave the menu and answer not found.',
+  perks: 'Tuition reimbursement, equity grants and volunteer match.',
 };
 
 const TERM_GROUPS: Array<{ title: string; keys: TermKey[] }> = [
@@ -177,7 +179,7 @@ export function TenantProfileHome() {
       <PageHeader
         title="Organization profile"
         subtitle="What kind of organization this is, which modules it runs, and what it calls things. The words here reach the navigation, the roles and Hugo."
-        breadcrumbs={[{ label: 'Admin' }, { label: 'Organization profile' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile' }]}
       />
 
       {can('view:org') ? (

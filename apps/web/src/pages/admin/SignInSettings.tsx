@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Globe, KeyRound, Plus, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import {
   addDomain,
   createConnection,
@@ -208,7 +209,7 @@ export function SignInSettings() {
       <PageHeader
         title="Sign-in"
         subtitle="Your organization’s own sign-in, the email domains that lead to it, and directory provisioning."
-        breadcrumbs={[{ label: 'Admin' }, { label: 'Sign-in' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Sign-in' }]}
         primaryAction={
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={() => setEditing('new-saml')}>
@@ -343,7 +344,7 @@ export function SignInSettings() {
                     <li key={t.id} className="flex flex-wrap items-center gap-2 py-2">
                       <span className="text-white">{t.name}</span>
                       <span className="font-mono text-xs text-silver">…{t.last4}</span>
-                      <span className="text-xs text-silver">{t.lastUsedAt ? `used ${t.lastUsedAt.slice(0, 10)}` : 'never used'}</span>
+                      <span className="text-xs text-silver">{t.lastUsedAt ? `used ${fmtDate(t.lastUsedAt)}` : 'never used'}</span>
                       {t.revokedAt ? (
                         <Badge variant="default" size="sm">Revoked</Badge>
                       ) : (

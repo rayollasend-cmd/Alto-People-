@@ -32,7 +32,7 @@ import {
 import { useClients } from '@/lib/useClients';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge } from '@/lib/status';
@@ -61,6 +61,7 @@ import { Label } from '@/components/ui/Label';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
+import { pickOne } from '@/lib/validationCopy';
 
 type Tab = 'oe' | 'qle' | 'cobra' | 'aca';
 
@@ -137,6 +138,7 @@ export function BenefitsLifecycle() {
 }
 
 function OeTab({ canManage }: { canManage: boolean }) {
+  const term = useTerm();
   const [showNew, setShowNew] = useState(false);
 
   const refreshQuery = useQuery({
@@ -201,7 +203,7 @@ function OeTab({ canManage }: { canManage: boolean }) {
               exportCsv={{ filename: 'open-enrollment-windows' }}
               columns={[
                 { key: 'window', header: 'Window', accessor: (w) => w.name, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'client', header: 'Client', accessor: (w) => w.clientName, sortable: true, cardMeta: true },
+                { key: 'client', header: term('label.client'), accessor: (w) => w.clientName, sortable: true, cardMeta: true },
                 { key: 'period', header: 'Period', accessor: (w) => w.startsOn, csv: (w) => `${fmtYmd(w.startsOn)} → ${fmtYmd(w.endsOn)}`, sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (w) => `${fmtYmd(w.startsOn)} → ${fmtYmd(w.endsOn)}` },
                 { key: 'effective', header: 'Effective', accessor: (w) => w.effectiveOn, sortable: true, searchable: false, className: 'tabular-nums', cell: (w) => fmtYmd(w.effectiveOn) },
                 { key: 'status', header: 'Status', accessor: (w) => w.status, sortable: true, cell: (w) => <StatusBadge status={w.status} /> },
@@ -248,6 +250,7 @@ function OeTab({ canManage }: { canManage: boolean }) {
 }
 
 function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const term = useTerm();
   const [clientId, setClientId] = useState('');
   // Shared react-query cache — fetched at most once per 5 minutes app-wide.
   const {
@@ -299,7 +302,7 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label htmlFor="bl-oe-client">Client</Label>
+          <Label htmlFor="bl-oe-client">{term('label.client')}</Label>
           {clientsError ? (
             <ErrorBanner
               className="mt-1"
@@ -401,6 +404,7 @@ const QLE_KIND_LABEL: Record<QleKind, string> = {
 };
 
 function QleTab({ canManage }: { canManage: boolean }) {
+  const term = useTerm();
   const prompt = usePrompt();
   const [showNew, setShowNew] = useState(false);
 
@@ -474,13 +478,13 @@ function QleTab({ canManage }: { canManage: boolean }) {
               caption="Qualifying life events"
               rows={rows}
               rowKey={(q) => q.id}
-              search={{ placeholder: 'Associate, kind…' }}
+              search={{ placeholder: `${term('worker')}, kind…` }}
               urlState={false}
               exportCsv={{ filename: 'qualifying-life-events' }}
               columns={[
                 {
                   key: 'associate',
-                  header: 'Associate',
+                  header: term('worker'),
                   accessor: (q) => q.associateName,
                   sortable: true,
                   primary: true,
@@ -531,6 +535,7 @@ function QleTab({ canManage }: { canManage: boolean }) {
 }
 
 function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<QleKind>('MARRIAGE');
   const [eventDate, setEventDate] = useState(ymdLocal());
@@ -548,7 +553,7 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 
   const onSubmit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (!eventDate) {
@@ -579,7 +584,7 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={assoc} onChange={setAssoc} />
           </div>
@@ -648,6 +653,7 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 const COBRA_STATUS_TONES = { NOTIFIED: 'pending', ELECTED: 'success' } as const;
 
 function CobraTab({ canManage }: { canManage: boolean }) {
+  const term = useTerm();
   const confirm = useConfirm();
   const [showNew, setShowNew] = useState(false);
 
@@ -726,13 +732,13 @@ function CobraTab({ canManage }: { canManage: boolean }) {
               caption="COBRA offers"
               rows={rows}
               rowKey={(c) => c.id}
-              search={{ placeholder: 'Associate, event…' }}
+              search={{ placeholder: `${term('worker')}, event…` }}
               urlState={false}
               exportCsv={{ filename: 'cobra-offers' }}
               columns={[
                 {
                   key: 'associate',
-                  header: 'Associate',
+                  header: term('worker'),
                   accessor: (c) => c.associateName,
                   sortable: true,
                   primary: true,
@@ -790,6 +796,7 @@ function NewCobraDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [qualifyingEvent, setQualifyingEvent] = useState('TERMINATION');
   const [qeDate, setQeDate] = useState(ymdLocal());
@@ -805,7 +812,7 @@ function NewCobraDrawer({
 
   const onSubmit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (!qeDate) {
@@ -835,7 +842,7 @@ function NewCobraDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={assoc} onChange={setAssoc} />
           </div>
@@ -905,6 +912,7 @@ function hasMissingCodes(e: AcaEmployeeMonths): boolean {
 }
 
 function AcaTab() {
+  const term = useTerm();
   // Last 5 completed-ish tax years — 1095-C reporting is for the prior year.
   const currentYear = new Date().getFullYear();
   const yearOptions = Array.from({ length: 5 }, (_, i) => String(currentYear - 1 - i));
@@ -935,7 +943,7 @@ function AcaTab() {
 
   const exportCsv = () => {
     downloadCsv(`1095c-${year}.csv`, [
-      ['Associate', ...MONTHS_SHORT],
+      [term('worker'), ...MONTHS_SHORT],
       ...filtered.map((e) => [
         e.associateName,
         ...e.months.map((m) => (m ? formatAcaCell(m) : '')),
@@ -965,7 +973,7 @@ function AcaTab() {
         {employees !== null && employees.length > 0 && (
           <>
             <div className="flex-1 min-w-[10rem]">
-              <Label htmlFor="bl-aca-filter">Associate</Label>
+              <Label htmlFor="bl-aca-filter">{term('worker')}</Label>
               <Input
                 id="bl-aca-filter"
                 className="mt-1"
@@ -1038,7 +1046,7 @@ function AcaTab() {
                 <table className="min-w-max text-xs">
                   <thead className="text-silver">
                     <tr>
-                      <th className="text-left px-3 py-2">Associate</th>
+                      <th className="text-left px-3 py-2">{term('worker')}</th>
                       {MONTHS_SHORT.map((mo) => (
                         <th key={mo} className="text-left px-2 py-2">
                           {mo}

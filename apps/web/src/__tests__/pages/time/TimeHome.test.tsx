@@ -81,7 +81,7 @@ describe('<TimeHome> — the floor supervisor punches at the tablet only', () =>
     expect(screen.getByText('floor view')).toBeInTheDocument();
     expect(screen.queryByText('personal strip')).not.toBeInTheDocument();
     expect(await screen.findByText(/On the clock since/)).toBeInTheDocument();
-    expect(screen.getByText('Punch in and out at the store tablet with your PIN.')).toBeInTheDocument();
+    expect(screen.getByText('Punch in and out at the store tablet with your clock-in number.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /clock (in|out)/i })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'My time →' })).toHaveAttribute('href', '/time-attendance?mine=1');
   });

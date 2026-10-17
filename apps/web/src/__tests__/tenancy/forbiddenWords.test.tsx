@@ -352,16 +352,16 @@ describe('the hotel tenant sees none of the staffing words', () => {
 });
 
 describe("Alto HR's words are unchanged for a workforce provider", () => {
-  it('the navigation still says Clients, People and Store Ops; scheduling still assigns associates and filters by client', async () => {
+  it('the navigation still says Clients, People and Store operations; scheduling still assigns associates and filters by client', async () => {
     tenantProfileResponse = profileResponse(ALTO);
-    // Groups fold by default now (design system §4.1); this test reads every label.
-    window.localStorage.setItem('alto.sidebar.collapsedGroups', '[]');
+    // Doors open only around the current page; this test reads every label.
+    window.localStorage.setItem('alto.sidebar.openDoors', JSON.stringify(['me', 'team', 'people', 'hire', 'time', 'pay', 'compliance', 'operations', 'transport', 'clients', 'comms', 'insights', 'settings']));
     renderUnder(ALTO, <Sidebar />);
     await settle();
     let text = visibleText();
     expect(text).toMatch(/\bClients\b/);
     expect(text).toMatch(/\bPeople\b/);
-    expect(text).toMatch(/\bStore Ops\b/);
+    expect(text).toMatch(/\bStore operations\b/);
     cleanup();
     renderUnder(ALTO, <SchedulingHome />, '/scheduling');
     await settle();

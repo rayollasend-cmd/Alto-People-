@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import { CheckCircle2, FileSignature } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { acceptOfferLetter, declineOfferLetter, getOfferLetter } from '@/lib/recruiting90Api';
+import { isDateOnly } from '@alto-people/shared';
 import { fmtDate } from '@/lib/format';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/Button';
@@ -28,7 +29,7 @@ function Shell({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-gradient-to-br from-midnight via-navy to-navy-secondary text-white">
       <div className="mx-auto max-w-2xl px-4 py-10 md:px-6 md:py-14">
         <div className="mb-8 flex items-center justify-center">
-          <Logo size="lg" alt="Alto" />
+          <Logo size="lg" alt="Company logo" />
         </div>
         {children}
       </div>
@@ -71,11 +72,11 @@ export function OfferLetterPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ kind: 'signed'; at: string } | { kind: 'declined' } | null>(null);
 
-  useEffect(() => {
-    document.title = 'Your offer from Alto';
-  }, []);
-
   const offer = q.data;
+
+  useEffect(() => {
+    document.title = offer ? `Your offer — ${offer.jobTitle}` : 'Your offer';
+  }, [offer]);
 
   const sign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,7 +108,7 @@ export function OfferLetterPage() {
   if (done?.kind === 'signed') {
     return (
       <Shell>
-        <Notice tone="good" title="You've accepted — welcome to Alto">
+        <Notice tone="good" title="You've accepted — welcome aboard">
           Signed by {typedName.trim()} on {fmtDate(done.at)}. We've emailed you a copy of the signed letter. Next,
           you'll get an email to set up your account and complete your paperwork.
         </Notice>
@@ -168,7 +169,7 @@ export function OfferLetterPage() {
 
   return (
     <Shell>
-      <p className="text-sm uppercase tracking-widest text-gold">Your offer from Alto</p>
+      <p className="text-sm uppercase tracking-widest text-gold">Your offer</p>
       <h1 className="mt-2 font-display text-3xl md:text-4xl text-white">{offer.jobTitle}</h1>
       <dl className="mt-4 grid grid-cols-1 gap-3 rounded-lg border border-navy-secondary bg-navy/60 p-4 text-sm sm:grid-cols-3">
         <div>
@@ -177,7 +178,7 @@ export function OfferLetterPage() {
         </div>
         <div>
           <dt className="text-2xs uppercase tracking-widest text-silver">Starts</dt>
-          <dd className="mt-0.5 text-white">{offer.startDate}</dd>
+          <dd className="mt-0.5 text-white">{isDateOnly(offer.startDate) ? fmtDate(offer.startDate) : offer.startDate}</dd>
         </div>
         <div>
           <dt className="text-2xs uppercase tracking-widest text-silver">Pay</dt>

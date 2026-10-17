@@ -101,6 +101,8 @@ function renderDashboard() {
     isOffline: false,
     user: {
       id: 'u',
+      // The greeting uses the account's first name, never the mailbox.
+      firstName: 'Maria',
       email: 'maria.lopez@example.com',
       role: 'ASSOCIATE' as const,
       status: 'ACTIVE' as const,
@@ -329,7 +331,7 @@ describe('<AssociateDashboard> — the shift hero', () => {
     });
     renderDashboard();
     expect(await screen.findByText('Your shift started 25m ago')).toBeInTheDocument();
-    expect(screen.getByText(/punch in with your PIN at the worksite kiosk tablet/)).toBeInTheDocument();
+    expect(screen.getByText(/punch in with your clock-in number at the worksite kiosk tablet/)).toBeInTheDocument();
     expect(screen.getByText('Not clocked in')).toBeInTheDocument();
   });
 

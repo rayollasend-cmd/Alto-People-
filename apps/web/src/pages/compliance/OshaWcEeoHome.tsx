@@ -54,6 +54,8 @@ import { downloadCsv } from '@/lib/csv';
 import { toast } from 'sonner';
 import { ListTemplate } from '@/components/templates';
 import { statusTone } from '@/lib/status';
+import { useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 
 type Tab = 'osha' | 'wc' | 'eeo';
 
@@ -927,6 +929,7 @@ function EeoTab({ clientId }: { clientId: string }) {
 }
 
 function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [category, setCategory] = useState<EeoCategory | ''>('');
   const [race, setRace] = useState<EeoRace | ''>('');
@@ -935,7 +938,7 @@ function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
 
   const onSubmit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate first.');
+      toast.error(pickOne(term));
       return;
     }
     if (!category && !race && !gender) {

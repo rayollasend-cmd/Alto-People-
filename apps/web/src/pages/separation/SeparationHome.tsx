@@ -20,7 +20,7 @@ import {
   type SeparationStatus,
   type SeparationSummary,
 } from '@/lib/separation119Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { listDirectory } from '@/lib/directoryApi';
 import { statusTone } from '@/lib/status';
@@ -48,6 +48,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
+import { pickOne } from '@/lib/validationCopy';
 
 // Deliberate departure from the shared vocabulary: an IN_PROGRESS offboarding
 // is actively being worked by HR (gold per the Badge contract), not a passive
@@ -61,6 +62,7 @@ const STATUS_LABELS: Record<SeparationStatus, string> = {
 };
 
 export function SeparationHome() {
+  const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [rows, setRows] = useState<SeparationRow[] | null>(null);
@@ -144,7 +146,7 @@ export function SeparationHome() {
     if (!rows) return;
     downloadCsv(`separations-${ymdLocal()}.csv`, [
       [
-        'Associate',
+        term('worker'),
         'Email',
         'Reason',
         'Status',
@@ -291,7 +293,7 @@ export function SeparationHome() {
               columns={[
                 {
                   key: 'associate',
-                  header: 'Associate',
+                  header: term('worker'),
                   accessor: (s) => s.associateName,
                   sortable: true,
                   primary: true,
@@ -415,6 +417,7 @@ function NewSeparationDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   // Mounted fresh on every open (conditional render), so seeding initial
   // state is enough — no sync effect needed.
   const [assoc, setAssoc] = useState<PickedAssociate | null>(initialAssociate);
@@ -445,7 +448,7 @@ function NewSeparationDrawer({
 
   const submit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (dateError) {
@@ -483,7 +486,7 @@ function NewSeparationDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={assoc} onChange={setAssoc} />
           </div>

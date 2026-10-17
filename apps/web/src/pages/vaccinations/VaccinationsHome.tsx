@@ -16,7 +16,7 @@ import {
   type VaccinationRecord,
 } from '@/lib/vaccination121Api';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -43,8 +43,10 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { pickOne } from '@/lib/validationCopy';
 
 export function VaccinationsHome() {
+  const term = useTerm();
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
@@ -213,11 +215,11 @@ export function VaccinationsHome() {
                 caption="Vaccination and TB test records"
                 rows={records}
                 rowKey={(r) => r.id}
-                search={{ placeholder: 'Associate, kind…' }}
+                search={{ placeholder: `${term('worker')}, kind…` }}
                 urlState={false}
                 exportCsv={{ filename: 'vaccinations' }}
                 columns={[
-                  { key: 'associate', header: 'Associate', accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'associate', header: term('worker'), accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
                   { key: 'email', header: 'Email', accessor: (r) => r.associateEmail, sortable: true, cardMeta: true, className: 'text-xs text-silver' },
                   { key: 'kind', header: 'Kind', accessor: (r) => (r.kind === 'OTHER' && r.customLabel ? r.customLabel : KIND_LABELS[r.kind]), sortable: true, cardMeta: true, className: 'text-sm' },
                   {
@@ -336,7 +338,7 @@ export function VaccinationsHome() {
                 urlState={false}
                 exportCsv={{ filename: 'vaccinations-expiring' }}
                 columns={[
-                  { key: 'associate', header: 'Associate', accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'associate', header: term('worker'), accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
                   { key: 'kind', header: 'Kind', accessor: (r) => (r.kind === 'OTHER' && r.customLabel ? r.customLabel : KIND_LABELS[r.kind]), sortable: true, cardMeta: true, className: 'text-sm' },
                   {
                     key: 'expires',
@@ -389,6 +391,7 @@ function NewRecordDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<VaccinationKind>('COVID19');
   const [customLabel, setCustomLabel] = useState('');
@@ -432,7 +435,7 @@ function NewRecordDrawer({
 
   const submit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (kind === 'OTHER' && !customLabel.trim()) {
@@ -471,7 +474,7 @@ function NewRecordDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={assoc} onChange={setAssoc} />
           </div>

@@ -55,7 +55,7 @@ The first families to build after the registry are **Workforce** and **Complianc
 
 Workforce Management · Operations · Compliance · Payroll and Finance (including Planning and Analysis) · Client Services · Platform.
 
-How today's modules map (the navigation groups follow this):
+How today's modules map (the navigation's doors follow this — see docs/design-system.md §3.1):
 
 | Product | Modules today |
 |---|---|

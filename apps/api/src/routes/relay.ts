@@ -440,8 +440,9 @@ relayRouter.post('/work-notes', STAFF, async (req, res, next) => {
 
 /* ---- Decisions with receipts ----------------------------------------- */
 
-/** Which desk this staff role answers for when ruling on a decision. */
-function deskOf(role: string): 'FINANCE' | 'HR' | 'WORKFORCE' | null {
+/** Which desk this staff role answers for when ruling on a decision.
+ *  Exported for GET /me/inbox, which counts the rulings waiting on it. */
+export function deskOf(role: string): 'FINANCE' | 'HR' | 'WORKFORCE' | null {
   if (role === 'FINANCE_ACCOUNTANT') return 'FINANCE';
   if (role === 'WORKFORCE_MANAGER') return 'WORKFORCE';
   if (DESK_ROLES.HR.includes(role)) return 'HR';

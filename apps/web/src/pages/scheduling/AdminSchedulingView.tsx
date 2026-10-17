@@ -2337,10 +2337,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   };
 
   const onQuickCancel = async (s: Shift) => {
+    // The server tells the person on a published shift (in-app, and WhatsApp
+    // where it is set up); a never-published or open shift tells nobody.
+    const tellsSomeone = !!s.assignedAssociateId && !!s.publishedAt;
     const ok = await confirm({
-      title: 'Cancel shift?',
-      description: `Cancel ${s.position} on ${fmtDateTime(s.startsAt)}?`,
+      title: 'Cancel this shift?',
+      description: `${s.position} on ${fmtDateTime(s.startsAt)} stays on the record as cancelled. ${
+        tellsSomeone
+          ? `${s.assignedAssociateName ?? `The ${term('worker').toLowerCase()}`} is told right away.`
+          : 'Nobody is notified — it was not published to anyone.'
+      }`,
       confirmLabel: 'Cancel shift',
+      cancelLabel: 'Keep shift',
+      destructive: true,
     });
     if (!ok) return;
     try {
@@ -4357,7 +4366,7 @@ function AssignDialog({
                 <ul className="mt-2 space-y-1 text-silver">
                   {unavailable.map((u) => (
                     <li key={u.date} className="text-xs">
-                      • <span className="tabular-nums">{u.date}</span>
+                      • <span className="tabular-nums">{fmtDate(u.date)}</span>
                       {u.note ? ` — ${u.note}` : ''}
                     </li>
                   ))}
@@ -4381,8 +4390,8 @@ function AssignDialog({
                     <li key={t.requestId} className="text-xs">
                       • {fmtCategory(t.category)} ·{' '}
                       <span className="tabular-nums">
-                        {t.startDate}
-                        {t.startDate !== t.endDate ? ` → ${t.endDate}` : ''}
+                        {fmtDate(t.startDate)}
+                        {t.startDate !== t.endDate ? ` → ${fmtDate(t.endDate)}` : ''}
                       </span>{' '}
                       <a
                         href={`/approvals?request=${t.requestId}`}

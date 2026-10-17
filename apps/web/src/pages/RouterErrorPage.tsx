@@ -41,7 +41,7 @@ export function RouterErrorPage() {
           </Button>
           <Button variant="outline" onClick={() => navigate('/')}>
             <Home className="h-4 w-4" />
-            Back to dashboard
+            Go home
           </Button>
         </div>
 
@@ -68,7 +68,7 @@ export function RouterErrorPage() {
 function describeError(error: unknown): { headline: string; detail: string } {
   if (isRouteErrorResponse(error)) {
     return {
-      headline: `${error.status} ${error.statusText || 'Error'}`,
+      headline: error.status === 404 ? 'We couldn’t find that page' : 'Something went wrong',
       detail:
         typeof error.data === 'string'
           ? error.data

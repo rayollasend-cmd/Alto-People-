@@ -338,9 +338,16 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
     try {
       const res = await resendInvite(detail.id);
       if (res.inviteUrl) {
-        await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
-        toast.success('Fresh invite link copied.', {
-          description: 'Email is stubbed — paste the link in Slack or a manual email.',
+        let copied = true;
+        try {
+          await navigator.clipboard.writeText(res.inviteUrl);
+        } catch {
+          copied = false;
+        }
+        toast.success(copied ? 'Fresh invite link copied.' : 'Fresh invite link ready.', {
+          description: copied
+            ? "Email isn't set up here — link copied. Send it on yourself."
+            : `Email isn't set up here — copy the link below.\n${res.inviteUrl}`,
           icon: <Copy className="h-4 w-4" />,
         });
       } else {

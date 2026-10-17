@@ -35,8 +35,8 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-midnight via-navy to-navy-secondary text-white">
       <div className="mx-auto max-w-3xl px-4 py-10 md:px-6 md:py-14">
-        <Link to="/careers" className="mb-8 flex items-center justify-center" aria-label="All jobs at Alto">
-          <Logo size="lg" alt="Alto" />
+        <Link to="/careers" className="mb-8 flex items-center justify-center" aria-label="All open jobs">
+          <Logo size="lg" alt="Company logo" />
         </Link>
         {children}
       </div>
@@ -99,12 +99,12 @@ export function CareersListPage() {
   const error = q.error ? (q.error instanceof ApiError ? q.error.message : 'Could not load open jobs.') : null;
 
   useEffect(() => {
-    document.title = 'Jobs at Alto';
+    document.title = 'Open jobs';
   }, []);
 
   return (
     <Shell>
-      <h1 className="font-display text-3xl md:text-4xl text-white">Work with Alto</h1>
+      <h1 className="font-display text-3xl md:text-4xl text-white">Work with us</h1>
       <p className="mt-2 text-silver">
         Open jobs at stores across the Florida Panhandle. Apply in a couple of minutes — a recruiter will
         get back to you.
@@ -158,7 +158,7 @@ export function CareerPostingPage() {
     q.error && !missing ? (q.error instanceof ApiError ? q.error.message : 'Could not load this job.') : null;
 
   useEffect(() => {
-    if (posting) document.title = `${posting.title} — Jobs at Alto`;
+    if (posting) document.title = `${posting.title} — Jobs at ${posting.orgName}`;
   }, [posting]);
 
   return (

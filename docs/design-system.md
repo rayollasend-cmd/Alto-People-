@@ -60,6 +60,12 @@ Rules: no inline hex in page code; status colours mean status (never decoration)
 
 **Touch.** Every control is at least 44 px tall on a coarse pointer and inputs are 16 px so iOS never zooms. These are enforced in the components, never undone with `md:`.
 
+## 3.1 Navigation: rows and doors
+
+The sidebar is a dozen rows for every role, never the hundred. In order: Home · Inbox (every decision waiting on the person, one count) · Messages · Relay · the person's Pinned and Recent · then the **doors** — one row each, which open to the pages behind them: Me, My team, People, Hiring, Time & scheduling, Pay & finance, Compliance, Operations, Transportation, Clients, Communications, Insights, Settings & trust. The six Products of the taxonomy survive as the doors; what changed is the depth. A door opens when the page inside it is the current one and stays the way the person last left it; in the icon rail a door is one icon that opens a menu of its pages. The phone's drawer draws the same shape, and its tab bar may only name destinations the rail shows that role.
+
+Rules. A module is reached through a door, the palette, and by URL — never by URL alone: `__tests__/lib/navCoverage.test.ts` fails the build for a signed-in route with no way in, a module in no door, a role whose rail grows past twenty rows, or a phone tab outside the rail. Counts beside rows come from the one inbox request (`GET /me/inbox`), keyed by path. The assistant opens from the chrome for everyone. Settings & trust is one door; its overview at `/admin` and the area rail read one list (`pages/settings/settingsRail.ts`).
+
 ## 4. The five page templates
 
 Every page is one of these and says so (`data-template` on the root; `src/components/templates`). The design walk groups screenshots by template.

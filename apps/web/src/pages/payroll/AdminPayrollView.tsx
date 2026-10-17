@@ -103,6 +103,9 @@ import { cn } from '@/lib/cn';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
 import { StatusBadge, statusLabel } from '@/lib/status';
+import { useTerm } from '@/lib/auth';
+import { performWithUndo } from '@/lib/undoToast';
+import { pickOne } from '@/lib/validationCopy';
 import { FilterChip } from '@/components/ui/FilterBar';
 
 /** "May 13, 2026 → May 26, 2026" — the run period, parsed as local days. */
@@ -185,6 +188,7 @@ function expectedVoidConfirmation(periodStartYmd: string, periodEndYmd: string):
 }
 
 export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps) {
+  const term = useTerm();
   // The Finance queue's open count rides on the header link.
   const financialChanges = useQuery({
     queryKey: ['AdminPayrollView', 'financialChangesSummary'],
@@ -1353,7 +1357,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
                 <div>
                   <div className="text-2xs uppercase tracking-widest text-silver">
-                    Net to associates
+                    Net to {term('workers').toLowerCase()}
                   </div>
                   <div className="font-display text-4xl md:text-5xl text-gold-bright leading-none tabular-nums mt-2">
                     {fmtMoney(selected.totalNet)}
@@ -1395,8 +1399,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   </DialogTitle>
                   <DialogDescription className="leading-relaxed">
                     {busy
-                      ? 'Talking to the payout adapter for every paystub. This can take 10–30 seconds — keep this tab open and don’t refresh.'
-                      : 'This will trigger the configured payout adapter (Wise / Branch in production, stub in dev) for every paystub. The run will move to DISBURSED and associates will see funds within the adapter’s settlement window.'}
+                      ? 'Sending every payment. This can take 10–30 seconds — keep this tab open and don’t refresh.'
+                      : `Pays ${selected.itemCount.toLocaleString()} ${selected.itemCount === 1 ? term('worker').toLowerCase() : term('workers').toLowerCase()} ${fmtMoney(selected.totalNet)}. Funds arrive within the payment provider’s settlement window, and each person sees their ${term('label.paystub').toLowerCase()} as soon as it posts.`}
                   </DialogDescription>
                 </DialogHeader>
 
@@ -1476,16 +1480,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             </DialogTitle>
             <DialogDescription>
               Voiding files a reversing journal entry in QuickBooks and notifies
-              every associate that their paystub was reversed. <strong>Alto does
-              not auto-claw funds back from associates.</strong> Disbursed money
+              every {term('worker').toLowerCase()} that their {term('label.paystub').toLowerCase()} was reversed. <strong>Funds are
+              not pulled back automatically.</strong> Disbursed money
               must be recovered out-of-band (e.g. next paycheck deduction or
               direct repayment).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2 text-sm">
             <div className="rounded border border-alert/30 bg-alert/5 px-3 py-2 text-alert text-xs">
-              This action can't be undone. The run will be marked CANCELLED and
-              its paystubs marked VOIDED.
+              This can't be undone. The run is marked cancelled and every
+              {term('label.paystub').toLowerCase()} in it is voided.
             </div>
             <Field
               label={
@@ -1510,7 +1514,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             </Field>
             <Field
               label="Reason for voiding"
-              hint="Stored on the run and shown to affected associates."
+              hint={`Stored on the run and shown to affected ${term('workers').toLowerCase()}.`}
               required
             >
               {(p) => (
@@ -1921,6 +1925,7 @@ function DraftAddOnsSection({
   runItems: import('@alto-people/shared').PayrollItem[];
   onChanged: () => Promise<void> | void;
 }) {
+  const term = useTerm();
   const [addOns, setAddOns] = useState<RunAddOn[] | null>(null);
   const [open, setOpen] = useState(false);
   // Multi-associate: chips accumulate via repeated pick-and-add; the
@@ -1940,12 +1945,12 @@ function DraftAddOnsSection({
       if (!seen.has(it.associateId)) {
         seen.set(it.associateId, {
           id: it.associateId,
-          name: it.associateName ?? 'Unnamed associate',
+          name: it.associateName ?? `Unnamed ${term('worker').toLowerCase()}`,
         });
       }
     }
     return [...seen.values()];
-  }, [runItems]);
+  }, [runItems, term]);
 
   const load = useCallback(() => {
     listRunAddOns(runId)
@@ -1958,7 +1963,7 @@ function DraftAddOnsSection({
     const amt = Number(amount);
     const targets = everyone ? runAssociates : assocs;
     if (targets.length === 0 || !Number.isFinite(amt) || amt <= 0) {
-      toast.error('Pick at least one associate and a positive amount.');
+      toast.error(targets.length === 0 ? pickOne(term) : 'Enter a positive amount.');
       return;
     }
     setBusy(true);
@@ -1986,7 +1991,7 @@ function DraftAddOnsSection({
       ADD_ON_KINDS.find((k) => k.value === kind)?.label.toLowerCase() ?? kind.toLowerCase();
     if (failures.length === 0) {
       toast.success(
-        `Added ${kindLabel} for ${added} associate${added === 1 ? '' : 's'}.`,
+        `Added ${kindLabel} for ${added} ${(added === 1 ? term('worker') : term('workers')).toLowerCase()}.`,
       );
       setAssocs([]);
       setEveryone(false);
@@ -2003,17 +2008,25 @@ function DraftAddOnsSection({
     }
   };
 
-  const remove = async (addOnId: string) => {
-    setBusy(true);
-    try {
-      await deleteRunAddOn(runId, addOnId);
-      load();
-      await onChanged();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to remove line.');
-    } finally {
-      setBusy(false);
-    }
+  // Gmail-style: the line leaves the list at once and the delete commits
+  // when the undo window closes; Undo puts the line back without a request.
+  const remove = (addOnId: string) => {
+    const before = addOns;
+    const line = addOns?.find((a) => a.id === addOnId);
+    setAddOns((prev) => (prev ? prev.filter((a) => a.id !== addOnId) : prev));
+    performWithUndo({
+      message: line ? `Removed ${fmtMoney(line.amount)} for ${line.associateName}.` : 'Earning line removed.',
+      onCommit: async () => {
+        try {
+          await deleteRunAddOn(runId, addOnId);
+        } finally {
+          load();
+          await onChanged();
+        }
+      },
+      onUndo: () => setAddOns(before),
+      commitFailedMessage: "Couldn't remove the earning line.",
+    });
   };
 
   return (
@@ -2108,8 +2121,8 @@ function DraftAddOnsSection({
                 }}
                 placeholder={
                   assocs.length === 0
-                    ? 'Search associate…'
-                    : 'Add another associate…'
+                    ? `Search ${term('worker').toLowerCase()}…`
+                    : `Add another ${term('worker').toLowerCase()}…`
                 }
               />
             </>
@@ -2270,7 +2283,7 @@ function FailedPaymentsSummary({
                           target="_blank"
                           rel="noreferrer"
                           className="hover:text-gold-bright"
-                          title="Open this associate's record in a new tab"
+                          title="Open this person's record in a new tab"
                         >
                           {it.associateName}
                         </Link>

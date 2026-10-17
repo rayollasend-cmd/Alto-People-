@@ -68,7 +68,7 @@ describe('/offer/:token', () => {
     await user.click(sign);
 
     await waitFor(() => expect(acceptOfferLetter).toHaveBeenCalledWith('tok-123', 'Kim Phan'));
-    expect(await screen.findByRole('status')).toHaveTextContent(/accepted — welcome to Alto/i);
+    expect(await screen.findByRole('status')).toHaveTextContent(/accepted — welcome aboard/i);
     expect(screen.getByRole('status')).toHaveTextContent('Signed by Kim Phan');
   });
 

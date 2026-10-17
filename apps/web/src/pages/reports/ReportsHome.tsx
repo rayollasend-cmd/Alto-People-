@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { errorText } from '@/lib/errorText';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
@@ -170,7 +171,7 @@ export function ReportsHome() {
         rows: res.rows as Array<Record<string, unknown>>,
       });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't run the report."));
     }
   };
 
@@ -181,7 +182,7 @@ export function ReportsHome() {
       exportRowsAsCsv(r.name, res.columns, res.rows as Array<Record<string, unknown>>);
       toast.success(`Exported ${res.rows.length} rows.`);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't export the report."));
     }
   };
 
@@ -201,7 +202,7 @@ export function ReportsHome() {
       toast.success('Report deleted.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't delete the report."));
     }
   };
 
@@ -535,7 +536,7 @@ function ReportBuilder({
         rows: r.rows as Array<Record<string, unknown>>,
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed.');
+      toast.error(err instanceof Error ? err.message : "Couldn't preview the report.");
     }
   };
 
@@ -569,7 +570,7 @@ function ReportBuilder({
       }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed.');
+      toast.error(err instanceof Error ? err.message : "Couldn't save the report.");
     } finally {
       setSaving(false);
     }
@@ -965,7 +966,7 @@ function SchedulesDrawer({
       setRecipients('');
       load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't create the schedule."));
     } finally {
       setSaving(false);
     }
@@ -978,7 +979,7 @@ function SchedulesDrawer({
       toast.success('Schedule deleted.');
       load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't delete the schedule."));
     }
   };
 

@@ -15,6 +15,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ApiError } from '@/lib/api';
+import { useTerm } from '@/lib/auth';
 import {
   emailOpsReport,
   listOpsReportRecipients,
@@ -95,6 +96,7 @@ function OpsReportDialog({
   const [extraEmail, setExtraEmail] = useState('');
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
+  const term = useTerm();
 
   useEffect(() => {
     const r = reportRange(preset, today);
@@ -146,9 +148,9 @@ function OpsReportDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Store Operations Report</DialogTitle>
+          <DialogTitle>{term('site')} operations report</DialogTitle>
           <DialogDescription>
-            The figures against the prior period, food safety, production, exceptions, photos and a plan for next week — as a PDF, downloaded or emailed to the store.
+            The figures against the prior period, food safety, production, exceptions, photos and a plan for next week — as a PDF, downloaded or emailed to the {term('site').toLowerCase()}.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={send} className="space-y-4">

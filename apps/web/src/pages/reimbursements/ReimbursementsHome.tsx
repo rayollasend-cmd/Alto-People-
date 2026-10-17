@@ -476,7 +476,10 @@ function ReimbursementDrawer({
   }, [refreshQuery.isError, refreshQuery.error, t]);
   const refresh = () => void refreshQuery.refetch();
 
+  const [submitting, setSubmitting] = useState(false);
   const onSubmit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await submitReimbursement(summary.id);
       toast.success(t('rmb.submittedToast'));
@@ -484,6 +487,8 @@ function ReimbursementDrawer({
       onChanged();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -653,7 +658,9 @@ function ReimbursementDrawer({
             </Card>
             <div className="flex flex-wrap gap-2 justify-end">
               {editable && data.lines.length > 0 && (
-                <Button onClick={onSubmit}>{t('rmb.submitForApproval')}</Button>
+                <Button onClick={onSubmit} loading={submitting} disabled={submitting}>
+                  {t('rmb.submitForApproval')}
+                </Button>
               )}
               {canApprove && data.status === 'SUBMITTED' && (
                 <>

@@ -10,6 +10,7 @@ import {
   ArrowRight,
   Banknote,
   CalendarDays,
+  CalendarPlus,
   ClipboardList,
   Inbox,
   Mail,
@@ -180,9 +181,11 @@ export function WorkforceDashboard() {
     supsByClient.set(s.clientId, list);
   }
   const greet = useGreeting();
+  const name = greetingName(user, '');
   const greeting = (
     <>
-      <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
+      <LiveNow render={(now) => greet(now.getHours())} />
+      {name && <>, <span className="text-accent">{name}</span></>}.
     </>
   );
 
@@ -226,7 +229,7 @@ export function WorkforceDashboard() {
           ['/approvals', 'wf.goApprovals', Inbox],
           ['/time-attendance', 'wf.goLive', Radio],
           ['/ops', 'wf.goOps', ClipboardList],
-          ['/marketplace', 'wf.goMarketplace', Store],
+          ['/marketplace', 'wf.goMarketplace', CalendarPlus],
           ['/compliance', 'wf.goIncidents', ShieldAlert],
         ] as const
       ).map(([to, key, Icon]) => (

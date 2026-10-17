@@ -8,7 +8,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
-import { fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { LaborOverridesSection } from './LaborOverridesSection';
 
@@ -56,7 +56,7 @@ function SiteDrawer({ id, date, onClose }: { id: string; date: string; onClose: 
     <Drawer open onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
         <DrawerTitle>{d?.site.name ?? 'Site'}</DrawerTitle>
-        <DrawerDescription>{d ? `${d.jurisdictions.join(' → ')} · in force on ${d.date}` : 'Loading…'}</DrawerDescription>
+        <DrawerDescription>{d ? `${d.jurisdictions.join(' → ')} · in force on ${fmtDate(parseYmd(d.date))}` : 'Loading…'}</DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="space-y-5">
         {q.isError ? (

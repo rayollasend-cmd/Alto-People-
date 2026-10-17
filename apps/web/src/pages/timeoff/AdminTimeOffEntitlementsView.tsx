@@ -40,6 +40,8 @@ import { Select } from '@/components/ui/Select';
 import { BulkEntitlementDialog } from './BulkEntitlementDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 
 const CATEGORIES: TimeOffCategory[] = [
   'VACATION',
@@ -337,6 +339,7 @@ interface DialogProps {
 }
 
 function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProps) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(
     existing ? { id: existing.associateId, name: existing.associateName } : null
   );
@@ -373,7 +376,7 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
   const submit = async () => {
     const aId = assoc?.id ?? '';
     if (!aId) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     const annual = Number(annualHours);

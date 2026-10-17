@@ -158,7 +158,7 @@ export function AcceptInvite() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt="Alto HR" />
+          <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt={t('common.logoAlt')} />
           <h1 className="font-display text-5xl md:text-6xl text-gold mb-2 leading-none">
             Alto People
           </h1>

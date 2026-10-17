@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
 import { useDesktopTable } from '@/lib/useViewport';
 import { AuthContext } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { Button } from './Button';
 import {
   DropdownMenu,
@@ -107,6 +108,12 @@ export interface DataGridProps<T> {
   onRetry?: () => void;
   /** Accessible name for the table (and the CSV's base filename). */
   caption: string;
+  /**
+   * What one record is called, for the count line: "12 people" instead of
+   * "12 rows". Pass the tenant's words (`{ one: term('worker'), many:
+   * term('workers') }`) so the line reads in their language and nouns.
+   */
+  noun?: { one: string; many: string };
   search?: { placeholder?: string } | false;
   /** Column key to sort by initially. */
   defaultSort?: TableSortState<string>;
@@ -317,6 +324,7 @@ function GridCore<T>({
   error = null,
   onRetry,
   caption,
+  noun,
   search = {},
   defaultSort,
   sort,
@@ -353,6 +361,8 @@ function GridCore<T>({
   // signed-in user only decides which column preference to remember.
   const auth = React.useContext(AuthContext);
   const userId = auth?.user?.id ?? null;
+  // Works without a provider (English), so the grid still renders anywhere.
+  const { t, lang } = useI18n();
 
   const accessors = React.useMemo(
     () => Object.fromEntries(columns.map((c) => [c.key, c.accessor])) as Record<string, (row: T) => string | number | null | undefined>,
@@ -565,11 +575,22 @@ function GridCore<T>({
   const desktop = useDesktopTable();
   const showCards = useCards && !desktop;
 
+  // "12 people", or "12 rows" when the grid was given no noun; "12 of 40"
+  // while a search or a server page narrows the set. Numbers format in the
+  // person's language, never a hard-coded en-US.
   const countLine = (() => {
     const n = sorted.length;
     const of = total ?? rows?.length ?? n;
-    const noun = n === 1 ? 'row' : 'rows';
-    return n === of ? `${n.toLocaleString('en-US')} ${noun}` : `${n.toLocaleString('en-US')} of ${of.toLocaleString('en-US')}`;
+    const count = n.toLocaleString(lang);
+    const nounWord = noun ? (of === 1 && n === of ? noun.one : noun.many) : null;
+    if (n === of) {
+      if (nounWord) return t('grid.count', { count, noun: nounWord });
+      return n === 1 ? t('grid.rowsOne', { count }) : t('grid.rowsMany', { count });
+    }
+    const totalText = of.toLocaleString(lang);
+    return nounWord
+      ? t('grid.countOfNoun', { count, total: totalText, noun: nounWord })
+      : t('grid.countOf', { count, total: totalText });
   })();
 
   const alignClass = (a?: GridAlign) => (a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : '');
@@ -744,26 +765,26 @@ function GridCore<T>({
             <SearchInput
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder={search?.placeholder ?? 'Search…'}
-              aria-label={`Search ${caption}`}
+              placeholder={search?.placeholder ?? t('common.search')}
+              aria-label={t('grid.searchAria', { caption })}
               wrapperClassName="min-w-[12rem] flex-1"
             />
           )}
           {filters}
           <span className="ml-auto text-xs tabular-nums text-silver/70" aria-live="polite">
-            {loading && !rows ? 'Loading…' : countLine}
+            {loading && !rows ? t('common.loading') : countLine}
             {footnote && <span className="text-silver/50"> · {footnote}</span>}
           </span>
           {columnChooser && columns.some((c) => !c.primary) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="xs" aria-label="Choose columns">
+                <Button variant="outline" size="xs" aria-label={t('grid.chooseColumns')}>
                   <Columns3 className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span className="ml-1 hidden sm:inline">Columns</span>
+                  <span className="ml-1 hidden sm:inline">{t('common.columns')}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[12rem]">
-                <DropdownMenuLabel>Columns</DropdownMenuLabel>
+                <DropdownMenuLabel>{t('common.columns')}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {columns.map((c) => (
                   <DropdownMenuCheckboxItem
@@ -785,11 +806,11 @@ function GridCore<T>({
               size="xs"
               onClick={exportRows}
               disabled={sorted.length === 0}
-              aria-label={`Export ${caption} as CSV — what is on screen`}
-              title="Exports the visible columns, in the current order"
+              aria-label={t('grid.exportAria', { caption })}
+              title={t('grid.exportTitle')}
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              <span className="ml-1 hidden sm:inline">Export</span>
+              <span className="ml-1 hidden sm:inline">{t('common.export')}</span>
             </Button>
           )}
         </FilterBar>
@@ -799,14 +820,14 @@ function GridCore<T>({
         <div
           className="flex flex-wrap items-center gap-2 rounded-md border border-gold/40 bg-gold/5 px-3 py-2"
           role="region"
-          aria-label="Bulk actions"
+          aria-label={t('grid.bulkActions')}
         >
           <span className="text-xs text-white tabular-nums">
-            {selected.size} selected
+            {t('grid.selected', { count: selected.size.toLocaleString(lang) })}
           </span>
           {selectable.actions([...selected], clearSelection)}
           <Button variant="ghost" size="xs" className="ml-auto" onClick={clearSelection}>
-            Clear
+            {t('common.clear')}
           </Button>
         </div>
       )}
@@ -816,12 +837,12 @@ function GridCore<T>({
           {error}
           {onRetry && (
             <Button variant="outline" size="xs" className="ml-3" onClick={onRetry}>
-              Try again
+              {t('common.tryAgain')}
             </Button>
           )}
         </div>
       ) : loading && !rows ? (
-        <div className="space-y-2" aria-busy="true" aria-label={`Loading ${caption}`}>
+        <div className="space-y-2" aria-busy="true" aria-label={t('grid.loadingAria', { caption })}>
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-11 w-full rounded-md" />
           ))}
@@ -829,15 +850,15 @@ function GridCore<T>({
       ) : sorted.length === 0 ? (
         <EmptyState
           icon={empty?.icon ?? Inbox}
-          title={empty?.title ?? (q ? 'Nothing matches' : 'Nothing here yet')}
+          title={empty?.title ?? (q ? t('grid.noMatchTitle') : t('grid.emptyTitle'))}
           description={
-            empty?.description ?? (q ? 'Try fewer words, or clear the search.' : undefined)
+            empty?.description ?? (q ? t('grid.noMatchDesc') : undefined)
           }
           action={
             empty?.action ??
             (q ? (
               <Button variant="outline" size="sm" onClick={() => setQ('')}>
-                Clear search
+                {t('grid.clearSearch')}
               </Button>
             ) : undefined)
           }

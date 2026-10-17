@@ -393,7 +393,7 @@ function CommitResultsPanel({ results }: { results: CsvImportCommitResponse }) {
                 {r.email ? ` · ${r.email}` : ''}
               </div>
               <div className={cn('mt-0.5', r.status === 'skipped' ? 'text-alert' : 'text-success')}>
-                {r.status}
+                {r.status === 'skipped' ? 'Skipped' : 'Created'}
                 {r.reason ? `: ${r.reason}` : ''}
               </div>
             </div>

@@ -37,7 +37,7 @@ describe('RequireCapability — notClientBounded (the /labor-costs guard)', () =
     for (const r of ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] as Role[]) {
       const { unmount } = renderLaborCosts(r);
       expect(screen.queryByText('labor board')).toBeNull();
-      expect(screen.getByText('Page not found')).toBeTruthy();
+      expect(screen.getByRole('heading', { name: /couldn.t find that page/ })).toBeTruthy();
       unmount();
     }
   });

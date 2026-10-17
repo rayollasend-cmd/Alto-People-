@@ -54,7 +54,7 @@ export function BillingHome() {
   const d = q.data;
   return (
     <div className="space-y-5">
-      <PageHeader title="Billing" subtitle="Your plan, this month’s active workers by type, and your invoices." breadcrumbs={[{ label: 'Admin' }, { label: 'Billing' }]} />
+      <PageHeader title="Billing" subtitle="Your plan, this month’s active workers by type, and your invoices." breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Billing' }]} />
       {q.isError ? (
         <QueryError what="billing" query={q} />
       ) : !d ? (

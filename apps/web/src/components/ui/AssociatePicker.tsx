@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { listDirectory } from '@/lib/directoryApi';
+import { useTerm } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { cn } from '@/lib/cn';
 import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
@@ -22,12 +24,14 @@ interface PickerResult extends PickedAssociate {
 /**
  * Directory typeahead that resolves to an associate {id, name}. Replaces
  * the raw-UUID-paste inputs that used to litter payroll forms. Debounced,
- * min 2 chars, top 8 matches.
+ * min 2 chars, top 8 matches. The default placeholder and the clear
+ * button's name use the tenant's word for a worker (`term('worker')`), so
+ * a hotel sees "Search team member…" where a staffing firm sees associate.
  */
 export function AssociatePicker({
   value,
   onChange,
-  placeholder = 'Search associate…',
+  placeholder,
   className,
   id,
 }: {
@@ -42,6 +46,9 @@ export function AssociatePicker({
   /** Applied to the search input so a <Field>/<label htmlFor> can bind. */
   id?: string;
 }) {
+  const { t } = useI18n();
+  const tenantTerm = useTerm();
+  const workerNoun = tenantTerm('worker').toLowerCase();
   const [term, setTerm] = useState('');
   const [open, setOpen] = useState(false);
   // The photo of the row just picked, so the chip shows the same
@@ -112,7 +119,7 @@ export function AssociatePicker({
             setTerm('');
           }}
           className="text-silver/60 hover:text-white"
-          aria-label="Clear associate"
+          aria-label={t('picker.clearNoun', { noun: workerNoun })}
         >
           <X className="h-4 w-4" />
         </button>
@@ -124,7 +131,7 @@ export function AssociatePicker({
     <div className="relative">
       <Input
         id={id}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t('picker.searchNoun', { noun: workerNoun })}
         value={term}
         onChange={(e) => setTerm(e.target.value)}
         onFocus={() => results.length > 0 && setOpen(true)}
@@ -132,7 +139,7 @@ export function AssociatePicker({
       />
       {open && searchFailed && (
         <div className="absolute z-20 mt-1 w-full rounded-md border border-warning/40 bg-navy px-3 py-2 text-xs text-warning elev-2">
-          Search unavailable — check your connection and keep typing to retry.
+          {t('picker.searchUnavailable')}
         </div>
       )}
       {open && !searchFailed && results.length > 0 && (

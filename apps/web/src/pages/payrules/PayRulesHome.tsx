@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { errorText } from '@/lib/errorText';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import {
@@ -13,7 +14,8 @@ import {
   ymdLocal,
 } from '@/lib/format';
 import { useClients } from '@/lib/useClients';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 import { boundedClientOf } from '@/lib/roles';
 import {
   addAllocation,
@@ -200,7 +202,7 @@ function ProjectsTab({ clientId }: { clientId: string }) {
       setIsBillable(true);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't create the project."));
     }
   };
 
@@ -210,7 +212,7 @@ function ProjectsTab({ clientId }: { clientId: string }) {
       await deactivateProject(id);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't deactivate the project."));
     }
   };
 
@@ -284,7 +286,7 @@ function ProjectsTab({ clientId }: { clientId: string }) {
           )}
         </CardContent>
       </Card>
-      <Drawer open={showNew} onOpenChange={setShowNew}>
+      <Drawer open={showNew} onOpenChange={setShowNew} confirmDiscard={() => code.trim().length > 0 || name.trim().length > 0}>
         <DrawerHeader>
           <DrawerTitle>New project</DrawerTitle>
         </DrawerHeader>
@@ -356,14 +358,14 @@ function EditProjectDrawer({
       toast.success('Project updated.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't save the project."));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => code !== project.code || name !== project.name || isBillable !== project.isBillable}>
       <DrawerHeader>
         <DrawerTitle>Edit project</DrawerTitle>
       </DrawerHeader>
@@ -438,7 +440,7 @@ function PremiumTab({ clientId }: { clientId: string }) {
       await deletePremiumPayRule(id);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't deactivate the pay rule."));
     }
   };
 
@@ -572,14 +574,14 @@ function PremiumDrawer({
       toast.success('Rule created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't save the pay rule."));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => name.trim().length > 0 || addPerHour !== '' || multiplier !== '1.5' || thresholdHours !== '8'}>
       <DrawerHeader>
         <DrawerTitle>New premium pay rule</DrawerTitle>
       </DrawerHeader>
@@ -804,13 +806,13 @@ function NewTipPoolDrawer({
       toast.success('Pool created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't create the tip pool."));
     } finally {
       setSaving(false);
     }
   };
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => name.trim().length > 0 || total !== ''}>
       <DrawerHeader>
         <DrawerTitle>New tip pool</DrawerTitle>
       </DrawerHeader>
@@ -863,6 +865,7 @@ function TipPoolDrawer({
   onChanged: () => void;
 }) {
   const confirm = useConfirm();
+  const term = useTerm();
   const [busy, setBusy] = useState(false);
   // datetime-local wall-clock values; converted to UTC ISO on submit.
   const [from, setFrom] = useState(`${pool.shiftDate}T00:00`);
@@ -903,7 +906,7 @@ function TipPoolDrawer({
       onChanged();
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't allocate the tips."));
     } finally {
       setBusy(false);
     }
@@ -911,7 +914,7 @@ function TipPoolDrawer({
 
   const onAddManual = async () => {
     if (!manualAssociate) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     const amt = Number(manualAmount);
@@ -931,7 +934,7 @@ function TipPoolDrawer({
       onChanged();
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't add the allocation."));
     } finally {
       setBusy(false);
     }
@@ -954,7 +957,7 @@ function TipPoolDrawer({
       onChanged();
       onClose();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't close the tip pool."));
     } finally {
       setBusy(false);
     }
@@ -977,7 +980,7 @@ function TipPoolDrawer({
       onChanged();
       onClose();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't pay out the tip pool."));
     } finally {
       setBusy(false);
     }
@@ -998,7 +1001,7 @@ function TipPoolDrawer({
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl" confirmDiscard={() => manualAssociate !== null || manualAmount !== ''}>
       <DrawerHeader>
         <DrawerTitle>{pool.name}</DrawerTitle>
       </DrawerHeader>

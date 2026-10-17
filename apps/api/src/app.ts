@@ -83,6 +83,7 @@ import { auditPacketRouter } from './routes/auditPacket.js';
 import { directoryRouter } from './routes/directory.js';
 import { executiveRouter } from './routes/executive.js';
 import { roleDecisionsRouter } from './routes/roleDecisions.js';
+import { inboxRouter } from './routes/inbox.js';
 import { positionsRouter } from './routes/positions.js';
 import { teamRouter } from './routes/team.js';
 import { workflowsRouter } from './routes/workflows.js';
@@ -561,6 +562,8 @@ export function createApp() {
   app.use('/people', directoryRouter);
   app.use('/executive', executiveRouter);
   app.use('/me', roleDecisionsRouter);
+  // Every decision waiting on the signed-in person, as counts with links.
+  app.use('/me', inboxRouter);
   // External payroll documentation — pay periods + evidence uploads for the
   // directory drawer's Payments tab. Router self-gates on process:payroll.
   app.use('/external-payments', requireModule('payrollSync'), externalPaymentsRouter);
@@ -641,6 +644,32 @@ export function createApp() {
   app.use('/', kiosk99Router);
   app.use('/', celebrationsRouter);
   app.use('/', assetsRouter);
+  // Tenant modules `talent` and `perks` (Brief 2-1b). The routers below
+  // mount at '/', so the gate sits on their path prefixes rather than the
+  // mount: an off module answers 404 on every path it owns and nothing
+  // else notices. Keep these lists in step with the routers' paths.
+  app.use(
+    [
+      '/skills', '/associate-skills',
+      '/career-ladders', '/career-levels',
+      '/mentorships',
+      '/succession',
+      '/probations',
+      '/ramp-plans', '/ramp-milestones',
+      '/learning-paths', '/learning-path-steps', '/my/learning-paths',
+      '/internal-jobs', '/internal-applications', '/my/internal-applications',
+      '/pulse-surveys', '/my/pulse-surveys',
+    ],
+    requireModule('talent'),
+  );
+  app.use(
+    [
+      '/tuition-requests', '/tuition-summary', '/my/tuition-requests',
+      '/equity-grants', '/my/equity-grants',
+      '/volunteer-entries', '/volunteer-summary', '/vto-policy', '/my/volunteer-entries',
+    ],
+    requireModule('perks'),
+  );
   app.use('/', pulseSurveysRouter);
   app.use('/', headcount110Router);
   app.use('/', skills111Router);

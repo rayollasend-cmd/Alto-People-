@@ -297,10 +297,10 @@ function HeroStrip({
       <CardContent className="py-4">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           <div className="flex-1 min-w-[260px]">
-            <h1 className="text-xl text-white flex items-center gap-2">
+            <h2 className="text-xl text-ink flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-gold" />
               Contract compliance scorecard
-            </h1>
+            </h2>
             <p className="text-xs text-silver mt-0.5">
               Live against {clientName ? `the ${clientName} contract` : 'every client contract'}: MSA, SOW and MTSA. Refreshes every 15 minutes.{' '}
               <Link to="/compliance?tab=audit" className="text-gold underline underline-offset-2">
@@ -2457,9 +2457,15 @@ function ClauseTooltip({ clause, children }: { clause: string; children: React.R
   );
 }
 
+const DOT_SEVERITY_LABEL: Record<ScorecardSeverity, string> = { critical: 'Critical', warn: 'Needs attention', ok: 'On track' };
+
 function SeverityDot({ severity }: { severity: ScorecardSeverity }) {
   const tone = severity === 'critical' ? 'bg-alert' : severity === 'warn' ? 'bg-warning' : 'bg-success';
-  return <span className={cn('mt-1.5 h-2 w-2 rounded-full shrink-0', tone)} />;
+  return (
+    <span className={cn('mt-1.5 h-2 w-2 rounded-full shrink-0', tone)}>
+      <span className="sr-only">{DOT_SEVERITY_LABEL[severity] ?? severity}</span>
+    </span>
+  );
 }
 
 // Delegates to the shared threshold so this bar can never disagree with the

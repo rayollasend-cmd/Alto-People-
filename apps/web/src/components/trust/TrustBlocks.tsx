@@ -49,7 +49,7 @@ export function TrustHero({ data, children }: { data: TrustSummaryPublic; childr
               ? 'The audit trail’s hash chain has not been verified yet.'
               : chainOk
                 ? `Audit trail hash chain verified ${data.auditChain.verifiedAt ? fmtDateTime(data.auditChain.verifiedAt) : ''}.`
-                : `The audit trail’s hash chain FAILED verification ${data.auditChain.verifiedAt ? fmtDateTime(data.auditChain.verifiedAt) : ''}; the team has been alerted.`}{' '}
+                : `The audit trail’s hash chain failed verification${data.auditChain.verifiedAt ? ` ${fmtDateTime(data.auditChain.verifiedAt)}` : ''} — the team has been alerted and is investigating.`}{' '}
             Audit records are kept at least {data.retention.auditYearsMinimum} years. {data.agents.registered} AI agents registered, {data.agents.certified} certified, every one with an accountable owner.
           </p>
           {children}

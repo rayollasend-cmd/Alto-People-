@@ -97,6 +97,7 @@ const RideHome = lazyNamed(() => import('@/pages/transport/RideHome'), 'RideHome
 const TransportHome = lazyNamed(() => import('@/pages/transport/TransportHome'), 'TransportHome');
 const EmergencyHome = lazyNamed(() => import('@/pages/emergency/EmergencyHome'), 'EmergencyHome');
 const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'), 'ApprovalsHome');
+const InboxHome = lazyNamed(() => import('@/pages/inbox/InboxHome'), 'InboxHome');
 const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
 const PayrollConfigView = lazyNamed(
   () => import('@/pages/payroll/PayrollConfigView'),
@@ -202,6 +203,7 @@ const WhatsNewPage = lazyNamed(() => import('@/pages/WhatsNewPage'), 'WhatsNewPa
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
 const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
+const SettingsHome = lazyNamed(() => import('@/pages/admin/SettingsHome'), 'SettingsHome');
 const SignInSettings = lazyNamed(() => import('@/pages/admin/SignInSettings'), 'SignInSettings');
 const SupportPage = lazyNamed(() => import('@/pages/support/SupportPage'), 'SupportPage');
 const PlatformSupportInbox = lazyNamed(() => import('@/pages/support/PlatformSupportInbox'), 'PlatformSupportInbox');
@@ -263,6 +265,7 @@ registerPrefetch('/time-attendance', () => import('@/pages/time/TimeHome'));
 registerPrefetch('/time-off', () => import('@/pages/timeoff/TimeOffHome'));
 registerPrefetch('/scheduling', () => import('@/pages/scheduling/SchedulingHome'));
 registerPrefetch('/approvals', () => import('@/pages/approvals/ApprovalsHome'));
+registerPrefetch('/inbox', () => import('@/pages/inbox/InboxHome'));
 registerPrefetch('/payroll', () => import('@/pages/payroll/PayrollHome'));
 registerPrefetch('/documents', () => import('@/pages/documents/DocumentsHome'));
 registerPrefetch('/communications', () => import('@/pages/communications/CommunicationsHome'));
@@ -284,6 +287,7 @@ registerPrefetch('/settings', () => import('@/pages/Settings'));
 registerPrefetch('/admin/users', () => import('@/pages/admin/UsersAdmin'));
 registerPrefetch('/admin/branding', () => import('@/pages/admin/BrandingHome'));
 registerPrefetch('/admin/organization', () => import('@/pages/admin/TenantProfileHome'));
+registerPrefetch('/admin', () => import('@/pages/admin/SettingsHome'));
 registerPrefetch('/admin/employers', () => import('@/pages/admin/EmployersAdmin'));
 registerPrefetch('/admin/org-units', () => import('@/pages/admin/OrgUnitsAdmin'));
 registerPrefetch('/admin/sites', () => import('@/pages/admin/SitesAdmin'));
@@ -448,6 +452,9 @@ const LAYOUT_ROUTES = [
   { path: 'messages/:id', element: <MessagesHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
+  // Every decision waiting on the signed-in person; the API decides which
+  // queues they may see, so any authenticated role can open it.
+  { path: 'inbox', element: <InboxHome /> },
   // notClientBounded: the shift supervisor holds manage:scheduling, but labor
   // cost is org economics — the API refuses bounded roles on every read here.
   { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']} notClientBounded><LaborCostsHome /></RequireCapability> },
@@ -481,6 +488,8 @@ const LAYOUT_ROUTES = [
     { path: 'robots', element: <RequireCapability cap="view:org"><RobotsHome /></RequireCapability> },
     { path: 'robots/sites/:locationId/zones', element: <RequireCapability cap="view:org"><SiteSafetyZones /></RequireCapability> },
     { path: 'robots/:id', element: <RequireCapability cap="view:org"><RobotRecord /></RequireCapability> },
+    // Settings & trust — the one door to the admin pages below (SettingsHome).
+    { path: 'admin', element: <RequireCapability cap="view:hr-admin"><SettingsHome /></RequireCapability> },
     { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
     { path: 'admin/regions', element: <RequireCapability cap="view:org"><RegionsAdmin /></RequireCapability> },
     { path: 'workers', element: <RequireCapability cap="view:org"><WorkerTypesAdmin /></RequireCapability> },

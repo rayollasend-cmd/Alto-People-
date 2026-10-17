@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { performWithUndo } from '@/lib/undoToast';
 import { ArrowLeft, Trash2 } from 'lucide-react';
 import type { RecruitingAnalytics as Analytics } from '@alto-people/shared';
 type SourceRow = Analytics['sources'][number];
@@ -182,6 +183,8 @@ function SpendDialog({
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  // Rows removed in the UI while their undo window is open.
+  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     if (!open) return;
@@ -214,16 +217,25 @@ function SpendDialog({
     }
   };
 
-  const remove = async (id: string) => {
-    try {
-      await deleteSourceSpend(id);
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not remove it.');
-    }
+  const remove = (row: { id: string; source: string; month: string }) => {
+    setHiddenIds((prev) => new Set(prev).add(row.id));
+    performWithUndo({
+      message: `Removed ${sourceName(row.source)}, ${row.month}.`,
+      onCommit: async () => {
+        await deleteSourceSpend(row.id);
+        refresh();
+      },
+      onUndo: () =>
+        setHiddenIds((prev) => {
+          const next = new Set(prev);
+          next.delete(row.id);
+          return next;
+        }),
+      commitFailedMessage: `Couldn't remove ${sourceName(row.source)}, ${row.month}.`,
+    });
   };
 
-  const rows = spend.data?.spend ?? [];
+  const rows = (spend.data?.spend ?? []).filter((r) => !hiddenIds.has(r.id));
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent>
@@ -283,7 +295,7 @@ function SpendDialog({
                         size="icon"
                         variant="ghost"
                         aria-label={`Remove ${sourceName(r.source)} ${r.month}`}
-                        onClick={() => void remove(r.id)}
+                        onClick={() => remove(r)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>

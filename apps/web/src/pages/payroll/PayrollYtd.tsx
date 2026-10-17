@@ -12,10 +12,13 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { fmtMoney } from '@/lib/format';
+import { useTerm } from '@/lib/auth';
+import { MetricCard } from '@/components/ui/MetricCard';
 
 const fmt = fmtMoney;
 
 export function PayrollYtd() {
+  const term = useTerm();
   const currentYear = new Date().getUTCFullYear();
   const [year, setYear] = useState(currentYear);
   const [q, setQ] = useState('');
@@ -80,7 +83,7 @@ export function PayrollYtd() {
         <>
           <Card className="mb-4">
             <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm py-4">
-              <Stat label="Associates" value={String(data.totals.associateCount)} />
+              <Stat label={term('workers')} value={String(data.totals.associateCount)} />
               <Stat label="Paystubs" value={String(data.totals.paystubCount)} />
               <Stat label="Gross" value={fmt(data.totals.gross)} />
               <Stat label="Net" value={fmt(data.totals.net)} />
@@ -104,7 +107,7 @@ export function PayrollYtd() {
             <CardContent className="p-0">
               <DataGrid<(typeof filtered)[number]>
                 id="payroll-ytd"
-                caption={`Year-to-date payroll by associate, ${year}`}
+                caption={`Year-to-date payroll by ${term('worker').toLowerCase()}, ${year}`}
                 rows={filtered}
                 rowKey={(r) => r.associateId}
                 search={false}
@@ -114,7 +117,7 @@ export function PayrollYtd() {
                 columns={[
                   {
                     key: 'associate',
-                    header: 'Associate',
+                    header: term('worker'),
                     accessor: (r) => `${r.firstName} ${r.lastName}`,
                     sortable: true,
                     primary: true,
@@ -147,10 +150,5 @@ export function PayrollYtd() {
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
-      <div className="text-sm text-silver tabular-nums">{value}</div>
-    </div>
-  );
+  return <MetricCard label={label} value={value} />;
 }

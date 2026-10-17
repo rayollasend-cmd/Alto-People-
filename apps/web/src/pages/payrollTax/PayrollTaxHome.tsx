@@ -50,7 +50,8 @@ import {
 } from '@/lib/payrollTax91Api';
 import { useClients } from '@/lib/useClients';
 import type { ClientSummary } from '@alto-people/shared';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
@@ -139,6 +140,7 @@ const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
 
 function GarnishmentsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
+  const term = useTerm();
   const [showNew, setShowNew] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<Garnishment | null>(null);
   const [deductTarget, setDeductTarget] = useState<Garnishment | null>(null);
@@ -213,11 +215,11 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
               caption="Garnishments"
               rows={rows}
               rowKey={(g) => g.id}
-              search={{ placeholder: 'Associate, kind…' }}
+              search={{ placeholder: `${term('worker')}, kind…` }}
               urlState={false}
               exportCsv={{ filename: 'garnishments' }}
               columns={[
-                { key: 'associate', header: 'Associate', accessor: (g) => g.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'associate', header: term('worker'), accessor: (g) => g.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
                 { key: 'kind', header: 'Kind', accessor: (g) => GARN_KIND_LABEL[g.kind], sortable: true, cardMeta: true },
                 {
                   key: 'withhold',
@@ -316,6 +318,7 @@ function NewGarnishmentDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<GarnishmentKind>('CHILD_SUPPORT');
   const [caseNumber, setCaseNumber] = useState('');
@@ -330,7 +333,7 @@ function NewGarnishmentDrawer({
 
   const onSubmit = async () => {
     if (!assoc || !startDate) {
-      toast.error('Associate and start date required.');
+      toast.error(!assoc ? pickOne(term) : 'Enter a start date.');
       return;
     }
     if (mode === 'AMOUNT' && !amount) {
@@ -363,13 +366,18 @@ function NewGarnishmentDrawer({
     }
   };
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && !saving && onClose()}
+      width="max-w-2xl"
+      confirmDiscard={() => !!assoc || caseNumber.trim().length > 0 || agencyName.trim().length > 0 || amount.trim().length > 0 || percent.trim().length > 0 || startDate.length > 0 || notes.trim().length > 0}
+    >
       <DrawerHeader>
         <DrawerTitle>New garnishment</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={assoc} onChange={setAssoc} />
           </div>
@@ -595,7 +603,7 @@ function GarnishmentManualDeductDrawer({
   };
 
   return (
-    <Drawer open onOpenChange={(v) => !v && onClose()}>
+    <Drawer open onOpenChange={(v) => !v && !saving && onClose()} confirmDiscard={() => amount.trim().length > 0}>
       <DrawerHeader>
         <DrawerTitle>Manual deduction — {garnishment.associateName}</DrawerTitle>
       </DrawerHeader>
@@ -1868,6 +1876,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const [kind, setKind] = useState<TaxFormKind>('F941');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [quarter, setQuarter] = useState('1');
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [amountValues, setAmountValues] = useState<Record<string, string>>({});
   const [customLines, setCustomLines] = useState<{ key: string; value: string }[]>([]);
@@ -1903,7 +1912,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
       amounts[key] = n;
     }
     if (needsAssociate && !assoc) {
-      toast.error('Pick an associate for W-2/1099.');
+      toast.error(pickOne(term));
       return;
     }
     setSaving(true);
@@ -1926,7 +1935,12 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && !saving && onClose()}
+      width="max-w-2xl"
+      confirmDiscard={() => !!assoc || ein.trim().length > 0 || customLines.length > 0 || Object.values(amountValues).some((v) => v.trim().length > 0)}
+    >
       <DrawerHeader>
         <DrawerTitle>New tax form</DrawerTitle>
       </DrawerHeader>
@@ -1985,7 +1999,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
         </div>
         {needsAssociate && (
           <div>
-            <Label>Associate</Label>
+            <Label>{term('worker')}</Label>
             <div className="mt-1">
               <AssociatePicker value={assoc} onChange={setAssoc} />
             </div>

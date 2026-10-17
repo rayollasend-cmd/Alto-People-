@@ -24,7 +24,7 @@ import { apiFetch } from '@/lib/api';
 import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
 import type { FinanceOverview } from './finance/financeTypes';
 import { BillingWeekCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks } from './finance/FinanceCockpit';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtHours, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -50,6 +50,11 @@ import { Skeleton } from '@/components/ui/Skeleton';
 export function FinanceDashboard() {
   const { t } = useI18n();
   const { user } = useAuth();
+  // Receivables are a staffing company's concern — a direct employer bills
+  // no one, so the AR tile, the aging card and the statements door go away
+  // together when either client statements or bill rates are off.
+  const { moduleOn } = useTenant();
+  const receivablesOn = moduleOn('clientPortal') && moduleOn('billRates');
   const query = useQuery({
     queryKey: ['finance', 'overview'],
     queryFn: () => apiFetch<FinanceOverview>('/finance/overview'),
@@ -85,9 +90,11 @@ export function FinanceDashboard() {
   };
 
   const greet = useGreeting();
+  const name = greetingName(user, '');
   const greeting = (
     <>
-      <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{greetingName(user)}</span>.
+      <LiveNow render={(now) => greet(now.getHours())} />
+      {name && <>, <span className="text-accent">{name}</span></>}.
     </>
   );
 
@@ -131,6 +138,16 @@ export function FinanceDashboard() {
   const aging = data.receivables.aging;
   const pastDue = aging ? aging.d31 + aging.d61 + aging.d91 : 0;
   const tasksToday = financeTasks(data, t, Date.now()).length;
+  // The doors the day needs (plus the payroll case desk below): statements
+  // only when the tenant bills clients.
+  const doors = (
+    [
+      ['/payroll', 'fin.goPayroll', DollarSign],
+      ['/timesheets', 'fin.goSheets', FileSpreadsheet],
+      ...(receivablesOn ? ([['/clients/statements', 'fin.goStatements', Wallet]] as const) : []),
+      ['/labor-costs', 'fin.goLabor', BarChart3],
+    ] as const
+  );
 
   return (
     // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
@@ -158,7 +175,7 @@ export function FinanceDashboard() {
     >
       {/* ---- The four numbers that matter (two across until xl: the
           template's main column is two thirds wide beside Hugo) ---------- */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className={cn('grid grid-cols-2 gap-3', receivablesOn ? 'xl:grid-cols-4' : 'xl:grid-cols-3')}>
         <FinKpi
           to="/labor-costs"
           label={t('fin.kpiRevenue')}
@@ -187,6 +204,7 @@ export function FinanceDashboard() {
           hint={atRisk > 0 ? t('fin.kpiRiskHint') : t('fin.kpiRiskClean')}
           stagger={3}
         />
+        {receivablesOn && (
         <FinKpi
           to="/clients/statements"
           label={t('fin.kpiAr')}
@@ -206,6 +224,7 @@ export function FinanceDashboard() {
           }
           stagger={4}
         />
+        )}
       </div>
 
       {/* ---- Getting paid: last week in Fieldglass, and the margin ----- */}
@@ -324,21 +343,16 @@ export function FinanceDashboard() {
         )}
 
         {/* ---- Who owes us, and for how long --------------------------- */}
-        <div className={cn(!chaseHot && 'lg:col-span-2')}>
-          <ReceivablesCard receivables={data.receivables} />
-        </div>
+        {receivablesOn && (
+          <div className={cn(!chaseHot && 'lg:col-span-2')}>
+            <ReceivablesCard receivables={data.receivables} />
+          </div>
+        )}
       </div>
 
       {/* ---- The actions the day needs -------------------------------- */}
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5 md:gap-3">
-        {(
-          [
-            ['/payroll', 'fin.goPayroll', DollarSign],
-            ['/timesheets', 'fin.goSheets', FileSpreadsheet],
-            ['/clients/statements', 'fin.goStatements', Wallet],
-            ['/labor-costs', 'fin.goLabor', BarChart3],
-          ] as const
-        ).map(([to, key, Icon]) => (
+      <div className={cn('grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3', doors.length + 1 === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4')}>
+        {doors.map(([to, key, Icon]) => (
           <Link
             key={to}
             to={to}

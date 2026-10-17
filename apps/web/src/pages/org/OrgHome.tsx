@@ -35,7 +35,7 @@ import {
   updateShiftPosition,
   type AssociateHistoryEntry,
 } from '@/lib/orgApi';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { boundedClientOf, hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
@@ -301,6 +301,7 @@ function DepartmentsTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
+  const term = useTerm();
   const [drawerTarget, setDrawerTarget] = useState<Department | 'new' | null>(null);
 
   const listQuery = useQuery({
@@ -377,7 +378,7 @@ function DepartmentsTab({
             { key: 'name', header: 'Name', accessor: (d) => d.name, sortable: true, primary: true, className: 'font-medium' },
             { key: 'code', header: 'Code', accessor: (d) => d.code, sortable: true, cardMeta: true, className: 'text-silver', cell: (d) => d.code ?? '—' },
             { key: 'parent', header: 'Parent', accessor: (d) => (rows ?? []).find((pd) => pd.id === d.parentId)?.name ?? null, sortable: true, cardMeta: true, className: 'text-silver', cell: (d) => (rows ?? []).find((pd) => pd.id === d.parentId)?.name ?? '—' },
-            { key: 'associates', header: 'Associates', accessor: (d) => d.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+            { key: 'associates', header: term('workers'), accessor: (d) => d.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
           ]}
         />
       )}
@@ -596,6 +597,7 @@ function CostCentersTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
+  const term = useTerm();
   const [drawerTarget, setDrawerTarget] = useState<CostCenter | 'new' | null>(null);
 
   const listQuery = useQuery({
@@ -671,7 +673,7 @@ function CostCentersTab({
           columns={[
             { key: 'code', header: 'Code', accessor: (c) => c.code, sortable: true, cardMeta: true, className: 'font-medium tabular-nums' },
             { key: 'name', header: 'Name', accessor: (c) => c.name, sortable: true, primary: true },
-            { key: 'associates', header: 'Associates', accessor: (c) => c.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+            { key: 'associates', header: term('workers'), accessor: (c) => c.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
           ]}
         />
       )}
@@ -1125,6 +1127,7 @@ function JobProfilesTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
+  const term = useTerm();
   const [drawerTarget, setDrawerTarget] = useState<JobProfile | 'new' | null>(null);
 
   const listQuery = useQuery({
@@ -1203,7 +1206,7 @@ function JobProfilesTab({
             { key: 'family', header: 'Family', accessor: (j) => j.family, sortable: true, cardMeta: true, className: 'text-silver', cell: (j) => j.family ?? '—' },
             { key: 'level', header: 'Level', accessor: (j) => j.level, sortable: true, className: 'text-silver', cell: (j) => j.level ?? '—' },
             { key: 'flsa', header: 'FLSA', accessor: (j) => (j.isExempt ? 'Exempt' : 'Non-exempt'), sortable: true, searchable: false, cell: (j) => <Badge variant={j.isExempt ? 'accent' : 'default'}>{j.isExempt ? 'Exempt' : 'Non-exempt'}</Badge> },
-            { key: 'associates', header: 'Associates', accessor: (j) => j.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+            { key: 'associates', header: term('workers'), accessor: (j) => j.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
           ]}
         />
       )}
@@ -1434,6 +1437,7 @@ function PeopleTab({
   clients: ClientSummary[];
   initialAssociateId: string | null;
 }) {
+  const term = useTerm();
   const [target, setTarget] = useState<AssociateOrgSummary | null>(null);
   // Client-side name/email filter over the loaded rows, debounced so
   // typing doesn't re-filter a 1000-row list on every keystroke.
@@ -1529,7 +1533,7 @@ function PeopleTab({
       failedIds.push(ids[i]);
       const row = rows?.find((a) => a.id === ids[i]);
       toast.error(
-        `${row ? `${row.firstName} ${row.lastName}` : 'Associate'}: ${
+        `${row ? `${row.firstName} ${row.lastName}` : term('worker')}: ${
           r.reason instanceof ApiError ? r.reason.message : 'assignment failed.'
         }`,
       );
@@ -1614,7 +1618,7 @@ function PeopleTab({
       {filtered && filtered.length > 0 && (
         <DataGrid<NonNullable<typeof filtered>[number]>
           id="org-associates"
-          caption="Associates and their org fields"
+          caption={`${term('workers')} and their org fields`}
           rows={filtered}
           rowKey={(a) => a.id}
           search={false}
@@ -1626,7 +1630,7 @@ function PeopleTab({
           columns={[
             {
               key: 'associate',
-              header: 'Associate',
+              header: term('worker'),
               accessor: (a) => `${a.firstName} ${a.lastName}`,
               sortable: true,
               primary: true,

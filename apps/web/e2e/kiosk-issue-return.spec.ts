@@ -90,7 +90,7 @@ async function settleHistory(page: Page) {
 async function issueAndReveal(page: Page) {
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: /^issue$/i }).click();
-  await expect(page.getByText('Employee number issued')).toBeVisible();
+  await expect(page.getByText(/clock-in number issued/i)).toBeVisible();
   await expect(page.getByText('4821')).toBeVisible();
 }
 
@@ -105,7 +105,7 @@ test('issuing from the Pins tab: Done keeps you on the kiosk page, and Back leav
   await page.goto('/time-attendance/kiosk?tab=pins');
   // The tab opens on every client; issuing wants one picked.
   await page.getByRole('combobox', { name: /filter by client/i }).selectOption(C1);
-  await page.getByRole('button', { name: /issue employee number/i }).first().click();
+  await page.getByRole('button', { name: /issue clock-in number/i }).first().click();
   await issueAndReveal(page);
   await page.getByRole('button', { name: /^done$/i }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);

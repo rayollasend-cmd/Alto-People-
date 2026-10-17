@@ -65,6 +65,7 @@ import { Select } from '@/components/ui/Select';
 import { Stepper } from '@/components/ui/Stepper';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { useTerm } from '@/lib/auth';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 
 /** "May 13, 2026 → May 26, 2026" — a YMD period, parsed as local days. */
@@ -526,6 +527,7 @@ function Step1(props: {
   setDefaultRate: (v: string) => void;
 }) {
   const offCycle = props.runKind === 'OFF_CYCLE';
+  const term = useTerm();
   return (
     <div className="space-y-4">
       <fieldset>
@@ -614,7 +616,7 @@ function Step1(props: {
       {!offCycle && (
         <Field
           label="Default hourly rate"
-          hint="Falls back to this only for associates without an hourly rate set on their Compensation record. Everyone with a rate on file is paid that rate."
+          hint={`Falls back to this only for ${term('workers').toLowerCase()} without an hourly rate set on their Compensation record. Everyone with a rate on file is paid that rate.`}
         >
           {(p) => (
             <Input
@@ -842,6 +844,13 @@ function ExceptionStrip({
   );
 }
 
+const SEVERITY_LABEL: Record<PayrollException['severity'], string> = {
+  BLOCKING: 'Blocks the run',
+  WARNING: 'Warning',
+  INFO: 'Note',
+};
+
+/** Colour carries the severity for sighted readers; the label is spoken for everyone else. */
 function SeverityDot({ severity }: { severity: PayrollException['severity'] }) {
   const cls =
     severity === 'BLOCKING'
@@ -849,7 +858,12 @@ function SeverityDot({ severity }: { severity: PayrollException['severity'] }) {
       : severity === 'WARNING'
       ? 'bg-warning'
       : 'bg-silver/50';
-  return <span className={cn('h-2 w-2 rounded-full inline-block', cls)} />;
+  return (
+    <span className="inline-flex items-center" title={SEVERITY_LABEL[severity] ?? severity}>
+      <span className={cn('h-2 w-2 rounded-full inline-block', cls)} aria-hidden="true" />
+      <span className="sr-only">{SEVERITY_LABEL[severity] ?? severity}</span>
+    </span>
+  );
 }
 
 /* -------------------------------------------------------------------------- *

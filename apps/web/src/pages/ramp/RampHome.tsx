@@ -16,7 +16,7 @@ import {
   type RampPlan,
   type RampPlanRow,
 } from '@/lib/ramp125Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -42,6 +42,7 @@ import { downloadCsv } from '@/lib/csv';
 import { statusTone } from '@/lib/status';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
+import { pickOne } from '@/lib/validationCopy';
 
 // Ramp-only milestone codes the shared vocabulary doesn't carry: ON_TRACK is
 // an in-flight state (gold per the Badge contract), ACHIEVED is terminal-good
@@ -247,6 +248,7 @@ function NewPlanDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [startDate, setStartDate] = useState(ymdLocal());
   const [notes, setNotes] = useState('');
@@ -254,7 +256,7 @@ function NewPlanDrawer({
 
   const submit = async () => {
     if (!associate) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     setSaving(true);

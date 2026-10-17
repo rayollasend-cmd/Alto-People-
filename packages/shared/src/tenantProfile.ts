@@ -38,6 +38,11 @@ export const TENANT_MODULES = [
   'clientPortal',
   'robotics',
   'agentBuilder',
+  // The talent and perks long tail — corporate-HR surfaces a frontline or
+  // seasonal operator may not run. On by default so nothing disappears for
+  // an existing tenant; the Organization profile turns them off.
+  'talent',
+  'perks',
 ] as const;
 export type TenantModule = (typeof TENANT_MODULES)[number];
 export const TenantModuleSchema = /* @__PURE__ */ (() => z.enum(TENANT_MODULES))();
@@ -55,6 +60,8 @@ export const TENANT_MODULE_LABEL: Record<TenantModule, string> = {
   clientPortal: 'Client portal',
   robotics: 'Robotics',
   agentBuilder: 'Agent builder',
+  talent: 'Talent programs (skills, career, mentorship, succession, probation, 30/60/90 plans, pulse)',
+  perks: 'Perks (tuition, equity, volunteer match)',
 };
 
 export const TenantModulesSchema = /* @__PURE__ */ (() => z.object({
@@ -70,6 +77,8 @@ export const TenantModulesSchema = /* @__PURE__ */ (() => z.object({
   clientPortal: z.boolean(),
   robotics: z.boolean(),
   agentBuilder: z.boolean(),
+  talent: z.boolean(),
+  perks: z.boolean(),
 }))();
 export type TenantModules = z.infer<typeof TenantModulesSchema>;
 
@@ -86,6 +95,8 @@ const ALL_ON: TenantModules = {
   clientPortal: true,
   robotics: true,
   agentBuilder: true,
+  talent: true,
+  perks: true,
 };
 
 /** The switches a business model starts with. */

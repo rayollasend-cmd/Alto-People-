@@ -1043,10 +1043,10 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           {
             key: 'kind',
             header: 'Kind',
-            accessor: (d) => d.kind.replace(/_/g, ' '),
+            accessor: (d) => DOCUMENT_KIND_LABEL[d.kind] ?? d.kind,
             sortable: true,
             cardMeta: true,
-            className: 'text-xs uppercase tracking-wider text-silver',
+            className: 'text-xs text-silver',
           },
           {
             key: 'associate',
@@ -1561,7 +1561,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       </button>
                     ),
                   },
-                  { key: 'kind', header: 'Kind', accessor: (d) => d.kind.replace(/_/g, ' '), sortable: true, cardMeta: true, className: 'text-xs text-silver uppercase tracking-wider' },
+                  { key: 'kind', header: 'Kind', accessor: (d) => DOCUMENT_KIND_LABEL[d.kind] ?? d.kind, sortable: true, cardMeta: true, className: 'text-xs text-silver' },
                   { key: 'uploaded', header: 'Uploaded', accessor: (d) => d.createdAt, csv: (d) => fmtAge(d.createdAt, now), sortable: true, searchable: false, cardMeta: true, className: 'text-silver text-xs tabular-nums', cell: (d) => fmtAge(d.createdAt, now) },
                   {
                     key: 'status',
@@ -1747,7 +1747,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   {verifyTarget.filename}
                 </div>
                 <div className="mt-0.5 text-silver">
-                  {verifyTarget.kind.replace(/_/g, ' ')}
+                  {DOCUMENT_KIND_LABEL[verifyTarget.kind] ?? verifyTarget.kind}
                   {verifyTarget.associateName ? ` · ${verifyTarget.associateName}` : ''}
                 </div>
               </div>

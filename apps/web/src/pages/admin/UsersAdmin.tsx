@@ -17,6 +17,7 @@ import { useAuth, useTenant, useTerm, useRoleLabel } from '@/lib/auth';
 import { roleOfferedFor } from '@/lib/modules';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
+import { errorText } from '@/lib/errorText';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { personPhotoUrl } from '@/lib/photoUrl';
 import {
@@ -196,7 +197,7 @@ export function UsersAdmin() {
       toast.success(newRegionId ? 'Region assigned — this is now a command-center account.' : 'Region cleared.');
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't change the region."));
     } finally {
       setPendingId(null);
     }
@@ -210,7 +211,7 @@ export function UsersAdmin() {
       toast.success(newLocationId ? `${termOf('label.store')} assigned.` : 'Now sees the whole client.');
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't change the location."));
     } finally {
       setPendingId(null);
     }
@@ -417,7 +418,7 @@ export function UsersAdmin() {
         setShiftFor({ ...u, role: newRole, shiftWindows: [], leadUserId: null, leadName: null });
       }
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't change the role."));
     } finally {
       setPendingId(null);
     }
@@ -459,7 +460,7 @@ export function UsersAdmin() {
         });
       }
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't change the assignment."));
     } finally {
       setPendingId(null);
     }
@@ -487,7 +488,7 @@ export function UsersAdmin() {
       toast.success('Status updated.');
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't change the account status."));
     } finally {
       setPendingId(null);
     }
@@ -502,7 +503,7 @@ export function UsersAdmin() {
       toast.success(r.status === 'INVITED' ? 'Reactivated — they never set a password, so the invite stands.' : 'Reactivated.');
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't reactivate the account."));
     } finally {
       setPendingId(null);
     }
@@ -515,7 +516,7 @@ export function UsersAdmin() {
       toast.success('Account unlocked.');
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't unlock the account."));
     } finally {
       setPendingId(null);
     }
@@ -537,7 +538,7 @@ export function UsersAdmin() {
       await forcePasswordReset(u.id);
       toast.success('Reset link sent.');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't require a password reset."));
     } finally {
       setPendingId(null);
     }
@@ -855,7 +856,7 @@ export function UsersAdmin() {
       <PageHeader
         title="Users & access"
         subtitle="Every account in the org. Change a role, disable a compromised account, or force a password reset."
-        breadcrumbs={[{ label: 'Compliance' }, { label: 'Users & access' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Users & access' }]}
       />
 
       {/* Shifts nobody leads / supervisors with no shift — only when any. */}

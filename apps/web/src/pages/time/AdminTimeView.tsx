@@ -1065,7 +1065,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   // dashes.
   const liveCols = useMemo(() => {
     const rows = active ?? [];
-    const client = !boundedClient;
+    // Brief 2-1b: no client column at all for a tenant without clients.
+    const client = !boundedClient && moduleOnTime('clientPortal');
     const job = rows.some((e) => !!e.jobName);
     const geofence = rows.some((e) => e.geofenceOk !== null);
     return {
@@ -1074,7 +1075,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
       geofence,
       span: 4 + (client ? 1 : 0) + (job ? 1 : 0) + (geofence ? 1 : 0) + (canManage ? 1 : 0),
     };
-  }, [active, boundedClient, canManage]);
+  }, [active, boundedClient, canManage, moduleOnTime]);
 
   const refreshPendingCount = useCallback(async () => {
     if (liveOnly) return;
@@ -1579,7 +1580,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     () => [
       {
         key: 'associate',
-        header: 'Associate',
+        header: term('worker'),
         accessor: (e) => e.associateName,
         sortable: true,
         primary: true,
@@ -1698,7 +1699,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           ]
         : []),
     ],
-    [liveCols, canManage, clockOutNow, liveClockOutIds],
+    [liveCols, canManage, clockOutNow, liveClockOutIds, term],
   );
 
   // The approval queue's columns. Keys match the page's sort accessors.
@@ -1706,7 +1707,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     () => [
       {
         key: 'associate',
-        header: 'Associate',
+        header: term('worker'),
         accessor: (e) => e.associateName,
         sortable: true,
         primary: true,
@@ -1723,14 +1724,18 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           </button>
         ),
       },
-      {
-        key: 'client',
-        header: 'Client',
-        accessor: (e) => e.clientName,
-        sortable: true,
-        cardMeta: true,
-        className: 'text-silver',
-      },
+      ...(liveCols.client
+        ? [
+            {
+              key: 'client',
+              header: 'Client',
+              accessor: (e) => e.clientName,
+              sortable: true,
+              cardMeta: true,
+              className: 'text-silver',
+            } satisfies GridColumn<TimeEntry>,
+          ]
+        : []),
       {
         key: 'in',
         header: 'In',
@@ -1857,7 +1862,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           ]
         : []),
     ],
-    [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne],
+    [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne, term, liveCols.client],
   );
 
   return (
@@ -4229,6 +4234,8 @@ function RecordPayPeriodDialog({
     retry: false,
   });
   const rows: PeriodPrefillRow[] | null = range ? (prefillQuery.data?.rows ?? null) : null;
+  const payTerm = useTerm();
+  const payClientsOn = useTenant().moduleOn('clientPortal');
   const loadErr = prefillQuery.error
     ? prefillQuery.error instanceof ApiError
       ? prefillQuery.error.message
@@ -4415,85 +4422,92 @@ function RecordPayPeriodDialog({
                 </div>
               </div>
 
-              <div className="max-h-80 overflow-y-auto rounded-md border border-navy-secondary">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-navy">
-                    <tr className="text-left text-2xs uppercase tracking-wider text-silver/70">
-                      <th className="px-2 py-1.5">
-                        <input
-                          type="checkbox"
-                          aria-label="Select everyone"
-                          checked={checked.size === rows.length}
-                          onChange={(e) =>
-                            setChecked(
-                              e.target.checked
-                                ? new Set(rows.map((r) => r.associateId))
-                                : new Set(),
-                            )
-                          }
-                        />
-                      </th>
-                      <th className="px-2 py-1.5">Associate</th>
-                      <th className="px-2 py-1.5 text-right">Reg h</th>
-                      <th className="px-2 py-1.5 text-right">OT h</th>
-                      <th className="px-2 py-1.5 text-right">Gross $</th>
-                      <th className="px-2 py-1.5">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-navy-secondary/60">
-                    {rows.map((r) => (
-                      <tr key={r.associateId}>
-                        <td className="px-2 py-1">
-                          <input
-                            type="checkbox"
-                            aria-label={`Include ${r.fullName}`}
-                            checked={checked.has(r.associateId)}
-                            onChange={(e) =>
-                              setChecked((prev) => {
-                                const next = new Set(prev);
-                                if (e.target.checked) next.add(r.associateId);
-                                else next.delete(r.associateId);
-                                return next;
-                              })
-                            }
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-white">
-                          {r.fullName}
+              <DataGrid<PeriodPrefillRow>
+                id="record-pay-period"
+                caption="Approved time in the period"
+                rows={rows}
+                rowKey={(r) => r.associateId}
+                search={false}
+                urlState={false}
+                exportCsv={false}
+                columnChooser={false}
+                selectable={{
+                  selection: { selected: checked, onChange: setChecked },
+                  selectAllLabel: 'Select everyone',
+                }}
+                className="max-h-80 overflow-y-auto"
+                columns={[
+                  {
+                    key: 'name',
+                    header: payTerm('worker'),
+                    accessor: (r) => r.fullName,
+                    sortable: true,
+                    primary: true,
+                    cell: (r) => (
+                      <span className="text-white">
+                        {r.fullName}
+                        {payClientsOn && r.clientName && (
                           <span className="ml-1.5 text-2xs text-silver/60">{r.clientName}</span>
-                        </td>
-                        <td className="px-2 py-1 text-right tabular-nums text-silver">
-                          {r.regularHours.toFixed(1)}
-                        </td>
-                        <td className="px-2 py-1 text-right tabular-nums text-silver">
-                          {r.overtimeHours.toFixed(1)}
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <Input
-                            inputMode="decimal"
-                            className="h-7 w-24 text-right tabular-nums"
-                            value={grossById[r.associateId] ?? ''}
-                            onChange={(e) =>
-                              setGrossById((prev) => ({
-                                ...prev,
-                                [r.associateId]: e.target.value,
-                              }))
-                            }
-                            aria-label={`Gross pay for ${r.fullName}`}
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-2xs">
-                          {r.alreadyRecorded ? (
-                            <span className="text-success">recorded ✓</span>
-                          ) : (
-                            <span className="text-silver/50">new</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        )}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'reg',
+                    header: 'Reg h',
+                    accessor: (r) => r.regularHours,
+                    sortable: true,
+                    align: 'right',
+                    className: 'tabular-nums text-silver',
+                    cell: (r) => r.regularHours.toFixed(1),
+                  },
+                  {
+                    key: 'ot',
+                    header: 'OT h',
+                    accessor: (r) => r.overtimeHours,
+                    sortable: true,
+                    align: 'right',
+                    className: 'tabular-nums text-silver',
+                    cell: (r) => r.overtimeHours.toFixed(1),
+                  },
+                  {
+                    key: 'gross',
+                    header: 'Gross $',
+                    accessor: (r) => grossById[r.associateId] ?? '',
+                    searchable: false,
+                    align: 'right',
+                    cardMeta: true,
+                    stopRowClick: true,
+                    cell: (r) => (
+                      <Input
+                        inputMode="decimal"
+                        className="h-7 w-24 text-right tabular-nums"
+                        value={grossById[r.associateId] ?? ''}
+                        onChange={(e) =>
+                          setGrossById((prev) => ({
+                            ...prev,
+                            [r.associateId]: e.target.value,
+                          }))
+                        }
+                        aria-label={`Gross pay for ${r.fullName}`}
+                      />
+                    ),
+                  },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (r) => (r.alreadyRecorded ? 'recorded' : 'new'),
+                    cardMeta: true,
+                    className: 'text-2xs',
+                    cell: (r) =>
+                      r.alreadyRecorded ? (
+                        <span className="text-success">recorded ✓</span>
+                      ) : (
+                        <span className="text-silver/50">new</span>
+                      ),
+                  },
+                ]}
+              />
 
               <div className="flex items-center justify-between gap-3">
                 <div className="text-xs text-silver tabular-nums">

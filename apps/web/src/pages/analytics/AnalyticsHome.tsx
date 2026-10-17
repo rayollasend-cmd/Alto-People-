@@ -57,6 +57,11 @@ const STATUS_ORDER: readonly string[] = [
   'REJECTED',
   'CANCELLED',
 ] as const;
+/** "IN_REVIEW" → "In review": the fallback for a status the label map has not met yet. */
+function sentenceCase(code: string): string {
+  const words = code.toLowerCase().replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 const STATUS_LABELS: Record<string, string> = {
   APPROVED: 'Approved',
   IN_REVIEW: 'In review',
@@ -227,13 +232,13 @@ export function AnalyticsHome() {
             <Stat
               label={`Net paid (last ${kpis.windowDays}d)`}
               value={fmtMoney(kpis.netPaidLast30d)}
-              hint="Sum of NET on every DISBURSED paystub"
+              hint="Net pay on every disbursed paystub"
               link="/payroll"
             />
             <Stat
               label="Net pending disbursement"
               value={fmtMoney(kpis.netPendingDisbursement)}
-              hint="On DRAFT + FINALIZED runs"
+              hint="On draft and finalized runs"
               link="/payroll"
             />
           </div>
@@ -380,7 +385,7 @@ function buildStatusBreakdown(
   for (const [status, value] of Object.entries(counts)) {
     if (seen.has(status) || value <= 0) continue;
     out.push({
-      name: status.replace(/_/g, ' '),
+      name: STATUS_LABELS[status] ?? sentenceCase(status),
       value,
     });
   }

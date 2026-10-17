@@ -4,7 +4,8 @@ import { useSearchParams } from 'react-router-dom';
 import { Landmark, PhoneCall, ShieldAlert } from 'lucide-react';
 import type { FinancialChangeRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useRoleLabel } from '@/lib/auth';
+import type { Role } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import {
   holdFinancialChange,
@@ -32,6 +33,30 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { toast } from '@/components/ui/Toaster';
+
+/** How the actor was signed in when they made the change, in plain words. */
+const AUTH_STRENGTH_LABEL: Record<string, string> = {
+  MFA: 'Two-step sign-in',
+  PASSKEY: 'Passkey sign-in',
+  PASSWORD: 'Password only',
+  NAME_ONLY: 'Name only',
+};
+const authStrengthLabel = (s: string): string => AUTH_STRENGTH_LABEL[s] ?? sentenceCase(s);
+
+/** How the change was verified. */
+const VERIFIED_VIA_LABEL: Record<string, string> = {
+  PHONE_CALL: 'by phone call',
+  IN_PERSON: 'in person',
+  NAME_ONLY: 'by name only',
+  OTHER: 'another way',
+  REJECTED: 'rejected',
+};
+const verifiedViaLabel = (s: string): string => VERIFIED_VIA_LABEL[s] ?? sentenceCase(s).toLowerCase();
+
+function sentenceCase(code: string): string {
+  const words = code.toLowerCase().replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 /**
  * The Finance queue. Every change to how or to whom an associate is paid
@@ -189,7 +214,7 @@ export function FinancialChangesQueue() {
                       <div>{row.actor?.name ?? 'System'}</div>
                       <div className="text-silver">
                         {row.onBehalf ? 'On behalf · ' : ''}
-                        {row.authStrength === 'MFA' || row.authStrength === 'PASSKEY' ? `${row.authStrength} sign-in` : row.authStrength.toLowerCase()}
+                        {authStrengthLabel(row.authStrength)}
                       </div>
                     </div>
                   ),
@@ -246,6 +271,7 @@ function ChangeDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const roleLabel = useRoleLabel();
   const { user } = useAuth();
   const [mode, setMode] = useState<'view' | 'verify' | 'reject' | 'hold'>('view');
   const [via, setVia] = useState<'PHONE_CALL' | 'IN_PERSON' | 'OTHER'>('PHONE_CALL');
@@ -301,14 +327,14 @@ function ChangeDialog({
           <dt className="text-silver">By</dt>
           <dd>
             {change.actor?.name ?? 'System'}
-            {change.actor?.role ? <span className="text-silver"> · {change.actor.role.replace(/_/g, ' ').toLowerCase()}</span> : null}
+            {change.actor?.role ? <span className="text-silver"> · {roleLabel(change.actor.role as Role)}</span> : null}
           </dd>
           <dt className="text-silver">Sign-in</dt>
           <dd>
             {change.authStrength === 'MFA' || change.authStrength === 'PASSKEY' ? (
-              <Badge variant="success">{change.authStrength}</Badge>
+              <Badge variant="success">{authStrengthLabel(change.authStrength)}</Badge>
             ) : (
-              <Badge variant="pending">{change.authStrength.toLowerCase()}</Badge>
+              <Badge variant="pending">{authStrengthLabel(change.authStrength)}</Badge>
             )}
           </dd>
           <dt className="text-silver">Device</dt>
@@ -334,7 +360,7 @@ function ChangeDialog({
             {change.verifiedBy && (
               <span className="text-xs text-silver">
                 by {change.verifiedBy.name} · {fmtDateTime(change.verifiedAt)}
-                {change.verifiedVia ? ` · ${change.verifiedVia.replace(/_/g, ' ').toLowerCase()}` : ''}
+                {change.verifiedVia ? ` · ${verifiedViaLabel(change.verifiedVia)}` : ''}
               </span>
             )}
           </dd>

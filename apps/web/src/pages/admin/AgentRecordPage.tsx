@@ -102,7 +102,7 @@ export function AgentRecordPage() {
 
   return (
     <RecordTemplate
-      breadcrumbs={[{ label: 'Settings & Trust' }, { label: 'Agents', to: '/agents' }, { label: agent.name }]}
+      breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Agents', to: '/agents' }, { label: agent.name }]}
       identity={<AgentGlyph family={agent.profile.family} status={agent.status} size="lg" />}
       title={agent.name}
       status={

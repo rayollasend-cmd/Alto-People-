@@ -50,7 +50,7 @@ export function BrandingHome() {
   const [branding, setBranding] = useState<OrgBranding | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const [orgName, setOrgName] = useState('Alto HR');
+  const [orgName, setOrgName] = useState('');
   const [assistantName, setAssistantName] = useState('Hugo');
   const [weekStartsOn, setWeekStartsOn] = useState(6);
   const [timezone, setTimezone] = useState('America/New_York');
@@ -126,6 +126,10 @@ export function BrandingHome() {
   };
 
   const onSave = async () => {
+    if (!orgName.trim()) {
+      toast.error('Enter your organization\'s name.');
+      return;
+    }
     if (!colorValid) {
       toast.error('Primary colour must be a #RRGGBB hex value.');
       return;
@@ -137,7 +141,7 @@ export function BrandingHome() {
     setSaving(true);
     try {
       const updated = await patchOrgBranding({
-        orgName: orgName.trim() || 'Alto HR',
+        orgName: orgName.trim(),
         assistantName: assistantName.trim() || 'Hugo',
         weekStartsOn,
         timezone,
@@ -240,7 +244,7 @@ export function BrandingHome() {
           </>
         }
         breadcrumbs={[
-          { label: 'Home', to: '/' },
+          { label: 'Settings & trust', to: '/admin' },
           { label: 'Branding' },
         ]}
         secondaryActions={
@@ -279,7 +283,7 @@ export function BrandingHome() {
                     value={orgName}
                     onChange={(e) => setOrgName(e.target.value)}
                     maxLength={120}
-                    placeholder="Alto HR"
+                    placeholder="Your organization's name"
                     {...p}
                   />
                 )}
@@ -328,7 +332,7 @@ export function BrandingHome() {
                 hint={
                   <>
                     Overlaid as the display name on the From: header (e.g.
-                    &ldquo;Alto HR &lt;hr@altohr.com&gt;&rdquo;). Leave blank
+                    &ldquo;Acme HR &lt;hr@example.com&gt;&rdquo;). Leave blank
                     to use the raw RESEND_FROM env value.
                   </>
                 }
@@ -338,7 +342,7 @@ export function BrandingHome() {
                     value={senderName}
                     onChange={(e) => setSenderName(e.target.value)}
                     maxLength={120}
-                    placeholder="Alto HR"
+                    placeholder="Your organization's name"
                     {...p}
                   />
                 )}

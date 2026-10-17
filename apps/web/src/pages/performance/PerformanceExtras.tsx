@@ -40,7 +40,8 @@ import {
 import { createReview } from '@/lib/performanceApi';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
+import { pickOne } from '@/lib/validationCopy';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -241,6 +242,7 @@ type GoalDraft = {
 
 function GoalsTab() {
   const { user } = useAuth();
+  const term = useTerm();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const confirm = useConfirm();
   const qc = useQueryClient();
@@ -259,11 +261,11 @@ function GoalsTab() {
 
   const filtered = useMemo(() => {
     if (!rows) return null;
-    const term = assocFilter.trim().toLowerCase();
+    const needle = assocFilter.trim().toLowerCase();
     return rows.filter(
       (g) =>
         (statusFilter === 'ALL' || g.status === statusFilter) &&
-        (!term || (g.associateName ?? '').toLowerCase().includes(term)),
+        (!needle || (g.associateName ?? '').toLowerCase().includes(needle)),
     );
   }, [rows, assocFilter, statusFilter]);
 
@@ -315,7 +317,7 @@ function GoalsTab() {
   const onExportCsv = () => {
     if (!filtered || filtered.length === 0) return;
     downloadCsv(`goals-${todayYmd()}.csv`, [
-      ['Associate', 'Kind', 'Title', 'Period start', 'Period end', 'Status', 'Progress %'],
+      [term('worker'), 'Kind', 'Title', 'Period start', 'Period end', 'Status', 'Progress %'],
       ...filtered.map((g) => [
         g.associateName ?? '',
         g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal',
@@ -411,7 +413,7 @@ function GoalsTab() {
               exportCsv={{ filename: 'goals' }}
               columns={[
                 { key: 'title', header: 'Title', accessor: (g) => g.title, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'associate', header: 'Associate', accessor: (g) => g.associateName, sortable: true, cardMeta: true, cell: (g) => g.associateName ?? '—' },
+                { key: 'associate', header: term('worker'), accessor: (g) => g.associateName, sortable: true, cardMeta: true, cell: (g) => g.associateName ?? '—' },
                 { key: 'kind', header: 'Kind', accessor: (g) => (g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'), sortable: true, cardMeta: true },
                 { key: 'period', header: 'Period', accessor: (g) => g.periodStart, csv: (g) => `${fmtYmd(g.periodStart)} – ${fmtYmd(g.periodEnd)}`, sortable: true, searchable: false, className: 'whitespace-nowrap', cell: (g) => `${fmtYmd(g.periodStart)} – ${fmtYmd(g.periodEnd)}` },
                 {
@@ -517,6 +519,7 @@ function GoalsTab() {
       <Drawer
         open={pipDraft !== null}
         onOpenChange={(o) => !o && setPipDraft(null)}
+        confirmDiscard={() => !!pipDraft && (pipDraft.reason.trim().length > 0 || pipDraft.expectations.trim().length > 0 || pipDraft.supportPlan.trim().length > 0)}
       >
         {pipDraft && (
           <PipFromGoalDrawer
@@ -532,7 +535,11 @@ function GoalsTab() {
           />
         )}
       </Drawer>
-      <Drawer open={draft !== null} onOpenChange={(o) => !o && setDraft(null)}>
+      <Drawer
+        open={draft !== null}
+        onOpenChange={(o) => !o && setDraft(null)}
+        confirmDiscard={() => !!draft && (draft.associate !== null || draft.title.trim().length > 0 || draft.description.trim().length > 0)}
+      >
         {draft && (
           <GoalDrawer
             draft={draft}
@@ -770,10 +777,11 @@ function GoalDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
     if (!draft.associate) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (!draft.title.trim()) {
@@ -809,7 +817,7 @@ function GoalDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker
               value={draft.associate}
@@ -1091,7 +1099,7 @@ function KudosTab() {
           ))}
         </div>
       )}
-      <Drawer open={showCompose} onOpenChange={setShowCompose}>
+      <Drawer open={showCompose} onOpenChange={setShowCompose} confirmDiscard={() => toAssociate !== null || message.trim().length > 0 || tags.trim().length > 0}>
         <DrawerHeader>
           <DrawerTitle>Send kudo</DrawerTitle>
         </DrawerHeader>
@@ -1135,6 +1143,7 @@ function KudosTab() {
 
 function OneOnOnesTab() {
   const { user } = useAuth();
+  const term = useTerm();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const confirm = useConfirm();
   const qc = useQueryClient();
@@ -1196,11 +1205,11 @@ function OneOnOnesTab() {
               caption="1:1 meetings"
               rows={rows}
               rowKey={(m) => m.id}
-              search={{ placeholder: 'Associate, manager…' }}
+              search={{ placeholder: `${term('worker')}, manager…` }}
               urlState={false}
               exportCsv={{ filename: 'one-on-ones' }}
               columns={[
-                { key: 'associate', header: 'Associate', accessor: (m) => m.associateName, sortable: true, primary: true, className: 'font-medium text-white', cell: (m) => m.associateName ?? '—' },
+                { key: 'associate', header: term('worker'), accessor: (m) => m.associateName, sortable: true, primary: true, className: 'font-medium text-white', cell: (m) => m.associateName ?? '—' },
                 { key: 'manager', header: 'Manager', accessor: (m) => m.managerEmail, sortable: true, cardMeta: true, cell: (m) => m.managerEmail ?? '—' },
                 { key: 'scheduled', header: 'Scheduled', accessor: (m) => m.scheduledFor, sortable: true, searchable: false, cardMeta: true, cell: (m) => fmtDateTime(m.scheduledFor) },
                 {
@@ -1259,6 +1268,7 @@ function ScheduleOneOnOneDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [when, setWhen] = useState('');
   const [agenda, setAgenda] = useState('');
@@ -1266,7 +1276,7 @@ function ScheduleOneOnOneDrawer({
 
   const onSubmit = async () => {
     if (!associate) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     const scheduledFor = when ? new Date(when) : null;
@@ -1292,13 +1302,13 @@ function ScheduleOneOnOneDrawer({
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg">
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg" confirmDiscard={() => associate !== null || when.length > 0 || agenda.trim().length > 0}>
       <DrawerHeader>
         <DrawerTitle>Schedule 1:1</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={associate} onChange={setAssociate} />
           </div>
@@ -1338,6 +1348,7 @@ function ScheduleOneOnOneDrawer({
 
 function PipsTab({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
+  const term = useTerm();
   const prompt = usePrompt();
   const navigate = useNavigate();
   const [showNew, setShowNew] = useState(false);
@@ -1353,9 +1364,9 @@ function PipsTab({ canManage }: { canManage: boolean }) {
 
   const filtered = useMemo(() => {
     if (!rows) return null;
-    const term = assocFilter.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter((p) => (p.associateName ?? '').toLowerCase().includes(term));
+    const needle = assocFilter.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((p) => (p.associateName ?? '').toLowerCase().includes(needle));
   }, [rows, assocFilter]);
 
   const invalidatePips = () =>
@@ -1444,7 +1455,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
               urlState={false}
               exportCsv={{ filename: 'pips' }}
               columns={[
-                { key: 'associate', header: 'Associate', accessor: (pip) => pip.associateName, sortable: true, primary: true, className: 'font-medium text-white', cell: (pip) => pip.associateName ?? '—' },
+                { key: 'associate', header: term('worker'), accessor: (pip) => pip.associateName, sortable: true, primary: true, className: 'font-medium text-white', cell: (pip) => pip.associateName ?? '—' },
                 { key: 'period', header: 'Period', accessor: (pip) => pip.startDate, csv: (pip) => `${fmtYmd(pip.startDate)} – ${fmtYmd(pip.endDate)}`, sortable: true, searchable: false, cardMeta: true, cell: (pip) => `${fmtYmd(pip.startDate)} – ${fmtYmd(pip.endDate)}` },
                 { key: 'reason', header: 'Reason', accessor: (pip) => pip.reason, cardMeta: true, className: 'max-w-md truncate' },
                 {
@@ -1493,6 +1504,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
 }
 
 function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [startDate, setStartDate] = useState(todayYmd());
   const [endDate, setEndDate] = useState(() => {
@@ -1507,7 +1519,7 @@ function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 
   const onSubmit = async () => {
     if (!associate) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (!reason.trim() || !expectations.trim()) {
@@ -1533,13 +1545,13 @@ function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
     }
   };
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg">
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg" confirmDiscard={() => associate !== null || reason.trim().length > 0 || expectations.trim().length > 0 || supportPlan.trim().length > 0}>
       <DrawerHeader>
         <DrawerTitle>New PIP</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={associate} onChange={setAssociate} />
           </div>
@@ -1717,6 +1729,7 @@ function FeedbackDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [rating, setRating] = useState('');
   const [strengths, setStrengths] = useState('');
   const [improvements, setImprovements] = useState('');
@@ -1746,10 +1759,10 @@ function FeedbackDrawer({
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg">
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg" confirmDiscard={() => rating !== '' || strengths.trim().length > 0 || improvements.trim().length > 0}>
       <DrawerHeader>
         <DrawerTitle>
-          Feedback for {review.subjectAssociateName ?? 'associate'}
+          Feedback for {review.subjectAssociateName ?? term('worker').toLowerCase()}
         </DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
@@ -1924,6 +1937,7 @@ function AggregateDrawer({
 }
 
 function NewReview360Drawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const term = useTerm();
   const [subject, setSubject] = useState<PickedAssociate | null>(null);
   const [periodStart, setStart] = useState(() => {
     const d = new Date();
@@ -1933,7 +1947,7 @@ function NewReview360Drawer({ onClose, onSaved }: { onClose: () => void; onSaved
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
     if (!subject) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     setSaving(true);
@@ -1952,7 +1966,7 @@ function NewReview360Drawer({ onClose, onSaved }: { onClose: () => void; onSaved
     }
   };
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => subject !== null}>
       <DrawerHeader>
         <DrawerTitle>New 360 review</DrawerTitle>
       </DrawerHeader>
@@ -1998,6 +2012,7 @@ const TIMELINE_KIND_META: Record<
 };
 
 function TimelineTab() {
+  const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
 
   // The picker resolves to a stable {id, name} only when the user selects
@@ -2020,13 +2035,13 @@ function TimelineTab() {
     <div className="space-y-4">
       <Card>
         <CardContent className="p-4">
-          <Label>Associate</Label>
+          <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={associate} onChange={setAssociate} />
           </div>
           {!associate && (
             <p className="mt-2 text-xs text-silver">
-              Pick an associate to see their goals, PIPs, and reviews on one timeline.
+              {pickOne(term).replace(/\.$/, '')} to see their goals, PIPs, and reviews on one timeline.
             </p>
           )}
         </CardContent>

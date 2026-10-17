@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Download, Inbox, Megaphone, RotateCw, Send } from 'lucide-react';
 import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
 import { toast } from 'sonner';
+import { performWithUndo } from '@/lib/undoToast';
+import { pickOne } from '@/lib/validationCopy';
 import type {
   EmailSuppression,
   Notification,
@@ -52,6 +54,7 @@ import {
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
+import { useTerm } from '@/lib/auth';
 
 function statusVariant(
   s: Notification['status'],
@@ -270,7 +273,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         title="Communications"
         subtitle={
           canManage
-            ? 'Send notifications via SMS, push, email, or in-app inbox. Provider integrations are stubbed.'
+            ? 'Send notifications via SMS, push, email, or in-app inbox.'
             : 'Read-only view of sent notifications.'
         }
         primaryAction={
@@ -439,30 +442,36 @@ const SUPPRESSION_REASON_LABELS: Record<EmailSuppression['reason'], string> = {
  * Suppressed status. Removing an address resumes delivery.
  */
 function SuppressionListCard() {
-  const [removingEmail, setRemovingEmail] = useState<string | null>(null);
+  // Addresses removed in the UI while their undo window is open.
+  const [hiddenEmails, setHiddenEmails] = useState<ReadonlySet<string>>(() => new Set());
 
   const refreshQuery = useQuery({
     queryKey: ['SuppressionListCard', 'rows'],
     queryFn: () => listSuppressions(),
   });
-  const rows: EmailSuppression[] | null = refreshQuery.data?.suppressions ?? null;
+  const rows: EmailSuppression[] | null = refreshQuery.data?.suppressions.filter((s) => !hiddenEmails.has(s.email)) ?? null;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
   const refresh = async () => {
     await refreshQuery.refetch();
   };
 
 
-  const remove = async (email: string) => {
-    setRemovingEmail(email);
-    try {
-      await deleteSuppression(email);
-      toast.success(`${email} can receive email again.`);
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Remove failed.');
-    } finally {
-      setRemovingEmail(null);
-    }
+  const remove = (email: string) => {
+    setHiddenEmails((prev) => new Set(prev).add(email));
+    performWithUndo({
+      message: `${email} can receive email again.`,
+      onCommit: async () => {
+        await deleteSuppression(email);
+        await refresh();
+      },
+      onUndo: () =>
+        setHiddenEmails((prev) => {
+          const next = new Set(prev);
+          next.delete(email);
+          return next;
+        }),
+      commitFailedMessage: `Couldn't unblock ${email}.`,
+    });
   };
 
   return (
@@ -528,8 +537,8 @@ function SuppressionListCard() {
                 stopRowClick: true,
                 width: '6rem',
                 cell: (sup) => (
-                  <Button size="xs" variant="outline" disabled={removingEmail === sup.email} onClick={() => void remove(sup.email)}>
-                    {removingEmail === sup.email ? 'Removing…' : 'Remove'}
+                  <Button size="xs" variant="outline" onClick={() => remove(sup.email)}>
+                    Remove
                   </Button>
                 ),
               },
@@ -645,6 +654,7 @@ interface ComposeDialogProps {
 }
 
 function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
+  const term = useTerm();
   const [channel, setChannel] = useState<NotificationChannel>('IN_APP');
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [recipientUserId, setRecipientUserId] = useState('');
@@ -721,7 +731,7 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
     if (submitting) return;
     setError(null);
     if (!recipientUserId && !recipientEmail && !recipientPhone) {
-      setError('Pick an associate or fill in an email/phone.');
+      setError(`${pickOne(term).replace(/\.$/, '')} or fill in an email/phone.`);
       return;
     }
     setSubmitting(true);
@@ -748,8 +758,7 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
         <DialogHeader>
           <DialogTitle>Send notification</DialogTitle>
           <DialogDescription>
-            Pick the channel and the recipient. Email / SMS / Push are stubbed —
-            they record an audit row but don&apos;t hit a real provider yet.
+            Pick the channel and the recipient. Every send is recorded here.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">

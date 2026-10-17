@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, defaultTenantProfile, type BusinessModel, type Capability, type Role } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 
 /**
@@ -32,11 +32,12 @@ vi.mock('@/pages/compliance/AuditPacketTab', () => ({
 
 import { ComplianceHome } from '@/pages/compliance/ComplianceHome';
 
-function renderAs(role: Role, path = '/compliance') {
+function renderAs(role: Role, path = '/compliance', model: BusinessModel = 'WORKFORCE_PROVIDER') {
   const caps = ROLE_CAPABILITIES[role];
   return render(
     <AuthContext.Provider
       value={{
+        tenant: { id: 't1', ...defaultTenantProfile(model) },
         isInitializing: false,
         isOffline: false,
         user: {
@@ -89,5 +90,29 @@ describe('the audit-packet tab follows the capability the server enforces', () =
   it('still opens it for someone who is allowed', () => {
     renderAs('HR_ADMINISTRATOR', '/compliance?tab=audit');
     expect(screen.getByText('audit packet body')).toBeInTheDocument();
+  });
+});
+
+describe('the contract scorecard and the J-1 tab follow the tenant\'s modules', () => {
+  it('a staffing company sees both and lands on the scorecard', () => {
+    renderAs('HR_ADMINISTRATOR');
+    expect(screen.getByRole('tab', { name: 'Scorecard' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'J-1 program' })).toBeInTheDocument();
+    expect(screen.getByText('scorecard body')).toBeInTheDocument();
+  });
+
+  it('a direct employer with no client contracts or programs sees neither and lands on I-9', () => {
+    renderAs('HR_ADMINISTRATOR', '/compliance', 'DIRECT_EMPLOYER');
+    expect(screen.queryByRole('tab', { name: 'Scorecard' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'J-1 program' })).toBeNull();
+    expect(screen.getByText('i9')).toBeInTheDocument();
+    // The tenant's word for a site names the requirements tab.
+    expect(screen.getByRole('tab', { name: 'Property requirements' })).toBeInTheDocument();
+  });
+
+  it('a bookmarked ?tab=j1 falls back to I-9 when programs are off', () => {
+    renderAs('HR_ADMINISTRATOR', '/compliance?tab=j1', 'DIRECT_EMPLOYER');
+    expect(screen.queryByText('j1')).toBeNull();
+    expect(screen.getByText('i9')).toBeInTheDocument();
   });
 });

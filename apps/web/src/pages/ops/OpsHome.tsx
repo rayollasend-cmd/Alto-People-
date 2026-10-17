@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
@@ -50,6 +50,7 @@ export function OpsHome() {
   // params (?shift=, ?record=) are preserved across switches so live
   // context survives a detour through another tab.
   const [searchParams, setSearchParams] = useSearchParams();
+  const term = useTerm();
   // Leadership (org-wide, holds the board) lands on the board — every
   // store at once; running one floor is a deliberate pick under My shift.
   // A supervisor lands on their own shift.
@@ -67,7 +68,7 @@ export function OpsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Store Ops"
+        title={`${term('site')} operations`}
         subtitle={
           searchParams.get('shift')
             ? undefined

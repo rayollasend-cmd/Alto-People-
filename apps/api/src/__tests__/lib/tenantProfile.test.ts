@@ -54,7 +54,7 @@ describe('the profile endpoints and the gates', () => {
     const got = await admin.get('/admin/tenant/profile');
     expect(got.status).toBe(200);
     expect(got.body.profile.modules.transportation).toBe(true);
-    expect(got.body.catalog.modules.length).toBe(12);
+    expect(got.body.catalog.modules.length).toBe(14);
 
     const kim = await createAssociate({ firstName: 'Kim', lastName: 'Nguyen' });
     const { user: kimUser } = await createUser({ role: 'ASSOCIATE', associateId: kim.id });
@@ -89,6 +89,47 @@ describe('the profile endpoints and the gates', () => {
     expect(reset.body.profile.modules.transportation).toBe(true);
     expect(reset.body.profile.terminology.worker.en).toBe('Associate');
     expect((await rider.get('/transport/me')).status).toBe(200);
+  });
+
+  it('talent and perks are on by default; off, every path they own answers 404 while the rest of the app stands', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const admin = await loginAs(agent(), hr.email);
+    const kim = await createAssociate({ firstName: 'Kim', lastName: 'Nguyen' });
+    const { user: kimUser } = await createUser({ role: 'ASSOCIATE', associateId: kim.id });
+    const associate = await loginAs(agent(), kimUser.email);
+
+    // The talent routers mount at '/', so the gate is by path prefix: each owned path, admin- and self-facing.
+    const talent = ['/skills', '/associate-skills', '/career-ladders', '/mentorships', '/succession/positions', '/probations', '/ramp-plans', '/learning-paths', '/internal-jobs', '/pulse-surveys'];
+    const talentSelf = ['/my/learning-paths', '/my/internal-applications', '/my/pulse-surveys'];
+    const perks = ['/tuition-requests', '/tuition-summary', '/equity-grants', '/volunteer-entries', '/volunteer-summary', '/vto-policy'];
+    const perksSelf = ['/my/tuition-requests', '/my/equity-grants', '/my/volunteer-entries'];
+    expect((await loadTenantProfile(ALTO_TENANT_ID)).modules).toMatchObject({ talent: true, perks: true });
+    for (const p of [...talent, ...perks]) expect((await admin.get(p)).status, p).not.toBe(404);
+    for (const p of [...talentSelf, ...perksSelf]) expect((await associate.get(p)).status, p).not.toBe(404);
+
+    // Talent off: its paths are gone for everyone; perks and the rest of the app are untouched.
+    expect((await admin.put('/admin/tenant/profile').send({ modules: { talent: false } })).status).toBe(200);
+    for (const p of talent) expect((await admin.get(p)).status, p).toBe(404);
+    for (const p of talentSelf) expect((await associate.get(p)).status, p).toBe(404);
+    expect((await admin.get('/skills/00000000-0000-4000-8000-000000000000')).status).toBe(404);
+    for (const p of perks) expect((await admin.get(p)).status, p).not.toBe(404);
+    expect((await admin.get('/admin/tenant/profile')).status).toBe(200);
+    expect((await admin.get('/programs')).status).not.toBe(404);
+    expect((await associate.get('/auth/me')).body.tenant.modules).toMatchObject({ talent: false, perks: true });
+
+    // Perks off too: now both long tails are gone; the gate never leaks onto neighbouring prefixes.
+    expect((await admin.put('/admin/tenant/profile').send({ modules: { perks: false } })).status).toBe(200);
+    for (const p of perks) expect((await admin.get(p)).status, p).toBe(404);
+    for (const p of perksSelf) expect((await associate.get(p)).status, p).toBe(404);
+    expect((await admin.get('/admin/tenant/profile')).status).toBe(200);
+    expect((await admin.get('/programs')).status).not.toBe(404);
+    expect(await moduleOn('talent')).toBe(false);
+    expect(await moduleOn('perks')).toBe(false);
+
+    // Back on: the paths return.
+    expect((await admin.put('/admin/tenant/profile').send({ modules: { talent: true, perks: true } })).status).toBe(200);
+    expect((await admin.get('/skills')).status).not.toBe(404);
+    expect((await admin.get('/tuition-requests')).status).not.toBe(404);
   });
 
   it('a direct employer switches the hotel modules off by default', async () => {

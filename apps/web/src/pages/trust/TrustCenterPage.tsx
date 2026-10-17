@@ -40,7 +40,7 @@ export function TrustCenterPage() {
       <PageHeader
         title="Trust Center"
         subtitle="How the platform is run, with the evidence: the controls, the audit chain, the agents and their governance. The public page says the same with your numbers left out."
-        breadcrumbs={[{ label: 'Settings & Trust' }, { label: 'Trust Center' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Trust Center' }]}
         primaryAction={
           <span className="flex flex-wrap items-center gap-2">
             <Button asChild variant="ghost" size="sm">

@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getMyDelegations } from '@/lib/delegationsApi';
-import { useAuth } from '@/lib/auth';
-import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Target, Users } from 'lucide-react';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   approveTeamTimeOff,
@@ -30,10 +31,9 @@ import {
   Avatar,
   Badge,
   Button,
-  Card,
-  CardContent,
   EmptyState,
   ErrorBanner,
+  MetricCard,
   SearchInput,
   SegmentedControl,
   SkeletonRows,
@@ -87,40 +87,12 @@ export function TeamHome() {
 
       {dashboard && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <KpiTile
-            label="Direct reports"
-            value={dashboard.directReports.toString()}
-            icon={Users}
-          />
-          <KpiTile
-            label="Timesheets"
-            value={dashboard.pendingTimesheets.toString()}
-            icon={Clock}
-            highlight={dashboard.pendingTimesheets > 0}
-          />
-          <KpiTile
-            label="Time-off"
-            value={dashboard.pendingTimeOff.toString()}
-            icon={CalendarOff}
-            highlight={dashboard.pendingTimeOff > 0}
-          />
-          <KpiTile
-            label="Reimbursements"
-            value={dashboard.pendingReimbursements.toString()}
-            icon={Receipt}
-            highlight={dashboard.pendingReimbursements > 0}
-          />
-          <KpiTile
-            label="At-risk goals"
-            value={dashboard.atRiskGoals.toString()}
-            icon={Target}
-            highlight={dashboard.atRiskGoals > 0}
-          />
-          <KpiTile
-            label="Onboarding"
-            value={dashboard.onboardingInProgress.toString()}
-            icon={Users}
-          />
+          <MetricCard label="Direct reports" value={dashboard.directReports} />
+          <MetricCard label="Timesheets" value={dashboard.pendingTimesheets} accent={dashboard.pendingTimesheets > 0} />
+          <MetricCard label="Time off" value={dashboard.pendingTimeOff} accent={dashboard.pendingTimeOff > 0} />
+          <MetricCard label="Reimbursements" value={dashboard.pendingReimbursements} accent={dashboard.pendingReimbursements > 0} />
+          <MetricCard label="At-risk goals" value={dashboard.atRiskGoals} accent={dashboard.atRiskGoals > 0} />
+          <MetricCard label="Onboarding" value={dashboard.onboardingInProgress} />
         </div>
       )}
 
@@ -203,36 +175,6 @@ export function TeamHome() {
   );
 }
 
-function KpiTile({
-  label,
-  value,
-  icon: Icon,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  icon: typeof Users;
-  highlight?: boolean;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-            {label}
-          </div>
-          <Icon className={`h-4 w-4 ${highlight ? 'text-gold' : 'text-silver/70'}`} />
-        </div>
-        <div
-          className={`font-display text-3xl tabular-nums mt-1 ${highlight ? 'text-gold' : 'text-white'}`}
-        >
-          {value}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 const KIND_META: Record<
   InboxItem['kind'],
   { label: string; icon: typeof Users; tone: string }
@@ -245,6 +187,7 @@ const KIND_META: Record<
 
 function InboxTab() {
   const prompt = usePrompt();
+  const term = useTerm();
   const q = useQuery({
     queryKey: teamKeys.inbox(),
     queryFn: getTeamInbox,
@@ -285,8 +228,8 @@ function InboxTab() {
       denyTeamTimeOff(id, note),
     keys: [teamKeys.all],
     apply: ({ id }, c) => removeFromLists(c, [teamKeys.all], [id]),
-    errorMessage: 'Deny failed.',
-    onSuccess: () => toast.success('Time off denied.'),
+    errorMessage: 'Reject failed.',
+    onSuccess: () => toast.success('Time off rejected.'),
   });
 
   const rejectTs = async (id: string) => {
@@ -301,12 +244,14 @@ function InboxTab() {
     if (!reason) return;
     rejectTsM.mutate({ id, reason });
   };
+  // One verb on this page: Reject — for a timesheet and for time off alike
+  // (the API calls the latter "deny"; the person never sees that word here).
   const denyPto = async (id: string) => {
     const note = (
       await prompt({
-        title: 'Deny time-off request',
-        reasonLabel: 'Reason for denial',
-        confirmLabel: 'Deny',
+        title: 'Reject time-off request',
+        reasonLabel: 'Reason for rejection',
+        confirmLabel: 'Reject',
         destructive: true,
       })
     )?.trim();
@@ -355,7 +300,7 @@ function InboxTab() {
       caption="Waiting on you"
       rows={q.data.items}
       rowKey={(item) => `${item.kind}-${item.id}`}
-      search={{ placeholder: 'Associate, type…' }}
+      search={{ placeholder: `${term('worker')}, type…` }}
       urlState={false}
       exportCsv={false}
       columns={[
@@ -378,7 +323,7 @@ function InboxTab() {
         },
         {
           key: 'associate',
-          header: 'Associate',
+          header: term('worker'),
           accessor: (item) => item.associateName,
           sortable: true,
           primary: true,
@@ -429,7 +374,7 @@ function InboxTab() {
               {item.kind === 'TIME_OFF' && (
                 <>
                   <Button size="sm" variant="outline" onClick={() => denyPto(item.id)} disabled={pendingId === item.id}>
-                    Deny
+                    Reject
                   </Button>
                   <Button size="sm" onClick={() => approvePtoM.mutate(item.id)} loading={pendingId === item.id}>
                     Approve
@@ -446,6 +391,7 @@ function InboxTab() {
 
 function ReportsList({ reports }: { reports: DirectReport[] | null }) {
   const [search, setSearch] = useState('');
+  const term = useTerm();
 
   const filtered = useMemo(() => {
     if (!reports) return null;
@@ -499,7 +445,7 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
           columns={[
             {
               key: 'associate',
-              header: 'Associate',
+              header: term('worker'),
               accessor: (r) => `${r.firstName} ${r.lastName}`,
               sortable: true,
               primary: true,
@@ -554,6 +500,9 @@ const TS_STATUS_LABELS: Record<TeamTimeEntry['status'], string> = {
 
 function TimesheetsTab() {
   const prompt = usePrompt();
+  const term = useTerm();
+  // The client column earns its place only where there are clients.
+  const clientsOn = useTenant().moduleOn('clientPortal');
   const [status, setStatus] = useState<TeamTimeEntry['status']>('COMPLETED');
   const isQueue = status === 'COMPLETED';
   const q = useQuery({
@@ -657,8 +606,8 @@ function TimesheetsTab() {
     const entries = q.data ?? [];
     downloadCsv(`team-timesheets-${status.toLowerCase()}-${ymdLocal()}.csv`, [
       [
-        'Associate',
-        'Client',
+        term('worker'),
+        ...(clientsOn ? ['Client'] : []),
         'Clock in',
         'Clock out',
         'Hours',
@@ -672,7 +621,7 @@ function TimesheetsTab() {
         const hours = entryHours(e);
         return [
           e.associateName,
-          e.clientName ?? '',
+          ...(clientsOn ? [e.clientName ?? ''] : []),
           e.clockInAt,
           e.clockOutAt ?? '',
           e.clockOutAt ? hours.toFixed(2) : '',
@@ -794,7 +743,7 @@ function TimesheetsTab() {
               loading={bulkRejectM.isPending}
               disabled={bulkM.isPending}
             >
-              Reject {selected.size}
+              Reject {selected.size} {selected.size === 1 ? 'timesheet' : 'timesheets'}
             </Button>
             <Button
               size="sm"
@@ -802,7 +751,7 @@ function TimesheetsTab() {
               loading={bulkM.isPending}
               disabled={bulkRejectM.isPending}
             >
-              Approve {selected.size}
+              Approve {selected.size} {selected.size === 1 ? 'timesheet' : 'timesheets'}
             </Button>
           </div>
         </div>
@@ -812,14 +761,14 @@ function TimesheetsTab() {
         caption={isQueue ? 'Time entries to review' : `${status.toLowerCase()} time entries`}
         rows={entries}
         rowKey={(e) => e.id}
-        search={{ placeholder: 'Associate, client…' }}
+        search={{ placeholder: clientsOn ? `${term('worker')}, client…` : `${term('worker')}…` }}
         urlState={false}
         exportCsv={false}
         selectable={isQueue ? { selection: { selected, onChange: setSelected } } : undefined}
         columns={[
           {
             key: 'associate',
-            header: 'Associate',
+            header: term('worker'),
             accessor: (e) => e.associateName,
             sortable: true,
             primary: true,
@@ -831,7 +780,9 @@ function TimesheetsTab() {
               </div>
             ),
           },
-          { key: 'client', header: 'Client', accessor: (e) => e.clientName, sortable: true, cardMeta: true, className: 'text-silver', cell: (e) => e.clientName ?? '—' },
+          ...(clientsOn
+            ? [{ key: 'client', header: 'Client', accessor: (e: TeamTimeEntry) => e.clientName, sortable: true, cardMeta: true, className: 'text-silver', cell: (e: TeamTimeEntry) => e.clientName ?? '—' }]
+            : []),
           { key: 'in', header: 'Clock in', accessor: (e) => e.clockInAt, sortable: true, searchable: false, cardMeta: true, className: 'text-silver tabular-nums', cell: (e) => fmtDateTime(e.clockInAt) },
           { key: 'out', header: 'Clock out', accessor: (e) => e.clockOutAt, sortable: true, searchable: false, className: 'text-silver tabular-nums', cell: (e) => (e.clockOutAt ? fmtDateTime(e.clockOutAt) : '—') },
           {
@@ -909,8 +860,24 @@ function TimesheetsTab() {
   );
 }
 
+/** The category in the person's words — the same keys the time-off page uses. */
+const CATEGORY_KEYS: Record<string, MessageKey> = {
+  SICK: 'timeoff.cat.SICK',
+  VACATION: 'timeoff.cat.VACATION',
+  PTO: 'timeoff.cat.PTO',
+  BEREAVEMENT: 'timeoff.cat.BEREAVEMENT',
+  JURY_DUTY: 'timeoff.cat.JURY_DUTY',
+  OTHER: 'timeoff.cat.OTHER',
+};
+
 function TimeOffTab() {
   const prompt = usePrompt();
+  const term = useTerm();
+  const { t } = useI18n();
+  const categoryLabel = (c: string) => {
+    const key = CATEGORY_KEYS[c];
+    return key ? t(key) : c.toLowerCase().replace(/_/g, ' ');
+  };
   const q = useQuery({
     queryKey: teamKeys.timeoff('PENDING'),
     queryFn: async () => (await listTeamTimeOff('PENDING')).requests,
@@ -930,16 +897,17 @@ function TimeOffTab() {
       denyTeamTimeOff(id, note),
     keys: [teamKeys.all],
     apply: ({ id }, c) => removeFromLists(c, [teamKeys.all], [id]),
-    errorMessage: 'Deny failed.',
-    onSuccess: () => toast.success('Denied.'),
+    errorMessage: 'Reject failed.',
+    onSuccess: () => toast.success('Rejected.'),
   });
 
+  // One verb on this page: Reject (the API's "deny" stays behind the wire).
   const deny = async (id: string) => {
     const note = (
       await prompt({
-        title: 'Deny time-off request',
-        reasonLabel: 'Reason for denial',
-        confirmLabel: 'Deny',
+        title: 'Reject time-off request',
+        reasonLabel: 'Reason for rejection',
+        confirmLabel: 'Reject',
         destructive: true,
       })
     )?.trim();
@@ -974,12 +942,12 @@ function TimeOffTab() {
     },
     keys: [teamKeys.all],
     apply: ({ ids }, c) => removeFromLists(c, [teamKeys.all], ids),
-    errorMessage: 'Bulk deny failed.',
+    errorMessage: 'Bulk reject failed.',
     onSuccess: (r) => {
       if (r.failed > 0) {
-        toast.error(`Denied ${r.denied} · ${r.failed} failed.`);
+        toast.error(`Rejected ${r.denied} · ${r.failed} failed.`);
       } else {
-        toast.success(`Denied ${r.denied}.`);
+        toast.success(`Rejected ${r.denied}.`);
       }
       setSelected(new Set());
     },
@@ -989,9 +957,9 @@ function TimeOffTab() {
     if (ids.length === 0) return;
     const note = (
       await prompt({
-        title: `Deny ${ids.length} time-off ${ids.length === 1 ? 'request' : 'requests'}`,
-        reasonLabel: 'Shared reason for denial',
-        confirmLabel: 'Deny all',
+        title: `Reject ${ids.length} time-off ${ids.length === 1 ? 'request' : 'requests'}`,
+        reasonLabel: 'Shared reason for rejection',
+        confirmLabel: 'Reject all',
         destructive: true,
       })
     )?.trim();
@@ -1025,7 +993,7 @@ function TimeOffTab() {
       <EmptyState
         icon={CalendarOff}
         title="No pending time-off requests"
-        description="When your team requests PTO, you'll see it here."
+        description="When your team requests time off, you'll see it here."
       />
     );
   }
@@ -1054,7 +1022,7 @@ function TimeOffTab() {
               loading={bulkDenyM.isPending}
               disabled={bulkM.isPending}
             >
-              Deny {selected.size}
+              Reject {selected.size} {selected.size === 1 ? 'request' : 'requests'}
             </Button>
             <Button
               size="sm"
@@ -1062,7 +1030,7 @@ function TimeOffTab() {
               loading={bulkM.isPending}
               disabled={bulkDenyM.isPending}
             >
-              Approve {selected.size}
+              Approve {selected.size} {selected.size === 1 ? 'request' : 'requests'}
             </Button>
           </div>
         </div>
@@ -1072,14 +1040,14 @@ function TimeOffTab() {
         caption="Time-off requests to review"
         rows={q.data}
         rowKey={(r) => r.id}
-        search={{ placeholder: 'Associate, category…' }}
+        search={{ placeholder: `${term('worker')}, category…` }}
         urlState={false}
         exportCsv={false}
         selectable={{ selection: { selected, onChange: setSelected } }}
         columns={[
           {
             key: 'associate',
-            header: 'Associate',
+            header: term('worker'),
             accessor: (r) => r.associateName,
             sortable: true,
             primary: true,
@@ -1091,7 +1059,7 @@ function TimeOffTab() {
               </div>
             ),
           },
-          { key: 'category', header: 'Category', accessor: (r) => r.category, sortable: true, cardMeta: true, className: 'text-silver' },
+          { key: 'category', header: 'Category', accessor: (r) => categoryLabel(r.category), sortable: true, cardMeta: true, className: 'text-silver' },
           {
             key: 'dates',
             header: 'Dates',
@@ -1128,7 +1096,7 @@ function TimeOffTab() {
             cell: (r) => (
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="outline" onClick={() => deny(r.id)} disabled={pendingId === r.id}>
-                  Deny
+                  Reject
                 </Button>
                 <Button size="sm" onClick={() => approveM.mutate(r.id)} loading={pendingId === r.id}>
                   Approve

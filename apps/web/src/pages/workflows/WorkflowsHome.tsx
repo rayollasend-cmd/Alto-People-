@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
 import {
@@ -128,6 +128,7 @@ export function WorkflowsHome() {
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   const [tab, setTab] = useState<'definitions' | 'runs'>('definitions');
   const [drawerTarget, setDrawerTarget] = useState<WorkflowDefinition | 'new' | null>(null);
+  const drawerDirty = useRef(false);
   const [defSearch, setDefSearch] = useState('');
   const [defTrigger, setDefTrigger] = useState<'' | WorkflowTrigger>('');
 
@@ -168,7 +169,7 @@ export function WorkflowsHome() {
         className="space-y-5"
         title="Workflows"
         subtitle="Trigger-condition-action automation. Replaces hard-coded chains in route handlers — define once, fire on every matching event."
-        breadcrumbs={[{ label: 'Settings' }, { label: 'Workflows' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Workflows' }]}
         primaryAction={
           canManage ? (
             <Button onClick={() => setDrawerTarget('new')}>
@@ -296,11 +297,15 @@ export function WorkflowsHome() {
         open={drawerTarget !== null}
         onOpenChange={(o) => !o && setDrawerTarget(null)}
         width="max-w-2xl"
+        confirmDiscard={() => drawerDirty.current}
       >
         {drawerTarget && (
           <DefinitionDrawer
             target={drawerTarget}
             canManage={canManage}
+            onDirtyChange={(d) => {
+              drawerDirty.current = d;
+            }}
             onClose={() => setDrawerTarget(null)}
             onSaved={() => {
               setDrawerTarget(null);
@@ -639,12 +644,15 @@ function DefinitionDrawer({
   onClose,
   onSaved,
   onTested,
+  onDirtyChange,
 }: {
   target: WorkflowDefinition | 'new';
   canManage: boolean;
   onClose: () => void;
   onSaved: () => void;
   onTested: () => void;
+  /** Lets the surrounding Drawer ask before discarding unsaved edits. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const confirm = useConfirm();
   const isNew = target === 'new';
@@ -673,6 +681,23 @@ function DefinitionDrawer({
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const initialActions = JSON.stringify(
+    (initial?.actions ?? []).map((a) => ({ kind: a.kind, params: JSON.stringify(a.params, null, 2) })),
+  );
+  const initialConditions = JSON.stringify(initial?.conditions ?? {}, null, 2);
+  const dirty =
+    name !== (initial?.name ?? '') ||
+    description !== (initial?.description ?? '') ||
+    trigger !== (initial?.trigger ?? 'ASSOCIATE_HIRED') ||
+    isActive !== (initial?.isActive ?? true) ||
+    JSON.stringify(actionRows.map((a) => ({ kind: a.kind, params: a.paramsText }))) !== initialActions ||
+    (condMode === 'json'
+      ? conditionsJson !== initialConditions
+      : JSON.stringify(rowsToConds(condRows), null, 2) !== initialConditions);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const switchToJson = () => {
     setConditionsJson(JSON.stringify(rowsToConds(condRows), null, 2));

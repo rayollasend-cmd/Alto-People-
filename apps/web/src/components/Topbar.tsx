@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, Sparkles, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth, useRoleLabel } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
@@ -21,6 +22,13 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
+import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { getHugo } from '@/lib/hugoApi';
+
+// The assistant's panel lives with the Agents page; here it opens from the
+// chrome for everyone, so it loads only when first asked for.
+const AssistantPanel = lazy(() => import('@/pages/admin/HugoPanel').then((m) => ({ default: m.HugoPanel })));
 import { InstallAppButton } from './InstallAppButton';
 import { RoleSwitchItem, RoleSwitchSheet } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
@@ -340,6 +348,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
             </Tooltip>
           )}
           <InstallAppButton />
+          <AssistantButton />
           <Button
             variant="ghost"
             size="icon-sm"
@@ -429,3 +438,47 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
   );
 }
 
+
+
+/**
+ * The way in to the assistant, for every signed-in person — the taxonomy
+ * makes it the router of the agents, and until now it had no door of its
+ * own in the chrome. Named by the tenant; the panel answers only with what
+ * is switched on for this organization and this desk.
+ */
+function AssistantButton() {
+  const [open, setOpen] = useState(false);
+  // Shared with the panel (same key), so opening it costs no second fetch.
+  const hugo = useQuery({ queryKey: ['hugo', 'me'], queryFn: getHugo, staleTime: 5 * 60_000 });
+  const name = hugo.data?.name ?? 'the assistant';
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setOpen(true)}
+            aria-label={`Ask ${name}`}
+            data-tour="assistant"
+          >
+            <Sparkles className="h-5 w-5" aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Ask {name}</TooltipContent>
+      </Tooltip>
+      {open && (
+        <Drawer open onOpenChange={(o) => !o && setOpen(false)}>
+          <DrawerHeader>
+            <DrawerTitle>{hugo.data?.name ?? 'Assistant'}</DrawerTitle>
+          </DrawerHeader>
+          <DrawerBody>
+            <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+              <AssistantPanel />
+            </Suspense>
+          </DrawerBody>
+        </Drawer>
+      )}
+    </>
+  );
+}

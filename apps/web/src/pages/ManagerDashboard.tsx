@@ -18,7 +18,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtRelativeDate, ymdLocal } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
@@ -40,6 +41,8 @@ import { LiveNow } from '@/components/ui/LiveNow';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
@@ -119,7 +122,8 @@ export function ManagerDashboard() {
   };
 
   const greet = useGreeting();
-  const greetingName = greetingNameOf(user);
+  const greetingName = greetingNameOf(user, '');
+  const { t } = useI18n();
 
   // Index of associateId → active time entry (so we can mark "on the
   // clock" badges in the team list).
@@ -136,8 +140,8 @@ export function ManagerDashboard() {
       <HomeTemplate
         title={
           <>
-            <LiveNow render={(now) => greet(now.getHours())} />,{' '}
-            <span className="text-accent">{greetingName}</span>.
+            <LiveNow render={(now) => greet(now.getHours())} />
+            {greetingName && <>, <span className="text-accent">{greetingName}</span></>}.
           </>
         }
         topbarTitle="Home"
@@ -147,33 +151,34 @@ export function ManagerDashboard() {
             : 'Your team-scoped overview.'
         }
         meta={
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
-              <Calendar className="h-3 w-3" aria-hidden="true" />
-              <LiveNow render={(now) => fmtDate(now)} />
-            </span>
-            <Badge variant="info" className="uppercase tracking-[0.18em]">
-              Manager view
-            </Badge>
-          </div>
+          <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
+            <Calendar className="h-3 w-3" aria-hidden="true" />
+            <LiveNow render={(now) => fmtDate(now)} />
+          </span>
         }
         banners={error ? <ErrorBanner>{error}</ErrorBanner> : undefined}
-        hero={<RoleDecisionQueue />}
+        // The one thing a manager opens this page for: everything waiting on
+        // them, counted and ranked, in ONE section. It used to be two lists —
+        // the decision queue as the hero and "Needs your approval" under the
+        // plan card — with a vanity "Direct reports" count leading the tiles.
+        hero={
+          <NeedsYou
+            title={t('home.needsYou')}
+            pendingTimesheets={pendingTimesheets}
+            pendingPto={pendingPto}
+            error={approvalsError}
+            onRetry={retryApprovals}
+          />
+        }
         assistant={<HugoSeat />}
       >
-        <MyPlanCard />
-        <ApprovalsSection
-          pendingTimesheets={pendingTimesheets}
-          pendingPto={pendingPto}
-          error={approvalsError}
-          onRetry={retryApprovals}
-        />
         <TeamSnapshot
           summary={summary}
           activeCount={activeByReport.size}
           activeError={Boolean(activeQuery.error)}
           onRetryActive={() => void activeQuery.refetch()}
         />
+        <MyPlanCard />
         <TeamRoster
           reports={reports}
           activeByReport={activeByReport}
@@ -185,14 +190,23 @@ export function ManagerDashboard() {
   );
 }
 
-/* ============================ Approvals ================================== */
+/* ============================ Needs you ================================== */
 
-function ApprovalsSection({
+/**
+ * The counted, ranked list of what needs this manager: the role's decision
+ * queue first (its own kinds of decision), then the approval queues —
+ * urgent before attention, the larger pile first. The queue hides its
+ * "nothing needs your decision" line while approvals are waiting, so the
+ * section never says "all clear" above three cards that disagree.
+ */
+function NeedsYou({
+  title,
   pendingTimesheets,
   pendingPto,
   error,
   onRetry,
 }: {
+  title: string;
   pendingTimesheets: TeamTimeEntry[] | null;
   pendingPto: TeamTimeOffRequest[] | null;
   error: boolean;
@@ -200,6 +214,7 @@ function ApprovalsSection({
 }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const term = useTerm();
   const bulkApproveM = useMutation({
     mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
     onSuccess: (r) => {
@@ -223,29 +238,73 @@ function ApprovalsSection({
     const ok = await confirm({
       title: `Approve all ${ids.length} ${ids.length === 1 ? 'timesheet' : 'timesheets'}?`,
       description:
-        'Approved hours are locked for the associate and included in the next payroll run.',
+        `Approved hours are locked for the ${term('worker').toLowerCase()} and included in the next payroll run.`,
       confirmLabel: 'Approve all',
     });
     if (!ok) return;
     bulkApproveM.mutate(ids);
   };
 
-  if (error) {
-    return (
-      <section aria-label="Pending approvals" className="space-y-3">
-        <SectionTitle icon={ClipboardList}>Needs your approval</SectionTitle>
-        <QueryErrorCard
-          label="Couldn't load your approval queues"
-          onRetry={onRetry}
-        />
-      </section>
+  const total = tsCount + ptoCount;
+  // Ranked: urgent before attention, then the bigger pile first.
+  const cards = [
+    {
+      key: 'timesheets',
+      icon: Clock,
+      count: tsCount,
+      label: tsCount === 1 ? 'Timesheet to review' : 'Timesheets to review',
+      hint: 'Approve so payroll can include the hours.',
+      cta: 'Open queue',
+      severity: (tsCount > 10 ? 'urgent' : 'attention') as 'urgent' | 'attention',
+      action: (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={approveAll}
+          loading={bulkApproveM.isPending}
+        >
+          Approve all {tsCount}
+        </Button>
+      ),
+    },
+    {
+      key: 'timeoff',
+      icon: CalendarOff,
+      count: ptoCount,
+      label: ptoCount === 1 ? 'Time-off request waiting' : 'Time-off requests waiting',
+      hint: 'Approve or reject before the requested dates.',
+      cta: 'Open requests',
+      severity: (ptoCount > 5 ? 'urgent' : 'attention') as 'urgent' | 'attention',
+      action: undefined,
+    },
+  ]
+    .filter((c) => c.count > 0)
+    .sort((a, b) =>
+      a.severity === b.severity ? b.count - a.count : a.severity === 'urgent' ? -1 : 1,
     );
-  }
 
-  if (loading) {
-    return (
-      <section aria-label="Pending approvals" className="space-y-3">
-        <SectionTitle icon={ClipboardList}>Needs your approval</SectionTitle>
+  return (
+    <section aria-labelledby="manager-needs-you" className="space-y-3">
+      <SectionTitle
+        id="manager-needs-you"
+        icon={ClipboardList}
+        title={
+          <>
+            {title}
+            {total > 0 && (
+              <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">
+                {total}
+              </span>
+            )}
+          </>
+        }
+      />
+      {/* The role's own decisions first. While approvals are waiting, its
+          empty line stays out of the way; with none, it is the only voice. */}
+      <RoleDecisionQueue title={null} hideWhenEmpty={total > 0 || loading || error} />
+      {error ? (
+        <QueryErrorCard label="Couldn't load your approval queues" onRetry={onRetry} />
+      ) : loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {Array.from({ length: 2 }).map((_, i) => (
             <Card key={i}>
@@ -257,69 +316,35 @@ function ApprovalsSection({
             </Card>
           ))}
         </div>
-      </section>
-    );
-  }
-
-  if (tsCount === 0 && ptoCount === 0) {
-    return (
-      <section aria-label="Pending approvals">
+      ) : total === 0 ? (
         <Card className="border-success/30 bg-success/5">
-          <CardContent className="py-5 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-success/15 grid place-items-center text-success shrink-0">
-              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+          <CardContent className="py-4 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-full bg-success/15 grid place-items-center text-success shrink-0">
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             </div>
-            <div>
-              <div className="text-white font-medium">Inbox zero</div>
-              <div className="text-sm text-silver">
-                No timesheets or time-off requests waiting on you. Nice.
-              </div>
+            <div className="text-sm text-silver">
+              <span className="text-white font-medium">Inbox zero</span> — no timesheets or time-off requests waiting on you.
             </div>
           </CardContent>
         </Card>
-      </section>
-    );
-  }
-
-  return (
-    <section aria-label="Pending approvals" className="space-y-3">
-      <SectionTitle icon={ClipboardList}>Needs your approval</SectionTitle>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <ApprovalCard
-          icon={Clock}
-          count={tsCount}
-          label={tsCount === 1 ? 'Timesheet to review' : 'Timesheets to review'}
-          hint="Approve so payroll can include the hours."
-          to="/team"
-          cta="Open queue"
-          severity={tsCount > 10 ? 'urgent' : 'attention'}
-          show={tsCount > 0}
-          action={
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={approveAll}
-              loading={bulkApproveM.isPending}
-            >
-              Approve all {tsCount}
-            </Button>
-          }
-        />
-        <ApprovalCard
-          icon={CalendarOff}
-          count={ptoCount}
-          label={
-            ptoCount === 1
-              ? 'Time-off request waiting'
-              : 'Time-off requests waiting'
-          }
-          hint="Approve or deny before the requested dates."
-          to="/team"
-          cta="Open requests"
-          severity={ptoCount > 5 ? 'urgent' : 'attention'}
-          show={ptoCount > 0}
-        />
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {cards.map((c) => (
+            <ApprovalCard
+              key={c.key}
+              icon={c.icon}
+              count={c.count}
+              label={c.label}
+              hint={c.hint}
+              to="/team"
+              cta={c.cta}
+              severity={c.severity}
+              show
+              action={c.action}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -451,56 +476,56 @@ function TeamSnapshot({
   activeError: boolean;
   onRetryActive: () => void;
 }) {
+  const toTeam = (card: React.ReactElement) => (
+    <Link
+      to="/team"
+      className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+    >
+      {card}
+    </Link>
+  );
   return (
     <section aria-label="Team snapshot" className="space-y-3">
-      <SectionTitle icon={Activity}>Team snapshot</SectionTitle>
+      <SectionTitle icon={Activity} title="Team snapshot" />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {summary ? (
           <>
-            <KpiTile
-              icon={Users}
-              label="Direct reports"
-              value={summary.directReports.toString()}
-              hint={
-                summary.directReports === 0
-                  ? 'No one currently reports to you.'
-                  : undefined
-              }
-              to="/team"
-            />
             {activeError ? (
               <QueryErrorCard
-                label="On the clock now — failed to load"
+                label="Couldn't load who is on the clock right now."
                 onRetry={onRetryActive}
               />
             ) : (
-              <KpiTile
-                icon={Clock}
+              <MetricCard
                 label="On the clock now"
-                value={activeCount.toString()}
+                value={activeCount}
                 hint={
                   summary.directReports > 0
                     ? `${activeCount} of ${summary.directReports}`
                     : undefined
                 }
-                to="/team"
+                wrap={toTeam}
               />
             )}
-            <KpiTile
-              icon={Clock}
+            <MetricCard
               label="Pending timesheets"
-              value={summary.pendingTimesheets.toString()}
-              hint={
-                summary.pendingTimesheets === 0 ? 'Inbox clear.' : undefined
-              }
-              to="/team"
+              value={summary.pendingTimesheets}
+              accent={summary.pendingTimesheets > 0}
+              hint={summary.pendingTimesheets === 0 ? 'Inbox clear.' : undefined}
+              wrap={toTeam}
             />
-            <KpiTile
-              icon={CalendarOff}
-              label="Pending time-off"
-              value={summary.pendingTimeOff.toString()}
+            <MetricCard
+              label="Pending time off"
+              value={summary.pendingTimeOff}
+              accent={summary.pendingTimeOff > 0}
               hint={summary.pendingTimeOff === 0 ? 'Nothing waiting.' : undefined}
-              to="/team"
+              wrap={toTeam}
+            />
+            <MetricCard
+              label="Direct reports"
+              value={summary.directReports}
+              hint={summary.directReports === 0 ? 'No one currently reports to you.' : undefined}
+              wrap={toTeam}
             />
           </>
         ) : (
@@ -516,63 +541,6 @@ function TeamSnapshot({
         )}
       </div>
     </section>
-  );
-}
-
-function KpiTile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  to,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  hint?: string;
-  to?: string;
-}) {
-  const inner = (
-    <>
-      <div className="flex items-center justify-between">
-        {/* Canonical KPI label spec (matches MetricCard). */}
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-          {label}
-        </div>
-        <Icon
-          className={cn(
-            'h-3.5 w-3.5 text-gold/70',
-            to && 'group-hover:text-gold-bright transition-colors',
-          )}
-          aria-hidden="true"
-        />
-      </div>
-      <div className="font-display text-3xl md:text-hero text-gold-bright mt-3 leading-none tabular-nums">
-        {value}
-      </div>
-      {hint && (
-        <div className="text-xs text-silver mt-2 truncate">{hint}</div>
-      )}
-    </>
-  );
-  if (to) {
-    return (
-      <Link
-        to={to}
-        className={cn(
-          'group block rounded-lg border border-navy-secondary border-l-2 border-l-gold/40 bg-navy p-5 elev-1 transition-all',
-          'hover:-translate-y-0.5 hover:border-l-gold-bright hover:elev-2',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
-        )}
-      >
-        {inner}
-      </Link>
-    );
-  }
-  return (
-    <Card className="border-l-2 border-l-gold/40">
-      <CardContent className="pt-5">{inner}</CardContent>
-    </Card>
   );
 }
 
@@ -596,6 +564,7 @@ function TeamRoster({
   approvedPto: TeamTimeOffRequest[] | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const term = useTerm();
 
   // Approved PTO overlapping today → "Out today" (a real absence).
   // Pending PTO overlapping today stays a softer "Pending PTO today"
@@ -625,7 +594,7 @@ function TeamRoster({
   return (
     <section aria-label="My team" className="space-y-3">
       <div className="flex items-end justify-between gap-3">
-        <SectionTitle icon={Users}>My team</SectionTitle>
+        <SectionTitle icon={Users} title="My team" className="mb-0" />
         <Link
           to="/team"
           className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
@@ -650,11 +619,7 @@ function TeamRoster({
             </div>
           ) : reports.length === 0 ? (
             <div className="p-6 text-center text-silver text-sm">
-              No direct reports linked yet. Once HR sets your associates'
-              <code className="mx-1 px-1 rounded bg-navy-secondary/40 text-silver text-xs">
-                managerId
-              </code>
-              to your associate ID, they'll show up here.
+              No direct reports linked yet. Once HR names you as someone's {term('manager').toLowerCase()}, they show up here.
             </div>
           ) : (
             <>
@@ -758,7 +723,7 @@ function StatusPill({
     return (
       <Badge variant="pending" withDot={false} className="normal-case tracking-normal">
         <CalendarOff className="h-3 w-3" aria-hidden="true" />
-        Pending PTO today
+        Time off pending today
       </Badge>
     );
   }
@@ -768,21 +733,3 @@ function StatusPill({
     </Badge>
   );
 }
-
-/* ============================== Section title ============================ */
-
-function SectionTitle({
-  icon: Icon,
-  children,
-}: {
-  icon: LucideIcon;
-  children: React.ReactNode;
-}) {
-  return (
-    <h2 className="text-xs uppercase tracking-[0.18em] text-silver/80 flex items-center gap-2">
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      {children}
-    </h2>
-  );
-}
-

@@ -67,6 +67,7 @@ import { Textarea } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { AdminUnconfirmedPanel } from '@/pages/scheduling/AdminApprovalPanels';
+import { useTerm } from '@/lib/auth';
 
 /**
  * One inbox for everything waiting on a manager's decision. Before this
@@ -600,6 +601,7 @@ function waitingSince(iso: string): string {
 }
 
 function WalkInClockInsPanel() {
+  const term = useTerm();
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
   // Which bulk action is in flight — so only its button shows the spinner.
@@ -850,15 +852,15 @@ function WalkInClockInsPanel() {
             </DialogTitle>
             <DialogDescription>
               {bulkDenyOpen
-                ? 'Each selected associate will be notified that their clock-in was not approved. No time entries are created.'
+                ? `Each selected ${term('worker').toLowerCase()} will be notified that their clock-in was not approved. No time entries are created.`
                 : `${denyTarget?.associateName} will be notified that their clock-in was not approved. No time entry is created.`}
             </DialogDescription>
           </DialogHeader>
           <Field
             label={
               bulkDenyOpen
-                ? 'Reason (optional, shared with every selected associate)'
-                : 'Reason (optional, shared with the associate)'
+                ? `Reason (optional, shared with every selected ${term('worker').toLowerCase()})`
+                : `Reason (optional, shared with the ${term('worker').toLowerCase()})`
             }
           >
             <Textarea

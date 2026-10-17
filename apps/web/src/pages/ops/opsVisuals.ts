@@ -49,7 +49,7 @@ export const HANDOVER_KIND_LABEL: Record<OpsHandoverKind, string> = {
   NOTE: 'Note',
   UNFINISHED_TASK: 'Unfinished task',
   SPECIAL_ORDER: 'Special order',
-  COACH_COMPLAINT: 'Walmart coach complaint',
+  COACH_COMPLAINT: 'Customer complaint',
   EQUIPMENT: 'Equipment problem',
   STOCKING: 'Stocking issue',
 };

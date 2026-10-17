@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { SectionTitle as KitSectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
@@ -63,19 +64,22 @@ const sourceName = (s: string | null) =>
   s ? (SOURCE_LABEL[s.toLowerCase()] ?? `${s.charAt(0).toUpperCase()}${s.slice(1)}`) : 'No source';
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** The kit's section header, with this page's count badge and trailing link. */
 function SectionTitle({ children, count, action }: { children: ReactNode; count?: number; action?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-center justify-between gap-3">
-      <h2 className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-silver/80">
-        {children}
-        {count !== undefined && count > 0 && (
-          <Badge variant="outline" className="tabular-nums">
-            {count}
-          </Badge>
-        )}
-      </h2>
-      {action}
-    </div>
+    <KitSectionTitle
+      title={
+        <span className="inline-flex items-center gap-2">
+          {children}
+          {count !== undefined && count > 0 && (
+            <Badge variant="outline" className="tabular-nums">
+              {count}
+            </Badge>
+          )}
+        </span>
+      }
+      trailing={action}
+    />
   );
 }
 
@@ -150,7 +154,13 @@ function Today({ home }: { home: RecruiterHome }) {
           Today&rsquo;s interviews
         </SectionTitle>
         {list.length === 0 ? (
-          <p className="text-sm text-silver/70">No interviews today.</p>
+          <EmptyState
+            icon={CalendarClock}
+            title="No interviews today"
+            description="Schedule one from a candidate's page and it lands here."
+            action={<MoreLink to="/recruiting?view=list&stage=SCREENING">Candidates in screening</MoreLink>}
+            className="py-6"
+          />
         ) : (
           <ul className="divide-y divide-navy-secondary/60" aria-label="Today's interviews">
             {list.map((i) => (
@@ -523,7 +533,13 @@ function PipelineAndPostings({ home }: { home: RecruiterHome }) {
             Open postings
           </SectionTitle>
           {home.postings.items.length === 0 ? (
-            <p className="text-sm text-silver/70">No open postings.</p>
+            <EmptyState
+              icon={Plus}
+              title="No open postings"
+              description="Open a posting and applicants start arriving here."
+              action={<MoreLink to="/recruiting/extras?tab=postings">Open a posting</MoreLink>}
+              className="py-6"
+            />
           ) : (
             <ul className="divide-y divide-navy-secondary/60">
               {home.postings.items.map((p) => {
@@ -650,7 +666,7 @@ export function RecruiterDashboard() {
   });
   const home = q.data;
   const greet = useGreeting();
-  const name = greetingName(user);
+  const name = greetingName(user, '');
 
   const retry = (
     <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
@@ -667,7 +683,8 @@ export function RecruiterDashboard() {
       <HomeTemplate
         title={
           <>
-            <LiveNow render={(now) => greet(now.getHours())} />, <span className="text-accent">{name}</span>.
+            <LiveNow render={(now) => greet(now.getHours())} />
+            {name && <>, <span className="text-accent">{name}</span></>}.
           </>
         }
         topbarTitle="Home"

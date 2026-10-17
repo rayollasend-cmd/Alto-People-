@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Coins, Download, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
@@ -53,6 +53,7 @@ import {
   AssociatePicker,
   type PickedAssociate,
 } from '@/components/ui/AssociatePicker';
+import { pickOne } from '@/lib/validationCopy';
 
 /** Add n months to a YYYY-MM-DD string, returning YYYY-MM-DD (local). */
 const addMonths = (iso: string, months: number): string | null => {
@@ -429,6 +430,7 @@ function NewGrantDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [grantType, setGrantType] = useState<EquityGrantType>('RSU');
   const [totalShares, setTotalShares] = useState('');
@@ -476,7 +478,7 @@ function NewGrantDrawer({
 
   const submit = async () => {
     if (!assoc) {
-      toast.error('Pick an associate.');
+      toast.error(pickOne(term));
       return;
     }
     if (!totalShares) {

@@ -54,8 +54,10 @@ const buttonVariants = cva(
         sm: 'h-8 px-3 text-xs coarse:h-11 coarse:min-w-11',
         md: 'h-10 px-4 coarse:h-11',
         lg: 'h-11 px-6 text-base',
-        // Icon-only — square; intended for IconButton use.
-        icon: 'h-10 w-10',
+        // Icon-only — square; intended for IconButton use. Same coarse
+        // bump as every other size: a 40px square is under HIG's 44 on a
+        // tablet, and this was the one size without it.
+        icon: 'h-10 w-10 coarse:h-11 coarse:w-11',
         // Big enough for a thumb to hit destructive row actions (Delete,
         // Suspend, etc.) on touch; compact where row density matters and
         // the pointer is precise.

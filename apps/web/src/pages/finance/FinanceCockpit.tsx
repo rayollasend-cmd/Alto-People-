@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import type { BillingWeek, FinanceOverview, MarginTrend, PayCycle } from './financeTypes';
+import { useTenant } from '@/lib/auth';
 
 /**
  * The finance cockpit's working parts — each answers one question the
@@ -234,7 +235,15 @@ export interface FinanceTask {
 }
 
 /** Everything waiting on finance, most urgent first. */
-export function financeTasks(data: FinanceOverview, t: ReturnType<typeof useI18n>['t'], now: number): FinanceTask[] {
+export function financeTasks(
+  data: FinanceOverview,
+  t: ReturnType<typeof useI18n>['t'],
+  now: number,
+  // Client statements and receivables exist only where there are clients
+  // to bill (clientPortal + billRates); a direct employer never sees them.
+  opts: { statements?: boolean } = {},
+): FinanceTask[] {
+  const statements = opts.statements ?? true;
   const tasks: Array<FinanceTask & { rank: number }> = [];
   const b = data.billing;
   // Rejected ones are the resubmit task's, not this one's.
@@ -305,7 +314,7 @@ export function financeTasks(data: FinanceOverview, t: ReturnType<typeof useI18n
   }
   const aging = data.receivables.aging;
   const pastDue = aging ? aging.d31 + aging.d61 + aging.d91 : 0;
-  if (pastDue > 0) {
+  if (statements && pastDue > 0) {
     tasks.push({
       key: 'collect',
       rank: 5,
@@ -327,7 +336,7 @@ export function financeTasks(data: FinanceOverview, t: ReturnType<typeof useI18n
       to: '/reimbursements',
     });
   }
-  if (data.receivables.draftStatements > 0) {
+  if (statements && data.receivables.draftStatements > 0) {
     tasks.push({
       key: 'statements',
       rank: 6,
@@ -360,8 +369,9 @@ const TONE: Record<FinanceTask['tone'], string> = {
 /** `headless`: the home titles the section ("Needs you"); the card keeps only its list. */
 export function TodayList({ data, headless = false }: { data: FinanceOverview; headless?: boolean }) {
   const { t } = useI18n();
+  const tenant = useTenant();
   const now = useNow();
-  const tasks = financeTasks(data, t, now);
+  const tasks = financeTasks(data, t, now, { statements: tenant.moduleOn('clientPortal') && tenant.moduleOn('billRates') });
   return (
     <Card className="h-full animate-enter" style={enterStagger(1)}>
       <CardContent className="p-5">

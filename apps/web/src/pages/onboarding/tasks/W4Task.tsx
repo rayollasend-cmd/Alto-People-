@@ -10,6 +10,7 @@ import { uploadI9Document } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDateTime } from '@/lib/format';
+import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 
@@ -275,23 +276,30 @@ export function W4Task() {
                         ? t('ob.w4.cardUploaded', { name: cardFilename })
                         : t('ob.w4.cardOnFile')}
                     </span>
-                    <button
+                    {/* Kit buttons, not bare text: a focus ring, and the
+                        coarse-pointer bump to a 44px target on phones —
+                        where this task is actually done. */}
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       {...p}
                       onClick={() => cardCameraRef.current?.click()}
                       disabled={cardUploading}
-                      className="ml-auto text-gold hover:text-gold-bright whitespace-nowrap"
+                      className="ml-auto -my-1.5 text-gold hover:text-gold-bright"
                     >
                       {t('ob.w4.takeNewPhoto')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={() => cardFileRef.current?.click()}
                       disabled={cardUploading}
-                      className="text-gold hover:text-gold-bright whitespace-nowrap"
+                      className="-my-1.5 text-gold hover:text-gold-bright"
                     >
                       {t('ob.w4.chooseFile')}
-                    </button>
+                    </Button>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-3">

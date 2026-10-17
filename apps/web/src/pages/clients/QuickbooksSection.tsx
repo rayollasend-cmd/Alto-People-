@@ -200,13 +200,13 @@ export function QuickbooksSection({ clientId }: Props) {
           ) : (
             <Badge variant="outline">Not connected</Badge>
           )}
-          {status.stubMode && <Badge variant="info">Stub mode</Badge>}
+          {status.stubMode && <Badge variant="info">Test connection — nothing is posted</Badge>}
         </CardTitle>
         <CardDescription>
-          When connected, finalized payroll runs auto-post a balanced
-          JournalEntry to your QBO company file. Stub mode means no Intuit
-          credentials are configured — JE payloads are logged to the API
-          console instead of sent.
+          When connected, finalized payroll runs post a balanced journal
+          entry to your QuickBooks company file. A test connection has no
+          QuickBooks credentials yet — the journal entries are prepared but
+          nothing is sent.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -303,12 +303,12 @@ function JeModeToggle({
       await updateAccounts(clientId, { jeMode: mode });
       toast.success(
         mode === 'PER_EMPLOYEE'
-          ? 'Switched to per-employee JE posting.'
-          : 'Switched to aggregate JE posting.'
+          ? 'Switched to one journal entry per employee.'
+          : 'Switched to one journal entry per run.'
       );
       await onSaved();
     } catch (err) {
-      toast.error('Could not change JE mode.', {
+      toast.error('Could not change how journal entries post.', {
         description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
@@ -321,10 +321,11 @@ function JeModeToggle({
       <div>
         <h3 className="text-sm font-medium text-white">Journal entry granularity</h3>
         <FormHint>
-          Aggregate posts one balanced JE per run (sum of every paystub).
-          Per employee posts one JE per associate with EmployeeRef set —
-          mirrors how QBO Payroll itself records payroll, but requires
-          every associate has been synced to QuickBooks first.
+          Aggregate posts one balanced journal entry per run (the sum of
+          every paystub). Per employee posts one journal entry per person,
+          linked to their QuickBooks employee record — the way QuickBooks
+          Payroll itself records payroll, but every person must be synced to
+          QuickBooks first.
         </FormHint>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -333,14 +334,14 @@ function JeModeToggle({
           disabled={!canManage || saving}
           onClick={() => setMode('AGGREGATE')}
         >
-          Aggregate (one JE per run)
+          Aggregate (one journal entry per run)
         </FilterChip>
         <FilterChip
           active={status.jeMode === 'PER_EMPLOYEE'}
           disabled={!canManage || saving}
           onClick={() => setMode('PER_EMPLOYEE')}
         >
-          Per employee (one JE per paystub)
+          Per employee (one journal entry per paystub)
         </FilterChip>
       </div>
     </div>

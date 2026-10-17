@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Copy, Download, Key, Plus, ShieldCheck, Webhook } from 'lucide-react';
 import { ApiClientsTab } from './ApiClientsTab';
 import { ApiError } from '@/lib/api';
+import { errorText } from '@/lib/errorText';
 import {
   createApiKey,
   createWebhook,
@@ -71,7 +72,7 @@ export function IntegrationsHome() {
         className="space-y-5"
         title="Integrations"
         subtitle="OAuth clients for the public API, legacy API keys, and outbound webhooks for event delivery."
-        breadcrumbs={[{ label: 'Settings' }, { label: 'Integrations' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Integrations' }]}
     >
       {/* What the platform is connected to. The disbursement rail comes
           first: money is the connection a buyer asks about, and the Payroll
@@ -174,7 +175,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
       toast.success('API key revoked.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't revoke the key."));
     }
   };
 
@@ -185,7 +186,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
       toast.success('API key deleted.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't delete the key."));
     }
   };
 
@@ -497,7 +498,7 @@ function NewKeyDrawer({
       toast.success('API key created.');
       onSaved({ plaintext: r.plaintext, last4: r.last4 });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't create the key."));
     } finally {
       setSaving(false);
     }
@@ -735,7 +736,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
       }
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't send the test event."));
     }
   };
 
@@ -745,7 +746,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
       toast.success(r.isActive ? 'Webhook resumed.' : 'Webhook paused.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't change the webhook."));
     }
   };
 
@@ -756,7 +757,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
       toast.success('Webhook deleted.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't delete the webhook."));
     }
   };
 
@@ -969,7 +970,7 @@ function NewWebhookDrawer({
       toast.success('Webhook created.');
       onSaved(r.secret);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errorText(err, "Couldn't create the webhook."));
     } finally {
       setSaving(false);
     }

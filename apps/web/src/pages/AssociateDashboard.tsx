@@ -6,6 +6,7 @@ import {
   AlertCircle,
   ArrowRight,
   CalendarCheck,
+  CalendarDays,
   CalendarOff,
   Clock,
   FileSignature,
@@ -80,7 +81,7 @@ export function AssociateDashboard() {
   const { user } = useAuth();
   const { t } = useI18n();
 
-  const greetingName = greetingNameOf(user);
+  const greetingName = greetingNameOf(user, '');
 
   // Each fetch is an independent query; one failing shouldn't blank out
   // the others. Cached results render instantly on revisit and refresh
@@ -181,7 +182,7 @@ export function AssociateDashboard() {
           hero, then what needs them, their numbers, their pay and week,
           Hugo, and the shortcuts. */}
       <HomeTemplate
-        title={t('dash.greeting', { name: greetingName })}
+        title={greetingName ? t('dash.greeting', { name: greetingName }) : t('dash.greetingNoName')}
         topbarTitle={t('tabs.home')}
         subtitle={
           place ? (
@@ -702,8 +703,9 @@ function TileLink({ to, children }: { to: string; children: React.ReactNode }) {
 }
 
 const QUICK_LINKS: { to: string; labelKey: MessageKey; icon: typeof Clock }[] = [
-  { to: '/time-attendance', labelKey: 'dash.myTimesheet', icon: Clock },
-  { to: '/scheduling', labelKey: 'dash.scheduleSwaps', icon: Timer },
+  // Same words as the page it opens ("My time"), and a calendar for the schedule.
+  { to: '/time-attendance', labelKey: 'time.myTime', icon: Clock },
+  { to: '/scheduling', labelKey: 'dash.scheduleSwaps', icon: CalendarDays },
   { to: '/documents', labelKey: 'dash.documents', icon: FileText },
   // ?new=1 lands straight in the request dialog — one tap to ask for a day.
   { to: '/time-off?new=1', labelKey: 'dash.requestTimeOff', icon: CalendarOff },
