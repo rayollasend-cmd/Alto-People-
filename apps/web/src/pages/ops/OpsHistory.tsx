@@ -211,8 +211,8 @@ export function OpsHistory({
       cell: (s) => (
         <div className="flex flex-wrap items-center gap-1">
           {s.tempAlerts > 0 && <Badge variant="destructive" size="sm">{s.tempAlerts} temp</Badge>}
-          {s.closedIncomplete && <Badge variant="destructive" size="sm">incomplete</Badge>}
-          {s.status === 'ACTIVE' && <Badge variant="accent" size="sm">running</Badge>}
+          {s.closedIncomplete && <Badge variant="destructive" size="sm">Incomplete</Badge>}
+          {s.status === 'ACTIVE' && <Badge variant="accent" size="sm">Running</Badge>}
           {s.tempAlerts === 0 && !s.closedIncomplete && s.status !== 'ACTIVE' && (
             <span className="text-2xs text-silver/60">clean</span>
           )}

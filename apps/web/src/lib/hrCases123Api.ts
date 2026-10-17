@@ -115,11 +115,14 @@ export const listCaseQueue = (params: {
   status?: CaseStatus;
   category?: CaseCategory;
   assignedToMe?: boolean;
+  /** One person's cases (the person record's Cases tab). */
+  associateId?: string;
 }) => {
   const q = new URLSearchParams();
   if (params.status) q.set('status', params.status);
   if (params.category) q.set('category', params.category);
   if (params.assignedToMe) q.set('assignedToMe', 'true');
+  if (params.associateId) q.set('associateId', params.associateId);
   const qs = q.toString();
   return apiFetch<{ cases: QueueCaseRow[] }>(
     `/hr-cases${qs ? `?${qs}` : ''}`,

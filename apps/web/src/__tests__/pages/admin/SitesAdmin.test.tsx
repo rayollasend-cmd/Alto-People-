@@ -38,7 +38,7 @@ describe('Sites', () => {
     expect(screen.getByText('Office')).toBeInTheDocument();
     expect(screen.getByText('America/Chicago')).toBeInTheDocument();
     expect(screen.getByText('Southeast')).toBeInTheDocument();
-    expect(screen.getByText('inactive')).toBeInTheDocument();
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
   });
 
   it('adds a property pinned to a unit with its time zone and state', async () => {

@@ -55,7 +55,7 @@ export function ProgramAlertsCard({ className }: { className?: string }) {
                 </span>
               </span>
               <Badge variant={a.severity === 'critical' ? 'destructive' : 'pending'} size="sm">
-                {a.daysUntil < 0 ? `${-a.daysUntil}d overdue` : a.daysUntil === 0 ? 'today' : `in ${a.daysUntil}d`}
+                {a.daysUntil < 0 ? `${-a.daysUntil}d overdue` : a.daysUntil === 0 ? 'Today' : `In ${a.daysUntil}d`}
               </Badge>
             </li>
           ))}

@@ -7,6 +7,7 @@ import { fmtDateTime } from '@/lib/format';
 import { getWhatsAppOverview, listWhatsAppMessages } from '@/lib/whatsappApi';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Badge } from '@/components/ui/Badge';
+import { statusLabel } from '@/lib/status';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -157,7 +158,7 @@ export function WhatsAppAdmin() {
                 { key: 'dir', header: 'Direction', accessor: (m) => m.direction, sortable: true, searchable: false, cell: (m) => (m.direction === 'OUTBOUND' ? 'Out' : 'In') },
                 { key: 'kind', header: 'Kind', accessor: (m) => KIND_LABEL[m.kind], sortable: true, searchable: false },
                 { key: 'tpl', header: 'Template · lang', accessor: (m) => `${m.templateName ?? '—'} · ${m.language}`, sortable: true, searchable: false, className: 'font-mono text-xs text-silver' },
-                { key: 'status', header: 'Status', accessor: (m) => m.status, sortable: true, searchable: false, cardMeta: true, cell: (m) => <Badge variant={STATUS_VARIANT[m.status]}>{m.status.toLowerCase()}</Badge> },
+                { key: 'status', header: 'Status', accessor: (m) => m.status, sortable: true, searchable: false, cardMeta: true, cell: (m) => <Badge variant={STATUS_VARIANT[m.status]}>{statusLabel(m.status)}</Badge> },
                 { key: 'body', header: 'Message', accessor: (m) => m.body, sortable: false, cell: (m) => <span title={m.body}>{truncate(m.body)}</span> },
                 { key: 'fail', header: 'Failure', accessor: (m) => m.failureReason ?? '', sortable: false, className: 'text-alert', cell: (m) => m.failureReason ?? '' },
               ]}

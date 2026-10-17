@@ -2,9 +2,9 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/cn';
 
-// Casing: the default is still uppercase (523 usages across 177 files were
-// written against it); sentence case is the target and `caps` is the path —
-// once every caller that wants shouting opts in, the default flips.
+// Casing: badges read in sentence case ("Approved", "Out today") per
+// docs/design-system.md — uppercase tracking is for eyebrows. `caps` is the
+// opt-in for the rare chip that is meant as an eyebrow-style tag.
 const badgeVariants = cva(
   'inline-flex items-center gap-1 rounded-full font-medium whitespace-nowrap',
   {
@@ -45,7 +45,7 @@ const badgeVariants = cva(
     defaultVariants: {
       variant: 'default',
       size: 'default',
-      caps: true,
+      caps: false,
     },
   },
 );
@@ -65,8 +65,8 @@ export interface BadgeProps
    */
   withDot?: boolean;
   /**
-   * Uppercase + letter-spaced label. Defaults to TRUE for now so nothing
-   * shifts; pass `caps={false}` for sentence case ("Approved", "Out today").
+   * Uppercase + letter-spaced label. Off by default — badges read in sentence
+   * case. Opt in only for a chip that is deliberately an eyebrow-style tag.
    */
   caps?: boolean;
 }

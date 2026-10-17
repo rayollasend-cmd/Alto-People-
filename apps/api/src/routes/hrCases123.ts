@@ -143,6 +143,9 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
     .union([z.literal('true'), z.literal('false')])
     .optional()
     .parse(req.query.assignedToMe);
+  // One person's cases — the person record's Cases tab. The desk scope
+  // still applies: Finance sees only their PAYROLL cases.
+  const associateId = z.string().uuid().optional().parse(req.query.associateId);
 
   const rows = await prisma.hrCase.findMany({
     take: 100,
@@ -152,6 +155,7 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
       ...(status ? { status } : {}),
       ...(category && scope !== 'payroll' ? { category } : {}),
       ...(assignedToMe === 'true' ? { assignedToId: req.user!.id } : {}),
+      ...(associateId ? { associateId } : {}),
     },
     include: {
       associate: {

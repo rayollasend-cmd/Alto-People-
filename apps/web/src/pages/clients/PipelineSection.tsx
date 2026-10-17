@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
+import { statusLabel } from '@/lib/status';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -157,7 +158,7 @@ export function PipelineSection() {
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="min-w-0 truncate text-white">{p.name}</span>
                       <Badge variant={STAGE_TONE[p.stage] ?? 'default'}>
-                        {p.stage.toLowerCase()}
+                        {statusLabel(p.stage)}
                       </Badge>
                       {p.estWeeklyHours && p.estBillRate && (
                         <span className="text-xs tabular-nums text-silver">

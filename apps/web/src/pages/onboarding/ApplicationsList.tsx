@@ -1286,7 +1286,7 @@ export function ApplicationsList() {
                     <StatusBadge status={a.status} data-status={a.status} />
                     {a.updatedAfterSubmitAt && (a.status === 'SUBMITTED' || a.status === 'IN_REVIEW') && (
                       <Badge variant="pending" className="ml-1.5" title={`The applicant changed their information on ${fmtDate(a.updatedAfterSubmitAt)} — re-check before approving.`}>
-                        updated
+                        Updated
                       </Badge>
                     )}
                   </>
@@ -1342,12 +1342,12 @@ export function ApplicationsList() {
                       <span className="text-silver tabular-nums">{fmtDate(a.startDate)}</span>
                       {risk === 'past' && (
                         <Badge variant="destructive" className="ml-1.5">
-                          past start
+                          Past start
                         </Badge>
                       )}
                       {risk === 'at-risk' && (
                         <Badge variant="pending" className="ml-1.5">
-                          at risk
+                          At risk
                         </Badge>
                       )}
                     </>

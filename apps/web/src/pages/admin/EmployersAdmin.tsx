@@ -48,7 +48,7 @@ export function EmployersAdmin() {
           <span className="text-white">{r.legalName}</span>
           {r.isDefault && (
             <Badge variant="accent" size="sm" withDot={false}>
-              default
+              Default
             </Badge>
           )}
         </div>

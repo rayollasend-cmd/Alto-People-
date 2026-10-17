@@ -176,7 +176,7 @@ const PAY_TYPE_SUFFIX: Record<string, string> = {
   PIECEWORK: '/piece',
 };
 
-function fmtPay(amount: string | null, type: string | null, currency: string | null): string {
+export function fmtPay(amount: string | null, type: string | null, currency: string | null): string {
   if (!amount) return '—';
   const formatted = fmtMoney(amount, { currency: currency ?? undefined });
   if (formatted === '—') return amount;
@@ -855,9 +855,15 @@ const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
       <div className="flex items-center gap-2.5">
         <Avatar src={r.photoUrl} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
         <div className="min-w-0">
-          <div className="font-medium text-white truncate">
+          {/* The name opens the person's record page; the rest of the row
+              still opens the drawer as a quick look. */}
+          <Link
+            to={`/people/${r.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="block truncate font-medium text-white hover:text-gold-bright hover:underline"
+          >
             {r.firstName} {r.lastName}
-          </div>
+          </Link>
           <div className="text-xs text-silver truncate">{r.email}</div>
         </div>
         {r.j1Status && (
@@ -1010,7 +1016,7 @@ function DirectoryTable({
 // mangles); HR (manage:org) can set, replace, or remove the photo right
 // here through the same crop step associates get, so a bad picture doesn't
 // wait for the associate to log in.
-function ProfilePhoto({
+export function ProfilePhoto({
   associate: a,
   onAssociateChange,
 }: {
@@ -1213,6 +1219,15 @@ function DirectoryDrawer({
               <span>{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</span>
               {a.j1Status && <Badge variant="default">J-1</Badge>}
             </DrawerDescription>
+            {/* The drawer is the quick look; the record page holds every
+                facet (time, time off, performance, cases) on one URL. */}
+            <Link
+              to={`/people/${a.id}`}
+              className="mt-1 inline-flex min-h-6 items-center gap-1 text-xs text-gold hover:text-gold-bright"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open full record
+            </Link>
           </div>
         </div>
       </DrawerHeader>
@@ -1285,7 +1300,7 @@ function DirectoryDrawer({
   );
 }
 
-function ProfileTab({
+export function ProfileTab({
   associate: a,
   onAssociateChange,
   onClose,
@@ -2338,7 +2353,7 @@ const REASON_LABEL: Record<CompChangeReason, string> = {
  * the employment record the W-2/1099 and the pay statement read. Read
  * only: a spell opens at approval and closes at separation.
  */
-function EmploymentTab({ associateId }: { associateId: string }) {
+export function EmploymentTab({ associateId }: { associateId: string }) {
   const term = useTerm();
   const { data, error, isPending } = useQuery({
     queryKey: ['employment-history', associateId],
@@ -2377,7 +2392,7 @@ function EmploymentTab({ associateId }: { associateId: string }) {
                 <div>{fmtDate(sp.hireDate)} → {sp.endDate ? fmtDate(sp.endDate) : 'present'}</div>
                 {!sp.endDate && (
                   <Badge variant="success" size="sm" withDot={false}>
-                    current
+                    Current
                   </Badge>
                 )}
               </div>
@@ -2390,7 +2405,7 @@ function EmploymentTab({ associateId }: { associateId: string }) {
   );
 }
 
-function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
+export function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
 
@@ -4094,7 +4109,7 @@ const PAYMENT_METHOD_LABEL: Record<ExternalPaymentMethod, string> = {
   OTHER: 'Other',
 };
 
-function PaymentsTab({ associateId }: { associateId: string }) {
+export function PaymentsTab({ associateId }: { associateId: string }) {
   const term = useTerm();
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery({
@@ -4866,7 +4881,7 @@ function vaultChips(
   }
 }
 
-function DocumentsTab({ associateId }: { associateId: string }) {
+export function DocumentsTab({ associateId }: { associateId: string }) {
   const term = useTerm();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -5381,7 +5396,7 @@ function UploadResultDialog({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
       <div className="text-2xs uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
@@ -5392,7 +5407,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function InfoRow({
+export function InfoRow({
   icon,
   label,
   value,

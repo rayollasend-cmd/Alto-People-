@@ -56,7 +56,7 @@ describe('Employers of record', () => {
     expect(screen.getByText('Coastal Payroll Services Inc')).toBeInTheDocument();
     expect(screen.getByText('••-•••6789')).toBeInTheDocument();
     expect(screen.queryByText('12-3456789')).not.toBeInTheDocument();
-    expect(screen.getByText('default')).toBeInTheDocument();
+    expect(screen.getByText('Default')).toBeInTheDocument();
     expect(screen.getByText('This organization')).toBeInTheDocument();
     expect(screen.getByText('Third party')).toBeInTheDocument();
   });

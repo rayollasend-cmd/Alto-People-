@@ -57,8 +57,8 @@ describe('ProgramAlertsCard', () => {
     expect(await screen.findByText('Maria Lopez')).toBeInTheDocument();
     expect(screen.getByText(/Program ends/)).toBeInTheDocument();
     expect(screen.getByText('Emre Kaya')).toBeInTheDocument();
-    expect(screen.getByText('today')).toBeInTheDocument();
-    expect(screen.getByText('in 30d')).toBeInTheDocument();
+    expect(screen.getByText('Today')).toBeInTheDocument();
+    expect(screen.getByText('In 30d')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /open programs/i })).toHaveAttribute('href', '/programs');
   });
 });

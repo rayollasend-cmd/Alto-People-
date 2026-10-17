@@ -451,7 +451,7 @@ function Bucket({
       cell: (i) => (
         <div className="flex items-center gap-2">
           {i.qualificationName}
-          {i.isCert && <Badge variant="accent">cert</Badge>}
+          {i.isCert && <Badge variant="accent">Cert</Badge>}
         </div>
       ),
     },

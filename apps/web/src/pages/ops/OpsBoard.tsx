@@ -1149,7 +1149,7 @@ export function OpsBoard() {
                           <Badge variant="destructive">{s.tempAlerts} temp</Badge>
                         )}
                         {s.closedIncomplete ? (
-                          <Badge variant="destructive">incomplete</Badge>
+                          <Badge variant="destructive">Incomplete</Badge>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-success">
                             <CheckCircle2 className="h-3.5 w-3.5" /> complete

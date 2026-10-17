@@ -34,6 +34,7 @@ interface DecisionRecord {
 }
 
 const OUTCOME: Record<DecisionRecord['decisions'][number]['outcome'], 'success' | 'destructive' | 'default'> = { FAVORABLE: 'success', ADVERSE: 'destructive', NONE: 'default' };
+const OUTCOME_LABEL: Record<DecisionRecord['decisions'][number]['outcome'], string> = { FAVORABLE: 'Favorable', ADVERSE: 'Adverse', NONE: 'None' };
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : '—');
 
 export function AgentDecisionRecordTab({ agentId, canManage }: { agentId: string; canManage: boolean }) {
@@ -115,7 +116,7 @@ export function AgentDecisionRecordTab({ agentId, canManage }: { agentId: string
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-white">{x.subject ?? 'A person'}</span>
                   <Badge variant={OUTCOME[x.outcome]} size="sm">
-                    {x.outcome.toLowerCase()}
+                    {OUTCOME_LABEL[x.outcome]}
                   </Badge>
                   <span className="text-xs text-silver">
                     {x.decisionType.toLowerCase()} · {day(x.at)} · decided by a person {day(x.humanDecidedAt)}

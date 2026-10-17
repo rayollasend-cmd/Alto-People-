@@ -578,7 +578,7 @@ export function TimesheetsView() {
                     <span>
                       <span className="text-silver/60">Status: </span>
                       <Badge variant={detail.status === 'PENDING' ? 'pending' : 'success'}>
-                        {detail.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}
+                        {detail.status === 'PENDING' ? 'Pending approval' : 'Ready to submit'}
                       </Badge>
                     </span>
                     <span>
@@ -941,10 +941,10 @@ export function TimesheetsView() {
               {
                 key: 'status',
                 header: 'Status',
-                accessor: (r) => (r.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'),
+                accessor: (r) => (r.status === 'PENDING' ? 'Pending approval' : 'Ready to submit'),
                 sortable: true,
                 cardMeta: true,
-                cell: (r) => <Badge variant={r.status === 'PENDING' ? 'pending' : 'success'}>{r.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}</Badge>,
+                cell: (r) => <Badge variant={r.status === 'PENDING' ? 'pending' : 'success'}>{r.status === 'PENDING' ? 'Pending approval' : 'Ready to submit'}</Badge>,
               },
               // ID + Revision are Fieldglass's — filled from the imported
               // Fieldglass list, so the columns match it line for line.

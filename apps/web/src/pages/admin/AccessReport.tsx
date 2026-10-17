@@ -106,7 +106,7 @@ export function AccessReport() {
             {me?.id === r.id && <span className="text-xs text-gold">(you)</span>}
             {r.personalEmail && (
               <Badge variant={r.role === 'CLIENT_PORTAL' ? 'destructive' : 'default'} size="sm" withDot={false} title="A free-mail address, not a company one">
-                personal
+                Personal
               </Badge>
             )}
           </div>

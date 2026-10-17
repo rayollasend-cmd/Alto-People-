@@ -386,7 +386,7 @@ function SlaChip({ sla }: { sla: SlaInfo }) {
       : 'outline';
   const label =
     hoursLeft <= 0
-      ? 'due now'
+      ? 'Due now'
       : hoursLeft < 24
       ? `${hoursLeft}h left`
       : `${Math.round(hoursLeft / 24)}d left`;

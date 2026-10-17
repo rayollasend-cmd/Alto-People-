@@ -83,6 +83,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { statusLabel } from '@/lib/status';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
@@ -299,8 +300,8 @@ function renderTokenStatus(iso: string | null) {
   const ms = new Date(iso).getTime() - Date.now();
   const days = Math.round(ms / (1000 * 60 * 60 * 24));
   if (ms <= 0) return <Badge variant="destructive">Expired</Badge>;
-  if (days <= 14) return <Badge variant="pending">in {days}d</Badge>;
-  return <Badge variant="success">in {days}d</Badge>;
+  if (days <= 14) return <Badge variant="pending">In {days}d</Badge>;
+  return <Badge variant="success">In {days}d</Badge>;
 }
 
 // A device that was last seen more than this many hours ago is treated
@@ -1664,7 +1665,7 @@ function PinsTab({
                       <EmployeeNumberCell value={pn.employeeNumber} />
                       {pn.wontClockIn && (
                         <Badge variant="destructive" title="This number stopped working after a security reset — it fails at every kiosk. Re-issue it.">
-                          won&rsquo;t clock in
+                          Won&rsquo;t clock in
                         </Badge>
                       )}
                     </div>
@@ -2750,7 +2751,7 @@ function LogTab() {
                   cardMeta: true,
                   cell: (pu) => (
                     <Badge variant={pu.action === 'CLOCK_IN' ? 'success' : pu.action === 'CLOCK_OUT' ? 'accent' : pu.action === 'BREAK_START' || pu.action === 'BREAK_END' ? 'pending' : 'destructive'}>
-                      {pu.action}
+                      {statusLabel(pu.action)}
                     </Badge>
                   ),
                 },
@@ -3108,7 +3109,7 @@ function ReviewTab({
                   cell: (pu) => (pu.associateId && pu.associateName ? <AssociateLink associateId={pu.associateId}>{pu.associateName}</AssociateLink> : (pu.associateName ?? '—')),
                 },
                 { key: 'device', header: 'Device', accessor: (pu) => pu.deviceName, sortable: true, className: 'text-xs' },
-                { key: 'action', header: 'Action', accessor: (pu) => pu.action, sortable: true, cardMeta: true, cell: (pu) => <Badge variant={pu.action === 'CLOCK_IN' ? 'success' : 'accent'}>{pu.action}</Badge> },
+                { key: 'action', header: 'Action', accessor: (pu) => pu.action, sortable: true, cardMeta: true, cell: (pu) => <Badge variant={pu.action === 'CLOCK_IN' ? 'success' : 'accent'}>{statusLabel(pu.action)}</Badge> },
                 {
                   key: 'reason',
                   header: 'Reason',

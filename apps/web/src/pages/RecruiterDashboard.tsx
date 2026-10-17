@@ -696,7 +696,7 @@ export function RecruiterDashboard() {
               <LiveNow render={(now) => fmtDate(now)} />
             </span>
             {role && (
-              <Badge variant="accent" className="uppercase tracking-[0.18em]">
+              <Badge variant="accent" caps className="tracking-[0.18em]">
                 {roleLabel(role)}
               </Badge>
             )}

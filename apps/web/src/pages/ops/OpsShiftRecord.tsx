@@ -141,16 +141,16 @@ export function OpsShiftRecordDialog({
                 {detail.shift.status === 'CLOSED' ? (
                   detail.shift.closedIncomplete ? (
                     <Badge variant="destructive" className="ml-2 align-middle">
-                      closed incomplete
+                      Closed incomplete
                     </Badge>
                   ) : (
                     <Badge variant="success" className="ml-2 align-middle">
-                      complete
+                      Complete
                     </Badge>
                   )
                 ) : (
                   <Badge variant="pending" className="ml-2 align-middle">
-                    live
+                    Live
                   </Badge>
                 )}
               </DialogTitle>
@@ -324,7 +324,7 @@ export function OpsShiftRecordDialog({
                         </span>
                         <span className="shrink-0 text-2xs">
                           {h.status === 'PENDING' ? (
-                            <Badge variant="pending">awaiting next shift</Badge>
+                            <Badge variant="pending">Awaiting next shift</Badge>
                           ) : (
                             <span
                               className={cn(
@@ -379,11 +379,11 @@ function RecordTaskLine({ task, isFollowUp = false }: { task: OpsTaskRow; isFoll
         <span className={cn('text-sm', isDone ? 'text-silver' : 'text-white')}>
           {task.title}
         </span>
-        {isFollowUp && <Badge variant="destructive">follow-up</Badge>}
+        {isFollowUp && <Badge variant="destructive">Follow-up</Badge>}
         {task.source === 'ADHOC' && !isFollowUp && (
           <span className="text-2xs text-silver/50">ad-hoc</span>
         )}
-        {task.source === 'CARRYOVER' && <Badge variant="pending">carried in</Badge>}
+        {task.source === 'CARRYOVER' && <Badge variant="pending">Carried in</Badge>}
         {task.tempOutOfRange && (
           <span className="inline-flex items-center gap-1 text-2xs text-alert">
             <AlertTriangle className="h-3 w-3" aria-hidden="true" />

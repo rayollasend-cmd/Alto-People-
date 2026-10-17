@@ -140,7 +140,7 @@ describe('the Store Ops record', () => {
   it('flags the shift that needs a person to look at it', async () => {
     renderHistory();
     const table = await screen.findByRole('table');
-    expect(within(table).getByText('incomplete')).toBeInTheDocument();
+    expect(within(table).getByText('Incomplete')).toBeInTheDocument();
     expect(within(table).getByText('2 temp')).toBeInTheDocument();
     expect(within(table).getByText('68%')).toBeInTheDocument();
   });

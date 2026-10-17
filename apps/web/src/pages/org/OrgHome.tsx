@@ -1995,7 +1995,7 @@ function PersonOrgDrawer({
                         <div className="text-white tabular-nums">
                           {fmtDateTime(h.effectiveFrom)}
                           {isCurrent ? (
-                            <Badge variant="default" className="ml-2">current</Badge>
+                            <Badge variant="default" className="ml-2">Current</Badge>
                           ) : null}
                         </div>
                         <div className="text-silver mt-0.5">

@@ -147,6 +147,7 @@ const AgentRecordPage = lazyNamed(() => import('@/pages/admin/AgentRecordPage'),
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
+const PersonRecord = lazyNamed(() => import('@/pages/people/PersonRecord'), 'PersonRecord');
 const OrgHome = lazyNamed(() => import('@/pages/org/OrgHome'), 'OrgHome');
 const OrgChart = lazyNamed(() => import('@/pages/org/OrgChart'), 'OrgChart');
 const HeadcountHome = lazyNamed(() => import('@/pages/headcount/HeadcountHome'), 'HeadcountHome');
@@ -259,7 +260,10 @@ const OfferLetterPage = lazyNamed(() => import('@/pages/offer/OfferLetterPage'),
 // loader automatically.
 registerPrefetch('/onboarding', () => import('@/pages/onboarding/OnboardingHome'));
 registerPrefetch('/recruiting', () => import('@/pages/recruiting/RecruitingHome'));
-registerPrefetch('/people', () => import('@/pages/people/PeopleDirectory'));
+// The person record (/people/<id>) imports the directory's sections, and the
+// prefetcher matches by path prefix (an id can't be registered), so the
+// People key warms both chunks — on the nav link and on a name in the grid.
+registerPrefetch('/people', () => Promise.all([import('@/pages/people/PeopleDirectory'), import('@/pages/people/PersonRecord')]));
 registerPrefetch('/clients', () => import('@/pages/clients/ClientsHome'));
 registerPrefetch('/time-attendance', () => import('@/pages/time/TimeHome'));
 registerPrefetch('/time-off', () => import('@/pages/timeoff/TimeOffHome'));
@@ -524,6 +528,7 @@ const LAYOUT_ROUTES = [
   // view:payroll; the route matches it.
   { path: 'benefits', element: <RequireCapability cap="view:payroll"><BenefitsHome /></RequireCapability> },
   { path: 'people', element: <RequireCapability cap="view:org"><PeopleDirectory /></RequireCapability> },
+  { path: 'people/:associateId', element: <RequireCapability cap="view:org"><PersonRecord /></RequireCapability> },
   { path: 'org', element: <RequireCapability cap="view:org"><OrgHome /></RequireCapability> },
   { path: 'org/chart', element: <RequireCapability cap="view:org"><OrgChart /></RequireCapability> },
   { path: 'celebrations', element: <CelebrationsHome /> },

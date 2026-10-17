@@ -68,7 +68,8 @@ describe('WhatsAppAdmin', () => {
     expect(screen.getByText('12 opted in · 2 opted out')).toBeInTheDocument();
     expect(screen.getByText('alto_notice')).toBeInTheDocument();
     expect(await screen.findByText('Maria Lopez')).toBeInTheDocument();
-    expect(screen.getByText('delivered')).toBeInTheDocument();
+    // 'Delivered' is both the week's stat tile and the row's status badge.
+    expect(screen.getAllByText('Delivered').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('alto_shift_assigned · es')).toBeInTheDocument();
     expect(listWhatsAppMessages).toHaveBeenCalledWith({ associateId: undefined, limit: 100 });
   });

@@ -271,7 +271,7 @@ export function OpsFloorFeed({
                     {e.alert && (
                       <Badge variant="destructive" size="sm" className="shrink-0">
                         <AlertTriangle className="mr-1 h-3 w-3" aria-hidden="true" />
-                        alert
+                        Alert
                       </Badge>
                     )}
                     {e.photoId && (

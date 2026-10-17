@@ -666,7 +666,7 @@ function EditWorkerDialog({ worker, canManage, onClose, onSaved }: { worker: Wor
                       {s.endedAt ? ` → ${fmtDate(s.endedAt)}` : ' → now'}
                     </span>
                     <Badge variant="outline" size="sm">
-                      {s.source === 'associate' ? 'from the associate record' : 'assigned here'}
+                      {s.source === 'associate' ? 'From the associate record' : 'Assigned here'}
                     </Badge>
                   </li>
                 ))}

@@ -706,14 +706,14 @@ function StatusPill({
   // a decision, default = neutral off-the-clock.
   if (active) {
     return (
-      <Badge variant="success" className="normal-case tracking-normal">
+      <Badge variant="success">
         On the clock · since {fmtRelativeDate(active.clockInAt)}
       </Badge>
     );
   }
   if (out) {
     return (
-      <Badge variant="info" className="normal-case tracking-normal">
+      <Badge variant="info">
         <CalendarOff className="h-3 w-3" aria-hidden="true" />
         Out today
       </Badge>
@@ -721,14 +721,14 @@ function StatusPill({
   }
   if (pto) {
     return (
-      <Badge variant="pending" withDot={false} className="normal-case tracking-normal">
+      <Badge variant="pending" withDot={false}>
         <CalendarOff className="h-3 w-3" aria-hidden="true" />
         Time off pending today
       </Badge>
     );
   }
   return (
-    <Badge variant="default" className="normal-case tracking-normal">
+    <Badge variant="default">
       Off the clock
     </Badge>
   );

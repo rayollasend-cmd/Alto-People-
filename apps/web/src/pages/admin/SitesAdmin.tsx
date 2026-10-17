@@ -48,7 +48,7 @@ export function SitesAdmin() {
           <span className="text-white">{r.name}</span>
           {!r.isActive && (
             <Badge variant="default" size="sm" withDot={false}>
-              inactive
+              Inactive
             </Badge>
           )}
         </div>
