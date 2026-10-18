@@ -5,6 +5,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { internalSites, scopeAssociates } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 108 — Asset tracking endpoints.
@@ -19,10 +21,14 @@ import { notifyAssociate } from '../lib/notify.js';
 
 export const assetsRouter = Router();
 
+/** Rows a list draws; more than this says so (`truncated`). */
+const ASSET_PAGE = 2000;
+const ASSIGNMENT_PAGE = 1000;
+
 const VIEW = requireCapability('view:org');
 const MANAGE = requireCapability('manage:org');
 
-const ALL_KINDS = ['LAPTOP', 'PHONE', 'TABLET', 'BADGE', 'KEY', 'VEHICLE', 'UNIFORM', 'OTHER'] as const;
+const ALL_KINDS = ['LAPTOP', 'PHONE', 'TABLET', 'DEVICE', 'BADGE', 'KEY', 'PPE', 'UNIFORM', 'VEHICLE', 'OTHER'] as const;
 const ALL_STATUSES = ['AVAILABLE', 'ASSIGNED', 'RETIRED', 'LOST', 'IN_REPAIR'] as const;
 
 const AssetInputSchema = z.object({
@@ -33,18 +39,46 @@ const AssetInputSchema = z.object({
   purchasedAt: z.string().date().optional().nullable(),
   purchasePrice: z.number().nonnegative().optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
+  /** The store it's kept at (badges, keys, PPE on site). */
+  locationId: z.string().uuid().optional().nullable(),
 });
+
+/** A store named on an asset must be the caller's organization's (and within their reach). */
+async function assertStore(user: Parameters<typeof internalSites>[0], locationId: string | null | undefined) {
+  if (!locationId) return;
+  const reach = internalSites(user);
+  const ok = await prisma.site.findFirst({ where: { AND: [{ id: locationId, tenantId: tenantIdForWrite(), deletedAt: null }, reach ?? {}] }, select: { id: true } });
+  if (!ok) throw new HttpError(404, 'store_not_found', 'No such store in your reach.');
+}
 
 assetsRouter.get('/assets', VIEW, async (req, res) => {
   const status = z.enum(ALL_STATUSES).optional().parse(req.query.status);
   const kind = z.enum(ALL_KINDS).optional().parse(req.query.kind);
-  const rows = await prisma.asset.findMany({
-    take: 1000,
+  const locationId = z.string().uuid().optional().parse(req.query.locationId);
+  const reach = internalSites(req.user!);
+  const fetched = await prisma.asset.findMany({
+    take: ASSET_PAGE + 1,
     where: {
-      ...(status ? { status } : {}),
-      ...(kind ? { kind } : {}),
+      AND: [
+        { tenantId: tenantIdForWrite() },
+        status ? { status } : {},
+        kind ? { kind } : {},
+        locationId ? { locationId } : {},
+        // A site-scoped lead: assets kept at their stores, held by their
+        // people, or unassigned stock with no store.
+        reach
+          ? {
+              OR: [
+                { location: { is: reach } },
+                { locationId: null, assignments: { some: { returnedAt: null, associate: scopeAssociates(req.user!) } } },
+                { locationId: null, assignments: { none: { returnedAt: null } } },
+              ],
+            }
+          : {},
+      ],
     },
     include: {
+      location: { select: { id: true, name: true, client: { select: { name: true } } } },
       assignments: {
         where: { returnedAt: null },
         include: {
@@ -53,9 +87,12 @@ assetsRouter.get('/assets', VIEW, async (req, res) => {
         take: 1,
       },
     },
-    orderBy: [{ kind: 'asc' }, { label: 'asc' }],
+    orderBy: [{ kind: 'asc' }, { label: 'asc' }, { id: 'asc' }],
   });
+  const truncated = fetched.length > ASSET_PAGE;
+  const rows = truncated ? fetched.slice(0, ASSET_PAGE) : fetched;
   res.json({
+    truncated,
     assets: rows.map((a) => ({
       id: a.id,
       kind: a.kind,
@@ -66,6 +103,9 @@ assetsRouter.get('/assets', VIEW, async (req, res) => {
       purchasedAt: a.purchasedAt?.toISOString().slice(0, 10) ?? null,
       purchasePrice: a.purchasePrice?.toString() ?? null,
       notes: a.notes,
+      locationId: a.locationId,
+      storeName: a.location?.name ?? null,
+      clientName: a.location?.client?.name ?? null,
       currentAssignment: a.assignments[0]
         ? {
             id: a.assignments[0].id,
@@ -81,9 +121,12 @@ assetsRouter.get('/assets', VIEW, async (req, res) => {
 
 assetsRouter.post('/assets', MANAGE, async (req, res) => {
   const input = AssetInputSchema.parse(req.body);
+  await assertStore(req.user!, input.locationId);
   try {
     const created = await prisma.asset.create({
       data: {
+        tenantId: tenantIdForWrite(),
+        locationId: input.locationId ?? null,
         kind: input.kind,
         label: input.label,
         serial: input.serial ?? null,
@@ -111,9 +154,13 @@ assetsRouter.post('/assets', MANAGE, async (req, res) => {
 
 assetsRouter.put('/assets/:id', MANAGE, async (req, res) => {
   const input = AssetInputSchema.partial().parse(req.body);
+  const existing = await prisma.asset.findFirst({ where: { id: String(req.params.id), tenantId: tenantIdForWrite() }, select: { id: true } });
+  if (!existing) throw new HttpError(404, 'not_found', 'Asset not found.');
+  await assertStore(req.user!, input.locationId);
   await prisma.asset.update({
-    where: { id: req.params.id },
+    where: { id: existing.id },
     data: {
+      ...(input.locationId !== undefined ? { locationId: input.locationId } : {}),
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.label != null ? { label: input.label } : {}),
       ...(input.serial !== undefined ? { serial: input.serial } : {}),
@@ -232,19 +279,27 @@ assetsRouter.get('/asset-assignments', VIEW, async (req, res) => {
     .optional()
     .parse(req.query.associateId);
   const assetId = z.string().uuid().optional().parse(req.query.assetId);
-  const rows = await prisma.assetAssignment.findMany({
+  const fetched = await prisma.assetAssignment.findMany({
     where: {
-      ...(associateId ? { associateId } : {}),
-      ...(assetId ? { assetId } : {}),
+      AND: [
+        { tenantId: tenantIdForWrite() },
+        associateId ? { associateId } : {},
+        assetId ? { assetId } : {},
+        // Former holders stay (recovery is the point); out-of-reach people don't.
+        { associate: scopeAssociates(req.user!) },
+      ],
     },
     include: {
       asset: { select: { kind: true, label: true, serial: true } },
       associate: { select: { firstName: true, lastName: true } },
     },
-    orderBy: { assignedAt: 'desc' },
-    take: 500,
+    orderBy: [{ assignedAt: 'desc' }, { id: 'asc' }],
+    take: ASSIGNMENT_PAGE + 1,
   });
+  const truncated = fetched.length > ASSIGNMENT_PAGE;
+  const rows = truncated ? fetched.slice(0, ASSIGNMENT_PAGE) : fetched;
   res.json({
+    truncated,
     assignments: rows.map((r) => ({
       id: r.id,
       assetId: r.assetId,

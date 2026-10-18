@@ -17,7 +17,7 @@ import {
   SUPPORTED_TIMEZONES,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { Select } from '@/components/ui/Select';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
@@ -50,6 +50,8 @@ const MFA_REQUIREMENT_LABELS: Record<MfaRequirement, string> = {
  * very next email rendered.
  */
 export function BrandingHome() {
+  const term = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
   const confirm = useConfirm();
   // The assistant's name rides with the session (useTenant); a save refreshes it so every screen renames at once.
   const { refreshUser } = useAuth();
@@ -639,8 +641,8 @@ export function BrandingHome() {
                     Users covered by the policy must set up an authenticator
                     app before a password sign-in completes. &ldquo;Admins&rdquo;
                     covers every role that can manage other people&rsquo;s data
-                    (including finance and shift supervisors); associates and
-                    client portal accounts are exempt. Passkey sign-ins already
+                    (including finance and shift supervisors); {term('workers').toLowerCase()}
+                    {hasClients ? ' and client portal accounts are' : ' are'} exempt. Passkey sign-ins already
                     count as strong authentication and are never blocked.
                   </>
                 }

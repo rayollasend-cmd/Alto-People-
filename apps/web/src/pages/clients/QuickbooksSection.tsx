@@ -610,7 +610,7 @@ function CostCenterGlSection({ clientId, canManage }: { clientId: string; canMan
         Split the wage expense by cost center
       </label>
       {q.data.costCenters.length === 0 ? (
-        <p className="text-xs text-silver">No cost centers yet. Add them under Organization → Organizational tree.</p>
+        <p className="text-xs text-silver">No cost centers yet. Add them under Settings &amp; trust → Cost centers &amp; ledger codes.</p>
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {q.data.costCenters.map((c) => (

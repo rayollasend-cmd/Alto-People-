@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { activeHeadcount } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { isInternallyScoped } from '../lib/scope.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { formatRef } from '../lib/emailTemplates.js';
@@ -33,6 +34,20 @@ import { env } from '../config/env.js';
 export const executiveRouter = Router();
 
 const EXEC = requireCapability('view:executive');
+
+/**
+ * The executive layer is the whole company by design: its numbers are
+ * tenant-wide totals, margins and concentrations. An office account
+ * narrowed to sites/regions is clamped out rather than shown a company
+ * picture it may not hold (lib/scope.internalSites).
+ */
+executiveRouter.use((req, _res, next) => {
+  if (req.user && isInternallyScoped(req.user)) {
+    next(new HttpError(403, 'scope_too_narrow', 'The executive view covers the whole company; your access is limited to certain sites.'));
+    return;
+  }
+  next();
+});
 
 executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
   // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
@@ -68,12 +83,15 @@ executiveRouter.get('/batons', EXEC, async (_req: Request, res: Response) => {
   const now = new Date();
   const DAY_MS = 86_400_000;
   const CASE_OPEN = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] as const;
+  // Brief 2-1: every count is this tenant's.
+  const T = tenantIdForWrite();
 
   const [closeOuts, fgCandidates, regs, unapprovedTimesheets, payrollCasesOpen, incidentsOpen] =
     await Promise.all([
       // Separated (or erased) workers still registered in Fieldglass.
       prisma.fieldglassRegistration.count({
         where: {
+          tenantId: T,
           associate: {
             OR: [{ separatedAt: { not: null } }, { deletedAt: { not: null } }],
           },
@@ -82,6 +100,7 @@ executiveRouter.get('/batons', EXEC, async (_req: Request, res: Response) => {
       // Recent approvals with no registration yet (active workers only).
       prisma.application.findMany({
         where: {
+          tenantId: T,
           status: 'APPROVED',
           approvedAt: { gte: new Date(now.getTime() - 60 * DAY_MS) },
           deletedAt: null,
@@ -98,6 +117,7 @@ executiveRouter.get('/batons', EXEC, async (_req: Request, res: Response) => {
       // Registered under one client while openly assigned at another.
       prisma.fieldglassRegistration.findMany({
         where: {
+          tenantId: T,
           clientId: { not: null },
           associate: { deletedAt: null, separatedAt: null },
         },
@@ -117,12 +137,12 @@ executiveRouter.get('/batons', EXEC, async (_req: Request, res: Response) => {
         take: 500,
       }),
       prisma.timeEntry.count({
-        where: { status: 'COMPLETED', clockOutAt: { not: null } },
+        where: { tenantId: T, status: 'COMPLETED', clockOutAt: { not: null } },
       }),
       prisma.hrCase.count({
-        where: { category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
+        where: { tenantId: T, category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
       }),
-      prisma.oshaIncident.count({ where: { status: { not: 'RESOLVED' } } }),
+      prisma.oshaIncident.count({ where: { tenantId: T, status: { not: 'RESOLVED' } } }),
     ]);
 
   const candidateIds = [...new Set(fgCandidates.map((a) => a.associateId))];
@@ -277,7 +297,7 @@ executiveRouter.get(
   requireAnyCapability('view:executive', 'process:payroll'),
   async (_req: Request, res: Response) => {
     const finals = await prisma.clientStatement.findMany({
-      where: { status: 'FINAL' },
+      where: { tenantId: tenantIdForWrite(), status: 'FINAL' },
       select: {
         id: true,
         clientId: true,
@@ -370,7 +390,8 @@ function currentQuarter(now: Date): { key: string; start: Date; end: Date } {
 executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
   const now = new Date();
   const quarter = currentQuarter(now);
-  const target = await prisma.execTarget.findUnique({ where: { quarter: quarter.key } });
+  // The quarter key is unique platform-wide; read it only as this tenant's.
+  const target = await prisma.execTarget.findFirst({ where: { quarter: quarter.key, tenantId: tenantIdForWrite() } });
   // Brief 2-1: the quarter's punches, headcount and shifts are this tenant's own.
   const T = { tenantId: tenantIdForWrite() };
 
@@ -475,11 +496,12 @@ executiveRouter.put(
   async (req: Request, res: Response) => {
     const input = TargetsInputSchema.parse(req.body);
     const { quarter, ...fields } = input;
-    const row = await prisma.execTarget.upsert({
-      where: { quarter },
-      create: { quarter, ...fields },
-      update: fields,
-    });
+    // One row per (tenant, quarter): find this tenant's, else create it.
+    const tenantId = tenantIdForWrite();
+    const existing = await prisma.execTarget.findFirst({ where: { quarter, tenantId }, select: { id: true } });
+    const row = existing
+      ? await prisma.execTarget.update({ where: { id: existing.id }, data: fields })
+      : await prisma.execTarget.create({ data: { quarter, tenantId, ...fields } });
     enqueueAudit(
       {
         actorUserId: req.user!.id,
@@ -508,7 +530,7 @@ const PROSPECT_WRITE = requireCapability('manage:clients');
 
 executiveRouter.get('/prospects', EXEC, async (_req: Request, res: Response) => {
   const rows = await prisma.clientProspect.findMany({
-    where: { deletedAt: null },
+    where: { tenantId: tenantIdForWrite(), deletedAt: null },
     orderBy: [{ stage: 'asc' }, { updatedAt: 'desc' }],
     take: 200,
   });

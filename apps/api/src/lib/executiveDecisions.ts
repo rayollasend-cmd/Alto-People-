@@ -122,7 +122,7 @@ async function generateRaw(
       select: { id: true, name: true, updatedAt: true },
       take: 10,
     }),
-    prisma.execTarget.findUnique({
+    prisma.execTarget.findFirst({
       where: { ...T, quarter: quarterKey },
       select: { marginTarget: true },
     }),

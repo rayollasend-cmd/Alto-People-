@@ -3,7 +3,10 @@ import type { Prisma } from '@prisma/client';
 import { hasCapability, type Capability, type Role, type SearchGroup, type SearchHit, type SearchKind } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import {
+  internalSites,
+  isClientBoundedRole,
   scopeApplications,
   scopeAssociates,
   scopeClients,
@@ -75,7 +78,16 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
     cap: 'view:clients',
     find: async (q, limit, user) => {
       const rows = await prisma.site.findMany({
-        where: { deletedAt: null, name: ci(q), client: { is: scopeClients(user) } },
+        // The caller's tenant and reach: an account pinned to one store finds
+        // that store, not its client's others; a site/region-bound office
+        // account finds its own sites.
+        where: {
+          AND: [
+            { deletedAt: null, tenantId: tenantIdForWrite(), name: ci(q), client: { is: scopeClients(user) } },
+            isClientBoundedRole(user) && user.locationId ? { id: user.locationId } : {},
+            internalSites(user) ?? {},
+          ],
+        },
         select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
         orderBy: { name: 'asc' },
         take: limit,

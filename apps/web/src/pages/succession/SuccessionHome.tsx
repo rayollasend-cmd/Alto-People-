@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { ListTemplate } from '@/components/templates';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { NineBox, SuccessionByStore } from './SuccessionStores';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Crown, Download, Plus, Trash2, Users } from 'lucide-react';
@@ -45,7 +49,6 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { ymdLocal } from '@/lib/format';
-import { ListTemplate } from '@/components/templates';
 import { downloadCsv } from '@/lib/csv';
 import { pickOne } from '@/lib/validationCopy';
 
@@ -61,7 +64,8 @@ const READINESS_VARIANT: Record<
 
 const READINESS_KEYS = Object.keys(READINESS_LABELS) as SuccessionReadiness[];
 
-export function SuccessionHome() {
+/** The corporate view: positions and their designated successors. */
+export function SuccessionPositions() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const positionsQuery = useQuery({
@@ -216,14 +220,9 @@ export function SuccessionHome() {
   };
 
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-    <ListTemplate
-        className="space-y-5"
-        title="Succession planning"
-        subtitle="Designate successors for each position. Track who's ready now, in 1–2 years, or beyond."
-        breadcrumbs={[{ label: 'Performance' }, { label: 'Succession' }]}
-        secondaryActions={
-          <Button
+    <div className="space-y-5">
+      <div className="flex justify-end">
+        <Button
             size="sm"
             variant="outline"
             onClick={onExportCsv}
@@ -233,8 +232,7 @@ export function SuccessionHome() {
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
-        }
-    >
+      </div>
 
       {summaryError ? (
         <ErrorBanner>
@@ -319,7 +317,7 @@ export function SuccessionHome() {
               description={
                 rows && rows.length > 0
                   ? 'No position matches the current filters.'
-                  : 'Create positions in Org structure first; once they exist you can name successors here.'
+                  : 'Create positions in Departments & job profiles first; once they exist you can name successors here.'
               }
             />
           ) : (
@@ -401,7 +399,7 @@ export function SuccessionHome() {
           }}
         />
       )}
-    </ListTemplate>
+    </div>
   );
 }
 
@@ -725,5 +723,52 @@ function AddCandidateDrawer({
         </Button>
       </DrawerFooter>
     </Drawer>
+  );
+}
+
+type SuccessionTab = 'stores' | 'positions' | 'nine-box';
+
+/**
+ * Succession, three ways: by store (the seats that run each store and who
+ * could take one), by position (the corporate roles), and the 9-box. The
+ * tab lives in the URL so a view can be shared.
+ */
+export function SuccessionHome() {
+  const term = useTerm();
+  const [params, setParams] = useSearchParams();
+  const raw = params.get('tab');
+  const tab: SuccessionTab = raw === 'positions' || raw === 'nine-box' ? raw : 'stores';
+  return (
+    <ListTemplate
+      className="space-y-5"
+      title="Succession"
+      subtitle={`Who could lead each ${term('label.store').toLowerCase()} next, who could step into each role, and where your talent sits.`}
+      breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Succession' }]}
+    >
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          const next = new URLSearchParams(params);
+          if (v === 'stores') next.delete('tab');
+          else next.set('tab', v);
+          setParams(next, { replace: true });
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="stores">By {term('label.store').toLowerCase()}</TabsTrigger>
+          <TabsTrigger value="positions">By position</TabsTrigger>
+          <TabsTrigger value="nine-box">9-box</TabsTrigger>
+        </TabsList>
+        <TabsContent value="stores" className="mt-4">
+          <SuccessionByStore />
+        </TabsContent>
+        <TabsContent value="positions" className="mt-4">
+          <SuccessionPositions />
+        </TabsContent>
+        <TabsContent value="nine-box" className="mt-4">
+          <NineBox />
+        </TabsContent>
+      </Tabs>
+    </ListTemplate>
   );
 }

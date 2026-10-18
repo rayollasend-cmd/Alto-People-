@@ -15,6 +15,8 @@ import {
   UserPlus,
   Users,
   UserCog,
+  Settings2,
+  MoveRight,
 } from 'lucide-react';
 import type { Role, TermKey } from '@alto-people/shared';
 import type { OrgNode } from '@/lib/orgChartApi';
@@ -44,6 +46,22 @@ import { PALETTE, ancestorsOf, managerChoices, type OrgIndex } from './orgChartM
  * accessible list (a real tree: arrows move, right opens, left closes),
  * and the "Reports to" dialog.
  */
+
+/**
+ * Structure editing on the field chart (StructureEditor.tsx): a details
+ * drawer for a region / client / store, "Move to region…" for a store, and
+ * the drop that moves a dragged store onto a region (null = no region).
+ */
+export interface StructureActions {
+  onDetails: (n: OrgNode) => void;
+  onMove: (store: OrgNode) => void;
+  onDropStore: (siteId: string, regionNodeId: string | null) => void;
+  /** Every region on the chart, for the drop bar while a store is dragged. */
+  regions: OrgNode[];
+}
+
+const SITE_DRAG = 'application/x-alto-site';
+const STRUCTURE_KINDS: ReadonlyArray<OrgNode['kind']> = ['region', 'client', 'store'];
 
 export interface Painter {
   /** The palette slot for a node, or null when not colouring. */
@@ -126,6 +144,8 @@ export function OrgCard({
   compact,
   onFocus,
   onEdit,
+  structure,
+  onDragState,
 }: {
   n: OrgNode;
   index: OrgIndex;
@@ -134,16 +154,56 @@ export function OrgCard({
   compact?: boolean;
   onFocus?: (n: OrgNode) => void;
   onEdit?: (n: OrgNode) => void;
+  structure?: StructureActions;
+  /** The canvas hears when a store starts and stops being dragged. */
+  onDragState?: (siteId: string | null) => void;
 }) {
+  const [dropping, setDropping] = useState(false);
   const slot = painter.slotOf(n);
+  const draggableStore = !!structure && n.kind === 'store';
+  const dropTarget = !!structure && n.kind === 'region';
   const isPerson = n.kind === 'person' || n.kind === 'staff' || n.kind === 'lead';
   const team = index.teamSize.get(n.id) ?? 0;
   const hasTeam = (index.children.get(n.id) ?? []).length > 0;
   return (
     <div
       data-node={n.id}
+      draggable={draggableStore || undefined}
+      onDragStart={
+        draggableStore
+          ? (e) => {
+              e.dataTransfer.setData(SITE_DRAG, n.id.slice(2));
+              e.dataTransfer.effectAllowed = 'move';
+              onDragState?.(n.id.slice(2));
+            }
+          : undefined
+      }
+      onDragEnd={draggableStore ? () => onDragState?.(null) : undefined}
+      onDragOver={
+        dropTarget
+          ? (e) => {
+              if (!e.dataTransfer.types.includes(SITE_DRAG)) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              setDropping(true);
+            }
+          : undefined
+      }
+      onDragLeave={dropTarget ? () => setDropping(false) : undefined}
+      onDrop={
+        dropTarget
+          ? (e) => {
+              e.preventDefault();
+              setDropping(false);
+              const siteId = e.dataTransfer.getData(SITE_DRAG);
+              if (siteId) structure!.onDropStore(siteId, n.id);
+            }
+          : undefined
+      }
       className={cn(
         'group relative flex items-center gap-2.5 rounded-lg border bg-surface text-left',
+        draggableStore && 'cursor-grab active:cursor-grabbing',
+        dropping && 'ring-2 ring-accent ring-offset-2',
         compact ? 'w-56 px-2.5 py-1.5' : 'w-60 px-3 py-2.5',
         n.kind === 'vacancy' ? 'border-dashed border-line' : 'border-line',
         slot !== null && 'border-l-4',
@@ -203,7 +263,64 @@ export function OrgCard({
             <UserCog className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         )}
+        {structure && STRUCTURE_KINDS.includes(n.kind) && (
+          <button
+            type="button"
+            onClick={() => structure.onDetails(n)}
+            className="grid h-7 w-7 place-items-center rounded text-ink-muted hover:bg-surface-raised hover:text-ink coarse:h-10 coarse:w-10"
+            aria-label={`Details for ${n.name}`}
+            title="Details"
+          >
+            <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
+        {structure && n.kind === 'store' && (
+          <button
+            type="button"
+            onClick={() => structure.onMove(n)}
+            className="grid h-7 w-7 place-items-center rounded text-ink-muted hover:bg-surface-raised hover:text-ink coarse:h-10 coarse:w-10"
+            aria-label={`Move ${n.name} to a region`}
+            title="Move to region…"
+          >
+            <MoveRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * While a store is dragged, every region is a drop target here — the
+ * focused view may not show the region it should go to.
+ */
+function RegionDropBar({ structure, onDone }: { structure: StructureActions; onDone: () => void }) {
+  const [over, setOver] = useState<string | null>(null);
+  const targets: Array<{ id: string | null; name: string }> = [...structure.regions.map((r) => ({ id: r.id, name: r.name })), { id: null, name: 'No region' }];
+  return (
+    <div role="group" aria-label="Drop on a region to move the store" className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-line bg-surface/95 p-2 backdrop-blur">
+      <span className="text-xs text-ink-muted">Move to</span>
+      {targets.map((t) => (
+        <div
+          key={t.id ?? 'none'}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes(SITE_DRAG)) return;
+            e.preventDefault();
+            setOver(t.id ?? 'none');
+          }}
+          onDragLeave={() => setOver(null)}
+          onDrop={(e) => {
+            e.preventDefault();
+            const siteId = e.dataTransfer.getData(SITE_DRAG);
+            setOver(null);
+            onDone();
+            if (siteId) structure.onDropStore(siteId, t.id);
+          }}
+          className={cn('rounded-full border px-3 py-1 text-xs', over === (t.id ?? 'none') ? 'border-accent bg-accent-fill/15 text-ink' : 'border-dashed border-line text-ink-muted')}
+        >
+          {t.name}
+        </div>
+      ))}
     </div>
   );
 }
@@ -220,6 +337,7 @@ export function ChartCanvas({
   painter,
   topLabel,
   onEdit,
+  structure,
 }: {
   index: OrgIndex;
   focusId: string | null;
@@ -228,7 +346,9 @@ export function ChartCanvas({
   painter: Painter;
   topLabel: string;
   onEdit?: (n: OrgNode) => void;
+  structure?: StructureActions;
 }) {
+  const [draggingSite, setDraggingSite] = useState<string | null>(null);
   const focus = focusId ? (index.byId.get(focusId) ?? null) : null;
   const path = focus ? ancestorsOf(index, focus.id) : [];
   const team = index.children.get(focus?.id ?? null) ?? [];
@@ -244,7 +364,7 @@ export function ChartCanvas({
   }, [highlightId, focusId]);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('button,a')) return;
+    if ((e.target as HTMLElement).closest('button,a,[draggable="true"]')) return;
     const el = scroller.current;
     if (!el) return;
     drag.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
@@ -315,10 +435,11 @@ export function ChartCanvas({
           setZoom((z) => clampZoom(z - Math.sign(e.deltaY) * 0.1));
         }}
       >
+        {structure && draggingSite && <RegionDropBar structure={structure} onDone={() => setDraggingSite(null)} />}
         <div className="inline-flex min-w-full origin-top flex-col items-center p-8" style={{ transform: `scale(${zoom})` }}>
           {focus && (
             <>
-              <OrgCard n={focus} index={index} painter={painter} highlighted={highlightId === focus.id} onEdit={onEdit} />
+              <OrgCard n={focus} index={index} painter={painter} highlighted={highlightId === focus.id} onEdit={onEdit} structure={structure} onDragState={setDraggingSite} />
               {team.length > 0 && <div className="h-6 w-px bg-line" aria-hidden="true" />}
             </>
           )}
@@ -334,11 +455,11 @@ export function ChartCanvas({
                 return (
                   <li key={m.id} className="relative flex flex-col items-center">
                     {focus && <span aria-hidden="true" className="absolute -top-6 h-6 w-px bg-line" />}
-                    <OrgCard n={m} index={index} painter={painter} highlighted={highlightId === m.id} onFocus={(n) => setFocus(n.id)} onEdit={onEdit} />
+                    <OrgCard n={m} index={index} painter={painter} highlighted={highlightId === m.id} onFocus={(n) => setFocus(n.id)} onEdit={onEdit} structure={structure} onDragState={setDraggingSite} />
                     {below.length > 0 && (
                       <div className="mt-2 flex flex-col items-center gap-1.5 border-l border-line pl-3">
                         {below.slice(0, STACK).map((c) => (
-                          <OrgCard key={c.id} n={c} index={index} painter={painter} compact highlighted={highlightId === c.id} onFocus={(n) => setFocus(n.id)} onEdit={onEdit} />
+                          <OrgCard key={c.id} n={c} index={index} painter={painter} compact highlighted={highlightId === c.id} onFocus={(n) => setFocus(n.id)} onEdit={onEdit} structure={structure} onDragState={setDraggingSite} />
                         ))}
                         {below.length > STACK && (
                           <button type="button" className="text-xs text-accent hover:underline" onClick={() => setFocus(m.id)}>
@@ -371,6 +492,7 @@ export function TreeList({
   painter,
   onEdit,
   label,
+  structure,
 }: {
   index: OrgIndex;
   expanded: Set<string>;
@@ -379,6 +501,7 @@ export function TreeList({
   painter: Painter;
   onEdit?: (n: OrgNode) => void;
   label: string;
+  structure?: StructureActions;
 }) {
   const [active, setActive] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -447,6 +570,18 @@ export function TreeList({
       case 'End':
         e.preventDefault();
         move(shown[shown.length - 1]?.n.id ?? null);
+        break;
+      case 'm':
+        if (structure && n.kind === 'store') {
+          e.preventDefault();
+          structure.onMove(n);
+        }
+        break;
+      case 'i':
+        if (structure && STRUCTURE_KINDS.includes(n.kind)) {
+          e.preventDefault();
+          structure.onDetails(n);
+        }
         break;
       case 'Enter':
       case ' ':
@@ -530,6 +665,16 @@ export function TreeList({
               {onEdit && (n.kind === 'person' || n.kind === 'staff') && !n.former && (
                 <button type="button" tabIndex={-1} onClick={() => onEdit(n)} className="grid h-7 w-7 shrink-0 place-items-center rounded text-ink-muted hover:text-ink coarse:h-10 coarse:w-10" aria-label={`Change who ${n.name} reports to`}>
                   <UserCog className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              )}
+              {structure && n.kind === 'store' && (
+                <button type="button" tabIndex={-1} onClick={() => structure.onMove(n)} className="grid h-7 w-7 shrink-0 place-items-center rounded text-ink-muted hover:text-ink coarse:h-10 coarse:w-10" aria-label={`Move ${n.name} to a region`}>
+                  <MoveRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              )}
+              {structure && STRUCTURE_KINDS.includes(n.kind) && (
+                <button type="button" tabIndex={-1} onClick={() => structure.onDetails(n)} className="grid h-7 w-7 shrink-0 place-items-center rounded text-ink-muted hover:text-ink coarse:h-10 coarse:w-10" aria-label={`Details for ${n.name}`}>
+                  <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               )}
             </li>

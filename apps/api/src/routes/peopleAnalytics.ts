@@ -1,9 +1,12 @@
 import { Router } from 'express';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { activeAssociateIds } from '../lib/activeDefinition.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { HttpError } from '../middleware/error.js';
+import { internalSites, isClientBoundedRole, scopeAssociates, scopeShifts, scopeWhere } from '../lib/scope.js';
 
 /**
  * People analytics (HR pack 2026-10): the canned reports the builder's
@@ -40,12 +43,19 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
   const months = z.coerce.number().int().min(3).max(36).default(12).parse(req.query.months);
   const now = new Date();
   const since = monthStart(now, months - 1);
+  // Company-wide people analytics (turnover by manager, by site, with names)
+  // are the office's: a store's portal login or a supervisor holds
+  // view:analytics for their own dashboards, not for this.
+  if (isClientBoundedRole(req.user!)) throw new HttpError(403, 'forbidden', 'People analytics are for the office.');
   const tenantId = tenantIdForWrite();
+  // A site/region-bound office account reads its own sites' people only.
+  const people = scopeAssociates(req.user!);
+  const sites = internalSites(req.user!);
   const activeIds = await activeAssociateIds({}, now);
 
   const [associates, separations, positions, timeOff, shifts] = await Promise.all([
     prisma.associate.findMany({
-      where: { deletedAt: null, tenantId },
+      where: scopeWhere<Prisma.AssociateWhereInput>({ deletedAt: null, tenantId }, people),
       select: {
         id: true,
         hireDate: true,
@@ -53,23 +63,32 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
         separatedAt: true,
         managerId: true,
         manager: { select: { firstName: true, lastName: true } },
-        assignments: { orderBy: { startedAt: 'asc' }, take: 1, select: { location: { select: { id: true, name: true } } } },
+        assignments: { orderBy: { startedAt: 'asc' }, take: 1, select: { location: { select: { id: true, name: true, client: { select: { id: true, name: true } } } } } },
       },
       take: 20_000,
     }),
     prisma.separation.findMany({ where: { tenantId }, select: { associateId: true, reason: true }, take: 20_000 }),
     prisma.position.findMany({
-      where: { deletedAt: null, status: 'FILLED', filledAt: { not: null, gte: since } },
-      select: { id: true, title: true, createdAt: true, targetStartDate: true, filledAt: true, department: { select: { name: true } } },
+      where: { tenantId, deletedAt: null, status: 'FILLED', filledAt: { not: null, gte: since }, ...(sites ? { client: { is: { locations: { some: sites } } } } : {}) },
+      select: { id: true, title: true, createdAt: true, targetStartDate: true, filledAt: true, department: { select: { name: true } }, client: { select: { name: true } } },
       take: 5000,
     }),
     prisma.timeOffRequest.findMany({
-      where: { tenantId, status: 'APPROVED', startDate: { gte: since } },
+      where: { tenantId, status: 'APPROVED', startDate: { gte: since }, ...(sites ? { associate: { is: people } } : {}) },
       select: { category: true, startDate: true, endDate: true, requestedMinutes: true },
       take: 20_000,
     }),
-    prisma.shift.count({ where: { tenantId, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: since, lt: now } } }),
+    prisma.shift.count({ where: scopeWhere<Prisma.ShiftWhereInput>({ tenantId, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: since, lt: now } }, scopeShifts(req.user!)) }),
   ]);
+  // Scheduled shifts per month, for the absence trend.
+  const monthlyShifts = await Promise.all(
+    Array.from({ length: months }, (_, k) => {
+      const i = months - 1 - k;
+      const start = monthStart(now, i);
+      const end = i === 0 ? now : monthStart(now, i - 1);
+      return prisma.shift.count({ where: scopeWhere({ tenantId, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: start, lt: end } }, scopeShifts(req.user!)) });
+    }),
+  );
   const reasonBy = new Map(separations.map((s) => [s.associateId, s.reason]));
   const rows = associates.map((a) => ({
     id: a.id,
@@ -78,12 +97,13 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     reason: reasonBy.get(a.id) ?? null,
     managerId: a.managerId,
     managerName: a.manager ? `${a.manager.firstName} ${a.manager.lastName}`.trim() : null,
-    site: a.assignments[0]?.location ?? null,
+    site: a.assignments[0]?.location ? { id: a.assignments[0].location.id, name: a.assignments[0].location.name } : null,
+    client: a.assignments[0]?.location?.client ?? null,
     active: activeIds.has(a.id),
   }));
 
   // Headcount month by month.
-  const headcount = [];
+  const headcount: Array<{ month: string; headcount: number; hires: number; separations: number; voluntary: number; involuntary: number }> = [];
   for (let i = months - 1; i >= 0; i--) {
     const start = monthStart(now, i);
     const end = monthStart(now, i - 1);
@@ -138,10 +158,18 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     cohorts.push({ month: monthKey(start), hires: cohort.length, s30: survived(30), s60: survived(60), s90: survived(90), s180: survived(180) });
   }
 
+  const rollUp = <T extends { days: number }>(xs: T[], key: (x: T) => string) => {
+    const m = new Map<string, number[]>();
+    for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x.days]);
+    return [...m.entries()]
+      .map(([label, days]) => ({ label, filled: days.length, medianDays: median(days) }))
+      .sort((a, b) => (b.medianDays ?? 0) - (a.medianDays ?? 0));
+  };
+
   // Time to fill: a seat opens when it is created (or its target start, when earlier) and fills at filledAt.
   const fills = positions.map((p) => {
     const opened = p.targetStartDate && p.targetStartDate < p.createdAt ? p.targetStartDate : p.createdAt;
-    return { department: p.department?.name ?? 'No department', days: Math.max(0, Math.round((p.filledAt!.getTime() - opened.getTime()) / DAY)) };
+    return { department: p.department?.name ?? 'No department', client: p.client?.name ?? null, position: p.title, days: Math.max(0, Math.round((p.filledAt!.getTime() - opened.getTime()) / DAY)) };
   });
   const byDept = new Map<string, number[]>();
   for (const f of fills) byDept.set(f.department, [...(byDept.get(f.department) ?? []), f.days]);
@@ -155,6 +183,9 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     medianDays: median(fills.map((f) => f.days)),
     averageDays: fills.length ? Math.round(fills.reduce((s, f) => s + f.days, 0) / fills.length) : null,
     byDepartment: [...byDept.entries()].map(([department, days]) => ({ department, filled: days.length, medianDays: median(days), averageDays: Math.round(days.reduce((s, d) => s + d, 0) / days.length) })).sort((a, b) => (b.medianDays ?? 0) - (a.medianDays ?? 0)),
+    // The staffing cut: which clients and which positions are slow to fill.
+    byClient: rollUp(fills, (f) => f.client ?? 'No client'),
+    byPosition: rollUp(fills, (f) => f.position).slice(0, 15),
   };
 
   // Absence: approved time-off days against scheduled shifts in the window.
@@ -174,9 +205,82 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     byCategory: [...byCategory.values()].sort((a, b) => b.days - a.days),
   };
 
+  // Absence, month by month: approved days off against scheduled shifts.
+  const absenceTrend = headcount.map((h, k) => {
+    const days = timeOff.filter((r) => monthKey(r.startDate) === h.month).reduce((sum, r) => sum + daysOf(r), 0);
+    const scheduled = monthlyShifts[k] ?? 0;
+    return { month: h.month, absenceDays: days, scheduledShiftDays: scheduled, absenceRatePct: pct(days, scheduled + days) };
+  });
+
+  // Headcount by store, month by month (the store someone was hired into), top stores by today's people.
+  const storeRows = new Map<string, { storeId: string; storeName: string; clientName: string | null; current: number }>();
+  for (const r of rows) {
+    if (!r.site) continue;
+    const g = storeRows.get(r.site.id) ?? { storeId: r.site.id, storeName: r.site.name, clientName: r.client?.name ?? null, current: 0 };
+    if (r.active) g.current += 1;
+    storeRows.set(r.site.id, g);
+  }
+  const topStores = [...storeRows.values()].sort((a, b) => b.current - a.current).slice(0, 8);
+  const headcountByStore = topStores.map((st) => ({
+    storeId: st.storeId,
+    storeName: st.storeName,
+    clientName: st.clientName,
+    series: headcount.map((_h, k) => {
+      const end = monthStart(now, months - 2 - k);
+      return rows.filter((r) => r.site?.id === st.storeId && r.hired < end && (r.separatedAt === null || r.separatedAt >= end)).length;
+    }),
+  }));
+
+  // Where early leavers leave: separations in the window by store and how long they had been there.
+  const EARLY_BANDS = [
+    { key: 'week1', label: 'First week', min: 0, max: 7 },
+    { key: 'weeks2to4', label: 'Weeks 2–4', min: 7, max: 28 },
+    { key: 'months2to3', label: 'Months 2–3', min: 28, max: 90 },
+    { key: 'later', label: '3 months and more', min: 90, max: Infinity },
+  ] as const;
+  const grid = new Map<string, { storeId: string; storeName: string; clientName: string | null; hires: number; separations: number; bands: number[] }>();
+  for (const r of rows) {
+    if (!r.site) continue;
+    const g = grid.get(r.site.id) ?? { storeId: r.site.id, storeName: r.site.name, clientName: r.client?.name ?? null, hires: 0, separations: 0, bands: [0, 0, 0, 0] };
+    if (r.hired >= since) g.hires += 1;
+    if (r.separatedAt !== null && r.separatedAt >= since) {
+      g.separations += 1;
+      const d = (r.separatedAt.getTime() - r.hired.getTime()) / DAY;
+      const b = EARLY_BANDS.findIndex((x) => d >= x.min && d < x.max);
+      g.bands[b < 0 ? 3 : b]! += 1;
+    }
+    grid.set(r.site.id, g);
+  }
+  const turnoverGrid = {
+    bands: EARLY_BANDS.map((b) => ({ key: b.key, label: b.label })),
+    rows: [...grid.values()].filter((g) => g.separations > 0 || g.hires > 0).sort((a, b) => (a.clientName ?? '').localeCompare(b.clientName ?? '') || b.separations - a.separations).slice(0, 40),
+  };
+
+  // The first 90 days, cohort by cohort: the share still here at each week.
+  const SURVIVAL_DAYS = Array.from({ length: 14 }, (_, i) => i * 7).concat(90);
+  const survival = cohorts.slice(-6).map((c) => {
+    const [y, m] = c.month.split('-').map(Number) as [number, number];
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 1));
+    const cohort = rows.filter((r) => r.hired >= start && r.hired < end);
+    return {
+      month: c.month,
+      hires: cohort.length,
+      points: SURVIVAL_DAYS.map((d) => ({
+        day: d,
+        // Only once the whole cohort has had the chance to reach that day.
+        pct: end.getTime() + d * DAY > now.getTime() ? null : pct(cohort.filter((r) => r.separatedAt === null || r.separatedAt.getTime() - r.hired.getTime() >= d * DAY).length, cohort.length),
+      })),
+    };
+  });
+
   res.json({
     months,
     since: since.toISOString().slice(0, 10),
+    headcountByStore,
+    turnoverGrid,
+    survival,
+    absenceTrend,
     headcount,
     turnover: {
       annualizedPct: annualize(sepsInWindow.length, avgHead),

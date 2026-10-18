@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Users } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
@@ -143,6 +143,8 @@ function DeskScoreboard({
 
 export function RelayBoard() {
   const { can, user } = useAuth();
+  // Client requests come from client portal accounts — none where the tenant has no clients.
+  const hasClients = useTenant().moduleOn('clientPortal');
   const queryClient = useQueryClient();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
@@ -152,7 +154,7 @@ export function RelayBoard() {
   // What's waiting on this person's desk — the badge on the Requests tab.
   const inbox = useQuery({ queryKey: ['relay', 'requests', 'inbox', 'open'], queryFn: () => workApi.requests('inbox'), refetchInterval: 60_000 });
   const activity = useQuery({ queryKey: ['relay', 'activity'], queryFn: relayApi.activity, refetchInterval: 60_000 });
-  const requests = useQuery({ queryKey: ['relay', 'client-requests'], queryFn: relayApi.requests, refetchInterval: 60_000 });
+  const requests = useQuery({ queryKey: ['relay', 'client-requests'], queryFn: relayApi.requests, refetchInterval: 60_000, enabled: hasClients });
   const data = board.data;
 
   const myDesk = data?.me?.desk ?? deskOf(user?.role);
@@ -322,15 +324,17 @@ export function RelayBoard() {
           <MondayPack agenda={data.agenda} lens={lens} />
           <DecisionsPanel decisions={decisions} loading={activity.isLoading} lens={lens} myDesk={myDesk} onOpen={openLane} onChanged={refreshAll} />
           <ActivityFeed notes={activity.data?.notes ?? []} loading={activity.isLoading} lens={lens} onOpen={openLane} />
+          {hasClients && (
           <ClientRequestsSection
-            rows={requests.data?.requests ?? []}
-            lens={lens}
-            canWork={can('manage:scheduling')}
-            claims={claims}
-            desks={data.desks}
-            meId={meId}
-            onChanged={refreshAll}
-          />
+              rows={requests.data?.requests ?? []}
+              lens={lens}
+              canWork={can('manage:scheduling')}
+              claims={claims}
+              desks={data.desks}
+              meId={meId}
+              onChanged={refreshAll}
+            />
+          )}
         </aside>
       </div>
         </>

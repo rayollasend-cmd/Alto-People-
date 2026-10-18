@@ -192,7 +192,7 @@ export function TenantProfileHome() {
             <Link to="/admin/employers">Employers of record</Link>
           </Button>
           <Button asChild variant="outline" size="sm">
-            <Link to="/admin/org-units">Organizational tree</Link>
+            <Link to="/admin/org-units">Cost centers &amp; ledger codes</Link>
           </Button>
           <Button asChild variant="outline" size="sm">
             <Link to="/admin/sites">{term('sites')}</Link>

@@ -5,6 +5,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 130 — Volunteer time off (VTO).
@@ -158,7 +160,8 @@ vto130Router.get('/volunteer-entries', MANAGE_HR, async (req, res) => {
     .parse(req.query.status);
   const rows = await prisma.volunteerEntry.findMany({
     take: 100,
-    where: status ? { status } : {},
+    // People in the caller's tenant and reach.
+    where: { associate: { is: scopeActiveAssociates(req.user!, { former: true }) }, ...(status ? { status } : {}) },
     include: {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -402,7 +405,7 @@ vto130Router.get('/volunteer-summary', MANAGE_HR, async (_req, res) => {
   const year = new Date().getUTCFullYear();
   const start = new Date(`${year}-01-01T00:00:00Z`);
   const [pending, approvedAggregate, matchedAggregate] = await Promise.all([
-    prisma.volunteerEntry.count({ where: { status: 'PENDING' } }),
+    prisma.volunteerEntry.count({ where: { status: 'PENDING', tenantId: tenantIdForWrite() } }),
     prisma.volunteerEntry.aggregate({
       where: {
         status: { in: ['APPROVED', 'MATCHED'] },
@@ -411,7 +414,7 @@ vto130Router.get('/volunteer-summary', MANAGE_HR, async (_req, res) => {
       _sum: { hours: true },
     }),
     prisma.volunteerEntry.aggregate({
-      where: { status: 'MATCHED', activityDate: { gte: start } },
+      where: { status: 'MATCHED', activityDate: { gte: start }, tenantId: tenantIdForWrite() },
       _sum: { matchAmount: true },
     }),
   ]);

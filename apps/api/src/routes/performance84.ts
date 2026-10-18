@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 84 — Performance: Goals/OKRs, 1:1s, Kudos, PIPs, 360 reviews.
@@ -24,7 +25,12 @@ const MANAGE = requireCapability('manage:performance');
 // ----- Goals --------------------------------------------------------------
 
 const GoalCreateSchema = z.object({
-  associateId: z.string().uuid(),
+  /** Required for a person's goal; absent for a company or team goal. */
+  associateId: z.string().uuid().optional().nullable(),
+  /** PERSON (default) | TEAM | COMPANY — the cascade's levels. */
+  scope: z.enum(['PERSON', 'TEAM', 'COMPANY']).optional(),
+  /** A team goal's owner (a manager or store lead). */
+  ownerUserId: z.string().uuid().optional().nullable(),
   kind: z.enum(['GOAL', 'OBJECTIVE']).optional(),
   title: z.string().min(1).max(250),
   description: z.string().max(4000).optional().nullable(),
@@ -34,29 +40,43 @@ const GoalCreateSchema = z.object({
 });
 
 const GoalUpdateSchema = z.object({
+  /** Re-align under another goal (or none). */
+  parentGoalId: z.string().uuid().nullable().optional(),
   title: z.string().min(1).max(250).optional(),
   description: z.string().max(4000).nullable().optional(),
   status: z.enum(['DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED']).optional(),
   progressPct: z.number().int().min(0).max(100).optional(),
 });
 
+const GOAL_LIMIT = 2000;
+
 performance84Router.get('/goals', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const rows = await prisma.goal.findMany({
-    take: 500,
-    where: { deletedAt: null, ...(associateId ? { associateId } : {}) },
+    take: GOAL_LIMIT + 1,
+    where: { tenantId: tenantIdForWrite(), deletedAt: null, ...(associateId ? { associateId } : {}) },
     include: {
       keyResults: true,
       associate: { select: { firstName: true, lastName: true } },
+      owner: { select: { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } },
     },
     orderBy: { createdAt: 'desc' },
   });
+  const truncated = rows.length > GOAL_LIMIT;
   res.json({
-    goals: rows.map((g) => ({
+    truncated,
+    goals: rows.slice(0, GOAL_LIMIT).map((g) => ({
       id: g.id,
       associateId: g.associateId,
       associateName: g.associate
         ? `${g.associate.firstName} ${g.associate.lastName}`
+        : null,
+      scope: g.scope,
+      ownerUserId: g.ownerUserId,
+      ownerName: g.owner
+        ? g.owner.associate
+          ? `${g.owner.associate.firstName} ${g.owner.associate.lastName}`
+          : g.owner.displayName?.trim() || g.owner.email
         : null,
       kind: g.kind,
       title: g.title,
@@ -83,9 +103,27 @@ performance84Router.post('/goals', VIEW, async (req, res) => {
   if (input.periodEnd < input.periodStart) {
     throw new HttpError(400, 'invalid_period', 'periodEnd must be after periodStart');
   }
+  const scope = input.scope ?? 'PERSON';
+  const tenantId = tenantIdForWrite();
+  if (scope === 'PERSON' && !input.associateId) {
+    throw new HttpError(400, 'person_required', 'A person’s goal needs the person.');
+  }
+  if (scope !== 'PERSON' && input.associateId) {
+    throw new HttpError(400, 'no_person_for_shared_goal', 'A company or team goal belongs to no one person.');
+  }
+  if (input.associateId) {
+    const person = await prisma.associate.findFirst({ where: { id: input.associateId, tenantId, deletedAt: null }, select: { id: true } });
+    if (!person) throw new HttpError(404, 'associate_not_found', 'No such person.');
+  }
+  if (input.parentGoalId) {
+    const parent = await prisma.goal.findFirst({ where: { id: input.parentGoalId, tenantId, deletedAt: null }, select: { id: true } });
+    if (!parent) throw new HttpError(404, 'parent_not_found', 'The goal it aligns to doesn’t exist.');
+  }
   const created = await prisma.goal.create({
     data: {
-      associateId: input.associateId,
+      associateId: input.associateId ?? null,
+      scope,
+      ownerUserId: scope === 'TEAM' ? (input.ownerUserId ?? req.user!.id) : null,
       kind: input.kind ?? 'GOAL',
       title: input.title,
       description: input.description ?? null,
@@ -101,13 +139,24 @@ performance84Router.post('/goals', VIEW, async (req, res) => {
 performance84Router.put('/goals/:id', VIEW, async (req, res) => {
   const id = req.params.id;
   const input = GoalUpdateSchema.parse(req.body);
-  const existing = await prisma.goal.findUnique({ where: { id } });
+  const existing = await prisma.goal.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
   if (!existing || existing.deletedAt) {
     throw new HttpError(404, 'not_found', 'Goal not found.');
+  }
+  if (input.parentGoalId) {
+    // Walk up from the new parent; meeting this goal means a loop.
+    let cursor: string | null = input.parentGoalId;
+    for (let i = 0; i < 50 && cursor; i++) {
+      if (cursor === id) throw new HttpError(409, 'goal_cycle', 'A goal can’t align under itself or its own children.');
+      const up: { parentGoalId: string | null } | null = await prisma.goal.findFirst({ where: { id: cursor, tenantId: tenantIdForWrite(), deletedAt: null }, select: { parentGoalId: true } });
+      if (!up) throw new HttpError(404, 'parent_not_found', 'The goal it aligns to doesn’t exist.');
+      cursor = up.parentGoalId;
+    }
   }
   await prisma.goal.update({
     where: { id },
     data: {
+      parentGoalId: input.parentGoalId === undefined ? undefined : input.parentGoalId,
       title: input.title ?? undefined,
       description: input.description === undefined ? undefined : input.description,
       status: input.status ?? undefined,
@@ -118,11 +167,15 @@ performance84Router.put('/goals/:id', VIEW, async (req, res) => {
 });
 
 performance84Router.delete('/goals/:id', VIEW, async (req, res) => {
-  const id = req.params.id;
-  await prisma.goal.update({
-    where: { id },
+  const id = z.string().uuid().parse(req.params.id);
+  const gone = await prisma.goal.updateMany({
+    where: { id, tenantId: tenantIdForWrite(), deletedAt: null },
     data: { deletedAt: new Date() },
   });
+  if (gone.count === 0) throw new HttpError(404, 'not_found', 'Goal not found.');
+  // Goals aligned under it move up to its parent rather than dangling.
+  const goal = await prisma.goal.findUnique({ where: { id }, select: { parentGoalId: true } });
+  await prisma.goal.updateMany({ where: { parentGoalId: id, deletedAt: null }, data: { parentGoalId: goal?.parentGoalId ?? null } });
   res.status(204).end();
 });
 

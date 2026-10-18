@@ -1,4 +1,5 @@
 import type { FieldglassStatus } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { primaryClientsForAssociates } from './associateClients.js';
 import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
@@ -23,7 +24,16 @@ import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 
 const DAY_MS = 86_400_000;
 
-export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenantId?: string } = {}) {
+/** The people a site/region-bound caller may see, as an id set (null when not bound). */
+async function inReach(people: Prisma.AssociateWhereInput | undefined): Promise<Set<string> | null> {
+  if (!people) return null;
+  const rows = await prisma.associate.findMany({ where: people, select: { id: true } });
+  return new Set(rows.map((r) => r.id));
+}
+
+/** opts.people: the associates in the caller's reach — a store-bound office account works its own people's batons. */
+export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenantId?: string; people?: Prisma.AssociateWhereInput } = {}) {
+  const reach = await inReach(opts.people);
   // Brief 2-1: a route passes the caller's tenant; callers without one read every row as before.
   const tenant = opts.tenantId ? { tenantId: opts.tenantId } : {};
   // The Fieldglass setup queue — approved+scheduled workers not yet
@@ -308,6 +318,7 @@ export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenan
   const shiftTime = (v: string | null) =>
     v ? new Date(v).getTime() : Number.MAX_SAFE_INTEGER;
   return [...closeRows, ...transferRows, ...addRows]
+    .filter((r) => !reach || reach.has(r.associateId))
     .map((r) => ({ ...r, hoursUnbilled: unbilledHours.get(r.associateId) ?? 0 }))
     .sort((x, y) => {
       if (x.kind !== y.kind) return KIND_RANK[x.kind] - KIND_RANK[y.kind];
@@ -335,9 +346,9 @@ export interface FieldglassRosterRow {
 }
 
 /** Everyone registered in Fieldglass, newest first. */
-export async function buildFieldglassRoster(opts: { tenantId?: string } = {}): Promise<FieldglassRosterRow[]> {
+export async function buildFieldglassRoster(opts: { tenantId?: string; people?: Prisma.AssociateWhereInput } = {}): Promise<FieldglassRosterRow[]> {
   const regs = await prisma.fieldglassRegistration.findMany({
-    where: { associate: { deletedAt: null }, ...(opts.tenantId ? { tenantId: opts.tenantId } : {}) },
+    where: { associate: { deletedAt: null, ...(opts.people ? { AND: [opts.people] } : {}) }, ...(opts.tenantId ? { tenantId: opts.tenantId } : {}) },
     orderBy: { addedAt: 'desc' },
     take: 1000,
     select: {

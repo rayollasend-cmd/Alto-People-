@@ -31,6 +31,12 @@ export interface SkillSearchResult {
     level: SkillLevel;
     yearsExperience: number | null;
     verified: boolean;
+    /** Where they work now. */
+    place?: { locationId: string; siteName: string; clientName: string | null } | null;
+    /** The next day in the coming two weeks with no shift and no approved leave. */
+    nextFreeDay?: string | null;
+    /** Current certifications and qualifications — one competency view. */
+    certifications?: { name: string; isCert: boolean; expiresAt: string | null }[];
   }[];
 }
 
@@ -71,8 +77,10 @@ export const listAssociateSkills = (associateId: string) =>
     `/associate-skills?associateId=${associateId}`,
   );
 
-export const searchSkills = (q: string, minLevel?: SkillLevel) => {
+export const searchSkills = (q: string, minLevel?: SkillLevel, where: { clientId?: string; locationId?: string } = {}) => {
   const qs = new URLSearchParams({ q });
   if (minLevel) qs.set('minLevel', minLevel);
+  if (where.clientId) qs.set('clientId', where.clientId);
+  if (where.locationId) qs.set('locationId', where.locationId);
   return apiFetch<SkillSearchResult>(`/skills/search?${qs.toString()}`);
 };

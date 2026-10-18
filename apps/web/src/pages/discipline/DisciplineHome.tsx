@@ -143,7 +143,7 @@ export function DisciplineHome() {
         className="space-y-5"
         title="Disciplinary actions"
         subtitle="Formal warning ladder. Verbal → written → final → suspension → termination."
-        breadcrumbs={[{ label: 'Performance' }, { label: 'Discipline' }]}
+        breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Disciplinary actions' }]}
     >
 
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -160,9 +160,9 @@ export function DisciplineHome() {
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <SearchInput
-            aria-label="Search associate"
+            aria-label="Search by name"
             className="h-8 w-52 text-xs"
-            placeholder="Search associate"
+            placeholder="Search by name"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />

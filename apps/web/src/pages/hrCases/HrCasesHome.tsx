@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Avatar } from '@/components/ui/Avatar';
@@ -170,19 +170,27 @@ export function HrCasesHome() {
     queryFn: () => listMyCases(),
     enabled: tab === 'mine',
   });
-  const queueQuery = useQuery({
+  // Paged on the server: "Show more" reads on instead of the queue
+  // silently stopping at the first hundred.
+  const queueQuery = useInfiniteQuery({
     queryKey: ['hrCases', 'queue', { status: statusFilter, category: categoryFilter, assignedToMe, breachedOnly }],
-    queryFn: () =>
-      listCaseQueue({
-        status: breachedOnly || statusFilter === 'ALL' ? undefined : statusFilter,
-        category: categoryFilter === 'ALL' ? undefined : categoryFilter,
-        assignedToMe: assignedToMe || undefined,
-        sla: breachedOnly ? 'breached' : undefined,
-      }),
+    queryFn: ({ pageParam }) =>
+      listCaseQueue(
+        {
+          status: breachedOnly || statusFilter === 'ALL' ? undefined : statusFilter,
+          category: categoryFilter === 'ALL' ? undefined : categoryFilter,
+          assignedToMe: assignedToMe || undefined,
+          sla: breachedOnly ? 'breached' : undefined,
+        },
+        pageParam,
+      ),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => (last.hasMore ? all.length : undefined),
     enabled: tab !== 'mine',
   });
   const mine: MyCaseRow[] | null = mineQuery.data?.cases ?? null;
-  const queue: QueueCaseRow[] | null = queueQuery.data?.cases ?? null;
+  const queue: QueueCaseRow[] | null = queueQuery.data ? queueQuery.data.pages.flatMap((p) => p.cases) : null;
+  const queueTotal = queueQuery.data?.pages[0]?.total ?? null;
   const mineError = mineQuery.error
     ? mineQuery.error instanceof ApiError
       ? mineQuery.error.message
@@ -276,7 +284,7 @@ export function HrCasesHome() {
         className="space-y-5"
         title={t('hrc.title')}
         subtitle={t('hrc.subtitle')}
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'HR cases' }]}
+        breadcrumbs={[{ label: term('nav.compliance') }, { label: term('nav.hrCases') }]}
     >
 
       <div className="flex items-center justify-between">
@@ -530,6 +538,17 @@ export function HrCasesHome() {
                   { key: 'updated', header: 'Updated', accessor: (c) => c.updatedAt, sortable: true, searchable: false, className: 'text-xs text-silver', cell: (c) => fmtDate(c.updatedAt) },
                 ]}
               />
+            )}
+            {queue && queueQuery.hasNextPage && (
+              <div className="mt-3 flex items-center justify-center gap-3 text-xs text-ink-muted">
+                <span>
+                  Showing {queue.length}
+                  {queueTotal !== null ? ` of ${queueTotal}` : ''}
+                </span>
+                <Button size="sm" variant="outline" onClick={() => void queueQuery.fetchNextPage()} loading={queueQuery.isFetchingNextPage}>
+                  Show more
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>

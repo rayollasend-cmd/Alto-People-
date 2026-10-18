@@ -15,7 +15,16 @@ import { activeAssociateIds, activeHeadcount } from '../lib/activeDefinition.js'
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
-import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
+import {
+  associatesOfClient,
+  effectiveClientIdFilter,
+  internalSites,
+  scopeAssociates,
+  scopeAssociatesIncludingFormer,
+  scopeShifts,
+  scopeTimeEntries,
+} from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
 
 export const analyticsRouter = Router();
 
@@ -30,6 +39,24 @@ const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+
+/**
+ * The sites the caller's numbers are narrowed to, beyond their client:
+ * an office account bound to sites/regions, or a client account pinned to
+ * one store (it gets that store, not the whole client). `null` = no site
+ * narrowing. `ids` is the resolved list, for the raw-SQL trends.
+ */
+async function siteReach(user: SessionUser): Promise<{ where: Prisma.SiteWhereInput; ids: string[] } | null> {
+  const internal = internalSites(user);
+  const where: Prisma.SiteWhereInput | null = internal
+    ? internal
+    : user.role === 'CLIENT_PORTAL' && user.clientId && user.locationId
+      ? { id: user.locationId }
+      : null;
+  if (!where) return null;
+  const rows = await prisma.site.findMany({ where: { AND: [{ tenantId: tenantIdForWrite() }, where] }, select: { id: true } });
+  return { where, ids: rows.map((r) => r.id) };
+}
 
 /** Number of weekly buckets in each KPI micro-trend (ending this week). */
 const TREND_WEEKS = 8;
@@ -130,6 +157,21 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       ? associatesOfClient(boundedClientId)
       : {};
     const isBounded = bounded !== undefined;
+    // Site narrowing (a site-scoped office account, or a store-pinned
+    // client account) and this tenant, on every number below.
+    const T = tenantIdForWrite();
+    const reach = await siteReach(req.user!);
+    const appReach: Prisma.ApplicationWhereInput = reach ? { location: { is: reach.where } } : {};
+    const sqlSites = reach ? Prisma.sql`AND "locationId" = ANY(${reach.ids}::uuid[])` : Prisma.empty;
+    // Payroll dollars are a company number: never for a narrowed caller.
+    const hidePayroll = isBounded || reach !== null;
+    const activeInReach = async (): Promise<number> => {
+      const scopeOpts = { tenantId: T, ...(boundedClientId ? { clientId: boundedClientId } : {}) };
+      if (!reach) return activeHeadcount(scopeOpts, now);
+      const ids = [...(await activeAssociateIds(scopeOpts, now))];
+      if (ids.length === 0) return 0;
+      return prisma.associate.count({ where: { AND: [{ id: { in: ids } }, scopeAssociates(req.user!)] } });
+    };
 
     const [
       activeAssociates,
@@ -147,46 +189,48 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       trendHires,
     ] = await Promise.all([
       // Brief 1A-2: the one definition of active, clamped to the caller's client.
-      activeHeadcount({ tenantId: tenantIdForWrite(), ...(boundedClientId ? { clientId: boundedClientId } : {}) }, now),
+      activeInReach(),
       prisma.shift.count({
         where: {
-          status: { in: ['OPEN', 'ASSIGNED'] },
-          startsAt: { gte: now, lte: in30 },
-          ...clientClamp,
+          AND: [
+            { tenantId: T, status: { in: ['OPEN', 'ASSIGNED'] }, startsAt: { gte: now, lte: in30 } },
+            clientClamp,
+            scopeShifts(req.user!),
+          ],
         },
       }),
-      prisma.timeEntry.count({ where: { status: 'ACTIVE', ...clientClamp } }),
+      prisma.timeEntry.count({ where: { AND: [{ tenantId: T, status: 'ACTIVE' }, clientClamp, scopeTimeEntries(req.user!)] } }),
       prisma.application.count({
         where: {
-          deletedAt: null,
-          status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
-          ...clientClamp,
+          AND: [{ tenantId: T, deletedAt: null, status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] } }, clientClamp, appReach],
         },
       }),
       // I-9s aren't client-attributable — bounded callers see 0 rather
       // than the org count.
       isBounded
         ? Promise.resolve(0)
-        : prisma.i9Verification.count({ where: { section2CompletedAt: null } }),
+        : prisma.i9Verification.count({
+            where: { tenantId: T, section2CompletedAt: null, associate: { AND: [{ deletedAt: null }, scopeAssociates(req.user!)] } },
+          }),
       prisma.documentRecord.count({
-        where: { deletedAt: null, status: 'UPLOADED', ...clientClamp },
+        where: { AND: [{ tenantId: T, deletedAt: null, status: 'UPLOADED' }, clientClamp, { associate: scopeAssociates(req.user!) }] },
       }),
-      // Org payroll dollars are never shown to bounded roles.
-      isBounded
+      // Org payroll dollars are never shown to bounded or site-narrowed callers.
+      hidePayroll
         ? Promise.resolve({ _sum: { totalNet: null } })
         : prisma.payrollRun.aggregate({
-            where: { status: 'DISBURSED', disbursedAt: { gte: minus30 } },
+            where: { tenantId: T, status: 'DISBURSED', disbursedAt: { gte: minus30 } },
             _sum: { totalNet: true },
           }),
-      isBounded
+      hidePayroll
         ? Promise.resolve({ _sum: { totalNet: null } })
         : prisma.payrollRun.aggregate({
-            where: { status: { in: ['DRAFT', 'FINALIZED'] } },
+            where: { tenantId: T, status: { in: ['DRAFT', 'FINALIZED'] } },
             _sum: { totalNet: true },
           }),
       prisma.application.groupBy({
         by: ['status'],
-        where: { deletedAt: null, ...clientClamp },
+        where: { AND: [{ tenantId: T, deletedAt: null }, clientClamp, appReach] },
         _count: { _all: true },
       }),
       // Trend feeds. Hours + shifts are aggregated in SQL — these two
@@ -204,7 +248,9 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
         FROM "TimeEntry"
         WHERE "clockInAt" >= ${trendStart} AND "clockInAt" < ${trendEnd}
           AND "clockOutAt" IS NOT NULL
+          AND "tenantId" = ${T}::uuid
           ${boundedClientId ? Prisma.sql`AND "clientId" = ${boundedClientId}::uuid` : Prisma.empty}
+          ${sqlSites}
         GROUP BY 1
       `),
       prisma.$queryRaw<{ wk: number; n: bigint }[]>(Prisma.sql`
@@ -214,22 +260,18 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
         FROM "Shift"
         WHERE "startsAt" >= ${trendStart} AND "startsAt" < ${trendEnd}
           AND "status" <> 'CANCELLED'::"ShiftStatus"
+          AND "tenantId" = ${T}::uuid
           ${boundedClientId ? Prisma.sql`AND "clientId" = ${boundedClientId}::uuid` : Prisma.empty}
+          ${sqlSites}
         GROUP BY 1
       `),
       prisma.application.findMany({
-        where: {
-          deletedAt: null,
-          createdAt: { gte: trendStart, lt: trendEnd },
-          ...clientClamp,
-        },
+        where: { AND: [{ tenantId: T, deletedAt: null, createdAt: { gte: trendStart, lt: trendEnd } }, clientClamp, appReach] },
         select: { createdAt: true },
       }),
       prisma.associate.findMany({
         where: {
-          deletedAt: null,
-          createdAt: { gte: trendStart, lt: trendEnd },
-          ...associateClamp,
+          AND: [{ tenantId: T, deletedAt: null, createdAt: { gte: trendStart, lt: trendEnd } }, associateClamp, scopeAssociates(req.user!)],
         },
         select: { createdAt: true },
       }),
@@ -310,10 +352,21 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const now = new Date();
     // Brief 1A-2: "active" on the retention table is the one definition.
-    const activeIds = await activeAssociateIds({}, now);
+    const activeIds = await activeAssociateIds({ tenantId: tenantIdForWrite() }, now);
+    // A site-narrowed caller (office account bound to sites, or a client
+    // account pinned to a store) reads only people who worked those sites,
+    // judged at the first of those sites they worked.
+    const reach = await siteReach(req.user!);
+    const reachIds = reach ? new Set(reach.ids) : null;
     const associates = await prisma.associate.findMany({
       // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
-      where: { deletedAt: null, tenantId: tenantIdForWrite() },
+      where: {
+        AND: [
+          { deletedAt: null, tenantId: tenantIdForWrite() },
+          reach ? { assignments: { some: { location: { is: reach.where } } } } : {},
+          scopeAssociatesIncludingFormer(req.user!),
+        ],
+      },
       select: {
         id: true,
         hireDate: true,
@@ -347,9 +400,11 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
         // someone who started elsewhere never carries another client's
         // location (name + counts) into this client's comparison.
         firstLocation:
-          (typeof clamped === 'string'
-            ? a.assignments.find((asg) => asg.location.clientId === clamped)
-            : a.assignments[0]
+          (reachIds
+            ? a.assignments.find((asg) => reachIds.has(asg.location.id) && (typeof clamped !== 'string' || asg.location.clientId === clamped))
+            : typeof clamped === 'string'
+              ? a.assignments.find((asg) => asg.location.clientId === clamped)
+              : a.assignments[0]
           )?.location ?? null,
         activeNow: activeIds.has(a.id),
         clientIds: new Set(a.assignments.map((asg) => asg.location.clientId)),
@@ -464,9 +519,12 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
     // client's funnel, never the org's per-client breakdown.
     const clamped = effectiveClientIdFilter(req.user!, undefined);
     // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
+    // …and a site-narrowed caller's stores only.
+    const onboardingReach = await siteReach(req.user!);
     const clientClamp: Prisma.ApplicationWhereInput = {
       tenantId: tenantIdForWrite(),
       ...(clamped === undefined ? {} : { clientId: clamped ?? NO_CLIENT }),
+      ...(onboardingReach ? { location: { is: onboardingReach.where } } : {}),
     };
     const now = new Date();
     const windowStart = new Date(now.getTime() - ANALYTICS_LOOKBACK_DAYS * ONE_DAY_MS);

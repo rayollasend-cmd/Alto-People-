@@ -63,8 +63,8 @@ const TRIGGERS: WorkflowTrigger[] = [
 ];
 
 const TRIGGER_LABELS: Record<WorkflowTrigger, string> = {
-  ASSOCIATE_HIRED: 'Associate hired',
-  ASSOCIATE_TERMINATED: 'Associate terminated',
+  ASSOCIATE_HIRED: 'New hire',
+  ASSOCIATE_TERMINATED: 'Separation',
   TIME_OFF_REQUESTED: 'Time off requested',
   TIME_OFF_APPROVED: 'Time off approved',
   TIME_OFF_DENIED: 'Time off denied',
@@ -232,7 +232,7 @@ export function WorkflowsHome() {
             <EmptyState
               icon={Workflow}
               title="No workflows yet"
-              description='Workflows fire on triggers like "Associate hired" → send a welcome notification, create an onboarding task, post to an audit log.'
+              description='Workflows fire on triggers like "New hire" → send a welcome notification, create an onboarding task, post to an audit log.'
               action={
                 canManage ? (
                   <Button onClick={() => setDrawerTarget('new')} size="sm">

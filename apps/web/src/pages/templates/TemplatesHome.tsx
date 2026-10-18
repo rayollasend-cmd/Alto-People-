@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { Check, Copy, Download, FileText, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -65,6 +66,7 @@ const ASSOCIATE_TOKEN_PATHS = [
 ] as const;
 
 export function TemplatesHome() {
+  const term = useTerm();
   const confirm = useConfirm();
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<DocumentTemplate | null>(null);
@@ -106,8 +108,8 @@ export function TemplatesHome() {
     <div className="space-y-5">
       <PageHeader
         title="Document templates"
-        subtitle="Mail-merge templates with version history. Use {{ associate.firstName }} tokens."
-        breadcrumbs={[{ label: 'Compliance' }, { label: 'Templates' }]}
+        subtitle="Mail-merge templates with version history, filled in from each person’s record."
+        breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Document templates' }]}
       />
       <div className="flex justify-end">
         <Button onClick={() => setShowNew(true)}>

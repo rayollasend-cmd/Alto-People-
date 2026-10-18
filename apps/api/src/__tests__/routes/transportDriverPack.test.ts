@@ -7,6 +7,7 @@ import { setRoutingForTests } from '../../lib/mapboxRouting.js';
 import { PRE_TRIP_ITEMS, DRIVER_POSITION } from '../../lib/transportDrivers.js';
 import { generateAllSeries } from '../../lib/rideSeries.js';
 import { dateKeyInZone } from '../../lib/timeAnomalies.js';
+import { zonedWallTimeToUtcInstant } from '../../lib/timezone.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -403,8 +404,13 @@ describe('the fleet record, drivers and hours of service', () => {
 
   it('driver shifts: a day that schedules drivers takes only drivers on shift; hours of service bound the shift and the day', async () => {
     const f = await fleet();
-    const dayStart = new Date(f.targetAt);
-    dayStart.setHours(5, 0, 0, 0);
+    // Fixed times on tomorrow's store-local day: the run at 10:00, a driver
+    // shift that evening — never straddling midnight, whatever time it is now.
+    const [y, mo, d] = dateKeyInZone(new Date(Date.now() + 86_400_000), f.store.timezone).split('-').map(Number) as [number, number, number];
+    const at = (h: number) => zonedWallTimeToUtcInstant(y, mo, d, h * 60, f.store.timezone);
+    const targetAt = at(10);
+    const serviceDate = dateKeyInZone(targetAt, f.store.timezone);
+    const dayStart = at(5);
     // Too long for the day.
     const long = await f.directorAgent.post('/transport/driver-shifts').send({ driverUserId: f.driver.id, startsAt: dayStart.toISOString(), endsAt: new Date(dayStart.getTime() + 12 * 3_600_000).toISOString() });
     expect(long.status).toBe(409);
@@ -413,15 +419,15 @@ describe('the fleet record, drivers and hours of service', () => {
     const ghost = await createUser({ role: 'DRIVER' });
     expect((await f.directorAgent.post('/transport/driver-shifts').send({ driverUserId: ghost.user.id, startsAt: dayStart.toISOString(), endsAt: new Date(dayStart.getTime() + 8 * 3_600_000).toISOString() })).body.error.code).toBe('driver_not_on_file');
     // An evening shift, so the morning run finds nobody on shift.
-    const evening = new Date(f.targetAt.getTime() + 6 * 3_600_000);
+    const evening = at(16);
     const shift = await f.directorAgent.post('/transport/driver-shifts').send({ driverUserId: f.driver.id, startsAt: evening.toISOString(), endsAt: new Date(evening.getTime() + 4 * 3_600_000).toISOString() });
     expect(shift.status).toBe(201);
     expect(shift.body.shift.driver.name).toBe('Mike Chen');
     expect((await prisma.shift.findUniqueOrThrow({ where: { id: shift.body.shift.id } })).position).toBe(DRIVER_POSITION);
     const bo = await createAssociate({ firstName: 'Bo', lastName: 'Rider' });
-    const ride = await prisma.ride.create({ data: { associateId: bo.id, direction: 'TO_WORK', locationId: f.store.id, address: 'x', ...SEASIDE, targetAt: f.targetAt, serviceDate: f.serviceDate, fareCents: 500, noShowFeeCents: 100, createdById: f.director.id } });
-    const departAt = new Date(f.targetAt.getTime() - 45 * 60_000).toISOString();
-    const body = { vanId: f.van.id, driverUserId: f.driver.id, direction: 'TO_WORK', serviceDate: f.serviceDate, departAt, rides: [{ rideId: ride.id, pickupAt: new Date(f.targetAt.getTime() - 30 * 60_000).toISOString() }] };
+    const ride = await prisma.ride.create({ data: { associateId: bo.id, direction: 'TO_WORK', locationId: f.store.id, address: 'x', ...SEASIDE, targetAt, serviceDate, fareCents: 500, noShowFeeCents: 100, createdById: f.director.id } });
+    const departAt = new Date(targetAt.getTime() - 45 * 60_000).toISOString();
+    const body = { vanId: f.van.id, driverUserId: f.driver.id, direction: 'TO_WORK', serviceDate, departAt, rides: [{ rideId: ride.id, pickupAt: new Date(targetAt.getTime() - 30 * 60_000).toISOString() }] };
     const off = await f.directorAgent.post('/transport/runs').send(body);
     expect(off.status).toBe(409);
     expect(off.body.error.code).toBe('driver_not_on_shift');

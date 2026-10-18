@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Download, Laptop, Pencil, Plus, Smartphone, Key, IdCard, Car, Shirt, Box } from 'lucide-react';
+import { Download, Laptop, Pencil, Plus, Smartphone, Key, IdCard, Car, Shirt, Box, HardHat, Cpu } from 'lucide-react';
+import { listSites } from '@/lib/orgApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
@@ -43,23 +44,17 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
 import { ListTemplate } from '@/components/templates';
 import { FormHint, Label } from '@/components/ui/Label';
 
-const KIND_OPTIONS: AssetKind[] = [
-  'LAPTOP',
-  'PHONE',
-  'TABLET',
-  'BADGE',
-  'KEY',
-  'VEHICLE',
-  'UNIFORM',
-  'OTHER',
-];
+// Field kit first — what a store actually hands out — then devices.
+const KIND_OPTIONS: AssetKind[] = ['BADGE', 'KEY', 'PPE', 'UNIFORM', 'DEVICE', 'PHONE', 'TABLET', 'LAPTOP', 'VEHICLE', 'OTHER'];
 
 const KIND_ICONS: Record<AssetKind, typeof Laptop> = {
   LAPTOP: Laptop,
   PHONE: Smartphone,
   TABLET: Smartphone,
+  DEVICE: Cpu,
   BADGE: IdCard,
   KEY: Key,
+  PPE: HardHat,
   VEHICLE: Car,
   UNIFORM: Shirt,
   OTHER: Box,
@@ -77,8 +72,10 @@ const KIND_LABEL: Record<AssetKind, string> = {
   LAPTOP: 'Laptop',
   PHONE: 'Phone',
   TABLET: 'Tablet',
+  DEVICE: 'Device',
   BADGE: 'Badge',
-  KEY: 'Key',
+  KEY: 'Keys',
+  PPE: 'PPE',
   VEHICLE: 'Vehicle',
   UNIFORM: 'Uniform',
   OTHER: 'Other',
@@ -104,6 +101,9 @@ export function AssetsHome() {
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<AssetKind | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<AssetStatus | 'ALL'>('ALL');
+  const [storeFilter, setStoreFilter] = useState('');
+  const term = useTerm();
+  const stores = useStores();
   // One in-flight action at a time — a double-click on Delete used to
   // fire the write twice.
   const [actionKey, setActionKey] = useState<string | null>(null);
@@ -130,7 +130,9 @@ export function AssetsHome() {
     (a) =>
       (kindFilter === 'ALL' || a.kind === kindFilter) &&
       (statusFilter === 'ALL' || a.status === statusFilter) &&
+      (!storeFilter || (storeFilter === 'none' ? !a.locationId : a.locationId === storeFilter)) &&
       (!q ||
+        (a.storeName ?? '').toLowerCase().includes(q) ||
         a.label.toLowerCase().includes(q) ||
         (a.serial ?? '').toLowerCase().includes(q) ||
         (a.model ?? '').toLowerCase().includes(q) ||
@@ -210,11 +212,22 @@ export function AssetsHome() {
             {s === 'ALL' ? 'All' : STATUS_LABEL[s]}
           </Button>
         ))}
+        {stores.length > 0 && (
+          <Select size="sm" aria-label={`Filter by ${term('label.store').toLowerCase()}`} value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)}>
+            <option value="">Every {term('label.store').toLowerCase()}</option>
+            <option value="none">Central stock</option>
+            {stores.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
+              </option>
+            ))}
+          </Select>
+        )}
         <Input
           className="ml-auto w-56"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search label, serial, model, holder…"
+          placeholder="Search label, serial, holder, store…"
           aria-label="Search assets"
         />
       </div>
@@ -266,6 +279,14 @@ export function AssetsHome() {
                   },
                 },
                 { key: 'label', header: 'Label', accessor: (a) => a.label, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'store',
+                  header: term('label.store'),
+                  accessor: (a) => a.storeName ?? '',
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (a) => (a.storeName ? <span>{a.storeName}</span> : <span className="text-xs text-silver">Central stock</span>),
+                },
                 { key: 'serial', header: 'Serial', accessor: (a) => a.serial, sortable: true, className: 'font-mono text-xs', cell: (a) => a.serial ?? '—' },
                 {
                   key: 'status',
@@ -464,8 +485,9 @@ function NewAssetDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [kind, setKind] = useState<AssetKind>('LAPTOP');
+  const [kind, setKind] = useState<AssetKind>('BADGE');
   const [label, setLabel] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [serial, setSerial] = useState('');
   const [model, setModel] = useState('');
   const [serialWarning, setSerialWarning] = useState<string | null>(null);
@@ -483,6 +505,7 @@ function NewAssetDrawer({
         label: label.trim(),
         serial: serial.trim() || null,
         model: model.trim() || null,
+        locationId: locationId || null,
       });
       toast.success('Asset created.');
       onSaved();
@@ -509,11 +532,12 @@ function NewAssetDrawer({
           >
             {KIND_OPTIONS.map((k) => (
               <option key={k} value={k}>
-                {k}
+                {KIND_LABEL[k]}
               </option>
             ))}
           </Select>
         </div>
+        <StoreSelect id="new-asset-store" value={locationId} onChange={setLocationId} />
         <div>
           <Label htmlFor="new-asset-label">Label</Label>
           <Input
@@ -580,6 +604,7 @@ function EditAssetDrawer({
   const [serial, setSerial] = useState(asset.serial ?? '');
   const [model, setModel] = useState(asset.model ?? '');
   const [notes, setNotes] = useState(asset.notes ?? '');
+  const [locationId, setLocationId] = useState(asset.locationId ?? '');
   const [serialWarning, setSerialWarning] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -596,6 +621,7 @@ function EditAssetDrawer({
         serial: serial.trim() || null,
         model: model.trim() || null,
         notes: notes.trim() || null,
+        locationId: locationId || null,
       });
       toast.success('Asset updated.');
       onSaved();
@@ -622,11 +648,12 @@ function EditAssetDrawer({
           >
             {KIND_OPTIONS.map((k) => (
               <option key={k} value={k}>
-                {k}
+                {KIND_LABEL[k]}
               </option>
             ))}
           </Select>
         </div>
+        <StoreSelect id="edit-asset-store" value={locationId} onChange={setLocationId} />
         <div>
           <Label htmlFor="edit-asset-label">Label</Label>
           <Input
@@ -750,5 +777,31 @@ function AssignDrawer({
         </Button>
       </DrawerFooter>
     </Drawer>
+  );
+}
+
+/** The stores an asset can be kept at (empty when the list can't be read). */
+function useStores() {
+  const q = useQuery({ queryKey: ['assets', 'stores'], queryFn: listSites });
+  return (q.data?.sites ?? []).filter((x) => x.isActive).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function StoreSelect({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
+  const term = useTerm();
+  const stores = useStores();
+  if (stores.length === 0) return null;
+  return (
+    <div>
+      <Label htmlFor={id}>Kept at</Label>
+      <Select id={id} className="mt-1" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Central stock — no {term('label.store').toLowerCase()}</option>
+        {stores.map((x) => (
+          <option key={x.id} value={x.id}>
+            {x.name}
+            {x.clientName ? ` — ${x.clientName}` : ''}
+          </option>
+        ))}
+      </Select>
+    </div>
   );
 }

@@ -6,6 +6,8 @@ import type { DirectoryEntry, TimeEntry, TimeOffEntitlement, TimeOffRequest } fr
 import { RecordTemplate } from '@/components/templates';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
 import { Avatar, Badge, Button, Card, CardContent, EmptyState, Label, MetricCard, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
+import { getCareerPosition } from '@/lib/career126Api';
+import { CareerLadderView } from '@/pages/career/CareerPosition';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { QueryError } from '@/components/ui/QueryError';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
@@ -571,6 +573,23 @@ const TIMELINE_KIND_LABEL: Record<PerfTimelineEntry['kind'], string> = {
 
 const LADDER_ORDER: DisciplineKind[] = ['VERBAL_WARNING', 'WRITTEN_WARNING', 'FINAL_WARNING', 'SUSPENSION', 'TERMINATION'];
 
+/** Where they stand on a career ladder and what the next rung asks of them. */
+function CareerSection({ associateId }: { associateId: string }) {
+  const position = useQuery({ queryKey: ['person-record', 'career', associateId], queryFn: () => getCareerPosition(associateId) });
+  return (
+    <div className="space-y-3">
+      <SectionTitle title="Career" description="Their rung on a career ladder, and how close they are to the next one." />
+      {position.isError ? (
+        <QueryError what="their career position" query={position} />
+      ) : position.isPending ? (
+        <Skeleton className="h-24" />
+      ) : (
+        <CareerLadderView position={position.data} self={false} />
+      )}
+    </div>
+  );
+}
+
 function PerformanceTab({ associateId, showLadder }: { associateId: string; showLadder: boolean }) {
   const timeline = useQuery({ queryKey: ['person-record', 'perf-timeline', associateId], queryFn: () => getPerfTimeline(associateId) });
   const goals = useQuery({ queryKey: ['person-record', 'goals', associateId], queryFn: () => listGoals(associateId) });
@@ -609,6 +628,8 @@ function PerformanceTab({ associateId, showLadder }: { associateId: string; show
           )}
         </div>
       )}
+
+      <CareerSection associateId={associateId} />
 
       <div className="space-y-3">
         <SectionTitle title="Timeline" description="Goals, improvement plans and reviews in the order they happened." />

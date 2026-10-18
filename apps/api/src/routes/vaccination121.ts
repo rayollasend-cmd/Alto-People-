@@ -5,6 +5,7 @@ import { activeHeadcount } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 121 — Vaccination + medical records.
@@ -37,6 +38,8 @@ vaccination121Router.get('/vaccinations', VIEW, async (req, res) => {
   const rows = await prisma.vaccinationRecord.findMany({
     take: 500,
     where: {
+      // People in the caller's tenant and reach.
+      associate: { is: scopeActiveAssociates(req.user!, { former: true }) },
       ...(associateId ? { associateId } : {}),
       ...(kind ? { kind } : {}),
     },

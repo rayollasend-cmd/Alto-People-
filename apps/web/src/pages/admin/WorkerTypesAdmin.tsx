@@ -93,6 +93,9 @@ function currentSites(w: WorkerSummary) {
   return w.sites.filter((s) => s.endedAt === null);
 }
 
+type GroupBy = 'none' | 'client' | 'store' | 'type';
+const GROUP_NONE = '\u0000none';
+
 /** "2 onboarding · 1 suspended" — everything that is not ACTIVE and not zero. */
 function otherStatusesHint(counts: Record<WorkerStatus, number> | undefined): string {
   if (!counts) return 'Active now';
@@ -130,6 +133,12 @@ export function WorkerTypesAdmin() {
   const [searchParams, setSearchParams] = useSearchParams();
   // ?type=ROBOT preselects the chip (the Robots page links here); ?add=1 opens the robot form.
   const [typeFilter, setTypeFilter] = useState<TypeFilter>(() => TYPE_PARAM[searchParams.get('type') ?? ''] ?? 'ALL');
+  // A staffing roster reads by where people work: group by client or store.
+  const hasClients = tenant.modules.clientPortal;
+  const [groupBy, setGroupBy] = useState<GroupBy>(() => {
+    const g = searchParams.get('group');
+    return g === 'client' || g === 'store' || g === 'type' || g === 'none' ? g : 'store';
+  });
   const [statusFilter, setStatusFilter] = useState<'' | WorkerStatus>('');
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -253,15 +262,18 @@ export function WorkerTypesAdmin() {
       },
       {
         key: 'sites',
-        header: 'Current sites',
-        accessor: (w) => currentSites(w).map((s) => `${s.clientName} — ${s.siteName}`).join(', '),
+        header: `Current ${term('label.stores').toLowerCase()}`,
+        accessor: (w) => currentSites(w).map((s) => (hasClients ? `${s.clientName} — ${s.siteName}` : s.siteName)).join(', '),
         searchable: true,
         cell: (w) => {
           const sites = currentSites(w);
           return sites.length ? (
             <span className="flex flex-col">
               {sites.map((s) => (
-                <span key={`${s.locationId}-${s.startedAt}`}>{s.siteName}</span>
+                <span key={`${s.locationId}-${s.startedAt}`}>
+                  {s.siteName}
+                  {hasClients && <span className="text-xs text-silver"> · {s.clientName}</span>}
+                </span>
               ))}
             </span>
           ) : (
@@ -272,14 +284,38 @@ export function WorkerTypesAdmin() {
       { key: 'upcoming', header: 'Upcoming shifts', accessor: (w) => w.upcomingShifts, sortable: true, align: 'right' },
       { key: 'created', header: 'Created', accessor: (w) => w.createdAt, sortable: true, cell: (w) => fmtDate(w.createdAt) },
     ],
-    [typeFilter, term],
+    [typeFilter, term, hasClients],
   );
+
+  // Where a row sits when grouped: its first current site (or "not placed"), or its type.
+  const groupKey = (w: WorkerSummary): string => {
+    if (groupBy === 'type') return w.type;
+    const site = currentSites(w)[0];
+    if (!site) return GROUP_NONE;
+    return groupBy === 'client' && hasClients ? `c:${site.clientId}` : `s:${site.locationId}`;
+  };
+  const groupHeader = (key: string, list: WorkerSummary[]) => {
+    const n = `${list.length} ${list.length === 1 ? 'worker' : 'workers'}`;
+    if (key === GROUP_NONE) return <span>Not placed at a {term('label.store').toLowerCase()} · {n}</span>;
+    if (groupBy === 'type') return <span>{key === 'PERSON' ? 'People' : key === 'AGENT' ? 'Agents' : 'Robots'} · {n}</span>;
+    const site = currentSites(list[0]!)[0]!;
+    return groupBy === 'client' ? (
+      <span>
+        {site.clientName} · {n}
+      </span>
+    ) : (
+      <span>
+        {site.siteName}
+        {hasClients && <span className="font-normal text-silver"> · {site.clientName}</span>} · {n}
+      </span>
+    );
+  };
 
   return (
     <div className="space-y-6" data-template="list">
       <PageHeader
         title="Workforce roster"
-        subtitle={`People, agents and robots in one roster. A person answers to their ${term('manager').toLowerCase()}; an agent or a robot has an owner who answers for it. Each row opens the record behind it.`}
+        subtitle={`Everyone and everything that works, grouped by where they work. Agents and robots show the owner who answers for them. Each row opens the record behind it.`}
         breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Workforce roster' }]}
         primaryAction={
           canManage && tenant.modules.robotics ? (
@@ -343,8 +379,30 @@ export function WorkerTypesAdmin() {
         onRowClick={(w) => setEditingId(w.id)}
         rowActionLabel={(w) => `Open ${w.name}`}
         defaultSort={{ key: 'name', direction: 'asc' }}
+        groupBy={groupBy === 'none' ? undefined : { key: groupKey, header: groupHeader }}
         filters={
           <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-silver">
+              <span className="sr-only">Group by</span>
+              <Select
+                size="sm"
+                value={groupBy}
+                aria-label="Group by"
+                onChange={(e) => {
+                  const g = e.target.value as GroupBy;
+                  setGroupBy(g);
+                  const next = new URLSearchParams(searchParams);
+                  if (g === 'store') next.delete('group');
+                  else next.set('group', g);
+                  setSearchParams(next, { replace: true });
+                }}
+              >
+                <option value="store">Group by {term('label.store').toLowerCase()}</option>
+                {hasClients && <option value="client">Group by {term('label.client').toLowerCase()}</option>}
+                <option value="type">Group by type</option>
+                <option value="none">No grouping</option>
+              </Select>
+            </label>
             <SegmentedControl ariaLabel="Worker type" options={tenant.modules.robotics ? TYPE_OPTIONS : TYPE_OPTIONS.filter((o) => o.value !== 'ROBOT')} value={typeFilter} onChange={setTypeFilter} />
             <label className="flex items-center gap-2 text-sm text-silver">
               <span className="sr-only">Status</span>

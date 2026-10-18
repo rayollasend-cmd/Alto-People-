@@ -158,6 +158,16 @@ vi.mock('@/lib/expirations113Api', () => ({
     dueSoon: [],
     dueLater: [],
   })),
+  getExpirationRisk: vi.fn(async () => ({
+    asOf: '2026-10-17T12:00:00.000Z',
+    days: 90,
+    truncated: false,
+    items: [],
+    atRisk: [],
+    weeks: ['2026-10-17'],
+    timeline: [],
+    filters: { clients: [], stores: [], qualifications: [] },
+  })),
 }));
 
 // Shared by ExpirationsHome (grantAssociateQual) and MarketplaceHome.
@@ -349,7 +359,8 @@ describe('axe: time & pay pages (settled empty states)', () => {
 
   it('<ExpirationsHome> has no axe violations', async () => {
     const { container } = renderPage(<ExpirationsHome />);
-    await screen.findByText('Nothing expired.');
+    // The page opens on "At risk": nothing blocks a shift.
+    await screen.findByText('Nobody’s shifts are at risk');
     await expectNoViolations(container);
   });
 

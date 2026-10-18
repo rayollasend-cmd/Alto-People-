@@ -230,7 +230,7 @@ export function ReimbursementsHome() {
             ? `Submit, approve, and pay ${term('worker').toLowerCase()} expense reports.`
             : t('rmb.subtitle')
         }
-        breadcrumbs={[{ label: 'Payroll' }, { label: 'Spend' }]}
+        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Reimbursements' }]}
     >
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm text-silver">

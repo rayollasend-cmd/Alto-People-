@@ -21,7 +21,7 @@ import {
   type PathEnrollment,
 } from '@/lib/learningPaths114Api';
 import { listCourses, type Course } from '@/lib/lms94Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
@@ -72,6 +72,7 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 const PATH_ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
 
 export function LearningPathsHome() {
+  const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [search, setSearch] = useState('');
@@ -101,8 +102,8 @@ export function LearningPathsHome() {
     <ListTemplate
         className="space-y-5"
         title="Learning paths"
-        subtitle="Sequence courses into ordered tracks. Associates work through them in order."
-        breadcrumbs={[{ label: 'Learning' }, { label: 'Paths' }]}
+        subtitle="Sequence courses into ordered tracks. People work through them in order."
+        breadcrumbs={[{ label: term('nav.people') }, { label: 'Learning paths' }]}
     >
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput

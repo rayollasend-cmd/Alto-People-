@@ -8,6 +8,7 @@ import { genericNotificationTemplate } from './emailTemplates.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { formatTimeInZone } from './timezone.js';
 import { dayLabel } from './portalDayReport.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Portal engagement — who on the client side is actually using their
@@ -221,7 +222,8 @@ export async function portalEngagementOverview(
   now: Date = new Date(),
 ): Promise<{ accounts: EngagementOverviewRow[]; totals: { accounts: number; active7d: number; neverSignedIn: number; downloads7d: number } }> {
   const users = await prisma.user.findMany({
-    where: { role: 'CLIENT_PORTAL', deletedAt: null, status: { not: 'DISABLED' } },
+    // This tenant's client accounts only.
+    where: { tenantId: tenantIdForWrite(), role: 'CLIENT_PORTAL', deletedAt: null, status: { not: 'DISABLED' } },
     select: ACCOUNT_SELECT,
     orderBy: { createdAt: 'asc' },
     take: 500,

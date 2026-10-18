@@ -22,6 +22,8 @@ import { EmailSuppressedError, sendStubbed } from '../lib/notifications.js';
 import { pushConfigured } from '../lib/webPush.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { isInternallyScoped, scopeAssociates } from '../lib/scope.js';
 
 export const communicationsRouter = Router();
 
@@ -385,15 +387,27 @@ communicationsRouter.post('/admin/broadcast', MANAGE, idempotent, async (req, re
     }
     const i = parsed.data;
 
-    const where: Prisma.UserWhereInput = { deletedAt: null, status: 'ACTIVE' };
+    // This tenant's active accounts only; a site/region-bound sender reaches
+    // the people at its own sites, never the whole company.
+    const where: Prisma.UserWhereInput = { tenantId: tenantIdForWrite(), deletedAt: null, status: 'ACTIVE' };
     if (i.audience === 'ALL_ASSOCIATES') where.role = 'ASSOCIATE';
     if (i.audience === 'ALL_HR') where.role = 'HR_ADMINISTRATOR';
+    if (isInternallyScoped(req.user!)) where.associate = { is: scopeAssociates(req.user!) };
 
-    const recipients = await prisma.user.findMany({
-      take: 1000,
-      where,
-      select: { id: true },
-    });
+    // Every recipient, in pages — a silent cap used to skip everyone past the first thousand.
+    const recipients: Array<{ id: string }> = [];
+    for (let cursor: string | undefined; ; ) {
+      const page: Array<{ id: string }> = await prisma.user.findMany({
+        where,
+        select: { id: true },
+        orderBy: { id: 'asc' },
+        take: 1000,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      recipients.push(...page);
+      if (page.length < 1000) break;
+      cursor = page[page.length - 1]!.id;
+    }
     if (recipients.length === 0) {
       res.json({ notifications: [], count: 0 });
       return;

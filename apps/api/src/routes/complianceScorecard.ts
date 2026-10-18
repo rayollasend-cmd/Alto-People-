@@ -41,6 +41,7 @@ import { cardOn, loadRateCards } from '../lib/rateCards.js';
 import { placements } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { internalSites } from '../lib/scope.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
 import { notifyUser, notifyAssociate } from '../lib/notify.js';
 import { env } from '../config/env.js';
@@ -58,6 +59,41 @@ import { ReportPdf } from '../lib/reportPdf.js';
 import { formatRef } from '../lib/emailTemplates.js';
 
 export const complianceScorecardRouter = Router();
+
+/**
+ * Reach. Every tile is a whole-client (or whole-company) number, so the
+ * scorecard is opened only at a scope the caller wholly holds:
+ *   - a named client must be this tenant's (another tenant's id reads as
+ *     not found — the tiles would otherwise compute its numbers);
+ *   - an office account narrowed to sites/regions may open a client only
+ *     when every active store of that client is inside its reach, and
+ *     never the all-clients view.
+ */
+complianceScorecardRouter.use(async (req, _res, next) => {
+  try {
+    const raw = typeof req.query.clientId === 'string' && req.query.clientId.length > 0 ? req.query.clientId : null;
+    const clientId = raw && z.string().uuid().safeParse(raw).success ? raw : null;
+    if (clientId) {
+      const client = await prisma.client.findFirst({ where: { id: clientId, tenantId: tenantIdForWrite(), deletedAt: null }, select: { id: true } });
+      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    }
+    const reach = req.user ? internalSites(req.user) : null;
+    if (reach) {
+      if (!clientId) {
+        throw new HttpError(403, 'scope_too_narrow', 'The scorecard covers whole clients. Pick a client whose stores are all in your reach.');
+      }
+      const outside = await prisma.site.count({
+        where: { AND: [{ clientId, deletedAt: null, isActive: true }, { NOT: reach }] },
+      });
+      if (outside > 0) {
+        throw new HttpError(403, 'scope_too_narrow', 'This client has stores outside your reach, so its scorecard isn’t yours to open.');
+      }
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 const VIEW = requireCapability('view:compliance');
 const MANAGE_COMPLIANCE = requireCapability('manage:compliance');
@@ -1912,7 +1948,7 @@ export async function buildActionsTile(
   // rows (assigned/snoozed/done) so fetching them all is a handful of rows,
   // not a scan of the derived action space.
   const stateRows = await prisma.complianceActionState.findMany({
-    where: { OR: [{ status: { not: 'OPEN' } }, { assigneeUserId: { not: null } }] },
+    where: { tenantId: tenantIdForWrite(), OR: [{ status: { not: 'OPEN' } }, { assigneeUserId: { not: null } }] },
     select: {
       actionKey: true,
       status: true,
@@ -2081,7 +2117,7 @@ complianceScorecardRouter.get('/history', VIEW, async (req, res, next) => {
     const since = new Date(Date.now() - days * 24 * 3600 * 1000);
 
     const rows = await prisma.complianceScoreSnapshot.findMany({
-      where: { clientId: clientId ?? null, day: { gte: since } },
+      where: { tenantId: tenantIdForWrite(), clientId: clientId ?? null, day: { gte: since } },
       orderBy: { day: 'asc' },
       take: 400,
       select: {
@@ -2141,7 +2177,7 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
     // Trend context from snapshots (best-effort — a fresh install has none).
     const since = new Date(Date.now() - 35 * 24 * 3600 * 1000);
     const snaps = await prisma.complianceScoreSnapshot.findMany({
-      where: { clientId: clientId ?? null, day: { gte: since } },
+      where: { tenantId: tenantIdForWrite(), clientId: clientId ?? null, day: { gte: since } },
       orderBy: { day: 'asc' },
       select: { day: true, score: true },
     });

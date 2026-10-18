@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { scopeAssociatesIncludingFormer } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import type { SessionUser } from '../types/express.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
@@ -42,6 +46,14 @@ const REASON = z.enum([
 
 // ----- List ----------------------------------------------------------------
 
+/** Rows a separations list draws per page. */
+const SEPARATION_PAGE = 100;
+
+/** This tenant's separations, for people whose placement was inside the caller's reach. */
+function reachOf(user: SessionUser): Prisma.SeparationWhereInput {
+  return { tenantId: tenantIdForWrite(), associate: scopeAssociatesIncludingFormer(user) };
+}
+
 separation119Router.get('/separations', VIEW, async (req, res) => {
   const status = z
     .enum(['PLANNED', 'IN_PROGRESS', 'COMPLETE'])
@@ -49,12 +61,13 @@ separation119Router.get('/separations', VIEW, async (req, res) => {
     .parse(req.query.status);
   const reason = REASON.optional().parse(req.query.reason);
 
-  const rows = await prisma.separation.findMany({
-    take: 100,
-    where: {
-      ...(status ? { status } : {}),
-      ...(reason ? { reason } : {}),
-    },
+  const page = z.coerce.number().int().min(0).max(10_000).default(0).parse(req.query.page);
+  const where: Prisma.SeparationWhereInput = { AND: [reachOf(req.user!), status ? { status } : {}, reason ? { reason } : {}] };
+  const [rows, total] = await Promise.all([
+    prisma.separation.findMany({
+    take: SEPARATION_PAGE,
+    skip: page * SEPARATION_PAGE,
+    where,
     include: {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -62,9 +75,14 @@ separation119Router.get('/separations', VIEW, async (req, res) => {
       initiatedBy: { select: { email: true } },
       completedBy: { select: { email: true } },
     },
-    orderBy: { lastDayWorked: 'desc' },
-  });
+    orderBy: [{ lastDayWorked: 'desc' }, { id: 'asc' }],
+    }),
+    prisma.separation.count({ where }),
+  ]);
   res.json({
+    total,
+    page,
+    hasMore: (page + 1) * SEPARATION_PAGE < total,
     separations: rows.map((s) => ({
       id: s.id,
       associateId: s.associateId,
@@ -100,24 +118,22 @@ separation119Router.get('/separations/summary', VIEW, async (req, res) => {
   today.setUTCHours(0, 0, 0, 0);
   const cutoff = new Date(today);
   cutoff.setUTCDate(cutoff.getUTCDate() - days);
+  const reach = reachOf(req.user!);
 
   const [planned, inProgress, completedRecent, byReason, exitInterviewCompleted] =
     await Promise.all([
-      prisma.separation.count({ where: { status: 'PLANNED' } }),
-      prisma.separation.count({ where: { status: 'IN_PROGRESS' } }),
+      prisma.separation.count({ where: { AND: [reach, { status: 'PLANNED' }] } }),
+      prisma.separation.count({ where: { AND: [reach, { status: 'IN_PROGRESS' }] } }),
       prisma.separation.count({
-        where: { status: 'COMPLETE', completedAt: { gte: cutoff } },
+        where: { AND: [reach, { status: 'COMPLETE', completedAt: { gte: cutoff } }] },
       }),
       prisma.separation.groupBy({
         by: ['reason'],
-        where: { lastDayWorked: { gte: cutoff } },
+        where: { AND: [reach, { lastDayWorked: { gte: cutoff } }] },
         _count: { _all: true },
       }),
       prisma.separation.count({
-        where: {
-          lastDayWorked: { gte: cutoff },
-          exitInterviewCompletedAt: { not: null },
-        },
+        where: { AND: [reach, { lastDayWorked: { gte: cutoff }, exitInterviewCompletedAt: { not: null } }] },
       }),
     ]);
 
@@ -126,10 +142,7 @@ separation119Router.get('/separations/summary', VIEW, async (req, res) => {
 
   // Average exit-interview rating across the window.
   const ratingAvg = await prisma.separation.aggregate({
-    where: {
-      lastDayWorked: { gte: cutoff },
-      rating: { not: null },
-    },
+    where: { AND: [reach, { lastDayWorked: { gte: cutoff }, rating: { not: null } }] },
     _avg: { rating: true },
   });
 

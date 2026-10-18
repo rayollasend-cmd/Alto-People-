@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
+import { useTenant, useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -93,6 +94,9 @@ type WindowDays = (typeof WINDOW_PRESETS)[number];
  * page.
  */
 export function AnalyticsHome() {
+  const term = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const workers = term('workers');
   // Subscribe to the theme context (value unused) so a light/dark flip
   // re-renders the page and chartColor() re-reads the swapped CSS vars
   // for the status donut.
@@ -114,8 +118,8 @@ export function AnalyticsHome() {
     downloadCsv(`alto-analytics-${ymdLocal()}.csv`, [
       ['Metric', 'Value'],
       ['Window (days)', kpis.windowDays],
-      ['Active associates', kpis.activeAssociates],
-      ['Associates clocked in', kpis.associatesClockedIn],
+      [`Active ${workers.toLowerCase()}`, kpis.activeAssociates],
+      [`${workers} clocked in`, kpis.associatesClockedIn],
       [`Open shifts (next ${kpis.windowDays}d)`, kpis.openShiftsNext30d],
       ['Pending onboarding applications', kpis.pendingOnboardingApplications],
       ['Pending I-9 Section 2', kpis.pendingI9Section2],
@@ -133,7 +137,7 @@ export function AnalyticsHome() {
     <ListTemplate
         className="mx-auto"
         title="Analytics"
-        subtitle="Live operational and financial KPIs across all clients."
+        subtitle={hasClients ? 'Live operational and financial KPIs across all clients.' : 'Live operational and financial KPIs across the organization.'}
         primaryAction={
           <Button onClick={exportCsv} variant="secondary" disabled={!kpis}>
             <Download className="h-4 w-4" />
@@ -187,9 +191,9 @@ export function AnalyticsHome() {
         {kpis ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Stat
-              label="Active associates"
+              label={`Active ${workers.toLowerCase()}`}
               value={kpis.activeAssociates.toString()}
-              link="/clients"
+              link={hasClients ? '/clients' : '/people'}
             />
             <Stat
               label="Clocked in right now"
@@ -213,7 +217,7 @@ export function AnalyticsHome() {
             <Stat
               label={`Open shifts (next ${kpis.windowDays}d)`}
               value={kpis.openShiftsNext30d.toString()}
-              hint="Shifts without an assigned associate"
+              hint={`Shifts without an assigned ${term('worker').toLowerCase()}`}
               link="/scheduling"
             />
           </div>

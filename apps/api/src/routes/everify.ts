@@ -19,6 +19,7 @@ import {
   isEVerifyOverdue,
 } from '../lib/everifyReadiness.js';
 import { primaryClientsForAssociates } from '../lib/associateClients.js';
+import { scopeAssociates } from '../lib/scope.js';
 
 /**
  * E-Verify directorate — a staging surface for the federal E-Verify portal.
@@ -73,12 +74,14 @@ function ymd(d: Date): string {
  * I-9-driven query would hide exactly the people who still need action, which
  * is the population this queue exists to surface.
  */
-everifyRouter.get('/', async (_req, res, next) => {
+everifyRouter.get('/', async (req, res, next) => {
   try {
     const rows = await prisma.associate.findMany({
       where: {
         deletedAt: null,
         tenantId: tenantIdForWrite(),
+        // The caller's reach: a store-bound office account sees its own people.
+        AND: [scopeAssociates(req.user!)],
         // Onboarded or onboarding: any application that wasn't declined.
         applications: { some: { deletedAt: null, status: { notIn: ['REJECTED', 'CANCELLED'] } } },
       },

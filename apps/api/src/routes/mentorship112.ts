@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 112 — Mentorship matching.
@@ -25,8 +26,12 @@ const STATUS = ['PROPOSED', 'ACTIVE', 'COMPLETED', 'DECLINED', 'CANCELLED'] as c
 mentorship112Router.get('/mentorships', VIEW, async (req, res) => {
   const status = z.enum(STATUS).optional().parse(req.query.status);
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
+  // Pairings whose people are both in the caller's tenant and reach.
+  const inReach = scopeActiveAssociates(req.user!, { former: true });
   const rows = await prisma.mentorship.findMany({
     where: {
+      mentor: { is: inReach },
+      mentee: { is: inReach },
       ...(status ? { status } : {}),
       ...(associateId
         ? {
@@ -75,6 +80,11 @@ mentorship112Router.post('/mentorships', MANAGE, async (req, res) => {
   if (input.mentorAssociateId === input.menteeAssociateId) {
     throw new HttpError(400, 'self_pairing', 'Mentor and mentee must be different people.');
   }
+  // Both must be active and within the caller's tenant and reach.
+  const found = await prisma.associate.count({
+    where: { AND: [{ id: { in: [input.mentorAssociateId, input.menteeAssociateId] } }, scopeActiveAssociates(req.user!)] },
+  });
+  if (found !== 2) throw new HttpError(404, 'associate_not_found', 'Both people must be active and within your reach.');
   const created = await prisma.mentorship.create({
     data: {
       mentorAssociateId: input.mentorAssociateId,
@@ -119,8 +129,8 @@ mentorship112Router.post(
   MANAGE,
   async (req, res) => {
     const input = TransitionSchema.parse(req.body);
-    const m = await prisma.mentorship.findUnique({
-      where: { id: req.params.id },
+    const m = await prisma.mentorship.findFirst({
+      where: { id: String(req.params.id), mentee: { is: scopeActiveAssociates(req.user!, { former: true }) } },
       select: {
         status: true,
         mentorAssociateId: true,
@@ -199,7 +209,8 @@ mentorship112Router.post('/mentorships/suggest', VIEW, async (req, res) => {
     where: {
       skillId: input.skillId,
       level: { in: ['ADVANCED', 'EXPERT'] },
-      associate: { deletedAt: null },
+      // Never a former employee: active people in the caller's tenant and reach.
+      associate: { is: scopeActiveAssociates(req.user!) },
       associateId: { not: input.menteeAssociateId },
     },
     include: {

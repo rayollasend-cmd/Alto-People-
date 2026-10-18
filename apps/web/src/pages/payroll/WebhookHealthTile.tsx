@@ -102,7 +102,8 @@ export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'integrati
     }
   }
 
-  const style = STYLE[data.health];
+  // An unknown or missing health reads as idle rather than crashing the payroll page.
+  const style = STYLE[data.health] ?? STYLE.idle;
   const Icon = style.Icon;
   return (
     <div

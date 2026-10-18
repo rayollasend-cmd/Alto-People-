@@ -151,7 +151,7 @@ export function DirCommsHome() {
         className="space-y-5"
         title="Directory & comms"
         subtitle="Search the people directory, send broadcasts, and run pulse / eNPS surveys."
-        breadcrumbs={[{ label: 'Insights' }, { label: 'Directory & comms' }]}
+        breadcrumbs={[{ label: 'Communications' }, { label: 'Directory & comms' }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>

@@ -143,15 +143,17 @@ export const listCaseQueue = (params: {
   associateId?: string;
   /** Only open cases past their SLA. */
   sla?: 'breached';
-}) => {
+}, page = 0) => {
   const q = new URLSearchParams();
+  if (page) q.set('page', String(page));
   if (params.status) q.set('status', params.status);
   if (params.category) q.set('category', params.category);
   if (params.assignedToMe) q.set('assignedToMe', 'true');
   if (params.associateId) q.set('associateId', params.associateId);
   if (params.sla) q.set('sla', params.sla);
   const qs = q.toString();
-  return apiFetch<{ cases: QueueCaseRow[] }>(
+  // One page; `hasMore` says the server holds more than it sent.
+  return apiFetch<{ cases: QueueCaseRow[]; total?: number; hasMore?: boolean }>(
     `/hr-cases${qs ? `?${qs}` : ''}`,
   );
 };

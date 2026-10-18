@@ -68,7 +68,7 @@ export function ClientNpsPage() {
       title={`${term('label.client')} NPS`}
       topbarTitle="Client NPS"
       subtitle="How likely each store is to recommend you — one question a quarter, straight to leadership."
-      breadcrumbs={[{ label: term('nav.clients'), to: '/clients' }, { label: 'NPS' }]}
+      breadcrumbs={[{ label: term('nav.clients'), to: '/clients' }, { label: `${term('label.client')} NPS` }]}
       primaryAction={
         canSend ? (
           r?.canSendQuarter ? (

@@ -421,7 +421,7 @@ export function ReliabilityHome() {
 
       <p className="flex items-center gap-2 text-xs text-silver">
         <ScanFace className="h-3.5 w-3.5" aria-hidden="true" />
-        A rejected kiosk punch is one the kiosk refused (wrong PIN, inactive associate, stale clock).
+        A rejected kiosk punch is one the kiosk refused (wrong PIN, inactive person, stale clock).
         <Bus className="ml-2 h-3.5 w-3.5" aria-hidden="true" />
         Ride completion counts seats past their pickup time; cancellations are left out.
       </p>

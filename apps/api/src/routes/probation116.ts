@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { ROLE_LABELS } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { scopeAssociates } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import type { SessionUser } from '../types/express.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
@@ -24,6 +28,14 @@ import {
  */
 
 export const probation116Router = Router();
+
+/** Rows a probation list draws per page. */
+const LIST_PAGE = 100;
+
+/** This tenant's probations, for people inside the caller's reach. */
+function reachOf(user: SessionUser): Prisma.ProbationPeriodWhereInput {
+  return { tenantId: tenantIdForWrite(), associate: { AND: [{ deletedAt: null }, scopeAssociates(user)] } };
+}
 
 // Probation lists are org-wide HR data — gate on view:hr-admin
 // so associates with view:onboarding (their own application page)
@@ -134,9 +146,17 @@ probation116Router.get('/probations', VIEW, async (req, res) => {
     .enum(['ACTIVE', 'PASSED', 'EXTENDED', 'FAILED'])
     .optional()
     .parse(req.query.status);
-  const rows = await prisma.probationPeriod.findMany({
-    take: 100,
-    where: status ? { status } : {},
+  const page = z.coerce.number().int().min(0).max(10_000).default(0).parse(req.query.page);
+  const where = { AND: [reachOf(req.user!), status ? { status } : {}] };
+  // Open probations read soonest end first (the ones about to need a
+  // decision); decided ones (and "All") newest first — never just the
+  // oldest hundred.
+  const open = status === 'ACTIVE' || status === 'EXTENDED';
+  const [rows, total] = await Promise.all([
+    prisma.probationPeriod.findMany({
+    take: LIST_PAGE,
+    skip: page * LIST_PAGE,
+    where,
     include: {
       associate: {
         select: {
@@ -149,9 +169,14 @@ probation116Router.get('/probations', VIEW, async (req, res) => {
       },
       decidedBy: { select: { id: true, email: true } },
     },
-    orderBy: { endDate: 'asc' },
-  });
+    orderBy: [{ endDate: open ? 'asc' : 'desc' }, { id: 'asc' }],
+    }),
+    prisma.probationPeriod.count({ where }),
+  ]);
   res.json({
+    total,
+    page,
+    hasMore: (page + 1) * LIST_PAGE < total,
     probations: rows.map((p) => ({
       id: p.id,
       associateId: p.associateId,
@@ -180,11 +205,8 @@ probation116Router.get('/probations/ending-soon', VIEW, async (req, res) => {
   cutoff.setUTCDate(cutoff.getUTCDate() + days);
 
   const rows = await prisma.probationPeriod.findMany({
-    take: 100,
-    where: {
-      status: 'ACTIVE',
-      endDate: { lte: cutoff },
-    },
+    take: 500,
+    where: { AND: [reachOf(req.user!), { status: 'ACTIVE', endDate: { lte: cutoff } }] },
     include: {
       associate: {
         select: {
@@ -317,31 +339,29 @@ probation116Router.post(
 
 // ----- Summary -------------------------------------------------------------
 
-probation116Router.get('/probations/summary', VIEW, async (_req, res) => {
+probation116Router.get('/probations/summary', VIEW, async (req, res) => {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
   const cutoff14 = new Date(today);
   cutoff14.setUTCDate(cutoff14.getUTCDate() + 14);
   const cutoff90Back = new Date(today);
   cutoff90Back.setUTCDate(cutoff90Back.getUTCDate() - 90);
+  const reach = reachOf(req.user!);
 
   const [active, endingSoon, overdue, passedRecent, failedRecent] =
     await Promise.all([
-      prisma.probationPeriod.count({ where: { status: 'ACTIVE' } }),
+      prisma.probationPeriod.count({ where: { AND: [reach, { status: 'ACTIVE' }] } }),
       prisma.probationPeriod.count({
-        where: {
-          status: 'ACTIVE',
-          endDate: { gte: today, lte: cutoff14 },
-        },
+        where: { AND: [reach, { status: 'ACTIVE', endDate: { gte: today, lte: cutoff14 } }] },
       }),
       prisma.probationPeriod.count({
-        where: { status: 'ACTIVE', endDate: { lt: today } },
+        where: { AND: [reach, { status: 'ACTIVE', endDate: { lt: today } }] },
       }),
       prisma.probationPeriod.count({
-        where: { status: 'PASSED', decidedAt: { gte: cutoff90Back } },
+        where: { AND: [reach, { status: 'PASSED', decidedAt: { gte: cutoff90Back } }] },
       }),
       prisma.probationPeriod.count({
-        where: { status: 'FAILED', decidedAt: { gte: cutoff90Back } },
+        where: { AND: [reach, { status: 'FAILED', decidedAt: { gte: cutoff90Back } }] },
       }),
     ]);
 

@@ -159,7 +159,7 @@ export function KioskAdmin() {
         className="space-y-5"
         title={term('nav.kiosk')}
         subtitle="Register tablets, issue 4-digit clock-in numbers, and review the punch log."
-        breadcrumbs={[{ label: term('nav.time') }, { label: term('nav.kiosk') }]}
+        breadcrumbs={[{ label: 'Time & attendance', to: '/time-attendance' }, { label: term('nav.kiosk') }]}
     >
       {canManage && <PinHealthBanner onTab={() => setTab('pins')} bump={badgeBump} />}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>

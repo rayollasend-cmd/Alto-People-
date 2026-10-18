@@ -588,6 +588,9 @@ export interface SiteRow {
   orgUnitId: string | null;
   orgUnitName: string | null;
   orgUnitType: OrgUnitType | null;
+  /** The region it sits in (the Org chart's field view moves it). */
+  regionId?: string | null;
+  regionName?: string | null;
 }
 
 export interface SiteCreateInput {
@@ -616,7 +619,7 @@ export const createSite = (body: SiteCreateInput) => apiFetch<{ site: SiteRow }>
 /** PATCH /admin/sites/:id — only the fields given change; the body is strict. */
 export type SiteUpdateInput = Partial<SiteCreateInput> & { isActive?: boolean };
 export const updateSite = (id: string, body: SiteUpdateInput) =>
-  apiFetch<{ site: Omit<SiteRow, 'clientName' | 'orgUnitName' | 'orgUnitType'> }>(`/admin/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+  apiFetch<{ site: Omit<SiteRow, 'clientName' | 'orgUnitName' | 'orgUnitType' | 'regionId' | 'regionName'> }>(`/admin/sites/${encodeURIComponent(id)}`, { method: 'PATCH', body });
 
 export interface ProfilePhotoHealth {
   /** 'local' or 's3'. */

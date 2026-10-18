@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 129 — Equity grants & vesting.
@@ -283,7 +284,8 @@ equity129Router.get('/equity-grants', MANAGE_COMP, async (req, res) => {
     .parse(req.query.status);
   const rows = await prisma.equityGrant.findMany({
     take: 500,
-    where: status ? { status } : {},
+    // People in the caller's tenant and reach.
+    where: { associate: { is: scopeActiveAssociates(req.user!, { former: true }) }, ...(status ? { status } : {}) },
     include: {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },

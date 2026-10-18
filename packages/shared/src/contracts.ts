@@ -2742,6 +2742,8 @@ export const AvailabilityOverviewResponseSchema = /* @__PURE__ */ (() => z.objec
       blockedDays: z.array(z.string()),
     }),
   ),
+  /** True when more people were in reach than the overview carries. */
+  truncated: z.boolean().optional(),
 }))();
 export type AvailabilityOverviewResponse = z.infer<
   typeof AvailabilityOverviewResponseSchema
@@ -3714,6 +3716,8 @@ export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
 export const I9ListResponseSchema = /* @__PURE__ */ (() => z.object({
   i9s: z.array(I9VerificationSchema),
+  /** True when more I-9s matched than the list carries. */
+  truncated: z.boolean().optional(),
 }))();
 export type I9ListResponse = z.infer<typeof I9ListResponseSchema>;
 
@@ -3962,6 +3966,8 @@ export type J1Profile = z.infer<typeof J1ProfileSchema>;
 
 export const J1ListResponseSchema = /* @__PURE__ */ (() => z.object({
   profiles: z.array(J1ProfileSchema),
+  /** True when more profiles matched than the list carries. */
+  truncated: z.boolean().optional(),
 }))();
 export type J1ListResponse = z.infer<typeof J1ListResponseSchema>;
 
@@ -5790,7 +5796,8 @@ export const DepartmentListResponseSchema = /* @__PURE__ */ (() => z.object({
 export type DepartmentListResponse = z.infer<typeof DepartmentListResponseSchema>;
 
 export const DepartmentInputSchema = /* @__PURE__ */ (() => z.object({
-  clientId: UuidSchema,
+  /** A client's department, or the company's own (a direct employer has no clients). */
+  clientId: UuidSchema.nullable(),
   parentId: UuidSchema.nullable().optional(),
   name: z.string().min(1).max(120),
   code: z.string().max(40).optional().nullable(),
@@ -5949,6 +5956,8 @@ export type AssociateOrgSummary = z.infer<typeof AssociateOrgSummarySchema>;
 
 export const AssociateOrgListResponseSchema = /* @__PURE__ */ (() => z.object({
   associates: z.array(AssociateOrgSummarySchema),
+  /** True when the list hit its cap and more people exist than were returned. */
+  truncated: z.boolean().optional(),
 }))();
 export type AssociateOrgListResponse = z.infer<typeof AssociateOrgListResponseSchema>;
 
@@ -6078,6 +6087,8 @@ export type Position = z.infer<typeof PositionSchema>;
 
 export const PositionListResponseSchema = /* @__PURE__ */ (() => z.object({
   positions: z.array(PositionSchema),
+  /** True when the list hit its cap and more seats exist than were returned. */
+  truncated: z.boolean().optional(),
 }))();
 export type PositionListResponse = z.infer<typeof PositionListResponseSchema>;
 
@@ -7268,6 +7279,8 @@ export type OtOutlookRow = z.infer<typeof OtOutlookRowSchema>;
 export const OtOutlookResponseSchema = /* @__PURE__ */ (() => z.object({
   rows: z.array(OtOutlookRowSchema),
   generatedAt: z.string().datetime(),
+  /** True when the week's assigned shifts ran past what the radar reads. */
+  truncated: z.boolean().optional(),
 }))();
 export type OtOutlookResponse = z.infer<typeof OtOutlookResponseSchema>;
 
@@ -8624,6 +8637,8 @@ export interface WorkersResponse {
   withoutOwner: WorkerSummary[];
   /** Associates that have no PERSON worker yet (the sweep fills them when an owner can be found). */
   associatesWithoutWorker: number;
+  /** True when the roster hit its cap and more workers exist than were returned. */
+  truncated?: boolean;
 }
 
 /* ---------------------------------------------------------------------------

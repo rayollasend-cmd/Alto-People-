@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ComponentType } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { Navigate, createBrowserRouter } from 'react-router-dom';
 // PERF: the Layout is authenticated-only chrome — Sidebar, Topbar, MobileNav,
 // BottomTabBar, CommandPalette (and cmdk with it), WhatsNew, InstallPrompt,
 // the SSE live-events client. Importing it eagerly put all of that in the
@@ -144,7 +144,6 @@ const PortalOps = lazyNamed(() => import('@/pages/portal/PortalOps'), 'PortalOps
 const PortalCandidates = lazyNamed(() => import('@/pages/portal/PortalCandidates'), 'PortalCandidates');
 const MessagesHome = lazyNamed(() => import('@/pages/messages/MessagesHome'), 'MessagesHome');
 const RegionHome = lazyNamed(() => import('@/pages/region/RegionHome'), 'RegionHome');
-const RegionsAdmin = lazyNamed(() => import('@/pages/admin/RegionsAdmin'), 'RegionsAdmin');
 const WorkerTypesAdmin = lazyNamed(() => import('@/pages/admin/WorkerTypesAdmin'), 'WorkerTypesAdmin');
 const AgentRegistryAdmin = lazyNamed(() => import('@/pages/admin/AgentRegistryAdmin'), 'AgentRegistryAdmin');
 const AgentRecordPage = lazyNamed(() => import('@/pages/admin/AgentRecordPage'), 'AgentRecordPage');
@@ -529,7 +528,8 @@ const LAYOUT_ROUTES = [
     // Settings & trust — the one door to the admin pages below (SettingsHome).
     { path: 'admin', element: <RequireCapability cap="view:hr-admin"><SettingsHome /></RequireCapability> },
     { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
-    { path: 'admin/regions', element: <RequireCapability cap="view:org"><RegionsAdmin /></RequireCapability> },
+    // Regions are edited in the Org chart's field view now; old links land there.
+    { path: 'admin/regions', element: <Navigate to="/org/chart?view=field" replace /> },
     // Agents & gates: who approves what, certification, credentials, the MCP tools,
     // the decision record and the kill switches. The agents themselves live in People (/agents).
     { path: 'admin/agents', element: <RequireCapability cap="view:org"><AgentGovernance /></RequireCapability> },

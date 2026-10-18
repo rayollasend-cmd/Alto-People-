@@ -5,6 +5,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 127 — Tuition reimbursement.
@@ -133,7 +135,8 @@ tuition127Router.get('/tuition-requests', PROCESS_PAYROLL, async (req, res) => {
     .parse(req.query.status);
   const rows = await prisma.tuitionRequest.findMany({
     take: 100,
-    where: status ? { status } : {},
+    // People in the caller's tenant and reach.
+    where: { associate: { is: scopeActiveAssociates(req.user!, { former: true }) }, ...(status ? { status } : {}) },
     include: {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -270,8 +273,8 @@ tuition127Router.post(
 
 tuition127Router.get('/tuition-summary', PROCESS_PAYROLL, async (_req, res) => {
   const [pending, approved, paidYtd] = await Promise.all([
-    prisma.tuitionRequest.count({ where: { status: 'SUBMITTED' } }),
-    prisma.tuitionRequest.count({ where: { status: 'APPROVED' } }),
+    prisma.tuitionRequest.count({ where: { status: 'SUBMITTED', tenantId: tenantIdForWrite() } }),
+    prisma.tuitionRequest.count({ where: { status: 'APPROVED', tenantId: tenantIdForWrite() } }),
     prisma.tuitionRequest.aggregate({
       where: {
         status: 'PAID',

@@ -31,7 +31,7 @@ import {
   type MeritProposalStatus,
   type PayType,
 } from '@/lib/compApi';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -133,6 +133,10 @@ export function CompensationHome() {
       setClientId((prev) => prev || clients[0].id);
     }
   }, [clients]);
+  // Pay bands live under a client; a direct employer's container is its own business.
+  const tenantHasClients = useTenant().moduleOn('clientPortal');
+  const termFn = useTerm();
+  const unit = tenantHasClients ? termFn('label.client') : 'Business';
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -140,7 +144,7 @@ export function CompensationHome() {
         className="space-y-5"
         title="Compensation"
         subtitle="Pay bands tied to job profiles, effective-dated history, and merit-cycle planning."
-        breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Compensation' }]}
+        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Compensation' }]}
     >
 
       <Card>
@@ -149,7 +153,7 @@ export function CompensationHome() {
             htmlFor="comp-client"
             className="text-xs2 uppercase tracking-wider text-silver"
           >
-            Client
+            {unit}
           </label>
           <Select
             id="comp-client"
@@ -206,7 +210,7 @@ export function CompensationHome() {
           ) : (
             <Card>
               <CardContent className="p-6 text-sm text-silver">
-                Choose a client to view its pay bands.
+                Choose a {unit.toLowerCase()} to view its pay bands.
               </CardContent>
             </Card>
           )}
@@ -219,7 +223,7 @@ export function CompensationHome() {
           ) : (
             <Card>
               <CardContent className="p-6 text-sm text-silver">
-                Choose a client to plan its merit cycle.
+                Choose a {unit.toLowerCase()} to plan its merit cycle.
               </CardContent>
             </Card>
           )}
@@ -231,7 +235,7 @@ export function CompensationHome() {
           ) : (
             <Card>
               <CardContent className="p-6 text-sm text-silver">
-                Choose a client to view its merit cycles.
+                Choose a {unit.toLowerCase()} to view its merit cycles.
               </CardContent>
             </Card>
           )}

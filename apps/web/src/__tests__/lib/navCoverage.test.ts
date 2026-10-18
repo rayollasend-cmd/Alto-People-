@@ -45,6 +45,7 @@ const NOT_IN_THE_RAIL: Record<string, string> = {
   '/platform/support': 'the Settings & trust rail (platform operator)',
   '/admin/task-policy': 'the Settings & trust rail',
   '/worktags': 'opened from Payroll',
+  '/admin/regions': 'old link — redirects to the Org chart field view',
 };
 
 const term = (key: string) => key;

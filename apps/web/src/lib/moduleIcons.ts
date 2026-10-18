@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  ChartColumnStacked as HeadcountPlanIcon,
   Activity,
   Award,
   Briefcase,
@@ -52,7 +53,6 @@ import {
   FileSpreadsheet as StatementsIcon,
   FolderTree as OrgUnitsIcon,
   Gavel as DisciplineIcon,
-  Globe as RegionsIcon,
   GraduationCap as LearningIcon,
   HandHeart as MentorshipIcon,
   Heart as VolunteerIcon,
@@ -176,7 +176,6 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'portal-candidates': PortalCandidatesIcon,
   // Command center / regions
   'region': RegionIcon,
-  'regions': RegionsIcon,
   'floor-today': FloorTodayIcon,
   // Automation
   'workers': WorkersIcon,
@@ -203,6 +202,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'assets': AssetsIcon,
   'pulse': PulseIcon,
   'headcount': HeadcountIcon,
+  'headcount-plan': HeadcountPlanIcon,
   'skills': SkillsIcon,
   'mentorship': MentorshipIcon,
   'expirations': ExpirationsIcon,

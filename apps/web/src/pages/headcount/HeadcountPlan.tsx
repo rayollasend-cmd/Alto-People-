@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Wallet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useTenant, useTerm } from '@/lib/auth';
@@ -17,6 +17,8 @@ import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Select } from '@/components/ui/Select';
 import { ListTemplate } from '@/components/templates';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { StaffingPlanView } from './StaffingPlan';
 import { cn } from '@/lib/cn';
 
 /**
@@ -31,7 +33,8 @@ function varianceCell(v: number | null) {
   return <span className={cn('tabular-nums', v < 0 ? 'text-alert' : 'text-success')}>{v < 0 ? '−' : '+'}{fmtMoney(Math.abs(v))}</span>;
 }
 
-export function HeadcountPlan() {
+/** The office seats: each staff position's budget against what it costs (the original plan). */
+function OfficeSeats() {
   const term = useTerm();
   const tenant = useTenant();
   const { clients } = useClients({ enabled: tenant.modules.clientPortal });
@@ -65,51 +68,35 @@ export function HeadcountPlan() {
   ];
 
   return (
-    <ListTemplate
-      title="Headcount plan"
-      subtitle="Each seat's budget against what it costs: the person's pay annualized, and what payroll has actually paid this year."
-      breadcrumbs={[{ label: 'Headcount', to: '/headcount' }, { label: 'Plan' }]}
-      secondaryActions={
-        <Button asChild variant="outline">
-          <Link to="/headcount">
-            <ArrowLeft className="h-4 w-4" />
-            Headcount
-          </Link>
-        </Button>
-      }
-      filters={
-        <div className="flex flex-wrap items-center gap-3">
-          {tenant.modules.clientPortal && clients.length > 0 && (
-            <Select size="sm" aria-label={term('label.client')} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-              <option value="">All {term('label.clients').toLowerCase()}</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          )}
-          <Select size="sm" aria-label="Year" value={String(year)} onChange={(e) => setYear(Number(e.target.value))}>
-            {[0, 1, 2].map((back) => {
-              const y = new Date().getUTCFullYear() - back;
-              return (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              );
-            })}
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        {tenant.modules.clientPortal && clients.length > 0 && (
+          <Select size="sm" aria-label={term('label.client')} value={clientId} onChange={(e) => setClientId(e.target.value)}>
+            <option value="">All {term('label.clients').toLowerCase()}</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
           </Select>
-        </div>
-      }
-      summary={
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Budgeted" value={d ? fmtMoney(d.totals.budget) : '—'} hint={d ? `${d.totals.positions - d.totals.unbudgeted} of ${d.totals.positions} seats carry a budget` : undefined} />
-          <MetricCard label="Projected cost" value={d ? fmtMoney(d.totals.projected) : '—'} hint="Current pay, annualized" />
-          <MetricCard label={`Paid ${year} to date`} value={d ? fmtMoney(d.totals.paidYearToDate) : '—'} hint="Gross on finalized runs" />
-          <MetricCard label="Variance" value={d ? varianceCell(d.totals.variance) : '—'} accent={Boolean(d && d.totals.variance < 0)} hint={d && d.totals.unbudgeted > 0 ? `${d.totals.unbudgeted} seats have no budget yet` : 'Budget minus projected'} />
-        </div>
-      }
-    >
+        )}
+        <Select size="sm" aria-label="Year" value={String(year)} onChange={(e) => setYear(Number(e.target.value))}>
+          {[0, 1, 2].map((back) => {
+            const y = new Date().getUTCFullYear() - back;
+            return (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            );
+          })}
+        </Select>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard label="Budgeted" value={d ? fmtMoney(d.totals.budget) : '—'} hint={d ? `${d.totals.positions - d.totals.unbudgeted} of ${d.totals.positions} seats carry a budget` : undefined} />
+        <MetricCard label="Projected cost" value={d ? fmtMoney(d.totals.projected) : '—'} hint="Current pay, annualized" />
+        <MetricCard label={`Paid ${year} to date`} value={d ? fmtMoney(d.totals.paidYearToDate) : '—'} hint="Gross on finalized runs" />
+        <MetricCard label="Variance" value={d ? varianceCell(d.totals.variance) : '—'} accent={Boolean(d && d.totals.variance < 0)} hint={d && d.totals.unbudgeted > 0 ? `${d.totals.unbudgeted} seats have no budget yet` : 'Budget minus projected'} />
+      </div>
       {error && <QueryError what="the headcount plan" query={plan} />}
       <section className="space-y-3">
         <SectionTitle as="h2" icon={Wallet} title="By department" />
@@ -120,13 +107,61 @@ export function HeadcountPlan() {
         </Card>
       </section>
       <section className="space-y-3">
-        <SectionTitle as="h2" title="Every position" description="Set a seat's budget on the position itself (Organization › Positions)." />
+        <SectionTitle as="h2" title="Every position" description="Set a seat's budget on the position itself (Departments & job profiles › Positions)." />
         <Card>
           <CardContent className="p-3">
             <DataGrid<PlanPosition> id="headcount-plan-positions" caption="Plan by position" rows={d?.positions ?? []} rowKey={(r) => r.id} loading={plan.isLoading} search={{ placeholder: 'Position, person…' }} urlState={false} exportCsv={{ filename: `headcount-plan-${year}` }} columns={posColumns} />
           </CardContent>
         </Card>
       </section>
+    </div>
+  );
+}
+
+/**
+ * The headcount plan, two ways: Staffing (heads required against heads in
+ * place, place by place and week by week — the plan a staffing company
+ * runs on) and Office seats (each staff position's budget).
+ */
+export function HeadcountPlan() {
+  const term = useTerm();
+  const [params, setParams] = useSearchParams();
+  const tab: 'staffing' | 'office' = params.get('tab') === 'office' ? 'office' : 'staffing';
+  return (
+    <ListTemplate
+      title="Headcount plan"
+      subtitle={
+        tab === 'staffing'
+          ? `Heads required against heads in place, ${term('label.store').toLowerCase()} by ${term('label.store').toLowerCase()} and week by week — priced at today’s rates.`
+          : 'Each office seat’s budget against what it costs: the person’s pay annualized, and what payroll has actually paid this year.'
+      }
+      breadcrumbs={[{ label: 'Headcount', to: '/headcount' }, { label: 'Headcount plan' }]}
+      secondaryActions={
+        <Button asChild variant="outline">
+          <Link to="/headcount">
+            <ArrowLeft className="h-4 w-4" />
+            Headcount
+          </Link>
+        </Button>
+      }
+      filters={
+        <SegmentedControl
+          ariaLabel="Which plan"
+          value={tab}
+          onChange={(v) => {
+            const next = new URLSearchParams(params);
+            if (v === 'staffing') next.delete('tab');
+            else next.set('tab', v);
+            setParams(next, { replace: true });
+          }}
+          options={[
+            { value: 'staffing' as const, label: 'Staffing' },
+            { value: 'office' as const, label: 'Office seats' },
+          ]}
+        />
+      }
+    >
+      {tab === 'staffing' ? <StaffingPlanView /> : <OfficeSeats />}
     </ListTemplate>
   );
 }

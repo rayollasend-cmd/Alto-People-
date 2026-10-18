@@ -19,6 +19,9 @@ import { pendingResponse } from '../lib/approvalRequests.js';
 import { requestOpenPosition } from '../lib/requisitions.js';
 import { deciderFrom } from './approvalRequests.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
+import { scopePositions } from '../lib/scope.js';
+
+const POSITIONS_CAP = 1000;
 
 export const positionsRouter = Router();
 
@@ -126,18 +129,25 @@ positionsRouter.get('/', VIEW, async (req: Request, res: Response) => {
   const status =
     typeof req.query.status === 'string' ? req.query.status : undefined;
   const where: Prisma.PositionWhereInput = {
-    deletedAt: null,
-    ...(clientId ? { clientId } : {}),
-    ...(status ? { status: status as Position['status'] } : {}),
+    AND: [
+      scopePositions(req.user!),
+      {
+        deletedAt: null,
+        ...(clientId ? { clientId } : {}),
+        ...(status ? { status: status as Position['status'] } : {}),
+      },
+    ],
   };
-  const rows = await withRequisitions(await prisma.position.findMany({
-    take: 1000,
+  const found = await prisma.position.findMany({
+    take: POSITIONS_CAP + 1,
     where,
     include: POS_INCLUDE,
     orderBy: [{ status: 'asc' }, { code: 'asc' }],
-  }));
+  });
+  const rows = await withRequisitions(found.slice(0, POSITIONS_CAP));
   const body = PositionListResponseSchema.parse({
     positions: rows.map(shape),
+    truncated: found.length > POSITIONS_CAP,
   });
   res.json(body);
 });
@@ -148,9 +158,8 @@ positionsRouter.get(
   async (req: Request, res: Response) => {
     const clientId =
       typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
-    const where = {
-      deletedAt: null,
-      ...(clientId ? { clientId } : {}),
+    const where: Prisma.PositionWhereInput = {
+      AND: [scopePositions(req.user!), { deletedAt: null, ...(clientId ? { clientId } : {}) }],
     };
     const groups = await prisma.position.groupBy({
       by: ['status'],
@@ -159,7 +168,7 @@ positionsRouter.get(
       _sum: { fteAuthorized: true },
     });
     const filledFte = await prisma.position.aggregate({
-      where: { ...where, status: 'FILLED' },
+      where: { AND: [where, { status: 'FILLED' }] },
       _sum: { fteAuthorized: true },
     });
     const total = groups.reduce((acc, g) => acc + g._count._all, 0);
@@ -202,15 +211,18 @@ positionsRouter.get('/plan', VIEW, async (req: Request, res: Response) => {
   const year = typeof req.query.year === 'string' && /^\d{4}$/.test(req.query.year) ? Number(req.query.year) : new Date().getUTCFullYear();
   const yearStart = new Date(Date.UTC(year, 0, 1));
   const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
-  const rows = await prisma.position.findMany({
-    take: 2000,
-    where: { deletedAt: null, status: { not: 'CLOSED' }, ...(clientId ? { clientId } : {}) },
+  const PLAN_CAP = 2000;
+  const found = await prisma.position.findMany({
+    take: PLAN_CAP + 1,
+    where: { AND: [scopePositions(req.user!), { deletedAt: null, status: { not: 'CLOSED' }, ...(clientId ? { clientId } : {}) }] },
     include: {
       ...POS_INCLUDE,
       filledBy: { select: { id: true, firstName: true, lastName: true, compRecords: { where: { effectiveTo: null }, take: 1, select: { payType: true, amount: true } } } },
     },
     orderBy: [{ department: { name: 'asc' } }, { code: 'asc' }],
   });
+  const truncated = found.length > PLAN_CAP;
+  const rows = found.slice(0, PLAN_CAP);
   const filledIds = rows.map((r) => r.filledByAssociateId).filter((x): x is string => Boolean(x));
   const paid = filledIds.length
     ? await prisma.payrollItem.groupBy({
@@ -262,7 +274,7 @@ positionsRouter.get('/plan', VIEW, async (req: Request, res: Response) => {
     (acc, d) => ({ positions: acc.positions + d.positions, filled: acc.filled + d.filled, budget: acc.budget + d.budget, projected: acc.projected + d.projected, paidYearToDate: acc.paidYearToDate + d.paidYearToDate, unbudgeted: acc.unbudgeted + d.unbudgeted }),
     { positions: 0, filled: 0, budget: 0, projected: 0, paidYearToDate: 0, unbudgeted: 0 },
   );
-  res.json({ year, positions, departments, totals: { ...totals, variance: Math.round((totals.budget - totals.projected) * 100) / 100 } });
+  res.json({ year, truncated, positions, departments, totals: { ...totals, variance: Math.round((totals.budget - totals.projected) * 100) / 100 } });
 });
 
 positionsRouter.post('/', MANAGE, async (req: Request, res: Response) => {

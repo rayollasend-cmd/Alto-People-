@@ -41,7 +41,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 
 const ERRORS: Record<string, string> = {
   owner_not_found: 'Choose an active account of this organization as the owner.',
-  api_client_not_found: 'That client is no longer active.',
+  api_client_not_found: 'That app is no longer active.',
 };
 
 const message = (err: unknown) =>
@@ -81,7 +81,7 @@ export function ApiClientsTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm text-silver">
-          OAuth clients call the public API at <span className="font-mono text-xs text-white">/api/v1</span> with 15-minute tokens.
+          OAuth apps call the public API at <span className="font-mono text-xs text-white">/api/v1</span> with 15-minute tokens.
         </p>
         <div className="ml-auto flex items-center gap-2">
           <Button asChild size="sm" variant="outline">
@@ -91,7 +91,7 @@ export function ApiClientsTab({ canManage }: { canManage: boolean }) {
           </Button>
           {canManage && clients !== null && clients.length > 0 && (
             <Button size="sm" onClick={() => setShowNew(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" /> New client
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> New app
             </Button>
           )}
         </div>
@@ -107,14 +107,14 @@ export function ApiClientsTab({ canManage }: { canManage: boolean }) {
           ) : clients.length === 0 ? (
             <EmptyState
               icon={ShieldCheck}
-              title="No API clients"
-              description="Create a client for a system that calls Alto: it gets only the scopes you grant, and an owner who answers for it."
-              action={canManage ? <Button onClick={() => setShowNew(true)}><Plus className="mr-2 h-4 w-4" /> New client</Button> : undefined}
+              title="No API apps"
+              description="Create an app for each system that calls in: it gets only the scopes you grant, and an owner who answers for it."
+              action={canManage ? <Button onClick={() => setShowNew(true)}><Plus className="mr-2 h-4 w-4" /> New app</Button> : undefined}
             />
           ) : (
             <DataGrid<ApiClientSummary>
               id="api-clients"
-              caption="API clients"
+              caption="API apps"
               rows={clients}
               rowKey={(c) => c.id}
               search={false}
@@ -191,7 +191,7 @@ function NewClientDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: (
   const toggle = (s: ApiScope) => setScopes((xs) => (xs.includes(s) ? xs.filter((x) => x !== s) : [...xs, s]));
 
   const onSubmit = async () => {
-    if (name.trim().length < 2) return toast.error('Name the client.');
+    if (name.trim().length < 2) return toast.error('Name the app.');
     if (!scopes.length) return toast.error('Grant at least one scope.');
     setSaving(true);
     try {
@@ -206,13 +206,13 @@ function NewClientDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: (
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>New API client</DrawerTitle>
+        <DrawerTitle>New API app</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        <Field label="Name" required hint="What calls Alto with it, e.g. “Payroll sync”.">
+        <Field label="Name" required hint="The system that calls in with it, e.g. “Payroll sync”.">
           {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} />}
         </Field>
-        <Field label="Owner" required hint="Answers for the client; every change it makes is audited under them.">
+        <Field label="Owner" required hint="Answers for the app; every change it makes is audited under them.">
           {(p) =>
             owners.data ? (
               <Select {...p} value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)}>
@@ -255,7 +255,7 @@ function IssuedDrawer({ issued, onClose }: { issued: ApiClientIssued; onClose: (
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Save the client secret</DrawerTitle>
+        <DrawerTitle>Save the app’s client secret</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <p className="text-sm text-warning">This is the only time the secret is shown. Store it with the client ID in the calling system’s secret store.</p>

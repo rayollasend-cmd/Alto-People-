@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -42,6 +43,7 @@ import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, ymdLocal } from '@/lib/format';
+import { ExpirationAtRisk, ExpirationTimeline, type RiskFilters } from './ExpirationsRisk';
 
 /**
  * Phase 113 — Expiration dashboard.
@@ -53,7 +55,70 @@ import { fmtDate, ymdLocal } from '@/lib/format';
  * Click a row to renew the qualification — upserts AssociateQualification
  * with new acquiredAt + expiresAt. Manage:scheduling required.
  */
+type ExpView = 'risk' | 'timeline' | 'list';
+
+/**
+ * Expirations, three ways: At risk (what will stop someone working a shift
+ * they're on — the default), Timeline (weeks across, stores down), and the
+ * full list. One renew drawer serves all three.
+ */
 export function ExpirationsHome() {
+  const { user } = useAuth();
+  const canRenew = user ? hasCapability(user.role, 'manage:scheduling') : false;
+  const [params, setParams] = useSearchParams();
+  const raw = params.get('view');
+  const view: ExpView = raw === 'timeline' || raw === 'list' ? raw : 'risk';
+  const [filters, setFilters] = useState<RiskFilters>({ clientId: '', storeId: '', qualificationId: '', q: '' });
+  const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
+  const qc = useQueryClient();
+  const setView = (v: ExpView) => {
+    const next = new URLSearchParams(params);
+    if (v === 'risk') next.delete('view');
+    else next.set('view', v);
+    setParams(next, { replace: true });
+  };
+  return (
+    <ListTemplate
+      className="space-y-5"
+      title="Expirations"
+      subtitle="Credentials that lapse — first the ones that would stop someone working a shift they’re already on."
+      breadcrumbs={[{ label: 'Compliance', to: '/compliance' }, { label: 'Expirations' }]}
+    >
+      <SegmentedControl
+        ariaLabel="How to see expirations"
+        value={view}
+        onChange={setView}
+        options={[
+          { value: 'risk' as const, label: 'At risk' },
+          { value: 'timeline' as const, label: 'Timeline' },
+          { value: 'list' as const, label: 'All expiring' },
+        ]}
+      />
+      {view === 'risk' ? (
+        <ExpirationAtRisk filters={filters} setFilters={setFilters} onRenew={canRenew ? setRenewTarget : undefined} />
+      ) : view === 'timeline' ? (
+        <ExpirationTimeline filters={filters} setFilters={setFilters} onRenew={canRenew ? setRenewTarget : undefined} />
+      ) : (
+        <ExpirationsListView />
+      )}
+      {renewTarget && view !== 'list' && (
+        <RenewDrawer
+          key={renewTarget.id}
+          item={renewTarget}
+          onClose={() => setRenewTarget(null)}
+          onSaved={() => {
+            void qc.invalidateQueries({ queryKey: ['expirations', 'risk'] });
+            void qc.invalidateQueries({ queryKey: ['ExpirationsHome'] });
+            setRenewTarget(null);
+          }}
+        />
+      )}
+    </ListTemplate>
+  );
+}
+
+/** The full list, in three buckets (the original page): every expiring credential, renewable in bulk. */
+function ExpirationsListView() {
   const { user } = useAuth();
   const canRenew = user
     ? hasCapability(user.role, 'manage:scheduling')
@@ -213,13 +278,7 @@ export function ExpirationsHome() {
   };
 
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-    <ListTemplate
-        className="space-y-5"
-        title="Expirations"
-        subtitle="Qualifications and certifications expiring soon — chase renewals before they lapse."
-        breadcrumbs={[{ label: 'Expirations' }]}
-    >
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-silver">Within:</span>
         <SegmentedControl
@@ -399,7 +458,7 @@ export function ExpirationsHome() {
           }}
         />
       )}
-    </ListTemplate>
+    </div>
   );
 }
 

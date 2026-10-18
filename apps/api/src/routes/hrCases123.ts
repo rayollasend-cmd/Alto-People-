@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
@@ -14,6 +15,7 @@ import {
 } from '../lib/notify.js';
 import { CATEGORIES, PRIORITIES, clockDataFor, dueAtFor, slaTargets, slaView, targetHoursFor } from '../lib/hrCaseSla.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { hrCaseInReach, hrCaseReach } from '../lib/hrCaseScope.js';
 
 /**
  * Phase 123 — HR cases (ticketing) — now the company's internal case desk.
@@ -32,6 +34,9 @@ export const hrCases123Router = Router();
 
 /** What slice of the desk a staff role can work: everything, the PAYROLL
  *  category only, or nothing. */
+/** Rows a case list draws per page. */
+const CASE_PAGE = 100;
+
 function deskScope(role: Role): 'all' | 'payroll' | null {
   if (hasCapability(role, 'manage:onboarding')) return 'all';
   if (hasCapability(role, 'process:payroll')) return 'payroll';
@@ -156,17 +161,25 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
   // ?sla=breached — the Inbox's deep link: open and past due.
   const sla = z.enum(['breached']).optional().parse(req.query.sla);
 
-  const rows = await prisma.hrCase.findMany({
-    take: 100,
-    where: {
+  const page = z.coerce.number().int().min(0).max(10_000).default(0).parse(req.query.page);
+  const where: Prisma.HrCaseWhereInput = {
+    AND: [
+      // This tenant's cases, about people inside the caller's reach.
+      hrCaseReach(req.user!),
       // Finance sees the PAYROLL desk and nothing else.
-      ...(scope === 'payroll' ? { category: 'PAYROLL' } : {}),
-      ...(status ? { status } : {}),
-      ...(category && scope !== 'payroll' ? { category } : {}),
-      ...(assignedToMe === 'true' ? { assignedToId: req.user!.id } : {}),
-      ...(associateId ? { associateId } : {}),
-      ...(sla === 'breached' ? { status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } } : {}),
-    },
+      scope === 'payroll' ? { category: 'PAYROLL' } : {},
+      status ? { status } : {},
+      category && scope !== 'payroll' ? { category } : {},
+      assignedToMe === 'true' ? { assignedToId: req.user!.id } : {},
+      associateId ? { associateId } : {},
+      sla === 'breached' ? { status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } } : {},
+    ],
+  };
+  const [rows, total] = await Promise.all([
+    prisma.hrCase.findMany({
+    take: CASE_PAGE,
+    skip: page * CASE_PAGE,
+    where,
     include: {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -178,9 +191,15 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
       // URGENT, HIGH come up first.
       { priority: 'desc' },
       { createdAt: 'desc' },
+      { id: 'asc' },
     ],
-  });
+    }),
+    prisma.hrCase.count({ where }),
+  ]);
   res.json({
+    total,
+    page,
+    hasMore: (page + 1) * CASE_PAGE < total,
     cases: rows.map((c) => ({
       id: c.id,
       associateId: c.associateId,
@@ -203,8 +222,8 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
 
 hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const c = await prisma.hrCase.findUnique({
-    where: { id },
+  const c = await prisma.hrCase.findFirst({
+    where: { id, tenantId: tenantIdForWrite() },
     include: {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -237,6 +256,10 @@ hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
   const canManage = canWorkCase(req.user!.role, c.category);
   if (!isOwner && !canManage) {
     throw new HttpError(403, 'forbidden', 'Not yours.');
+  }
+  // A desk outside the person's reach doesn't learn the case exists.
+  if (!isOwner && !(await hrCaseInReach(req.user!, c.id))) {
+    throw new HttpError(404, 'not_found', 'Case not found.');
   }
 
   res.json({
@@ -288,11 +311,14 @@ hrCases123Router.post(
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
     const input = CommentInputSchema.parse(req.body);
-    const c = await prisma.hrCase.findUnique({ where: { id } });
+    const c = await prisma.hrCase.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
     if (!c) {
       throw new HttpError(404, 'not_found', 'Case not found.');
     }
     const isOwner = req.user!.associateId === c.associateId;
+    if (!isOwner && !(await hrCaseInReach(req.user!, c.id))) {
+      throw new HttpError(404, 'not_found', 'Case not found.');
+    }
     const canManage = canWorkCase(req.user!.role, c.category);
     if (!isOwner && !canManage) {
       throw new HttpError(403, 'forbidden', 'Not yours.');
@@ -354,8 +380,8 @@ const TriageInputSchema = z.object({
 hrCases123Router.patch('/hr-cases/:id', requireAuth, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const input = TriageInputSchema.parse(req.body);
-  const c = await prisma.hrCase.findUnique({ where: { id } });
-  if (!c) {
+  const c = await prisma.hrCase.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
+  if (!c || !(await hrCaseInReach(req.user!, c.id))) {
     throw new HttpError(404, 'not_found', 'Case not found.');
   }
   if (!canWorkCase(req.user!.role, c.category)) {
@@ -422,7 +448,7 @@ hrCases123Router.get('/hr-cases-summary', requireAuth, async (req, res) => {
   if (!scope) {
     throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
   }
-  const desk = scope === 'payroll' ? { category: 'PAYROLL' as const } : {};
+  const desk: Prisma.HrCaseWhereInput = { AND: [hrCaseReach(req.user!), scope === 'payroll' ? { category: 'PAYROLL' as const } : {}] };
   const now = new Date();
   const [openTotal, byStatus, byPriority, byCategory, breached, atRisk] = await Promise.all([
     prisma.hrCase.count({

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { atClient } from '../lib/scope.js';
+import { atClient, scopeAssociates } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
@@ -396,28 +397,43 @@ oshaWcEeoRouter.put('/eeo/associates/:id', MANAGE_COMP, async (req, res) => {
  */
 oshaWcEeoRouter.get('/eeo/report', VIEW_COMP, async (req, res) => {
   const clientId = z.string().uuid().parse(req.query.clientId);
+  await assertSameTenant('client', clientId);
   // "Associates of a client": where they work now — an open assignment
   // there, else (none open) their application there (lib/scope.atClient),
   // so a transferred associate reports under the client they moved to.
-  const associates = await prisma.associate.findMany({
-    take: 1000,
-    where: {
-      deletedAt: null,
-      ...atClient(clientId),
-    },
-    include: { eeo: true },
-  });
+  // EEO-1 counts the people employed now: never a separated or
+  // deactivated one, and only those inside the caller's reach.
+  const people: Prisma.AssociateWhereInput = {
+    AND: [
+      { tenantId: tenantIdForWrite(), deletedAt: null, deactivatedAt: null },
+      atClient(clientId),
+      scopeAssociates(req.user!),
+    ],
+  };
+  // Counted in the database: every person, however many.
+  const [total, grouped] = await Promise.all([
+    prisma.associate.count({ where: people }),
+    prisma.associateEeo.groupBy({
+      by: ['category', 'race', 'gender'],
+      where: { associate: people },
+      _count: { _all: true },
+    }),
+  ]);
   const buckets: Record<string, number> = {};
-  for (const a of associates) {
-    const cat = a.eeo?.category ?? 'UNCATEGORIZED';
-    const race = a.eeo?.race ?? 'NOT_DISCLOSED';
-    const gender = a.eeo?.gender ?? 'NOT_DISCLOSED';
-    const key = `${cat}|${race}|${gender}`;
-    buckets[key] = (buckets[key] ?? 0) + 1;
+  let withProfile = 0;
+  for (const g of grouped) {
+    const key = `${g.category ?? 'UNCATEGORIZED'}|${g.race ?? 'NOT_DISCLOSED'}|${g.gender ?? 'NOT_DISCLOSED'}`;
+    buckets[key] = (buckets[key] ?? 0) + g._count._all;
+    withProfile += g._count._all;
+  }
+  // No EEO record at all: the "Decline to Self-Identify" buckets EEOC requires.
+  if (total > withProfile) {
+    const key = 'UNCATEGORIZED|NOT_DISCLOSED|NOT_DISCLOSED';
+    buckets[key] = (buckets[key] ?? 0) + (total - withProfile);
   }
   res.json({
     clientId,
-    total: associates.length,
+    total,
     buckets: Object.entries(buckets).map(([key, count]) => {
       const [category, race, gender] = key.split('|');
       return { category, race, gender, count };

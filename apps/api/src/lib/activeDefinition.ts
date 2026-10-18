@@ -209,9 +209,15 @@ export interface ActiveBreakdown {
  * belongs, the per-site view (activeAssociateIds with a scope) says where
  * they worked.
  */
-export async function activeBreakdown(now: Date = new Date(), db: Db = defaultPrisma, windowDays?: number, opts: { tenantId?: string | null } = {}): Promise<ActiveBreakdown> {
+export async function activeBreakdown(
+  now: Date = new Date(),
+  db: Db = defaultPrisma,
+  windowDays?: number,
+  /** associateIds: only these people (a site/region-bound caller's reach). */
+  opts: { tenantId?: string | null; associateIds?: string[] } = {},
+): Promise<ActiveBreakdown> {
   const days = windowDays ?? (await activeWindowDays(db));
-  const placed = await placements(opts.tenantId ? { tenantId: opts.tenantId } : {}, db);
+  const placed = await placements({ ...(opts.tenantId ? { tenantId: opts.tenantId } : {}), ...(opts.associateIds ? { associateIds: opts.associateIds } : {}) }, db);
   const since = new Date(now.getTime() - days * DAY_MS);
   const ids = await workedOrScheduled([...placed.keys()], {}, since, now, db);
   const byClient = new Map<string, number>();

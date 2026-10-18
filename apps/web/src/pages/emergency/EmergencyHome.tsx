@@ -4,7 +4,7 @@ import { AlertTriangle, Bus, CheckCircle2, LifeBuoy, MapPin, Phone, Siren, Users
 import { toast } from 'sonner';
 import type { EmergencyBoardRow, EmergencyDeclareInput, EmergencySiteRef, EmergencySummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime, localInputToUtcIso, utcToZonedDatetimeInput } from '@/lib/format';
 import { declareEmergency, getEmergencyBoard, listEmergencies, listEmergencySites, standDownEmergency } from '@/lib/emergencyApi';
@@ -47,6 +47,8 @@ const rideWord = (r: EmergencyBoardRow) =>
   !r.needsRide ? '' : !r.ride ? 'asked' : r.ride.status === 'REQUESTED' ? (r.ride.located ? 'waiting for a van' : 'address not on map') : r.ride.status.toLowerCase();
 
 export function EmergencyHome() {
+  // Vans exist only where the tenant runs transportation.
+  const hasVans = useTenant().moduleOn('transportation');
   const { can } = useAuth();
   const canManage = can('manage:emergency');
   const [declaring, setDeclaring] = useState(false);
@@ -63,7 +65,7 @@ export function EmergencyHome() {
     <ListTemplate
         className="space-y-5"
         title="Emergency mode"
-        subtitle="One switch for a storm: shifts suspended without penalty, everyone told in their language, a live check-in board, evacuation vans."
+        subtitle={`One switch for a storm: shifts suspended without penalty, everyone told in their language, a live check-in board${hasVans ? ', evacuation vans' : ''}.`}
         primaryAction={
           canManage && !active ? (
             <Button variant="destructive" onClick={() => setDeclaring(true)}>
@@ -84,7 +86,7 @@ export function EmergencyHome() {
             <EmptyState
               icon={Siren}
               title="No emergency in effect"
-              description="Declaring one suspends the shifts in scope, tells every associate in their language, and opens the check-in board here."
+              description="Declaring one suspends the shifts in scope, tells everyone affected in their language, and opens the check-in board here."
             />
           </CardContent>
         </Card>
@@ -314,6 +316,8 @@ function ActiveEmergency({ emergency, canManage }: { emergency: EmergencySummary
 }
 
 function DeclareDialog({ onClose }: { onClose: () => void }) {
+  // Vans exist only where the tenant runs transportation.
+  const hasVans = useTenant().moduleOn('transportation');
   const qc = useQueryClient();
   const sites = useQuery({ queryKey: ['emergency', 'sites'], queryFn: listEmergencySites });
   const [title, setTitle] = useState('');
@@ -426,10 +430,12 @@ function DeclareDialog({ onClose }: { onClose: () => void }) {
             <Input type="number" min={5} max={1440} value={escalation} onChange={(e) => setEscalation(e.target.value)} />
           </Field>
 
+          {hasVans && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={withVans} onChange={(e) => setWithVans(e.target.checked)} /> Offer evacuation vans
           </label>
-          {withVans && (
+          )}
+          {hasVans && withVans && (
             <div className="space-y-2 rounded-md border border-navy-secondary p-3">
               <Field label="Vans leave around" hint="Riders who ask for a seat are booked for this time from their address on file; dispatch plans the runs on the Transportation page.">
                 <Input type="datetime-local" value={pickupAt} onChange={(e) => setPickupAt(e.target.value)} className="text-base" />

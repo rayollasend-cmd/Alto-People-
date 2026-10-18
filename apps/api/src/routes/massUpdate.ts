@@ -7,6 +7,8 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { assertSiteInScope, isInternallyScoped, scopeAssociates, scopeWhere } from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * Mass update (HR pack 2026-10).
@@ -26,6 +28,8 @@ export const massUpdateRouter = Router();
 
 const MANAGE = requireCapability('manage:org');
 const UNDO_WINDOW_MS = 24 * 3_600_000;
+/** One batch changes at most this many people; past it the caller is asked to narrow the filter. */
+const BATCH_CAP = 2000;
 
 const FilterSchema = z.object({
   siteIds: z.array(z.string().uuid()).max(100).optional(),
@@ -63,22 +67,30 @@ interface Before {
   payrollScheduleName: string | null;
 }
 
-function whereFor(f: Filter): Prisma.AssociateWhereInput {
-  return {
-    tenantId: tenantIdForWrite(),
-    ...(f.includeSeparated ? { deletedAt: null, erasedAt: null } : EMPLOYED_WHERE),
-    ...(f.associateIds?.length ? { id: { in: f.associateIds } } : {}),
-    ...(f.departmentIds?.length ? { departmentId: { in: f.departmentIds } } : {}),
-    ...(f.managerIds?.length ? { managerId: { in: f.managerIds } } : {}),
-    ...(f.payrollScheduleIds?.length ? { payrollScheduleId: { in: f.payrollScheduleIds } } : {}),
-    ...(f.siteIds?.length ? { assignments: { some: { endedAt: null, locationId: { in: f.siteIds } } } } : {}),
-    ...(f.clientIds?.length ? { applications: { some: { deletedAt: null, status: 'APPROVED', clientId: { in: f.clientIds } } } } : {}),
-  };
+/** Who the filter names, inside the caller's tenant and reach (AND, so no filter can overwrite the scope). */
+function whereFor(f: Filter, user: SessionUser): Prisma.AssociateWhereInput {
+  return scopeWhere<Prisma.AssociateWhereInput>(
+    { tenantId: tenantIdForWrite() },
+    f.includeSeparated ? { deletedAt: null, erasedAt: null } : EMPLOYED_WHERE,
+    scopeAssociates(user),
+    !!f.associateIds?.length && { id: { in: f.associateIds } },
+    !!f.departmentIds?.length && { departmentId: { in: f.departmentIds } },
+    !!f.managerIds?.length && { managerId: { in: f.managerIds } },
+    !!f.payrollScheduleIds?.length && { payrollScheduleId: { in: f.payrollScheduleIds } },
+    !!f.siteIds?.length && { assignments: { some: { endedAt: null, locationId: { in: f.siteIds } } } },
+    !!f.clientIds?.length && { applications: { some: { deletedAt: null, status: 'APPROVED', clientId: { in: f.clientIds } } } },
+  );
 }
 
-async function snapshot(f: Filter): Promise<Before[]> {
+/** Everyone the filter matches — refused, with the real count, when past the batch cap. */
+async function snapshot(f: Filter, user: SessionUser): Promise<Before[]> {
+  const where = whereFor(f, user);
+  const matched = await prisma.associate.count({ where });
+  if (matched > BATCH_CAP) {
+    throw new HttpError(400, 'too_many', `${matched.toLocaleString()} people match — one batch changes at most ${BATCH_CAP.toLocaleString()}. Narrow the filter (a site, a department) and run it in parts.`, { matched, cap: BATCH_CAP });
+  }
   const rows = await prisma.associate.findMany({
-    where: whereFor(f),
+    where,
     select: {
       id: true,
       firstName: true,
@@ -92,7 +104,7 @@ async function snapshot(f: Filter): Promise<Before[]> {
       assignments: { where: { endedAt: null }, take: 1, orderBy: { startedAt: 'desc' }, select: { locationId: true, location: { select: { name: true } } } },
     },
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-    take: 2000,
+    take: BATCH_CAP,
   });
   return rows.map((a) => ({
     associateId: a.id,
@@ -108,19 +120,25 @@ async function snapshot(f: Filter): Promise<Before[]> {
   }));
 }
 
-/** The names the changes point at — refused when any id is not this tenant's. */
-async function resolveChanges(c: Changes) {
+/**
+ * The names the changes point at — refused when any id is not this
+ * tenant's, a site is outside the caller's reach, or the manager is gone,
+ * out of reach, or would close a loop over the people being moved.
+ */
+async function resolveChanges(c: Changes, user: SessionUser, movingIds: string[] = []) {
+  const tenantId = tenantIdForWrite();
   const out: { siteName?: string | null; departmentName?: string | null; managerName?: string | null; payrollScheduleName?: string | null } = {};
   if (c.siteId !== undefined) {
     if (c.siteId === null) throw new HttpError(400, 'site_required', 'A site is required: people are moved, not unassigned, by a mass update.');
-    const s = await prisma.site.findUnique({ where: { id: c.siteId }, select: { name: true } });
+    const s = await prisma.site.findFirst({ where: { id: c.siteId, tenantId, deletedAt: null }, select: { name: true } });
     if (!s) throw new HttpError(404, 'site_not_found', 'Site not found.');
+    await assertSiteInScope(prisma, user, c.siteId);
     out.siteName = s.name;
   }
   if (c.departmentId !== undefined) {
     if (c.departmentId === null) out.departmentName = null;
     else {
-      const d = await prisma.department.findUnique({ where: { id: c.departmentId }, select: { name: true } });
+      const d = await prisma.department.findFirst({ where: { id: c.departmentId, tenantId }, select: { name: true } });
       if (!d) throw new HttpError(404, 'department_not_found', 'Department not found.');
       out.departmentName = d.name;
     }
@@ -128,15 +146,29 @@ async function resolveChanges(c: Changes) {
   if (c.managerId !== undefined) {
     if (c.managerId === null) out.managerName = null;
     else {
-      const m = await prisma.associate.findUnique({ where: { id: c.managerId }, select: { firstName: true, lastName: true, deletedAt: true } });
-      if (!m || m.deletedAt) throw new HttpError(404, 'manager_not_found', 'Manager not found.');
+      // An active person, in this tenant and the caller's reach.
+      const m = await prisma.associate.findFirst({
+        where: scopeWhere<Prisma.AssociateWhereInput>({ id: c.managerId, tenantId, deletedAt: null, deactivatedAt: null }, scopeAssociates(user)),
+        select: { firstName: true, lastName: true },
+      });
+      if (!m) throw new HttpError(404, 'manager_not_found', 'Manager not found — they must be active and within your reach.');
+      // A loop: the new manager already reports (at any depth) to someone being moved under them.
+      const moving = new Set(movingIds);
+      let cursor: string | null = c.managerId;
+      for (let i = 0; i < 100 && cursor; i++) {
+        const up: { managerId: string | null } | null = await prisma.associate.findUnique({ where: { id: cursor }, select: { managerId: true } });
+        cursor = up?.managerId ?? null;
+        if (cursor && moving.has(cursor)) {
+          throw new HttpError(409, 'manager_cycle', `${m.firstName} ${m.lastName} reports to someone in this batch — that would make a loop.`);
+        }
+      }
       out.managerName = `${m.firstName} ${m.lastName}`.trim();
     }
   }
   if (c.payrollScheduleId !== undefined) {
     if (c.payrollScheduleId === null) out.payrollScheduleName = null;
     else {
-      const p = await prisma.payrollSchedule.findUnique({ where: { id: c.payrollScheduleId }, select: { name: true } });
+      const p = await prisma.payrollSchedule.findFirst({ where: { id: c.payrollScheduleId, tenantId }, select: { name: true } });
       if (!p) throw new HttpError(404, 'schedule_not_found', 'Pay schedule not found.');
       out.payrollScheduleName = p.name;
     }
@@ -157,8 +189,8 @@ const BodySchema = z.object({ filter: FilterSchema, changes: ChangesSchema });
 
 massUpdateRouter.post('/people/mass-update/preview', MANAGE, async (req, res) => {
   const { filter, changes } = BodySchema.parse(req.body);
-  const names = await resolveChanges(changes);
-  const before = await snapshot(filter);
+  const before = await snapshot(filter, req.user!);
+  const names = await resolveChanges(changes, req.user!, before.map((b) => b.associateId));
   const to = (field: string) =>
     field === 'site' ? names.siteName ?? null : field === 'department' ? names.departmentName ?? null : field === 'manager' ? names.managerName ?? null : names.payrollScheduleName ?? null;
   const rows = before
@@ -183,8 +215,8 @@ async function applyOne(tx: Prisma.TransactionClient, b: Before, c: Changes, tod
 
 massUpdateRouter.post('/people/mass-update', MANAGE, async (req, res) => {
   const { filter, changes } = BodySchema.parse(req.body);
-  const names = await resolveChanges(changes);
-  const before = (await snapshot(filter)).filter((b) => changesFor(b, changes).length > 0);
+  const before = (await snapshot(filter, req.user!)).filter((b) => changesFor(b, changes).length > 0);
+  const names = await resolveChanges(changes, req.user!, before.map((b) => b.associateId));
   if (before.length === 0) throw new HttpError(400, 'nothing_to_change', 'No one matched with a different value.');
   if (changes.managerId && before.some((b) => b.associateId === changes.managerId)) {
     throw new HttpError(400, 'self_manager', 'A person cannot be made their own manager.');
@@ -233,6 +265,8 @@ massUpdateRouter.post('/people/mass-update/:id/undo', MANAGE, async (req, res) =
   const id = z.string().uuid().parse(req.params.id);
   const batch = await prisma.massUpdateBatch.findUnique({ where: { id } });
   if (!batch || batch.tenantId !== tenantIdForWrite()) throw new HttpError(404, 'not_found', 'Batch not found.');
+  // A site/region-bound account undoes only its own batches (another's may reach past its sites).
+  if (isInternallyScoped(req.user!) && batch.actorUserId !== req.user!.id) throw new HttpError(404, 'not_found', 'Batch not found.');
   if (batch.undoneAt) throw new HttpError(409, 'already_undone', 'This batch was already undone.');
   if (Date.now() - batch.appliedAt.getTime() >= UNDO_WINDOW_MS) throw new HttpError(409, 'undo_window_closed', 'The 24-hour undo window has closed.');
   const before = batch.affected as unknown as Before[];

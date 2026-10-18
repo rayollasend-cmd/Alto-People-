@@ -238,7 +238,7 @@ export function ReportsHome() {
     <ListTemplate
         className="space-y-5"
         title="Reports"
-        subtitle="Build, save, and schedule reports across associates, time, payroll, applications, and candidates."
+        subtitle="Build, save, and schedule reports across people, time, payroll, applications, and candidates."
         breadcrumbs={[{ label: 'Insights' }, { label: 'Reports' }]}
     >
       <div className="flex flex-wrap items-center gap-2">

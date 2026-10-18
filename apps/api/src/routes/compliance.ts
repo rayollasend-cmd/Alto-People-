@@ -20,7 +20,7 @@ import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeBackgroundChecks } from '../lib/scope.js';
+import { scopeAssociates, scopeBackgroundChecks } from '../lib/scope.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 import { syncProgramFromJ1 } from '../lib/programs.js';
@@ -35,6 +35,8 @@ import { drugTestsRouter } from './drugTests.js';
 export const complianceRouter = Router();
 
 const MANAGE = requireCapability('manage:compliance');
+/** Rows a compliance list draws; more than this says so (`truncated`). */
+const LIST_PAGE = 1000;
 
 // E-Verify directorate lives in its own module — it's roughly the size of
 // this file on its own. Mounted here rather than in app.ts so it inherits the
@@ -120,15 +122,21 @@ const I9_INCLUDE = {
 complianceRouter.get('/i9', async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
-    const where: Prisma.I9VerificationWhereInput = {};
-    if (status === 'pending') where.section2CompletedAt = null;
-    if (status === 'complete') where.section2CompletedAt = { not: null };
-    const rows = await prisma.i9Verification.findMany({
+    const filter: Prisma.I9VerificationWhereInput = {};
+    if (status === 'pending') filter.section2CompletedAt = null;
+    if (status === 'complete') filter.section2CompletedAt = { not: null };
+    // This tenant's people, inside the caller's reach.
+    const where: Prisma.I9VerificationWhereInput = {
+      AND: [filter, { tenantId: tenantIdForWrite() }, { associate: { AND: [{ deletedAt: null }, scopeAssociates(req.user!)] } }],
+    };
+    const fetched = await prisma.i9Verification.findMany({
       where,
-      orderBy: { updatedAt: 'desc' },
-      take: 200,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      take: LIST_PAGE + 1,
       include: I9_INCLUDE,
     });
+    const truncated = fetched.length > LIST_PAGE;
+    const rows = truncated ? fetched.slice(0, LIST_PAGE) : fetched;
     // Current client per associate, for the tab's client filter.
     const placement = await primaryClientsForAssociates(
       rows.map((r) => r.associateId),
@@ -136,6 +144,7 @@ complianceRouter.get('/i9', async (req, res, next) => {
     res.json(
       I9ListResponseSchema.parse({
         i9s: rows.map((r) => toI9(r, placement.get(r.associateId))),
+        truncated,
       }),
     );
   } catch (err) {
@@ -333,6 +342,8 @@ complianceRouter.get('/background/pending', MANAGE, async (req, res, next) => {
         deletedAt: null,
         tenantId: tenantIdForWrite(),
         backgroundChecks: { none: {} },
+        // The caller's reach: a store-bound office account orders for its own people.
+        AND: [scopeAssociates(req.user!)],
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       select: {
@@ -625,21 +636,26 @@ const J1_INCLUDE = {
 complianceRouter.get('/j1', async (req, res, next) => {
   try {
     const expiringWithin = req.query.expiringWithin?.toString();
-    const where: Prisma.J1ProfileWhereInput = {};
+    const filter: Prisma.J1ProfileWhereInput = {};
     if (expiringWithin) {
       const days = Number.parseInt(expiringWithin, 10);
       if (Number.isFinite(days)) {
         const cutoff = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-        where.programEndDate = { lte: cutoff };
+        filter.programEndDate = { lte: cutoff };
       }
     }
-    const rows = await prisma.j1Profile.findMany({
+    const where: Prisma.J1ProfileWhereInput = {
+      AND: [filter, { tenantId: tenantIdForWrite() }, { associate: { AND: [{ deletedAt: null }, scopeAssociates(req.user!)] } }],
+    };
+    const fetched = await prisma.j1Profile.findMany({
       where,
-      orderBy: { programEndDate: 'asc' },
-      take: 200,
+      orderBy: [{ programEndDate: 'asc' }, { id: 'asc' }],
+      take: LIST_PAGE + 1,
       include: J1_INCLUDE,
     });
-    res.json(J1ListResponseSchema.parse({ profiles: rows.map(toJ1) }));
+    const truncated = fetched.length > LIST_PAGE;
+    const rows = truncated ? fetched.slice(0, LIST_PAGE) : fetched;
+    res.json(J1ListResponseSchema.parse({ profiles: rows.map(toJ1), truncated }));
   } catch (err) {
     next(err);
   }

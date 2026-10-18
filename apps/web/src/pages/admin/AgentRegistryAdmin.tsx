@@ -371,7 +371,10 @@ export function AgentRegistryAdmin() {
   const control: AgentControlState | undefined = registry.data?.control ?? controlQuery.data;
   // Agent families: beside this organization's switch, the platform's (the operator's alone).
   const platform = registry.data?.platformControl;
-  const isOperator = useTenant().id === PLATFORM_OPERATOR_TENANT_ID;
+  const tenantSession = useTenant();
+  const isOperator = tenantSession.id === PLATFORM_OPERATOR_TENANT_ID;
+  // A tenant without clients has no client to message.
+  const hasClients = tenantSession.moduleOn('clientPortal');
 
   const agents = useMemo(() => registry.data?.agents ?? [], [registry.data]);
   const groups = useMemo(() => groupAgentsByFamily(agents), [agents]);
@@ -735,7 +738,7 @@ export function AgentRegistryAdmin() {
             <span className="font-medium text-ink">Always a person:</span> {HUMAN_ONLY_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a].toLowerCase()).join(', ')}. The approver does these in the app; the agent only asks.
           </li>
           <li>
-            <span className="font-medium text-ink">Needs approval first:</span> {AGENT_EXECUTABLE_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a].toLowerCase()).join(', ')}. The agent carries these out once a person approves.
+            <span className="font-medium text-ink">Needs approval first:</span> {AGENT_EXECUTABLE_ACTIONS.filter((a) => hasClients || a !== 'CLIENT_MESSAGE').map((a) => AGENT_GATED_ACTION_LABELS[a].toLowerCase()).join(', ')}. The agent carries these out once a person approves.
           </li>
         </ul>
       </section>

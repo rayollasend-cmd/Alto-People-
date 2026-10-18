@@ -229,7 +229,7 @@ describe('axe pages — insights / compliance / misc long tail', () => {
 
   it('<IntegrationsHome> has no axe violations', async () => {
     const { container } = renderPage(<IntegrationsHome />);
-    await screen.findByText('No API clients');
+    await screen.findByText('No API apps');
     await expectNoViolations(container);
   });
 

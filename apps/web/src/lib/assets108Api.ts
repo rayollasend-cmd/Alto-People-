@@ -4,8 +4,10 @@ export type AssetKind =
   | 'LAPTOP'
   | 'PHONE'
   | 'TABLET'
+  | 'DEVICE'
   | 'BADGE'
   | 'KEY'
+  | 'PPE'
   | 'VEHICLE'
   | 'UNIFORM'
   | 'OTHER';
@@ -27,6 +29,10 @@ export interface Asset {
   purchasedAt: string | null;
   purchasePrice: string | null;
   notes: string | null;
+  /** The store it's kept at. */
+  locationId?: string | null;
+  storeName?: string | null;
+  clientName?: string | null;
   currentAssignment: {
     id: string;
     associateId: string;
@@ -52,10 +58,12 @@ export interface AssetAssignment {
 export const listAssets = (params?: {
   status?: AssetStatus;
   kind?: AssetKind;
+  locationId?: string;
 }) => {
   const q = new URLSearchParams();
   if (params?.status) q.set('status', params.status);
   if (params?.kind) q.set('kind', params.kind);
+  if (params?.locationId) q.set('locationId', params.locationId);
   const suffix = q.toString() ? `?${q.toString()}` : '';
   return apiFetch<{ assets: Asset[] }>(`/assets${suffix}`);
 };
@@ -68,6 +76,7 @@ export interface AssetInput {
   purchasedAt?: string | null;
   purchasePrice?: number | null;
   notes?: string | null;
+  locationId?: string | null;
 }
 
 export const createAsset = (input: AssetInput) =>

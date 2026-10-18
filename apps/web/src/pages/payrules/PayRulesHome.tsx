@@ -89,7 +89,7 @@ export function PayRulesHome() {
         className="space-y-5"
         title="Pay rules"
         subtitle="Project codes, premium-pay differentials (OT, night, holiday), and tip pools."
-        breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Pay rules' }]}
+        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Pay rules' }]}
         secondaryActions={
           // Worktags are the sibling finance-config surface (spend/reporting
           // dimensions); its route is gated on view:hr-admin, so only show

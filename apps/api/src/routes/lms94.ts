@@ -7,6 +7,8 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { assertInTenant } from '../lib/sameTenant.js';
+import { scopeAssociates } from '../lib/scope.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 94 — Learning Management System (LMS).
@@ -48,6 +50,7 @@ lms94Router.get('/courses', VIEW, async (req, res) => {
   const rows = await prisma.course.findMany({
     take: 1000,
     where: {
+      tenantId: tenantIdForWrite(),
       deletedAt: null,
       ...(clientId ? { OR: [{ clientId }, { clientId: null }] } : {}),
       ...(status ? { status } : {}),
@@ -228,7 +231,9 @@ lms94Router.get('/learning/me', requireAuth, async (req, res) => {
     throw new HttpError(403, 'not_an_associate', 'My-training is for associate-linked accounts.');
   }
   const rows = await prisma.courseEnrollment.findMany({
-    where: { associateId },
+    where: {
+      // People in the caller's tenant and reach.
+      associate: { is: scopeActiveAssociates(req.user!, { former: true }) }, associateId },
     include: {
       course: {
         select: { title: true, description: true, isRequired: true, validityDays: true },
@@ -332,19 +337,31 @@ lms94Router.get('/lms/expiring', VIEW, async (req, res) => {
   const days = z
     .preprocess((v) => (v ? Number(v) : 30), z.number().int().min(1).max(365))
     .parse(req.query.days);
-  const cutoff = new Date(Date.now() + days * 24 * 3600 * 1000);
-  const rows = await prisma.courseEnrollment.findMany({
-    take: 500,
-    where: {
-      status: 'COMPLETED',
-      expiresAt: { not: null, lte: cutoff },
-    },
-    include: {
-      course: { select: { title: true, isRequired: true } },
-      associate: { select: { firstName: true, lastName: true, email: true } },
-    },
-    orderBy: { expiresAt: 'asc' },
-  });
+  const now = new Date();
+  const cutoff = new Date(now.getTime() + days * 24 * 3600 * 1000);
+  // This tenant's people who still work here, inside the caller's reach.
+  const base: Prisma.CourseEnrollmentWhereInput = {
+    AND: [
+      { tenantId: tenantIdForWrite(), status: 'COMPLETED', expiresAt: { not: null } },
+      { associate: { AND: [{ deletedAt: null, deactivatedAt: null }, scopeAssociates(req.user!)] } },
+    ],
+  };
+  const lapsedWhere: Prisma.CourseEnrollmentWhereInput = { AND: [base, { expiresAt: { lt: now } }] };
+  const comingWhere: Prisma.CourseEnrollmentWhereInput = { AND: [base, { expiresAt: { gte: now, lte: cutoff } }] };
+  const include = {
+    course: { select: { title: true, isRequired: true } },
+    associate: { select: { firstName: true, lastName: true, email: true } },
+  } as const;
+  // Two reads, so years of old lapses can never push the coming ones off
+  // the page: the coming ones soonest first, the lapsed newest first.
+  const HALF = 250;
+  const [coming, lapsed, comingCount, lapsedCount] = await Promise.all([
+    prisma.courseEnrollment.findMany({ where: comingWhere, include, orderBy: { expiresAt: 'asc' }, take: HALF }),
+    prisma.courseEnrollment.findMany({ where: lapsedWhere, include, orderBy: { expiresAt: 'desc' }, take: HALF }),
+    prisma.courseEnrollment.count({ where: comingWhere }),
+    prisma.courseEnrollment.count({ where: lapsedWhere }),
+  ]);
+  const rows = [...lapsed, ...coming].sort((a, b) => a.expiresAt!.getTime() - b.expiresAt!.getTime());
   res.json({
     expiring: rows.map((e) => ({
       id: e.id,
@@ -352,9 +369,9 @@ lms94Router.get('/lms/expiring', VIEW, async (req, res) => {
       isRequired: e.course.isRequired,
       associateName: `${e.associate.firstName} ${e.associate.lastName}`,
       expiresAt: e.expiresAt!.toISOString(),
-      daysLeft: Math.ceil(
-        (e.expiresAt!.getTime() - Date.now()) / (24 * 3600 * 1000),
-      ),
+      daysLeft: Math.ceil((e.expiresAt!.getTime() - now.getTime()) / (24 * 3600 * 1000)),
     })),
+    counts: { lapsed: lapsedCount, expiring: comingCount },
+    truncated: lapsedCount > HALF || comingCount > HALF,
   });
 });

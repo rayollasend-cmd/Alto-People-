@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { termizeText } from '@/lib/modules';
+import { useTerm } from '@/lib/auth';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AsOf } from '@/components/ui/AsOf';
@@ -176,6 +178,7 @@ function OpsFilterBar({
   onRange: (days: number) => void;
   onClear: () => void;
 }) {
+  const term = useTerm();
   return (
     <FilterBar className="gap-x-3 gap-y-2">
       <label className="flex items-center gap-1.5 text-2xs uppercase tracking-wider text-silver/70">
@@ -184,9 +187,9 @@ function OpsFilterBar({
           value={storeId}
           onChange={(e) => onParam('store', e.target.value)}
           className="h-9 w-48"
-          aria-label="Filter by store"
+          aria-label={termizeText('Filter by store', term)}
         >
-          <option value="">All stores</option>
+          <option value="">{termizeText('All stores', term)}</option>
           {stores.map((st) => (
             <option key={st.id} value={st.id}>
               {st.name}
@@ -270,7 +273,7 @@ function OpsFilterBar({
           >
             <option value="worst">Needs attention first</option>
             <option value="recent">Most recent first</option>
-            <option value="store">By store</option>
+            <option value="store">{termizeText('By store', term)}</option>
           </Select>
         </label>
       )}
@@ -285,6 +288,7 @@ function OpsFilterBar({
 }
 
 export function OpsBoard() {
+  const term = useTerm();
   // The record drill-in: which shift's full evidence is open.
   const [recordId, setRecordId] = useState<string | null>(null);
 
@@ -567,7 +571,7 @@ export function OpsBoard() {
             </div>
             <div className="mt-1 text-xl font-medium text-white">
               {headline.live > 0
-                ? `${headline.live} shift${headline.live === 1 ? '' : 's'} running across ${headline.stores} store${headline.stores === 1 ? '' : 's'}`
+                ? `${headline.live} shift${headline.live === 1 ? '' : 's'} running across ${headline.stores} ${termizeText(headline.stores === 1 ? 'store' : 'stores', term)}`
                 : 'All floors quiet'}
             </div>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -848,7 +852,7 @@ export function OpsBoard() {
                 </ResponsiveContainer>
               </div>
               <p className="mt-1 text-2xs text-silver/60">
-                Task completions per hour across all stores — the floors&apos; heartbeat.
+                {termizeText('Task completions per hour across all stores', term)} — the floors&apos; heartbeat.
               </p>
               {insights.metrics.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -972,7 +976,7 @@ export function OpsBoard() {
                   description={
                     anyFilter
                       ? 'Clear the filters above to see every floor, or pick a date range to read the record instead.'
-                      : 'Supervisors open their shift from Store Ops when they start — it will appear here the moment they do.'
+                      : termizeText('Supervisors open their shift from Store Ops when they start — it will appear here the moment they do.', term)
                   }
                 />
               ) : (

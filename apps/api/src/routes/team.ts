@@ -74,7 +74,9 @@ teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
   const user = req.user!;
   const reports = await prisma.associate.findMany({
     take: 1000,
-    where: await managerScope(user),
+    // Employed reports only, like the dashboard and home — a separated
+    // report no longer belongs on the manager's list.
+    where: { AND: [await managerScope(user), EMPLOYED_WHERE] },
     select: {
       id: true,
       firstName: true,
@@ -439,6 +441,8 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
     });
   }
   for (const g of atRiskGoals) {
+    // Company and team goals belong to no one person; the team inbox lists people's.
+    if (!g.associate || !g.associateId) continue;
     items.push({
       id: g.id,
       kind: 'GOAL_AT_RISK',

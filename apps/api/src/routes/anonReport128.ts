@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import {
   anonReportFileLimiter,
   anonReportLookupLimiter,
@@ -281,7 +282,8 @@ anonReport128Router.get('/anonymous-reports', MANAGE_PERF, async (req, res) => {
     .parse(req.query.status);
   const rows = await prisma.anonymousReport.findMany({
     take: 100,
-    where: status ? { status } : {},
+    // Anonymous: no person or site to scope by — but always this tenant's.
+    where: { tenantId: tenantIdForWrite(), ...(status ? { status } : {}) },
     include: {
       assignedTo: { select: { email: true } },
       updates: {
@@ -452,12 +454,12 @@ anonReport128Router.get(
   async (_req, res) => {
     const [received, triaging, investigating, resolved, openReports] =
       await Promise.all([
-        prisma.anonymousReport.count({ where: { status: 'RECEIVED' } }),
-        prisma.anonymousReport.count({ where: { status: 'TRIAGING' } }),
-        prisma.anonymousReport.count({ where: { status: 'INVESTIGATING' } }),
-        prisma.anonymousReport.count({ where: { status: 'RESOLVED' } }),
+        prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'RECEIVED' } }),
+        prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'TRIAGING' } }),
+        prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'INVESTIGATING' } }),
+        prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'RESOLVED' } }),
         prisma.anonymousReport.findMany({
-          where: { status: { in: ['RECEIVED', 'TRIAGING', 'INVESTIGATING'] } },
+          where: { tenantId: tenantIdForWrite(), status: { in: ['RECEIVED', 'TRIAGING', 'INVESTIGATING'] } },
           select: {
             status: true,
             createdAt: true,

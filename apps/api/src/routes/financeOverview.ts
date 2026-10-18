@@ -18,6 +18,9 @@ import { billingWeek, marginTrend, payCycle, receivablesAging } from '../lib/fin
 import { cashForecast } from '../lib/cashForecast.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { isInternallyScoped, scopeAssociates } from '../lib/scope.js';
+import type { Prisma } from '@prisma/client';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * The Finance cockpit — one round trip behind the FINANCE_ACCOUNTANT
@@ -42,6 +45,11 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 export const financeOverviewRouter = Router();
 
 const DAY_MS = 86_400_000;
+
+/** A site/region-bound office account works its own people's Fieldglass batons, not the company's. */
+function reachOf(user: SessionUser): { people?: Prisma.AssociateWhereInput } {
+  return isInternallyScoped(user) ? { people: scopeAssociates(user) } : {};
+}
 
 financeOverviewRouter.get(
   '/finance/overview',
@@ -210,7 +218,7 @@ financeOverviewRouter.get(
       // The money questions — pay cycle, last week in Fieldglass, the
       // margin trend — alongside the queue, in parallel.
       const [fullFieldglassQueue, cycle, billing, margin] = await Promise.all([
-        buildFieldglassQueue(now, { tenantId: T }),
+        buildFieldglassQueue(now, { tenantId: T, ...reachOf(req.user!) }),
         payCycle(now, { tenantId: T }),
         billingWeek(now, { tenantId: T }),
         marginTrend(now, 8, { tenantId: T }),
@@ -347,12 +355,12 @@ financeOverviewRouter.get(
   requireCapability('process:payroll'),
   async (req, res, next) => {
     try {
-      const queue = await buildFieldglassQueue(new Date(), { tenantId: tenantIdForWrite() });
+      const queue = await buildFieldglassQueue(new Date(), { tenantId: tenantIdForWrite(), ...reachOf(req.user!) });
       if (req.query.view === 'count') {
         res.json({ count: queue.length });
         return;
       }
-      res.json({ generatedAt: new Date().toISOString(), queue, roster: await buildFieldglassRoster({ tenantId: tenantIdForWrite() }) });
+      res.json({ generatedAt: new Date().toISOString(), queue, roster: await buildFieldglassRoster({ tenantId: tenantIdForWrite(), ...reachOf(req.user!) }) });
     } catch (err) {
       next(err);
     }

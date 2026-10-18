@@ -6,6 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { assertInTenant } from '../lib/sameTenant.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 114 — Learning paths.
@@ -55,6 +56,7 @@ learningPaths114Router.get('/learning-paths', VIEW, async (req, res) => {
   const rows = await prisma.learningPath.findMany({
     take: 1000,
     where: {
+      tenantId: tenantIdForWrite(),
       deletedAt: null,
       ...(status ? { status } : {}),
     },

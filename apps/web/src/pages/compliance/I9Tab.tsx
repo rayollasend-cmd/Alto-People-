@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTenant, useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
@@ -123,6 +124,8 @@ const DOC_LIST_LABELS: Record<I9DocumentList, string> = {
 type I9Filter = (typeof I9_FILTERS)[number]['value'];
 
 export function I9Tab({ canManage }: { canManage: boolean }) {
+  const term = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
   // ?associateId= deep-links one person's I-9 (the onboarding checklist
   // links here) — start on the ALL filter so they're present whatever
   // their state, then auto-open their drawer once rows arrive.
@@ -349,7 +352,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       <DirectorateHeader
         icon={Fingerprint}
         title="I-9 verification"
-        blurb="Federal employment-eligibility verification — Section 1 by the associate, Section 2 by HR within 3 business days of the start date"
+        blurb={`Federal employment-eligibility verification — Section 1 by the ${term('worker').toLowerCase()}, Section 2 by HR within 3 business days of the start date`}
       />
 
       {rows && rows.length > 0 && (
@@ -389,6 +392,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             {f.label}
           </FilterChip>
         ))}
+        {hasClients && (
         <Select
           value={clientFilter}
           onChange={(e) => changeClientFilter(e.target.value)}
@@ -404,6 +408,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           ))}
           {hasUnattributed && <option value="none">No client on record</option>}
         </Select>
+        )}
         <Select
           value={started}
           onChange={(e) => setStarted(e.target.value as StartedFilter)}
@@ -443,7 +448,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         <EmptyState
           icon={FileCheck}
           title="No I-9 records match this filter"
-          description="Switch to a different filter, clear the search, or wait for associates to complete Section 1."
+          description={`Switch to a different filter, clear the search, or wait for ${term('workers').toLowerCase()} to complete Section 1.`}
         />
       )}
       {displayRows && displayRows.length > 0 && (

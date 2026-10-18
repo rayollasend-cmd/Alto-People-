@@ -70,7 +70,7 @@ policyCampaignsRouter.get('/policy-campaigns', VIEW, async (_req, res) => {
 
 policyCampaignsRouter.post('/policy-campaigns/audience-size', VIEW, async (req, res) => {
   const audience = AudienceSchema.parse(req.body?.audience);
-  res.json({ count: await audienceSize(audience) });
+  res.json({ count: await audienceSize(audience, undefined, tenantIdForWrite()) });
 });
 
 policyCampaignsRouter.post('/policy-campaigns', MANAGE, async (req, res) => {
@@ -127,7 +127,7 @@ policyCampaignsRouter.get('/policy-campaigns/:id', VIEW, async (req, res) => {
     launchedAt: c.launchedAt?.toISOString() ?? null,
     lastReminderAt: c.lastReminderAt?.toISOString() ?? null,
     completion: completion(c.recipients),
-    audienceSize: c.status === 'DRAFT' ? await audienceSize(AudienceSchema.parse(c.audience)) : c.recipients.length,
+    audienceSize: c.status === 'DRAFT' ? await audienceSize(AudienceSchema.parse(c.audience), undefined, tenantIdForWrite()) : c.recipients.length,
     recipients: c.recipients.map((r) => ({
       id: r.id,
       associateId: r.associateId,

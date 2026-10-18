@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { tenantIdForWrite } from './tenant.js';
 import { z } from 'zod';
 import {
   ReportPeriodTokenSchema,
@@ -334,7 +335,8 @@ export async function runReport(
   const specWhere = buildWhere(entity, spec.filters, now);
   const select = buildSelect(entity, spec.columns);
   const orderBy = buildOrderBy(entity, spec.sort);
-  const scoped = <T>(scope: T) => ({ AND: [specWhere, scope] });
+  // The caller's tenant on every entity — tenancy is observe-only until enforce mode.
+  const scoped = <T>(scope: T) => ({ AND: [specWhere, scope, { tenantId: tenantIdForWrite() }] });
 
   if (spec.groupBy && spec.groupBy.length > 0) {
     return runAggregate(entity, spec, user, specWhere, db);
@@ -418,7 +420,7 @@ async function runAggregate(
   const argsFor = (scope: unknown): Record<string, unknown> => ({
     by,
     ...agg,
-    where: { AND: [specWhere, scope] },
+    where: { AND: [specWhere, scope, { tenantId: tenantIdForWrite() }] },
     orderBy: by.map((f) => ({ [f]: 'asc' as const })),
     take: Math.min(spec.limit, 2000),
   });

@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
+import type { Prisma } from '@prisma/client';
+import { scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 107 — Birthdays & work anniversaries.
@@ -22,6 +24,9 @@ import { emitLiveEvent } from '../lib/liveEvents.js';
 export const celebrationsRouter = Router();
 
 const VIEW = requireCapability('view:org');
+// A shift supervisor sees their own crew's celebrations (scopeActiveAssociates
+// clamps a bounded role to its client or store).
+const VIEW_CREW = requireAnyCapability('view:org', 'message:crew');
 
 interface CelebrationItem {
   associateId: string;
@@ -32,9 +37,16 @@ interface CelebrationItem {
   date: string;
   /** Anniversary years (e.g., "5 years"). null for birthdays. */
   years: number | null;
+  /** Where they work now — for the store and client filters. */
+  locationId: string | null;
+  siteName: string | null;
+  clientId: string | null;
+  clientName: string | null;
 }
 
-celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
+celebrationsRouter.get('/celebrations/upcoming', VIEW_CREW, async (req, res) => {
+  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const locationId = z.string().uuid().optional().parse(req.query.locationId);
   const days = z
     .coerce.number()
     .int()
@@ -43,9 +55,24 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
     .default(60)
     .parse(req.query.days);
 
-  const associates = await prisma.associate.findMany({
-    take: 1000,
-    where: { deletedAt: null },
+  // Active people in the caller's tenant and reach who have a date to
+  // celebrate — every one of them, read in pages (a cap of 1,000 in no
+  // particular order used to drop an arbitrary part of the company).
+  const where: Prisma.AssociateWhereInput = {
+    AND: [
+      scopeActiveAssociates(req.user!),
+      { OR: [{ dob: { not: null } }, { applications: { some: { deletedAt: null, startDate: { not: null } } } }] },
+      locationId || clientId
+        ? { assignments: { some: { endedAt: null, ...(locationId ? { locationId } : { location: { is: { clientId } } }) } } }
+        : {},
+    ],
+  };
+  const associates: Awaited<ReturnType<typeof page>> = [];
+  const page = (cursor?: string) => prisma.associate.findMany({
+    where,
+    orderBy: { id: 'asc' },
+    take: 5000,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: {
       id: true,
       firstName: true,
@@ -58,8 +85,20 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
         orderBy: { startDate: 'asc' },
         take: 1,
       },
+      assignments: {
+        where: { endedAt: null },
+        orderBy: { startedAt: 'desc' },
+        take: 1,
+        select: { location: { select: { id: true, name: true, clientId: true, client: { select: { name: true } } } } },
+      },
     },
   });
+  for (let cursor: string | undefined; ; ) {
+    const rows = await page(cursor);
+    associates.push(...rows);
+    if (rows.length < 5000) break;
+    cursor = rows[rows.length - 1]!.id;
+  }
 
   const now = new Date();
   // Use UTC math throughout — birthdays are date-only and don't care
@@ -85,6 +124,13 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
 
   for (const a of associates) {
     const name = `${a.firstName} ${a.lastName}`.trim();
+    const where = a.assignments[0]?.location;
+    const place = {
+      locationId: where?.id ?? null,
+      siteName: where?.name ?? null,
+      clientId: where?.clientId ?? null,
+      clientName: where?.client?.name ?? null,
+    };
     if (a.dob) {
       const dob = new Date(a.dob);
       const next = nextOccurrence(
@@ -99,6 +145,7 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
           kind: 'BIRTHDAY',
           date: next.toISOString().slice(0, 10),
           years: null,
+          ...place,
         });
       }
     }
@@ -120,6 +167,7 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
           kind: 'ANNIVERSARY',
           date: next.toISOString().slice(0, 10),
           years: yearsAtNext,
+          ...place,
         });
       }
     }

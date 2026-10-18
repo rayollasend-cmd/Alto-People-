@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { termizeText } from '@/lib/modules';
+import { useTerm } from '@/lib/auth';
 import { AlertTriangle, CheckCircle2, Clock, Thermometer } from 'lucide-react';
 import {
   Bar,
@@ -376,6 +378,7 @@ export function OpsStandards({
   /** Clicking a grid cell narrows the board to that store and shift. */
   onPickStore: (locationId: string | null, period: string) => void;
 }) {
+  const term = useTerm();
   const [view, setView] = useState<'grid' | 'rows'>('grid');
 
   if (!scorecard) return <Skeleton className="h-64" />;
@@ -414,7 +417,7 @@ export function OpsStandards({
           </CardTitle>
           <div className="flex gap-1" role="group" aria-label="How to read the scorecard">
             <FilterChip active={view === 'grid'} onClick={() => setView('grid')}>
-              By store &amp; shift
+              {termizeText('By store', term)} &amp; shift
             </FilterChip>
             <FilterChip active={view === 'rows'} onClick={() => setView('rows')}>
               Worst first
@@ -540,7 +543,7 @@ export function OpsStandards({
 
         <p className="text-2xs text-silver/50">
           Green is 95% and above, amber 85–94%, red below 85%. Percentages are weighted by the number
-          of shifts, so a store that ran twenty shifts is not averaged against one that ran two.
+          of shifts, so {termizeText('a store', term)} that ran twenty shifts is not averaged against one that ran two.
         </p>
       </CardContent>
     </Card>

@@ -6,6 +6,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { isInternallyScoped, scopeAssociates } from '../lib/scope.js';
 import { assignWorkerToSite, createWorker, ensurePersonWorkers, getWorker, listWorkers, scheduleWorkerOnShift, updateWorker } from '../lib/workers.js';
 
 /**
@@ -47,7 +48,8 @@ async function ownWorker(req: Request, _res: Response, next: NextFunction): Prom
 workersRouter.get('/', VIEW, async (req, res, next) => {
   try {
     const q = z.object({ type: WorkerTypeSchema.optional(), status: WorkerStatusSchema.optional() }).parse(req.query);
-    res.json(await listWorkers(prisma, { ...q, tenantId: tenantIdForWrite() }));
+    // A site/region-bound office account sees the people at its own sites.
+    res.json(await listWorkers(prisma, { ...q, tenantId: tenantIdForWrite(), ...(isInternallyScoped(req.user!) ? { people: scopeAssociates(req.user!) } : {}) }));
   } catch (err) {
     next(err);
   }

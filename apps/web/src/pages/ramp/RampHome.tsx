@@ -15,6 +15,9 @@ import {
   type RampMilestoneStatus,
   type RampPlan,
   type RampPlanRow,
+  type RampTemplate,
+  TEMPLATE_LABELS,
+  listRampOwners,
 } from '@/lib/ramp125Api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -99,9 +102,9 @@ export function RampHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="space-y-5"
-        title="Ramp plans"
-        subtitle="30/60/90-day milestones for new hires. Manager updates status as the new hire progresses."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Ramp plans' }]}
+        title="30/60/90 plans"
+        subtitle="Every new hire's first weeks, from the first shift on — owned by their manager or the store's shift supervisor."
+        breadcrumbs={[{ label: 'People', to: '/people' }, { label: '30/60/90 plans' }]}
     >
 
       <div className="flex flex-wrap items-center gap-2 justify-end">
@@ -189,7 +192,8 @@ export function RampHome() {
                       </div>
                       <div className="text-xs text-silver">
                         Started {fmtDate(parseYmd(p.startDate))}
-                        {p.managerEmail && ` · Manager ${p.managerEmail}`}
+                        {(p.managerName || p.managerEmail) && ` · Owner ${p.managerName ?? p.managerEmail}`}
+                        {p.template === 'SEASONAL' && ' · Seasonal'}
                       </div>
                     </div>
                     <div className="text-xs text-silver">
@@ -204,12 +208,7 @@ export function RampHome() {
                         </span>
                       )}
                     </div>
-                    <div className="w-32 h-2 bg-navy-secondary rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-success"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
+                    <RampMiniTimeline row={p} pct={pct} />
                   </button>
                 );
               })}
@@ -252,7 +251,10 @@ function NewPlanDrawer({
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [startDate, setStartDate] = useState(ymdLocal());
   const [notes, setNotes] = useState('');
+  const [template, setTemplate] = useState<RampTemplate>('STANDARD');
+  const [ownerId, setOwnerId] = useState('');
   const [saving, setSaving] = useState(false);
+  const owners = useQuery({ queryKey: ['ramp', 'owners'], queryFn: listRampOwners });
 
   const submit = async () => {
     if (!associate) {
@@ -265,8 +267,10 @@ function NewPlanDrawer({
         associateId: associate.id,
         startDate,
         notes: notes.trim() || null,
+        template,
+        managerId: ownerId || null,
       });
-      toast.success('Ramp plan created with 30/60/90 milestones.');
+      toast.success(template === 'SEASONAL' ? 'Plan created for the season, from the first shift on.' : 'Plan created, from the first shift to day 90.');
       onSaved();
     } catch (err) {
       toast.error(
@@ -280,7 +284,7 @@ function NewPlanDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>New ramp plan</DrawerTitle>
+        <DrawerTitle>New 30/60/90 plan</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
@@ -299,6 +303,29 @@ function NewPlanDrawer({
           />
         </div>
         <div>
+          <Label htmlFor="ramp-template">Plan</Label>
+          <Select id="ramp-template" className="mt-1" value={template} onChange={(e) => setTemplate(e.target.value as RampTemplate)}>
+            {(Object.keys(TEMPLATE_LABELS) as RampTemplate[]).map((t) => (
+              <option key={t} value={t}>
+                {TEMPLATE_LABELS[t]}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor="ramp-owner">Owner</Label>
+          <Select id="ramp-owner" className="mt-1" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+            <option value="">Nobody yet</option>
+            {(owners.data?.owners ?? []).map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+                {o.siteName ? ` — ${o.siteName}` : ''}
+              </option>
+            ))}
+          </Select>
+          <p className="mt-1 text-xs text-silver">Their manager, or the shift supervisor at the store they start at.</p>
+        </div>
+        <div>
           <Label>Notes (optional)</Label>
           <Textarea
             className="mt-1 h-24"
@@ -307,8 +334,8 @@ function NewPlanDrawer({
           />
         </div>
         <div className="text-xs text-silver">
-          Default 30/60/90-day milestones will be created. You can add more
-          (Day 180, etc.) once the plan exists.
+          The plan's checkpoints are created from the template. You can add
+          more once the plan exists.
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -388,15 +415,22 @@ function PlanDetailDrawer({
               <div className="text-sm italic text-silver">{plan.notes}</div>
             )}
 
-            <div className="space-y-2">
+            <ol className="relative space-y-2 border-l-2 border-line pl-5" aria-label="The plan's timeline">
               {plan.milestones.length === 0 ? (
-                <div className="text-sm text-silver">No milestones yet.</div>
+                <li className="text-sm text-silver">No milestones yet.</li>
               ) : (
                 plan.milestones.map((m) => (
-                  <div
+                  <li
                     key={m.id}
-                    className="p-3 rounded border border-navy-secondary"
+                    className="relative p-3 rounded border border-navy-secondary"
                   >
+                    <span
+                      aria-hidden="true"
+                      className={`absolute -left-[1.65rem] top-4 h-3 w-3 rounded-full border-2 ${m.status === 'ACHIEVED' ? 'border-success bg-success' : m.status === 'MISSED' ? 'border-alert bg-alert' : m.status === 'ON_TRACK' ? 'border-accent bg-accent' : 'border-line bg-surface'}`}
+                    />
+                    <div className="mb-1 text-2xs uppercase tracking-wider text-ink-muted">
+                      {checkpointLabel(m.dayCheckpoint)} · {fmtDate(addDaysYmd(plan.startDate, m.dayCheckpoint - 1))}
+                    </div>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
@@ -487,10 +521,10 @@ function PlanDetailDrawer({
                         <XCircle className="h-3 w-3" /> Missed
                       </div>
                     )}
-                  </div>
+                  </li>
                 ))
               )}
-            </div>
+            </ol>
 
             {canManage && (
               <div className="flex gap-2 pt-2">
@@ -623,5 +657,56 @@ function AddMilestoneDrawer({
         </Button>
       </DrawerFooter>
     </Drawer>
+  );
+}
+
+/** "First shift", "Week 2", "Day 30" — how a checkpoint reads on the timeline. */
+function checkpointLabel(day: number): string {
+  if (day <= 1) return 'First shift';
+  if (day % 7 === 0 && day <= 56) return `Week ${day / 7}`;
+  return `Day ${day}`;
+}
+
+/** YYYY-MM-DD plus n days, as a local date. */
+function addDaysYmd(ymd: string, n: number): Date | null {
+  const d = parseYmd(ymd);
+  if (!d) return null;
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+const DOT: Record<RampMilestoneStatus, string> = {
+  ACHIEVED: 'bg-success border-success',
+  MISSED: 'bg-alert border-alert',
+  ON_TRACK: 'bg-accent border-accent',
+  PENDING: 'bg-surface border-line',
+};
+
+/** The plan's checkpoints on one line, placed by day, with an accessible progress value. */
+function RampMiniTimeline({ row, pct }: { row: RampPlanRow; pct: number }) {
+  const ms = row.milestones ?? [];
+  const last = Math.max(1, ...ms.map((m) => m.dayCheckpoint));
+  return (
+    <div className="w-40 shrink-0">
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        aria-label={`${row.associateName}: ${row.achieved} of ${row.total} milestones achieved`}
+        className="relative h-3"
+      >
+        <span aria-hidden="true" className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-line" />
+        {ms.map((m) => (
+          <span
+            key={`${m.dayCheckpoint}-${m.title}`}
+            aria-hidden="true"
+            title={`${checkpointLabel(m.dayCheckpoint)}: ${m.title} — ${STATUS_LABELS[m.status]}`}
+            className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 ${DOT[m.status]}`}
+            style={{ left: `${(m.dayCheckpoint / last) * 100}%` }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }

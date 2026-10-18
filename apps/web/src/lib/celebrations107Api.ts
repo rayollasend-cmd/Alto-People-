@@ -7,6 +7,11 @@ export interface CelebrationItem {
   kind: 'BIRTHDAY' | 'ANNIVERSARY';
   date: string;
   years: number | null;
+  /** Where they work now. */
+  locationId?: string | null;
+  siteName?: string | null;
+  clientId?: string | null;
+  clientName?: string | null;
 }
 
 export const listUpcomingCelebrations = (days = 60) =>

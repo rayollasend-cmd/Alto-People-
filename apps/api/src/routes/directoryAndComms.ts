@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
-import { atClient } from '../lib/scope.js';
+import { atClient, scopeAssociates, scopeWhere } from '../lib/scope.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyUser } from '../lib/notify.js';
@@ -41,15 +41,20 @@ directoryAndCommsRouter.get(
   VIEW_ORG,
   async (req, res) => {
     const q = z.string().max(120).optional().parse(req.query.q);
-    const where: Prisma.AssociateWhereInput = { deletedAt: null, tenantId: tenantIdForWrite() };
-    if (q && q.trim()) {
-      const term = q.trim();
-      where.OR = [
-        { firstName: { contains: term, mode: 'insensitive' } },
-        { lastName: { contains: term, mode: 'insensitive' } },
-        { email: { contains: term, mode: 'insensitive' } },
-      ];
-    }
+    const term = q?.trim();
+    // Active people in the caller's tenant and reach — contact details for
+    // the people they work with, not the company's former staff.
+    const where = scopeWhere<Prisma.AssociateWhereInput>(
+      { deletedAt: null, deactivatedAt: null, tenantId: tenantIdForWrite() },
+      scopeAssociates(req.user!),
+      !!term && {
+        OR: [
+          { firstName: { contains: term, mode: 'insensitive' } },
+          { lastName: { contains: term, mode: 'insensitive' } },
+          { email: { contains: term, mode: 'insensitive' } },
+        ],
+      },
+    );
     const rows = await prisma.associate.findMany({
       where,
       take: 100,
@@ -102,6 +107,7 @@ directoryAndCommsRouter.get(
   MANAGE_COMMS,
   async (_req, res) => {
     const rows = await prisma.broadcast.findMany({
+      where: { tenantId: tenantIdForWrite() },
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: { _count: { select: { receipts: true } } },
@@ -153,7 +159,7 @@ directoryAndCommsRouter.put(
   async (req, res) => {
     const id = req.params.id;
     const input = BroadcastInputSchema.partial().parse(req.body);
-    const existing = await prisma.broadcast.findUnique({ where: { id } });
+    const existing = await prisma.broadcast.findFirst({ where: { id: String(id), tenantId: tenantIdForWrite() } });
     if (!existing) throw new HttpError(404, 'not_found', 'Broadcast not found.');
     if (existing.status === 'SENT') {
       throw new HttpError(400, 'already_sent', 'Cannot edit a sent broadcast.');
@@ -188,29 +194,37 @@ directoryAndCommsRouter.post(
   '/broadcasts/:id/send',
   MANAGE_COMMS,
   async (req, res) => {
-    const id = req.params.id;
-    const b = await prisma.broadcast.findUnique({ where: { id } });
+    const id = String(req.params.id);
+    const b = await prisma.broadcast.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
     if (!b) throw new HttpError(404, 'not_found', 'Broadcast not found.');
     if (b.status === 'SENT') {
       throw new HttpError(400, 'already_sent', 'Already sent.');
     }
 
-    // Resolve recipients via Associate ↔ User join, applying targeting.
-    const associateWhere: Prisma.AssociateWhereInput = {
-      deletedAt: null,
+    // Resolve recipients via Associate ↔ User join, applying targeting:
+    // active people, this tenant, the sender's reach, then the audience.
+    const associateWhere = scopeWhere<Prisma.AssociateWhereInput>(
+      { tenantId: tenantIdForWrite(), deletedAt: null, deactivatedAt: null },
+      scopeAssociates(req.user!),
       // The client's people now — a transfer moves them (lib/scope.atClient).
-      ...(b.clientId ? atClient(b.clientId) : {}),
-      ...(b.departmentId ? { departmentId: b.departmentId } : {}),
-      ...(b.costCenterId ? { costCenterId: b.costCenterId } : {}),
-    };
-    const associates = await prisma.associate.findMany({
-      take: 1000,
-      where: associateWhere,
-      select: { user: { select: { id: true } } },
-    });
-    const userIds = associates
-      .map((a) => a.user?.id)
-      .filter((id): id is string => Boolean(id));
+      !!b.clientId && atClient(b.clientId),
+      !!b.departmentId && { departmentId: b.departmentId },
+      !!b.costCenterId && { costCenterId: b.costCenterId },
+    );
+    // Every recipient, in pages, in a stable order — a silent cap used to skip everyone past 1,000.
+    const userIds: string[] = [];
+    for (let cursor: string | undefined; ; ) {
+      const page: Array<{ id: string; user: { id: string } | null }> = await prisma.associate.findMany({
+        where: associateWhere,
+        select: { id: true, user: { select: { id: true } } },
+        orderBy: { id: 'asc' },
+        take: 1000,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      for (const a of page) if (a.user?.id) userIds.push(a.user.id);
+      if (page.length < 1000) break;
+      cursor = page[page.length - 1]!.id;
+    }
 
     await prisma.$transaction(async (tx) => {
       // Receipts go to associate-linked users only — staff users see the
@@ -334,6 +348,7 @@ directoryAndCommsRouter.get(
   MANAGE_COMMS,
   async (_req, res) => {
     const rows = await prisma.survey.findMany({
+      where: { tenantId: tenantIdForWrite() },
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: { _count: { select: { responses: true, questions: true } } },

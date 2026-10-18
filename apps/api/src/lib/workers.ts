@@ -204,15 +204,29 @@ async function summarize(db: Db, rows: WorkerRow[], now: Date): Promise<WorkerSu
   }));
 }
 
-export async function listWorkers(db: PrismaClient = defaultPrisma, f: { type?: WorkerType; status?: WorkerStatus; tenantId?: string } = {}, now: Date = new Date()): Promise<WorkersResponse> {
+const WORKERS_CAP = 5000;
+
+export async function listWorkers(
+  db: PrismaClient = defaultPrisma,
+  /** people: the associates in the caller's reach — person workers outside it are left out; agents and robots are org-level. */
+  f: { type?: WorkerType; status?: WorkerStatus; tenantId?: string; people?: Prisma.AssociateWhereInput } = {},
+  now: Date = new Date(),
+): Promise<WorkersResponse> {
   // Agent families step 0: an optional tenant (the agent registry passes the caller's); without one, as before.
   const tenantWhere = f.tenantId ? { tenantId: f.tenantId } : {};
-  const rows = await db.worker.findMany({
-    where: { ...(f.type ? { type: f.type } : {}), ...(f.status ? { status: f.status } : {}), ...tenantWhere },
+  const found = await db.worker.findMany({
+    where: {
+      AND: [
+        { ...(f.type ? { type: f.type } : {}), ...(f.status ? { status: f.status } : {}), ...tenantWhere },
+        f.people ? { OR: [{ associateId: null }, { associate: { is: f.people } }] } : {},
+      ],
+    },
     include: WORKER_INCLUDE,
     orderBy: [{ type: 'asc' }, { name: 'asc' }],
-    take: 5000,
+    take: WORKERS_CAP + 1,
   });
+  const truncated = found.length > WORKERS_CAP;
+  const rows = found.slice(0, WORKERS_CAP);
   const all = await summarize(db, rows, now);
   const grouped = await db.worker.groupBy({ by: ['type', 'status'], where: tenantWhere, _count: { _all: true } });
   const counts = {} as WorkersResponse['counts'];
@@ -225,7 +239,7 @@ export async function listWorkers(db: PrismaClient = defaultPrisma, f: { type?: 
   // only way to lose one, and Restrict forbids that too. Still asked.
   const withoutOwner = all.filter((w) => !w.owner);
   const associatesWithoutWorker = await db.associate.count({ where: { deletedAt: null, worker: null, ...tenantWhere } });
-  return { workers: all, counts, withoutOwner, associatesWithoutWorker };
+  return { workers: all, counts, withoutOwner, associatesWithoutWorker, truncated };
 }
 
 export async function getWorker(db: Db, id: string, now: Date = new Date()): Promise<WorkerSummary> {

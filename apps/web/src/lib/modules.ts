@@ -29,7 +29,6 @@ export type ModuleKey =
   | 'agents'
   | 'portal'
   | 'region'
-  | 'regions'
   | 'messages'
   | 'portal-today'
   | 'portal-schedule'
@@ -77,6 +76,7 @@ export type ModuleKey =
   | 'assets'
   | 'pulse'
   | 'headcount'
+  | 'headcount-plan'
   | 'policy-campaigns'
   | 'document-retention'
   | 'skills'
@@ -176,11 +176,11 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
   'inbox',
-  'regions',
   'relay',
   'people',
   'org-chart',
   'headcount',
+  'headcount-plan',
   'succession',
   'separations',
   'pulse',
@@ -298,9 +298,9 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'inbox',
   'me',
   'messages',
-  'regions',
   'relay',
   'people',
+  'org-chart',
   'recruiting',
   'onboarding',
   'scheduling',
@@ -334,6 +334,7 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'expirations',
   'learning-paths',
   'headcount',
+  'headcount-plan',
   'communications',
   'dircomms',
   'analytics',
@@ -369,6 +370,7 @@ const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   // Headcount (the requisitions they hire against), the report builder and
   // the internal job board were reachable only by URL (2026-10-17).
   'headcount',
+  'headcount-plan',
   'reports',
   'internal-jobs',
 ]);
@@ -404,6 +406,7 @@ const SHIFT_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'agreements',
   'learning',
   'rides', // they ride the vans too
+  'celebrations', // their crew's birthdays and anniversaries
 ]);
 
 /** The Transportation Director's nav: the command center, and the
@@ -449,8 +452,9 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   audit: 'compliance',
   'payroll-compliance': 'compliance',
   'earned-wage': 'earnedWage',
-  fieldglass: 'payrollSync',
-  'fieldglass-setup': 'payrollSync',
+  // Fieldglass is a client's vendor system: a tenant with no clients never sees it.
+  fieldglass: 'clientPortal',
+  'fieldglass-setup': 'clientPortal',
   integrations: 'payrollSync',
   rides: 'transportation',
   transport: 'transportation',
@@ -482,7 +486,6 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   equity: 'perks',
   volunteer: 'perks',
   region: 'clientPortal',
-  regions: 'clientPortal',
   clients: 'clientPortal',
   dircomms: 'clientPortal',
 };
@@ -795,15 +798,6 @@ export const MODULES: ModuleNav[] = [
     group: 'workforce-management',
   },
   {
-    key: 'regions',
-    path: '/admin/regions',
-    label: 'Regions',
-    description:
-      'The command-center tier above the store: which stores roll up to which region, and the accounts that run each one.',
-    requires: 'view:org',
-    group: 'client-services',
-  },
-  {
     key: 'workers',
     path: '/workers',
     label: 'Workforce roster',
@@ -871,6 +865,8 @@ export const MODULES: ModuleNav[] = [
     description:
       'Upcoming birthdays and work anniversaries. Send a quick high-five from any row.',
     requires: 'view:org',
+    // A shift supervisor sees their own crew's.
+    requiresAny: ['message:crew'],
     group: 'workforce-management',
   },
   {
@@ -901,6 +897,15 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'headcount-plan',
+    path: '/headcount/plan',
+    label: 'Headcount plan',
+    description:
+      'Heads required against heads in place, place by place and week by week, priced at today’s rates — and the office seats against their budgets.',
+    requires: 'view:org',
+    group: 'payroll-finance',
+  },
+  {
     key: 'policy-campaigns',
     path: '/policy-campaigns',
     label: 'Policy campaigns',
@@ -923,7 +928,7 @@ export const MODULES: ModuleNav[] = [
     path: '/mentorship',
     label: 'Mentorship',
     description:
-      'Pair experienced associates with juniors. Suggestions use skills data to recommend ADVANCED+ mentors for a target growth skill.',
+      'Pair experienced people with newer ones. Suggestions use skills data to recommend ADVANCED+ mentors for a target growth skill.',
     requires: 'view:org',
     group: 'workforce-management',
   },
@@ -941,7 +946,7 @@ export const MODULES: ModuleNav[] = [
     path: '/learning-paths',
     label: 'Learning paths',
     description:
-      'Sequence multiple courses into ordered tracks. Associates work through them in order; status reflects the next incomplete step.',
+      'Sequence multiple courses into ordered tracks. People work through them in order; status reflects the next incomplete step.',
     requires: 'view:compliance',
     group: 'workforce-management',
   },
@@ -968,7 +973,7 @@ export const MODULES: ModuleNav[] = [
     path: '/holidays',
     label: 'Holidays',
     description:
-      'Federal, state, company, and client-specific holidays. Drives premium pay multipliers and shift planning.',
+      'Federal, state, company, and site-specific holidays. Drives premium pay multipliers and shift planning.',
     descriptionNoClients:
       'Federal, state, and company holidays. Drives premium pay multipliers and shift planning.',
     requires: 'view:scheduling',
@@ -977,7 +982,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'discipline',
     path: '/discipline',
-    label: 'Discipline',
+    label: 'Disciplinary actions',
     description:
       'Formal warning ladder — verbal, written, final, suspension, termination. Associates can acknowledge; HR can rescind.',
     requires: 'view:hr-admin',
@@ -988,7 +993,7 @@ export const MODULES: ModuleNav[] = [
     path: '/separations',
     label: 'Separations',
     description:
-      'Plan, process, and complete associate departures. Capture exit-interview feedback — rating, what worked, what to change.',
+      'Plan, process, and complete departures. Capture exit-interview feedback — rating, what worked, what to change.',
     requires: 'view:hr-admin',
     group: 'workforce-management',
   },
@@ -1006,7 +1011,7 @@ export const MODULES: ModuleNav[] = [
     path: '/vaccinations',
     label: 'Vaccinations',
     description:
-      'Vaccination + TB-test records. Required by many client SLAs. Coverage % per kind, expiring-soon feed.',
+      'Vaccination + TB-test records. Required by many sites and contracts. Coverage % per kind, expiring-soon feed.',
     descriptionNoClients:
       'Vaccination + TB-test records. Coverage % per kind, expiring-soon feed.',
     requires: 'view:compliance',
@@ -1063,7 +1068,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'learning',
     path: '/learning',
-    label: 'My learning',
+    label: 'Learning',
     description:
       'Courses assigned to you — work through required training and see what’s complete, due, or overdue.',
     requires: 'view:dashboard',
@@ -1531,8 +1536,8 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'org-units',
     path: '/admin/org-units',
-    label: 'Organizational tree',
-    description: 'Divisions, regions, business units and cost centers with their ledger codes; sites and accounts pinned at any level.',
+    label: 'Cost centers & ledger codes',
+    description: 'The ledger code labor posts to, and which places map to each. Regions and places are arranged in the Org chart.',
     requires: 'view:org',
     group: 'platform',
   },
@@ -1566,7 +1571,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'dircomms',
     path: '/directory',
-    label: 'Directory & surveys',
+    label: 'Directory & comms',
     description:
       'Search the people directory, send broadcasts, and run pulse / eNPS / open-ended surveys.',
     // Staff tool: the directory tab exposes every associate's email +
@@ -1759,7 +1764,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   people: {
     key: 'people',
     label: (term) => term('nav.people'),
-    children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-paths', 'separations'],
+    children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'headcount-plan', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-paths', 'separations'],
   },
   // Marketing sits under Hiring for the admins (the top of the same funnel);
   // the marketing manager's own rail opens its Marketing door first.
@@ -1781,7 +1786,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   },
   operations: { key: 'operations', label: 'Operations', children: ['control-room', 'tasks', 'ops', 'robots'] },
   transport: { key: 'transport', label: (term) => term('nav.transport'), children: ['transport'] },
-  clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'regions', 'client-nps'] },
+  clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'client-nps'] },
   comms: { key: 'comms', label: 'Communications', children: ['communications', 'dircomms', 'pulse'] },
   marketing: { key: 'marketing', label: 'Marketing', children: ['marketing'] },
   insights: { key: 'insights', label: 'Insights', children: ['analytics', 'reports'] },

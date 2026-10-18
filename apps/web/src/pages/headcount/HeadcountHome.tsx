@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { termizeText } from '@/lib/modules';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, Scale, TrendingDown, TrendingUp } from 'lucide-react';
@@ -7,7 +8,7 @@ import type { HeadcountOverview, HeadcountRow, ReconciliationSummary } from '@al
 import { getHeadcountOverview, getTurnover } from '@/lib/headcount110Api';
 import { patchOrgBranding } from '@/lib/brandingApi';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { fmtDate, fmtDateTime, fmtHours, fmtMoney } from '@/lib/format';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import { Button } from '@/components/ui/Button';
@@ -49,6 +50,7 @@ function errorMessage(err: unknown, fallback: string): string {
 const n = (v: number) => v.toLocaleString('en-US');
 
 export function HeadcountHome() {
+  const term = useTerm();
   const { can } = useAuth();
   const canManage = can('manage:org');
   const [days, setDays] = useState<TurnoverDays>(90);
@@ -71,7 +73,7 @@ export function HeadcountHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="space-y-6"
-        title="Headcount" subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: 'Headcount' }]}
+        title={term('nav.headcount')} subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: term('nav.headcount') }]}
         secondaryActions={
           <Button asChild variant="outline">
             <Link to="/headcount/plan">Headcount plan</Link>
@@ -83,7 +85,7 @@ export function HeadcountHome() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label="Active associates"
+          label={`Active ${term('workers').toLowerCase()}`}
           value={loading || !o ? '—' : n(o.active)}
           hint={o ? `Worked in the last ${o.windowDays} days or scheduled ahead` : undefined}
         />
@@ -265,6 +267,7 @@ function NotActiveCard({ notActive, windowDays }: { notActive: HeadcountOverview
 /* ---------------------------------------------------- activity window */
 
 function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | undefined; canManage: boolean }) {
+  const term = useTerm();
   const qc = useQueryClient();
   // null = untouched: the input shows the server value, and a refetch
   // never overwrites what the admin has typed.
@@ -296,7 +299,7 @@ function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | un
       <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-5">
         <div className="min-w-0">
           <h2 className="text-base font-medium text-white">Activity window (days)</h2>
-          <p className="text-sm text-silver">How many trailing days of work keep a placed associate active. Changing it changes every headcount on the platform.</p>
+          <p className="text-sm text-silver">How many trailing days of work keep a placed {term('worker').toLowerCase()} active. Changing it changes every headcount on the platform.</p>
         </div>
         {canManage ? (
           <form
@@ -344,6 +347,10 @@ function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | un
 /* ---------------------------------------------------- store / client */
 
 function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: HeadcountOverview | undefined; cut: Cut; onCut: (c: Cut) => void; loading: boolean; error: unknown; onRetry: () => void }) {
+  const term = useTerm();
+  // A tenant with no clients cuts by site only.
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const tz = (t: string) => termizeText(t, term);
   const rows = cut === 'store' ? overview?.byStore : overview?.byClient;
   const hasRate = (rows ?? []).some((r) => r.withoutRate !== null);
 
@@ -351,7 +358,7 @@ function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: 
     const cols: GridColumn<HeadcountRow>[] = [
       {
         key: 'name',
-        header: cut === 'store' ? 'Store' : 'Client',
+        header: cut === 'store' ? tz('Store') : tz('Client'),
         accessor: (r) => r.name,
         primary: true,
         sortable: true,
@@ -366,8 +373,8 @@ function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: 
           ),
       },
     ];
-    if (cut === 'store') {
-      cols.push({ key: 'client', header: 'Client', accessor: (r) => r.clientName ?? '', sortable: true, searchable: true, cardMeta: true });
+    if (cut === 'store' && hasClients) {
+      cols.push({ key: 'client', header: tz('Client'), accessor: (r) => r.clientName ?? '', sortable: true, searchable: true, cardMeta: true });
     }
     cols.push(
       { key: 'active', header: 'Active', accessor: (r) => r.active, sortable: true, align: 'right', className: 'tabular-nums font-semibold' },
@@ -390,18 +397,18 @@ function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: 
   return (
     <DataGrid
       id={`headcount-${cut}`}
-      caption={cut === 'store' ? 'Active by store' : 'Active by client'}
+      caption={cut === 'store' ? tz('Active by store') : tz('Active by client')}
       rows={rows ?? []}
       rowKey={(r) => r.id}
       loading={loading}
       error={error ? errorMessage(error, 'Could not load the headcount.') : null}
       onRetry={onRetry}
-      search={{ placeholder: cut === 'store' ? 'Search stores or clients…' : 'Search clients…' }}
+      search={{ placeholder: cut === 'store' ? (hasClients ? tz('Search stores or clients…') : tz('Search stores…')) : tz('Search clients…') }}
       urlState={false}
       exportCsv={{ filename: cut === 'store' ? 'headcount-by-store' : 'headcount-by-client' }}
       columns={columns}
       defaultSort={{ key: 'active', direction: 'desc' }}
-      filters={<SegmentedControl ariaLabel="Cut" options={[{ value: 'store', label: 'By store' }, { value: 'client', label: 'By client' }]} value={cut} onChange={onCut} />}
+      filters={hasClients ? <SegmentedControl ariaLabel="Cut" options={[{ value: 'store', label: tz('By store') }, { value: 'client', label: tz('By client') }]} value={cut} onChange={onCut} /> : undefined}
       empty={{ title: 'Nobody active', description: 'No one is placed with recent work or an upcoming shift.' }}
     />
   );

@@ -11,7 +11,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { logger } from '../lib/logger.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
-import { effectiveClientIdFilter, scopeApplications } from '../lib/scope.js';
+import { effectiveClientIdFilter, internalSites, scopeApplications } from '../lib/scope.js';
 import { canUseMessenger } from '../lib/messaging.js';
 import { buildFieldglassQueue } from '../lib/fieldglassQueue.js';
 import { countApprovalQueues, deciderOf } from './approvals.js';
@@ -22,6 +22,8 @@ import { countUnreadMessages } from './messages.js';
 import { deskOf } from './relay.js';
 import { transportNeedsYou } from './transportOps.js';
 import { countToCertify } from '../lib/accessCertification.js';
+import { expiringQualificationsWhere } from '../lib/expirationScope.js';
+import { hrCaseReach } from '../lib/hrCaseScope.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -147,10 +149,15 @@ const SOURCES: SourceDef[] = [
     visible: (u) => can(u, 'manage:time'),
     count: (u) => {
       const clamp = clientClamp(u);
+      const reach = internalSites(u);
+      // The punches the review tab shows: this tenant's, at kiosks in reach.
       return prisma.kioskPunch.count({
         where: {
-          reviewStatus: 'PENDING',
-          ...(clamp ? { device: { is: { clientId: clamp } } } : {}),
+          AND: [
+            { tenantId: tenantIdForWrite(), reviewStatus: 'PENDING' },
+            clamp ? { device: { is: { clientId: clamp } } } : {},
+            reach ? { device: { is: { location: { is: reach } } } } : {},
+          ],
         },
       });
     },
@@ -221,11 +228,15 @@ const SOURCES: SourceDef[] = [
     visible: (u) => caseDeskScope(u) !== null,
     count: (u) => {
       const scope = caseDeskScope(u);
+      // The cases this desk can open (lib/hrCaseScope), so the badge matches the list.
       return prisma.hrCase.count({
         where: {
-          ...(scope === 'payroll' ? { category: 'PAYROLL' } : {}),
-          status: { in: ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] },
-          OR: [{ assignedToId: u.id }, { assignedToId: null }],
+          AND: [
+            hrCaseReach(u),
+            scope === 'payroll' ? { category: 'PAYROLL' } : {},
+            { status: { in: ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] } },
+            { OR: [{ assignedToId: u.id }, { assignedToId: null }] },
+          ],
         },
       });
     },
@@ -240,7 +251,7 @@ const SOURCES: SourceDef[] = [
     count: (u) => {
       const scope = caseDeskScope(u);
       return prisma.hrCase.count({
-        where: { ...(scope === 'payroll' ? { category: 'PAYROLL' } : {}), status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } },
+        where: { AND: [hrCaseReach(u), scope === 'payroll' ? { category: 'PAYROLL' } : {}, { status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } }] },
       });
     },
   },
@@ -269,7 +280,7 @@ const SOURCES: SourceDef[] = [
     visible: (u) => can(u, 'manage:performance'),
     count: () =>
       prisma.anonymousReport.count({
-        where: { status: { in: ['RECEIVED', 'TRIAGING', 'INVESTIGATING'] } },
+        where: { tenantId: tenantIdForWrite(), status: { in: ['RECEIVED', 'TRIAGING', 'INVESTIGATING'] } },
       }),
   },
   {
@@ -279,14 +290,10 @@ const SOURCES: SourceDef[] = [
     path: '/expirations',
     module: 'compliance',
     visible: (u) => can(u, 'view:org'),
-    count: () =>
+    // The same people the Expirations page shows (lib/expirationScope).
+    count: (u) =>
       prisma.associateQualification.count({
-        where: {
-          deletedAt: null,
-          expiresAt: { not: null, lte: new Date(Date.now() + 30 * DAY_MS) },
-          qualification: { deletedAt: null },
-          associate: { deletedAt: null },
-        },
+        where: { AND: [expiringQualificationsWhere(u), { expiresAt: { lte: new Date(Date.now() + 30 * DAY_MS) } }] },
       }),
   },
   {

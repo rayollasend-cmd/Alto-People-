@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTenant } from '@/lib/auth';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,6 +25,8 @@ const toLines = (xs: string[]) => xs.join('\n');
 const fromLines = (s: string) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
 
 export function SecurityPolicyCard() {
+  // Client accounts exist only where the tenant runs the client portal.
+  const hasClients = useTenant().moduleOn('clientPortal');
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['identity', 'security-policy'], queryFn: getSecurityPolicy });
   const [draft, setDraft] = useState<SecurityPolicy | null>(null);
@@ -73,13 +76,15 @@ export function SecurityPolicyCard() {
               {(p) => <Input {...p} type="number" min={1} max={720} value={d.sessionAbsoluteHours ?? ''} onChange={(e) => set({ sessionAbsoluteHours: num(e.target.value) })} placeholder="e.g. 12" />}
             </Field>
           </div>
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className={`grid gap-4 ${hasClients ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
             <Field label="Staff networks" hint="IPv4/IPv6 addresses or CIDRs, one per line. Empty = anywhere. Your own address must be in it.">
               {(p) => <Textarea {...p} rows={3} value={internal} onChange={(e) => setInternal(e.target.value)} placeholder={'203.0.113.0/24\n2001:db8::/32'} />}
             </Field>
-            <Field label="Client account networks" hint="Store and region accounts.">
-              {(p) => <Textarea {...p} rows={3} value={client} onChange={(e) => setClient(e.target.value)} />}
-            </Field>
+            {hasClients && (
+              <Field label="Client account networks" hint="Store and region accounts.">
+                {(p) => <Textarea {...p} rows={3} value={client} onChange={(e) => setClient(e.target.value)} />}
+              </Field>
+            )}
             <Field label="Worker networks" hint="Rarely set: workers sign in from their phones.">
               {(p) => <Textarea {...p} rows={3} value={associate} onChange={(e) => setAssociate(e.target.value)} />}
             </Field>

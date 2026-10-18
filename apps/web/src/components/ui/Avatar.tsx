@@ -103,7 +103,9 @@ export function Avatar({
   );
 }
 
-function initialsFor(seed: string): string {
+function initialsFor(raw: string): string {
+  // A name that arrives as something other than text (a malformed row) still draws a badge.
+  const seed = typeof raw === 'string' ? raw : raw == null ? '' : String(raw);
   if (!seed) return '?';
   // Email shape — strip domain.
   const local = seed.includes('@') ? (seed.split('@')[0] ?? '') : seed;

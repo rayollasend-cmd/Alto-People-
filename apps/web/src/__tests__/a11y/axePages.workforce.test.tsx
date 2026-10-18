@@ -173,6 +173,9 @@ vi.mock('@/lib/career126Api', () => ({
   getLadder: vi.fn(),
   listLadders: vi.fn().mockResolvedValue({ ladders: [] }),
   removeLevelSkill: vi.fn(),
+  createFieldLeadershipLadder: vi.fn(),
+  getMyCareerPosition: vi.fn().mockResolvedValue({ ladder: null, currentLevelId: null, placedBy: null, next: null, otherLadders: [] }),
+  getCareerPosition: vi.fn(),
   SKILL_LEVEL_LABELS: {
     BEGINNER: 'Beginner',
     INTERMEDIATE: 'Intermediate',
@@ -217,6 +220,18 @@ vi.mock('@/lib/headcount110Api', () => ({
 
 vi.mock('@/lib/orgApi', () => ({
   listOrgAssociates: vi.fn().mockResolvedValue({ associates: [] }),
+  listSites: vi.fn().mockResolvedValue({ sites: [] }),
+}));
+
+// Succession opens on the stores view; the positions view is a tab.
+vi.mock('@/lib/successionBenchApi', () => ({
+  BENCH_READINESS_LABELS: { READY_NOW: 'Ready now', READY_6_MONTHS: 'In 6 months', READY_12_MONTHS: 'In 12 months' },
+  listStoreBench: vi.fn().mockResolvedValue({ stores: [], summary: { stores: 0, covered: 0, thin: 0, empty: 0, withoutLead: 0 } }),
+  addToBench: vi.fn(),
+  updateBench: vi.fn(),
+  removeFromBench: vi.fn(),
+  getNineBox: vi.fn().mockResolvedValue({ people: [], truncated: false, limit: 2000 }),
+  ratePotential: vi.fn(),
 }));
 
 vi.mock('@/lib/assets108Api', () => ({
@@ -321,8 +336,7 @@ describe('axe — workforce/HR long-tail pages', () => {
 
   it('<SuccessionHome> has no axe violations', async () => {
     const { container } = renderPage(<SuccessionHome />);
-    await screen.findByText('No positions');
-    await screen.findByText('With successor');
+    await screen.findByText(/No stores here/i);
     await expectNoViolations(container);
   });
 

@@ -249,7 +249,7 @@ export function TuitionHome() {
         className="space-y-5"
         title="Tuition reimbursement"
         subtitle="Submit course expenses for reimbursement. After grades land, attach them to your request."
-        breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Tuition' }]}
+        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Tuition' }]}
     >
 
       <div className="flex items-center justify-between">

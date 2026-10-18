@@ -113,6 +113,16 @@ describe('WorkerTypesAdmin', () => {
     expect(screen.queryByText(/People without a worker record/)).not.toBeInTheDocument();
   });
 
+  it('groups the roster by where people work — store by default, client or type on request', async () => {
+    renderPage();
+    expect(await screen.findByText('Maria Lopez')).toBeInTheDocument();
+    // Store headings carry the client; agents and robots sit under "not placed".
+    expect(screen.getByText((_, el) => el?.tagName === 'SPAN' && /^Destin · Coastal Resort · 1 worker$/.test(el.textContent ?? ''))).toBeInTheDocument();
+    expect(screen.getByText(/^Not placed at a store · 2 workers$/)).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('Group by'), 'type');
+    expect(await screen.findByText(/^Robots · 1 worker$/)).toBeInTheDocument();
+  });
+
   it('flags workers without an owner and offers the sweep when people are missing', async () => {
     vi.mocked(listWorkers).mockResolvedValue({ ...response, withoutOwner: [response.workers[1]], associatesWithoutWorker: 4 });
     renderPage();

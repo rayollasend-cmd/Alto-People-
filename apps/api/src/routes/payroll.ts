@@ -88,6 +88,7 @@ import {
 import { notifyAssociatesOfRunVoid } from '../lib/payrollVoidNotify.js';
 import { env } from '../config/env.js';
 import { listW2EligibleAssociates } from '../lib/w2Aggregator.js';
+import { scopeAssociates } from '../lib/scope.js';
 import { listF1099NecEligibleAssociates } from '../lib/f1099NecAggregator.js';
 import { listF1099MiscEligibleAssociates } from '../lib/f1099MiscAggregator.js';
 import { ZipArchive } from 'archiver';
@@ -3792,10 +3793,11 @@ payrollRouter.get('/config', PROCESS, async (req, res, next) => {
  * Read-only. The web UI links each red flag to the associate's profile
  * with a `?focus=` query param so HR lands on the right field.
  */
-payrollRouter.get('/readiness', PROCESS, async (_req, res, next) => {
+payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
   try {
     const associates = await prisma.associate.findMany({
-      where: { deletedAt: null, tenantId: tenantIdForWrite() },
+      // The caller's reach: a store-bound office account checks its own people.
+      where: { deletedAt: null, tenantId: tenantIdForWrite(), AND: [scopeAssociates(req.user!)] },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       select: {
         id: true,

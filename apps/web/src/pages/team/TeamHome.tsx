@@ -82,7 +82,7 @@ export function TeamHome() {
         className="space-y-5"
         title="My team"
         subtitle="Direct reports, pending timesheet reviews, and time-off decisions awaiting your sign-off."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'My team' }]}
+        breadcrumbs={[{ label: 'My team' }]}
     >
 
       {dashboard && (

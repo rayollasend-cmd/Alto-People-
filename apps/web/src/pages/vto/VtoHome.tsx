@@ -214,7 +214,7 @@ export function VtoHome() {
         className="space-y-5"
         title="Volunteer time"
         subtitle="Log volunteer hours and request employer match. Approved hours roll into your annual cap."
-        breadcrumbs={[{ label: 'Total rewards' }, { label: 'Volunteer' }]}
+        breadcrumbs={[{ label: 'Me' }, { label: 'Volunteer' }]}
     >
 
       <div className="flex items-center justify-between">

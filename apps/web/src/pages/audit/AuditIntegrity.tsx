@@ -116,7 +116,7 @@ export function AuditIntegrity() {
           {canManage && (
             <div className="flex flex-wrap items-end gap-2">
               <Field label="Endpoint (https)" hint="Signed JSON lines, in order, retried until delivered.">
-                {(p) => <Input {...p} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://siem.example.com/alto" className="w-80" />}
+                {(p) => <Input {...p} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://siem.example.com/ingest" className="w-80" />}
               </Field>
               <Button
                 size="sm"

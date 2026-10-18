@@ -30,7 +30,8 @@ import { activeAssociateIds } from '../lib/activeDefinition.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
-import { atClient, effectiveClientIdFilter, scopeAssociates } from '../lib/scope.js';
+import { atClient, effectiveClientIdFilter, scopeAssociates, scopeWhere } from '../lib/scope.js';
+import type { Prisma } from '@prisma/client';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
 import { executeDeactivation } from '../lib/deactivation.js';
@@ -103,7 +104,9 @@ function audit(
 orgRouter.get('/departments', VIEW, async (req: Request, res: Response) => {
   const clientId =
     typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
+  const tenantId = tenantIdForWrite();
   const where = {
+    tenantId,
     deletedAt: null,
     ...(clientId ? { clientId } : {}),
   };
@@ -112,14 +115,15 @@ orgRouter.get('/departments', VIEW, async (req: Request, res: Response) => {
     where,
     orderBy: [{ name: 'asc' }],
   });
-  // Brief 1A-2: the one definition of active.
+  // Brief 1A-2: the one definition of active — counted within this tenant
+  // and the caller's reach.
   const activeIds = await activeAssociateIds();
   const counts = await prisma.associate.groupBy({
     by: ['departmentId'],
-    where: {
-      id: { in: [...activeIds] },
-      departmentId: { in: rows.map((r) => r.id) },
-    },
+    where: scopeWhere<Prisma.AssociateWhereInput>(
+      { tenantId, id: { in: [...activeIds] }, departmentId: { in: rows.map((r) => r.id) } },
+      scopeAssociates(req.user!),
+    ),
     _count: { _all: true },
   });
   const countByDept = new Map<string, number>(
@@ -152,9 +156,14 @@ orgRouter.post('/departments', MANAGE, async (req: Request, res: Response) => {
       throw new HttpError(400, 'parent_invalid', 'Parent department mismatched.');
     }
   }
+  if (input.clientId) {
+    const client = await prisma.client.findFirst({ where: { id: input.clientId, tenantId: tenantIdForWrite(), deletedAt: null }, select: { id: true } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+  }
   const created = await prisma.department.create({
     data: {
-      clientId: input.clientId,
+      tenantId: tenantIdForWrite(),
+      clientId: input.clientId ?? null,
       parentId: input.parentId ?? null,
       name: input.name,
       code: input.code ?? null,
@@ -694,11 +703,15 @@ orgRouter.put('/staff/:userId/reports-to', MANAGE, async (req: Request, res: Res
 orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
   const clientId =
     typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
-  const rows = await prisma.associate.findMany({
-    take: 1000,
+  // Former people (deactivated) only when asked for: ?former=1.
+  const former = req.query.former === '1';
+  const LIST_CAP = 1000;
+  const found = await prisma.associate.findMany({
+    take: LIST_CAP + 1,
     where: {
       AND: [
         { deletedAt: null, tenantId: tenantIdForWrite() },
+        former ? {} : { deactivatedAt: null },
         // The caller's reach: a site/region-bound lead sees only their people.
         scopeAssociates(req.user!),
         // Where they work now (a transfer moves them), else the client
@@ -724,6 +737,8 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
     },
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
   });
+  const truncated = found.length > LIST_CAP;
+  const rows = found.slice(0, LIST_CAP);
   const body: AssociateOrgListResponse = {
     associates: rows.map((r) => ({
       id: r.id,
@@ -746,6 +761,7 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
         photoUpdatedAt: r.photoUpdatedAt,
       }),
     })),
+    truncated,
   };
   res.json(body);
 });
@@ -755,11 +771,32 @@ orgRouter.put(
   MANAGE,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
-    const id = req.params.id;
+    const id = String(req.params.id);
     const input = AssociateOrgAssignmentInputSchema.parse(req.body);
-    const existing = await prisma.associate.findUnique({ where: { id } });
-    if (!existing || existing.deletedAt) {
+    const tenantId = tenantIdForWrite();
+    // The person must be within the caller's reach (404 outside it, so nothing is revealed).
+    const existing = await prisma.associate.findFirst({
+      where: scopeWhere<Prisma.AssociateWhereInput>({ id, tenantId, deletedAt: null }, scopeAssociates(req.user!)),
+    });
+    if (!existing) {
       throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    // What they are being put under must be this tenant's — and a manager active and in reach.
+    if (input.managerId) {
+      const manager = await prisma.associate.findFirst({
+        where: scopeWhere<Prisma.AssociateWhereInput>({ id: input.managerId, tenantId, deletedAt: null, deactivatedAt: null }, scopeAssociates(req.user!)),
+        select: { id: true },
+      });
+      if (!manager) throw new HttpError(404, 'manager_not_found', 'Manager not found — they must be active and within your reach.');
+    }
+    if (input.departmentId && !(await prisma.department.findFirst({ where: { id: input.departmentId, tenantId, deletedAt: null }, select: { id: true } }))) {
+      throw new HttpError(404, 'department_not_found', 'Department not found.');
+    }
+    if (input.costCenterId && !(await prisma.costCenter.findFirst({ where: { id: input.costCenterId, tenantId, deletedAt: null }, select: { id: true } }))) {
+      throw new HttpError(404, 'cost_center_not_found', 'Cost center not found.');
+    }
+    if (input.jobProfileId && !(await prisma.jobProfile.findFirst({ where: { id: input.jobProfileId, tenantId, deletedAt: null }, select: { id: true } }))) {
+      throw new HttpError(404, 'job_profile_not_found', 'Job profile not found.');
     }
     if (input.managerId === id) {
       throw new HttpError(

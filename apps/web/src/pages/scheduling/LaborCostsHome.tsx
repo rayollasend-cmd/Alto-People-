@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { termizeText } from '@/lib/modules';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -40,6 +41,7 @@ import {
   laborCosts,
   listStaffingTargets,
   setStaffingTarget,
+  storeTrends,
 } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
 import {
@@ -49,7 +51,7 @@ import {
   DrawerTitle,
 } from '@/components/ui';
 import { ApiError, apiFetch } from '@/lib/api';
-import { useAuth, useTerm } from '@/lib/auth';
+import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
@@ -418,6 +420,7 @@ const hhmmToMinute = (s: string): number | null => {
  * cross-client), with the estimated 1.5× billed cost. Quiet when clean.
  */
 function OtOutlookCard() {
+  const hasClients = useTenant().moduleOn('clientPortal');
   const [refreshing, setRefreshing] = useState(false);
   // Collapsed state survives visits — a supervisor who works from the
   // daily tables can keep the radar folded to its one-line summary.
@@ -433,9 +436,12 @@ function OtOutlookCard() {
   // Initial-load failure renders nothing — this card is an extra lens
   // and the floor board above shows the aggregate chips. An explicit
   // REFRESH failure must speak, though (handled at the button).
+  // The Topbar store scope narrows on the server, before its cap.
+  const otScopeForQuery = useStoreScope();
+  const otClientId = otScopeForQuery.enabled ? otScopeForQuery.clientId : null;
   const outlookQuery = useQuery({
-    queryKey: ['OtOutlookCard', 'outlook'],
-    queryFn: () => otOutlook(),
+    queryKey: ['OtOutlookCard', 'outlook', otClientId ?? ''],
+    queryFn: () => otOutlook(otClientId),
   });
   const data: OtOutlookResponse | null = outlookQuery.data ?? null;
   const load = async (): Promise<boolean> => {
@@ -558,7 +564,7 @@ function OtOutlookCard() {
 
           {/* Filters — client-side lenses over the fetched week. */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            {clientOptions.length > 1 && (
+            {hasClients && clientOptions.length > 1 && (
               <Select
                 size="sm"
                 aria-label="Filter by client"
@@ -737,9 +743,11 @@ function StoreTrendsCard() {
     (v): v is boolean => typeof v === 'boolean',
   );
 
+  const trendScope = useStoreScope();
+  const trendClientId = trendScope.enabled ? trendScope.clientId : null;
   const dataQuery = useQuery({
-    queryKey: ['StoreTrendsCard', 'data'],
-    queryFn: () => apiFetch<{ stores: StoreTrend[]; bestMarginPerHour: number }>('/scheduling/store-trends'),
+    queryKey: ['StoreTrendsCard', 'data', trendClientId ?? ''],
+    queryFn: () => storeTrends<StoreTrend>(trendClientId),
   });
   const failed = dataQuery.isError;
   const data: { stores: StoreTrend[]; bestMarginPerHour: number } | null = dataQuery.data ?? null;
@@ -822,6 +830,8 @@ function StoreTrendsCard() {
 }
 
 function FloorNowCard() {
+  const floorScope = useStoreScope();
+  const floorClientId = floorScope.enabled ? floorScope.clientId : null;
   const [data, setData] = useState<FloorNowResponse | null>(null);
   const [failed, setFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -835,7 +845,7 @@ function FloorNowCard() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await floorNow();
+        const r = await floorNow(floorClientId);
         if (!cancelled) {
           setData(r);
           setFailed(false);
@@ -859,7 +869,7 @@ function FloorNowCard() {
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [reloadKey]);
+  }, [reloadKey, floorClientId]);
 
   const { can } = useAuth();
   const canManage = can('manage:scheduling');
@@ -1787,6 +1797,9 @@ const addRow = (t: Totals, r: LaborCostRow): void => {
 const NO_COST_ROWS: LaborCostRow[] = [];
 
 export function LaborCostsHome() {
+  const term = useTerm();
+  // A tenant with no clients has its own sites only: no client lens.
+  const hasClients = useTenant().moduleOn('clientPortal');
   const [from, setFrom] = useState(todayYmd);
   const [toInclusive, setToInclusive] = useState(todayYmd);
   // The last range's rows stay on screen while a new one loads (or while
@@ -2031,7 +2044,7 @@ export function LaborCostsHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Labor costs"
-        subtitle="Scheduled vs worked labor spend, per client and store, day by day"
+        subtitle={hasClients ? termizeText('Scheduled vs worked labor spend, per client and store, day by day', term) : termizeText('Scheduled vs worked labor spend, per store, day by day', term)}
     >
 
       {/* Live operations — deliberately ABOVE the filter row: both cards
@@ -2091,6 +2104,7 @@ export function LaborCostsHome() {
             </button>
           ))}
         </div>
+{hasClients && (
         <Select
           value={clientFilter}
           onChange={(e) => {
@@ -2108,14 +2122,15 @@ export function LaborCostsHome() {
             </option>
           ))}
         </Select>
+        )}
         <Select
           value={locationFilter}
           onChange={(e) => setLocationFilter(e.target.value)}
           size="sm"
           className="w-auto"
-          aria-label="Filter by store"
+          aria-label={termizeText('Filter by store', term)}
         >
-          <option value="">All stores</option>
+          <option value="">{termizeText('All stores', term)}</option>
           {locationOptions.map(([id, name]) => (
             <option key={id} value={id}>
               {name}

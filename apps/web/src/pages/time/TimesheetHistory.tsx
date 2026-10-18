@@ -161,7 +161,7 @@ export function TimesheetHistory() {
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
           className="space-y-4"
-          title="Timesheet history" breadcrumbs={[{ label: 'Fieldglass timesheets', to: '/time-attendance/timesheets' }, { label: 'History' }]}
+          title="Timesheet history" breadcrumbs={[{ label: 'Fieldglass hours', to: '/time-attendance/timesheets' }, { label: 'History' }]}
       >
         <EmptyState
           title="Couldn’t load this timesheet"
@@ -179,7 +179,7 @@ export function TimesheetHistory() {
         className="space-y-5"
         title={a.name}
         subtitle="Timesheet history — every week worked, by the pay period that paid it, and where it stands in Fieldglass."
-        breadcrumbs={[{ label: 'Fieldglass timesheets', to: '/time-attendance/timesheets' }, { label: a.name }]}
+        breadcrumbs={[{ label: 'Fieldglass hours', to: '/time-attendance/timesheets' }, { label: a.name }]}
         primaryAction={
           <Button variant="secondary" size="sm" onClick={() => void exportCsv()} loading={exporting} disabled={allWeeks.length === 0}>
             <Download className="h-3.5 w-3.5" />

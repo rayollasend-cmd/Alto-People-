@@ -7,6 +7,8 @@ import { createOrgUnit, deleteOrgUnit, getOrgUnit, listOrgUnits, setOrgUnitSites
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { LocationCreateInputSchema, LocationUpdateInputSchema } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
+import { loadTenantProfile } from '../lib/tenantProfile.js';
+import { placeSite } from '../lib/structure.js';
 
 /**
  * Brief 2-1b, step 5 — the organizational tree.
@@ -84,8 +86,8 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
     data: {
       clientId: null,
       orgUnitId: input.orgUnitId ?? null,
-      // A direct employer's site is a property unless it says otherwise.
-      type: input.type ?? 'PROPERTY',
+      // A workforce provider's sites are stores; a direct employer's are properties.
+      type: input.type ?? ((await loadTenantProfile()).businessModel === 'DIRECT_EMPLOYER' ? 'PROPERTY' : 'STORE'),
       name: input.name,
       addressLine1: input.addressLine1 ?? null,
       addressLine2: input.addressLine2 ?? null,
@@ -104,12 +106,15 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
 orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const input = LocationUpdateInputSchema.partial().extend({ orgUnitId: z.string().uuid().nullable().optional() }).strict().parse(req.body);
-  const existing = await prisma.site.findFirst({ where: { id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true, name: true, orgUnitId: true } });
+  const existing = await prisma.site.findFirst({ where: { id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true, name: true, orgUnitId: true, clientId: true } });
   if (!existing) throw new HttpError(404, 'site_not_found', 'That site does not exist.');
-  if (input.orgUnitId) {
-    const unit = await getOrgUnit(prisma, input.orgUnitId);
-    if (!unit) throw new HttpError(400, 'org_unit_not_found', 'That unit does not exist.');
+  // A client's store is the client's record: its name, address, hours and status change there.
+  const identity = Object.keys(input).filter((k) => k !== 'orgUnitId');
+  if (existing.clientId && identity.length > 0) {
+    throw new HttpError(409, 'client_store', 'This store belongs to a client — edit it from the client’s page.');
   }
+  // Where it sits (its cost center) goes through the one placement rule.
+  if (input.orgUnitId !== undefined) await placeSite(prisma, id, { orgUnitId: input.orgUnitId }, { allowRegionUnits: true });
   const updated = await prisma.site.update({
     where: { id },
     data: {
@@ -122,7 +127,6 @@ orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
       ...(input.zip !== undefined ? { zip: input.zip } : {}),
       ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
       ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
-      ...(input.orgUnitId !== undefined ? { orgUnitId: input.orgUnitId } : {}),
     },
     select: { id: true, name: true, type: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true },
   });
@@ -134,10 +138,10 @@ orgUnitsRouter.get('/admin/sites', VIEW, async (_req, res) => {
   // Explicit tenant: the guard only observes until enforce mode (cross-tenant suite).
   const rows = await prisma.site.findMany({
     where: { deletedAt: null, tenantId: tenantIdForWrite() },
-    select: { id: true, name: true, type: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true, client: { select: { name: true } }, orgUnit: { select: { name: true, type: true } } },
+    select: { id: true, name: true, type: true, timezone: true, state: true, isActive: true, clientId: true, orgUnitId: true, regionId: true, client: { select: { name: true } }, orgUnit: { select: { name: true, type: true } }, region: { select: { name: true } } },
     orderBy: [{ clientId: { sort: 'asc', nulls: 'first' } }, { name: 'asc' }],
   });
-  res.json({ sites: rows.map((r) => ({ id: r.id, name: r.name, type: r.type, timezone: r.timezone, state: r.state, isActive: r.isActive, clientId: r.clientId, clientName: r.client?.name ?? null, orgUnitId: r.orgUnitId, orgUnitName: r.orgUnit?.name ?? null, orgUnitType: r.orgUnit?.type ?? null })) });
+  res.json({ sites: rows.map((r) => ({ id: r.id, name: r.name, type: r.type, timezone: r.timezone, state: r.state, isActive: r.isActive, clientId: r.clientId, clientName: r.client?.name ?? null, orgUnitId: r.orgUnitId, orgUnitName: r.orgUnit?.name ?? null, orgUnitType: r.orgUnit?.type ?? null, regionId: r.regionId, regionName: r.region?.name ?? null })) });
 });
 
 orgUnitsRouter.get('/admin/org-units/:id/sites', VIEW, async (req, res) => {

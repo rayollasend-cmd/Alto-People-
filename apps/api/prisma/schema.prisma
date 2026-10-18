@@ -764,6 +764,9 @@ model User {
   @@index([deletedAt])
   @@index([tenantId])
   @@index([reportsToUserId])
+  goalsOwned             Goal[]               @relation("GoalOwner")
+  leadBenchCreated       LeadBenchCandidate[] @relation("LeadBenchCreator")
+  talentRatingsGiven     TalentRating[]       @relation("TalentRater")
 }
 
 model Client {
@@ -1006,6 +1009,8 @@ model Site {
   @@index([deletedAt])
   @@index([tenantId])
   @@map("Location")
+  assetsHere              Asset[]              @relation("AssetLocation")
+  leadBench               LeadBenchCandidate[] @relation("LeadBenchLocation")
 }
 
 // A standing crew at a work site — "Front Beach Morning", "Overnight team".
@@ -1667,7 +1672,7 @@ model ClientStatementReminder {
 // dashboard and board pack show actual-vs-target pace.
 model ExecTarget {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  quarter           String   @unique @db.VarChar(8)
+  quarter           String   @db.VarChar(8)
   revenueTarget     Decimal? @db.Decimal(12, 2)
   marginTarget      Decimal? @db.Decimal(12, 2)
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
@@ -1678,6 +1683,7 @@ model ExecTarget {
   updatedAt         DateTime @updatedAt @db.Timestamptz(6)
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
 
+  @@unique([tenantId, quarter])
   @@index([tenantId])
 }
 
@@ -2202,6 +2208,8 @@ model Associate {
   @@index([jobProfileId])
   @@index([lastName, firstName])
   @@index([tenantId])
+  leadBench                LeadBenchCandidate[]      @relation("LeadBenchAssociate")
+  talentRating             TalentRating?             @relation("TalentRatingAssociate")
 }
 
 model J1Profile {
@@ -5698,7 +5706,12 @@ enum Review360Status {
 
 model Goal {
   id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId  String     @db.Uuid
+  /// Null for a company or team goal (scope COMPANY / TEAM), which belongs to no one person.
+  associateId  String?    @db.Uuid
+  /// PERSON | TEAM | COMPANY — the cascade's levels.
+  scope        String     @default("PERSON") @db.VarChar(16)
+  /// A team goal's owner (a manager or store lead).
+  ownerUserId  String?    @db.Uuid
   kind         GoalKind   @default(GOAL)
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId     String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
@@ -5714,7 +5727,8 @@ model Goal {
   updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
   deletedAt    DateTime?  @db.Timestamptz(6)
 
-  associate     Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  associate     Associate?  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  owner         User?       @relation("GoalOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   parent        Goal?       @relation("GoalParent", fields: [parentGoalId], references: [id], onDelete: SetNull)
   children      Goal[]      @relation("GoalParent")
   createdBy     User?       @relation("GoalCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -7818,6 +7832,8 @@ enum AssetKind {
   KEY
   VEHICLE
   UNIFORM
+  PPE
+  DEVICE
   OTHER
 }
 
@@ -7841,6 +7857,9 @@ model Asset {
   purchasedAt   DateTime?   @db.Date
   purchasePrice Decimal?    @db.Decimal(12, 2)
   notes         String?
+  /// The store the asset lives at (badges, keys, PPE kept on site).
+  locationId    String?     @db.Uuid
+  location      Site?       @relation("AssetLocation", fields: [locationId], references: [id], onDelete: SetNull)
   createdAt     DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime    @updatedAt @db.Timestamptz(6)
 
@@ -7849,6 +7868,7 @@ model Asset {
   @@index([status])
   @@index([kind])
   @@index([tenantId])
+  @@index([locationId])
 }
 
 model AssetAssignment {
@@ -8136,6 +8156,52 @@ model SuccessionCandidate {
   @@index([positionId])
   @@index([tenantId])
 }
+/// Readiness for a store lead seat: now, in six months, in a year.
+enum BenchReadiness {
+  READY_NOW
+  READY_6_MONTHS
+  READY_12_MONTHS
+}
+
+/// Succession for the seats that run a store (shift and floor leads):
+/// who could lead this store next, and how soon.
+model LeadBenchCandidate {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  locationId  String         @db.Uuid
+  associateId String         @db.Uuid
+  readiness   BenchReadiness
+  notes       String?        @db.VarChar(1000)
+  createdById String?        @db.Uuid
+  createdAt   DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(6)
+
+  location  Site      @relation("LeadBenchLocation", fields: [locationId], references: [id], onDelete: Cascade)
+  associate Associate @relation("LeadBenchAssociate", fields: [associateId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("LeadBenchCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([locationId, associateId])
+  @@index([associateId])
+  @@index([tenantId])
+}
+
+/// The 9-box's potential axis (1 low – 3 high), rated by HR. Performance
+/// comes from the latest review.
+model TalentRating {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId String   @unique @db.Uuid
+  potential   Int
+  notes       String?  @db.VarChar(1000)
+  ratedById   String?  @db.Uuid
+  ratedAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation("TalentRatingAssociate", fields: [associateId], references: [id], onDelete: Cascade)
+  ratedBy   User?     @relation("TalentRater", fields: [ratedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+}
+
 
 // ===== Phase 116 — Probation period tracking ===============================
 //
@@ -8794,6 +8860,8 @@ model RampPlan {
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   notes       String?
+  /// STANDARD (30/60/90) | SEASONAL (a 6–8 week season).
+  template    String    @default("STANDARD") @db.VarChar(20)
   archivedAt  DateTime? @db.Timestamptz(6)
   createdById String?   @db.Uuid
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
@@ -8864,6 +8932,10 @@ model CareerLevel {
   title        String
   description  String?
   jobProfileId String?  @db.Uuid
+  /// What the rung asks for beyond skills.
+  requiredQualificationCodes String[] @default([])
+  minTenureMonths            Int?
+  minReviewRating            Int?
   createdAt    DateTime @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 

@@ -128,7 +128,7 @@ export function MentorshipHome() {
     <ListTemplate
         className="space-y-5"
         title="Mentorship"
-        subtitle="Pair experienced associates with juniors. Status tracks the lifecycle from proposal to completion."
+        subtitle="Pair experienced people with newer ones. Status tracks the lifecycle from proposal to completion."
         breadcrumbs={[{ label: 'Mentorship' }]}
         primaryAction={
           canManage ? (
@@ -196,7 +196,7 @@ export function MentorshipHome() {
               description={
                 rows && rows.length > 0
                   ? 'No pairing matches the current search or status filter.'
-                  : 'Pair an experienced associate with a junior to start one.'
+                  : 'Pair an experienced person with a newer one to start one.'
               }
             />
           ) : (

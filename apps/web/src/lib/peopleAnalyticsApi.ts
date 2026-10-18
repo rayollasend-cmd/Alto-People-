@@ -28,7 +28,19 @@ export interface PeopleAnalytics {
     medianDays: number | null;
     averageDays: number | null;
     byDepartment: Array<{ department: string; filled: number; medianDays: number | null; averageDays: number }>;
+    byClient?: Array<{ label: string; filled: number; medianDays: number | null }>;
+    byPosition?: Array<{ label: string; filled: number; medianDays: number | null }>;
   };
+  /** Headcount at month end for the busiest stores (where people were hired in). */
+  headcountByStore?: Array<{ storeId: string; storeName: string; clientName: string | null; series: number[] }>;
+  /** Separations in the window by store and by how long they had been there. */
+  turnoverGrid?: {
+    bands: Array<{ key: string; label: string }>;
+    rows: Array<{ storeId: string; storeName: string; clientName: string | null; hires: number; separations: number; bands: number[] }>;
+  };
+  /** The first 90 days, cohort by cohort: the share still here at each week (null = not yet reached). */
+  survival?: Array<{ month: string; hires: number; points: Array<{ day: number; pct: number | null }> }>;
+  absenceTrend?: Array<{ month: string; absenceDays: number; scheduledShiftDays: number; absenceRatePct: number | null }>;
   absence: {
     scheduledShiftDays: number;
     absenceDays: number;

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Cake, PartyPopper, Send } from 'lucide-react';
@@ -26,6 +27,7 @@ import {
   SegmentedControl,
   SkeletonRows,
   Textarea,
+  Select,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 import { Avatar } from '@/components/ui/Avatar';
@@ -47,6 +49,12 @@ const keyOf = (c: CelebrationItem) => `${c.associateId}-${c.kind}-${c.date}`;
 export function CelebrationsHome() {
   const [days, setDays] = useState<number>(60);
   const [search, setSearch] = useState('');
+  const [clientFilter, setClientFilter] = useState('');
+  const [storeFilter, setStoreFilter] = useState('');
+  const termWord = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
+  // A shift supervisor's list is already their crew (the server clamps it).
+  const isCrewLead = useAuth().user?.role === 'SHIFT_SUPERVISOR';
   const [target, setTarget] = useState<CelebrationItem | null>(null);
   // Cards already high-fived this session — disabled so nobody
   // double-sends the same congrats.
@@ -65,10 +73,25 @@ export function CelebrationsHome() {
   const load = () => void itemsQuery.refetch();
 
   const term = search.trim().toLowerCase();
+  // Where people work, from the items themselves — the filters only offer
+  // places that have someone to celebrate.
+  const clientOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of items ?? []) if (c.clientId && c.clientName) m.set(c.clientId, c.clientName);
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [items]);
+  const storeOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of items ?? []) if (c.locationId && c.siteName && (!clientFilter || c.clientId === clientFilter)) m.set(c.locationId, c.siteName);
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [items, clientFilter]);
   const filtered = items
-    ? term
-      ? items.filter((c) => c.associateName.toLowerCase().includes(term))
-      : items
+    ? items.filter(
+        (c) =>
+          (!term || c.associateName.toLowerCase().includes(term)) &&
+          (!clientFilter || c.clientId === clientFilter) &&
+          (!storeFilter || c.locationId === storeFilter),
+      )
     : null;
   const buckets = filtered ? bucketize(filtered) : null;
 
@@ -77,8 +100,8 @@ export function CelebrationsHome() {
     <ListTemplate
         className="space-y-5"
         title="Celebrations"
-        subtitle="Upcoming birthdays and work anniversaries across the team."
-        breadcrumbs={[{ label: 'Celebrations' }]}
+        subtitle={isCrewLead ? 'Your crew’s upcoming birthdays and work anniversaries.' : 'Upcoming birthdays and work anniversaries, by where people work.'}
+        breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Celebrations' }]}
     >
       <FilterBar>
         <SegmentedControl<number>
@@ -87,6 +110,34 @@ export function CelebrationsHome() {
           value={days}
           onChange={(d) => setDays(d)}
         />
+        {hasClients && clientOptions.length > 1 && (
+          <Select
+            size="sm"
+            aria-label={termWord('label.client')}
+            value={clientFilter}
+            onChange={(e) => {
+              setClientFilter(e.target.value);
+              setStoreFilter('');
+            }}
+          >
+            <option value="">Every {termWord('label.client').toLowerCase()}</option>
+            {clientOptions.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </Select>
+        )}
+        {storeOptions.length > 1 && (
+          <Select size="sm" aria-label={termWord('label.store')} value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)}>
+            <option value="">Every {termWord('label.store').toLowerCase()}</option>
+            {storeOptions.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </Select>
+        )}
         <SearchInput
           className="h-8 w-56 text-xs"
           value={search}

@@ -14,8 +14,13 @@ export interface KeyResult {
 
 export interface Goal {
   id: string;
-  associateId: string;
+  /** Null for a company or team goal. */
+  associateId: string | null;
   associateName: string | null;
+  /** PERSON | TEAM | COMPANY — the cascade's levels. */
+  scope?: 'PERSON' | 'TEAM' | 'COMPANY';
+  ownerUserId?: string | null;
+  ownerName?: string | null;
   kind: GoalKind;
   title: string;
   description: string | null;
@@ -121,7 +126,9 @@ export const listGoals = (associateId?: string) =>
     associateId ? `/performance/goals?associateId=${associateId}` : '/performance/goals',
   );
 export const createGoal = (input: {
-  associateId: string;
+  associateId?: string | null;
+  scope?: 'PERSON' | 'TEAM' | 'COMPANY';
+  ownerUserId?: string | null;
   kind?: GoalKind;
   title: string;
   description?: string | null;
@@ -132,6 +139,7 @@ export const createGoal = (input: {
 export const updateGoal = (
   id: string,
   input: {
+    parentGoalId?: string | null;
     title?: string;
     description?: string | null;
     status?: GoalStatus;

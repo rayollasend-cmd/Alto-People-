@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, Prisma } from '@prisma/client';
 import { latestCoverageGaps } from './coverageForecast.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { soonestPayday } from './payday.js';
@@ -260,8 +260,9 @@ function closeAfter(d: Date): Date {
 export async function computeRelayBoard(
   prisma: PrismaClient,
   now: Date = new Date(),
-  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged). */
-  opts: { tenantId?: string } = {},
+  /** Brief 2-1: the tenant to read, until enforce mode filters every query. Absent = no filter (unchanged).
+   *  people: a site/region-bound caller's reach — lanes and named batons are its own people's. */
+  opts: { tenantId?: string; people?: Prisma.AssociateWhereInput } = {},
 ): Promise<RelayBoard> {
   const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const windowStart = new Date(now.getTime() - LANE_WINDOW_DAYS * DAY_MS);
@@ -273,7 +274,7 @@ export async function computeRelayBoard(
       status: 'APPROVED',
       approvedAt: { gte: windowStart },
       deletedAt: null,
-      associate: { deletedAt: null, separatedAt: null, deactivatedAt: null },
+      associate: { deletedAt: null, separatedAt: null, deactivatedAt: null, ...(opts.people ? { AND: [opts.people] } : {}) },
     },
     orderBy: { approvedAt: 'desc' },
     take: 80,
@@ -466,6 +467,7 @@ export async function computeRelayBoard(
             separatedAt: null,
             deactivatedAt: null,
             fieldglassRegistration: { is: null },
+            ...(opts.people ? { AND: [opts.people] } : {}),
           },
         },
         select: { associateId: true, approvedAt: true },

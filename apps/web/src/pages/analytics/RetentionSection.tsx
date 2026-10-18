@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { termizeText } from '@/lib/modules';
+import { useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import {
   CartesianGrid,
@@ -34,6 +36,8 @@ const SMALL_COHORT = 5;
 const pct = (v: number | null): string => fmtPercent(v);
 
 export function RetentionSection() {
+  const term = useTerm();
+  const tz = (t: string) => termizeText(t, term);
 
   const loadQuery = useQuery({
     queryKey: ['RetentionSection', 'data'],
@@ -208,17 +212,16 @@ export function RetentionSection() {
 
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">By store</CardTitle>
+                <CardTitle className="text-base">{tz('By store')}</CardTitle>
                 <p className="text-xs text-silver">
-                  A store that's an outlier here is a management conversation,
-                  not a hiring problem. Store = where the associate onboarded.
+                  {tz("A store that's an outlier here is a management conversation, not a hiring problem. Store = where the associate onboarded.")}
                 </p>
               </CardHeader>
               <CardContent className="overflow-x-auto">
                 <table className="w-full text-sm tabular-nums">
                   <thead>
                     <tr className="border-b border-navy-secondary text-2xs uppercase tracking-wider text-silver/60">
-                      <th className="py-1.5 pr-3 text-left font-medium">Store</th>
+                      <th className="py-1.5 pr-3 text-left font-medium">{tz('Store')}</th>
                       <th className="py-1.5 px-2 text-right font-medium">Active</th>
                       <th className="py-1.5 px-2 text-right font-medium">Seps (12 mo)</th>
                       <th className="py-1.5 pl-2 text-right font-medium">90d survival</th>

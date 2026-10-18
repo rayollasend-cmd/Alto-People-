@@ -102,7 +102,7 @@ export function VaccinationsHome() {
     <ListTemplate
         className="space-y-5"
         title="Vaccinations & medical"
-        subtitle="Proof of vaccination and TB tests. Required by many client SLAs."
+        subtitle="Proof of vaccination and TB tests, for the sites and contracts that require them."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'Vaccinations' }]}
     >
 

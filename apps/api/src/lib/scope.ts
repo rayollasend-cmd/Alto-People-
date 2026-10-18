@@ -86,6 +86,30 @@ function atInternalSites(sites: Prisma.SiteWhereInput): Prisma.AssociateWhereInp
 }
 
 /**
+ * Combine where-clauses with AND — never with object spread. Two helpers
+ * that both constrain `assignments`, `OR` or `id` silently overwrite each
+ * other when spread (the people directory let a store filter replace the
+ * caller's scope that way). Falsy parts are dropped, so optional filters
+ * read as `cond && { … }`.
+ */
+export function scopeWhere<T extends object>(...parts: Array<T | null | undefined | false>): { AND: T[] } {
+  return { AND: parts.filter((p): p is T => !!p && Object.keys(p).length > 0) };
+}
+
+/**
+ * The people the caller may see, active only and in the caller's tenant —
+ * the usual base for any people list. `former` keeps deactivated people
+ * (the separated) for the lists that are about them.
+ */
+export function scopeActiveAssociates(user: SessionUser, opts: { former?: boolean } = {}): Prisma.AssociateWhereInput {
+  return scopeWhere<Prisma.AssociateWhereInput>(
+    { tenantId: tenantIdForWrite(), deletedAt: null },
+    !opts.former && { deactivatedAt: null },
+    scopeAssociates(user),
+  );
+}
+
+/**
  * Is this site inside the caller's reach? Always true for an unscoped
  * caller; a scoped one must name a site under their binding. Use on writes
  * that create a record at a site (a shift, a time entry) — the list
@@ -97,6 +121,21 @@ export async function siteInScope(tx: Tx, user: SessionUser, locationId: string 
   if (!locationId) return false;
   const hit = await tx.site.findFirst({ where: { id: locationId, ...sites }, select: { id: true } });
   return !!hit;
+}
+
+/**
+ * 404 unless this person is in the caller's tenant and reach — for the
+ * routes that take an associate id in the path (their pay, their skills).
+ * `former` admits deactivated people (their history is still theirs).
+ */
+export async function assertAssociateInScope(
+  tx: Tx,
+  user: SessionUser,
+  associateId: string,
+  opts: { former?: boolean } = {},
+): Promise<void> {
+  const hit = await tx.associate.findFirst({ where: { AND: [{ id: associateId }, scopeActiveAssociates(user, { former: opts.former ?? true })] }, select: { id: true } });
+  if (!hit) throw new HttpError(404, 'not_found', 'Associate not found.');
 }
 
 /** 404 (not 403) when the site is outside the caller's reach, so nothing is revealed. */
@@ -144,8 +183,20 @@ export function scopeApplications(
   }
   const sites = internalSites(user);
   if (sites) {
-    // The application's own site, else its client has a site in reach.
-    return { ...base, OR: [{ location: { is: sites } }, { client: { is: { locations: { some: sites } } } }] };
+    // The application's own site; else (no site on it) its client has a site
+    // in reach AND the person isn't already placed at a store outside it —
+    // the client alone would show a store-A lead every store-B hire.
+    return {
+      ...base,
+      OR: [
+        { location: { is: sites } },
+        {
+          locationId: null,
+          client: { is: { locations: { some: sites } } },
+          associate: { is: { OR: [{ assignments: { none: { endedAt: null } } }, atInternalSites(sites)] } },
+        },
+      ],
+    };
   }
   return base;
 }
@@ -165,6 +216,9 @@ export function scopeBackgroundChecks(user: SessionUser): Prisma.BackgroundCheck
     const b = boundsOf(user);
     return b?.clientId ? { tenantId: b.tenantId, clientId: b.clientId } : { clientId: NO_CLIENT };
   }
+  // A site/region-bound office account: the checks of the people at its sites.
+  const sites = internalSites(user);
+  if (sites) return { associate: { is: atInternalSites(sites) } };
   return {};
 }
 
@@ -173,6 +227,8 @@ export function scopeDrugTests(user: SessionUser): Prisma.DrugTestWhereInput {
     const b = boundsOf(user);
     return b?.clientId ? { tenantId: b.tenantId, clientId: b.clientId } : { clientId: NO_CLIENT };
   }
+  const sites = internalSites(user);
+  if (sites) return { associate: { is: atInternalSites(sites) } };
   return {};
 }
 
@@ -198,6 +254,10 @@ export function scopePayrollRuns(user: SessionUser): Prisma.PayrollRunWhereInput
     const b = boundsOf(user);
     return b?.clientId ? { tenantId: b.tenantId, clientId: b.clientId } : { clientId: NO_CLIENT };
   }
+  // A site/region-bound office account sees the runs of clients with a site
+  // in its reach — never an org-wide run, whose totals span every site.
+  const sites = internalSites(user);
+  if (sites) return { client: { is: { locations: { some: sites } } } };
   return {};
 }
 
@@ -206,6 +266,9 @@ export function scopePayrollSchedules(user: SessionUser): Prisma.PayrollSchedule
   if (user.role === 'CLIENT_PORTAL') {
     return { ...base, OR: [{ clientId: null }, { clientId: boundsOf(user)?.clientId ?? NO_CLIENT }] };
   }
+  // Schedules are definitions, not people: the org-wide ones plus the clients in reach.
+  const sites = internalSites(user);
+  if (sites) return { ...base, OR: [{ clientId: null }, { client: { is: { locations: { some: sites } } } }] };
   return base;
 }
 
@@ -345,6 +408,20 @@ export function scopeAssociates(user: SessionUser): Prisma.AssociateWhereInput {
 }
 
 /**
+ * scopeAssociates for records about people who may have LEFT (separations,
+ * discipline history): a separated person has no open assignment, so the
+ * open-assignment clamp would hide them from the very lead who managed
+ * them. A site-scoped office account reaches anyone whose placement —
+ * current or past — was at a site in its reach. Everyone else: as
+ * scopeAssociates.
+ */
+export function scopeAssociatesIncludingFormer(user: SessionUser): Prisma.AssociateWhereInput {
+  const sites = internalSites(user);
+  if (sites) return { assignments: { some: { location: { is: sites } } } };
+  return scopeAssociates(user);
+}
+
+/**
  * Payroll items for the caller's tenant. Items carry no clientId of their
  * own, so we reach through the run.
  */
@@ -357,6 +434,9 @@ export function scopePayrollItems(user: SessionUser): Prisma.PayrollItemWhereInp
     // Pay is a client's matter; a site-only account sees none of it.
     return b?.clientId ? { payrollRun: { is: { tenantId: b.tenantId, clientId: b.clientId } } } : { payrollRun: { is: { clientId: NO_CLIENT } } };
   }
+  // A site/region-bound office account: the pay of the people at its sites.
+  const sites = internalSites(user);
+  if (sites) return { associate: { is: atInternalSites(sites) } };
   return {};
 }
 
@@ -418,6 +498,17 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
   return {};
 }
 
+/**
+ * The seats (Positions) a caller may read: this tenant's; a client-bound or
+ * site/region-bound account only the clients in its reach — an org-wide
+ * seat with no client is the whole company's, not theirs.
+ */
+export function scopePositions(user: SessionUser): Prisma.PositionWhereInput {
+  const tenantId = tenantIdForWrite();
+  if (isClientBoundedRole(user) || internalSites(user)) return { tenantId, deletedAt: null, client: { is: scopeClients(user) } };
+  return { tenantId, deletedAt: null };
+}
+
 /** The roles clamped to a single client. */
 export function isClientBoundedRole(user: SessionUser): boolean {
   return (
@@ -439,6 +530,9 @@ export function scopeQualifications(user: SessionUser): Prisma.QualificationWher
   if (isClientBoundedRole(user)) {
     return { OR: [{ clientId: null }, { clientId: boundsOf(user)?.clientId ?? NO_CLIENT }] };
   }
+  // The globals plus the qualifications of clients with a site in reach.
+  const sites = internalSites(user);
+  if (sites) return { OR: [{ clientId: null }, { client: { is: { locations: { some: sites } } } }] };
   return {};
 }
 

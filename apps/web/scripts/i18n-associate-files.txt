@@ -64,3 +64,4 @@ src/components/BottomTabBar.tsx
 src/pages/agreements/MyPolicies.tsx
 src/pages/documents/LettersSection.tsx
 src/components/EarnedWageCard.tsx
+src/pages/career/CareerPosition.tsx

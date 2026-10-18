@@ -134,8 +134,11 @@ import { headcount110Router } from './routes/headcount110.js';
 import { skills111Router } from './routes/skills111.js';
 import { mentorship112Router } from './routes/mentorship112.js';
 import { expirations113Router } from './routes/expirations113.js';
+import { expirationRiskRouter } from './routes/expirationRisk.js';
+import { staffingPlanRouter } from './routes/staffingPlan.js';
 import { learningPaths114Router } from './routes/learningPaths114.js';
 import { succession115Router } from './routes/succession115.js';
+import { successionBenchRouter } from './routes/successionBench.js';
 import { probation116Router } from './routes/probation116.js';
 import { holiday117Router } from './routes/holiday117.js';
 import { discipline118Router } from './routes/discipline118.js';
@@ -160,6 +163,7 @@ import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { usersRouter } from './routes/users.js';
 import { employersRouter } from './routes/employers.js';
 import { orgUnitsRouter } from './routes/orgUnits.js';
+import { structureRouter } from './routes/structure.js';
 import { complianceEvidenceRouter } from './routes/complianceEvidence.js';
 import { accessCertificationsRouter } from './routes/accessCertifications.js';
 import { shiftWindowsRouter } from './routes/shiftWindows.js';
@@ -711,9 +715,13 @@ export function createApp() {
   app.use('/', headcount110Router);
   app.use('/', skills111Router);
   app.use('/', mentorship112Router);
+  app.use('/', expirationRiskRouter);
+  app.use('/', staffingPlanRouter);
   app.use('/', expirations113Router);
   app.use('/', learningPaths114Router);
   app.use('/', succession115Router);
+  // Succession by store (lead seats and their bench) and the 9-box.
+  app.use('/', successionBenchRouter);
   app.use('/', probation116Router);
   app.use('/', holiday117Router);
   app.use('/', discipline118Router);
@@ -743,6 +751,7 @@ export function createApp() {
   app.use('/', usersRouter);
   app.use('/', employersRouter);
   app.use('/', orgUnitsRouter);
+  app.use('/', structureRouter);
   app.use('/', complianceEvidenceRouter);
   // Access pack: access certification campaigns for every tenant.
   app.use('/', accessCertificationsRouter);

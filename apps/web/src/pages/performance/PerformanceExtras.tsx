@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { GoalCascade } from './GoalCascade';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CalendarPlus, Download, Heart, Plus, Target } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -62,6 +63,7 @@ import {
   Input,
   SearchInput,
   Select,
+  SegmentedControl,
   SkeletonRows,
   Tabs,
   TabsContent,
@@ -198,15 +200,25 @@ const perfKeys = {
 export function PerformanceExtras() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
-  const [tab, setTab] = useState<Tab>('goals');
+  // The tab lives in the URL, so a view (say, the 360s) can be linked to.
+  const [params, setParams] = useSearchParams();
+  const TABS: Tab[] = ['goals', 'kudos', 'one-on-ones', 'pips', 'reviews360', 'timeline'];
+  const raw = params.get('tab') as Tab | null;
+  const tab: Tab = raw && TABS.includes(raw) ? raw : 'goals';
+  const setTab = (v: Tab) => {
+    const next = new URLSearchParams(params);
+    if (v === 'goals') next.delete('tab');
+    else next.set('tab', v);
+    setParams(next, { replace: true });
+  };
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="space-y-5"
-        title="Performance"
-        subtitle="Goals & OKRs, 1:1 meetings, kudos, performance improvement plans, and 360 reviews."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Performance' }]}
+        title="Goals, 1:1s & feedback"
+        subtitle="Goals and OKRs from the company down to each person, 1:1s, kudos, improvement plans and 360 reviews."
+        breadcrumbs={[{ label: 'Performance', to: '/performance' }, { label: 'Goals, 1:1s & feedback' }]}
     >
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -232,6 +244,9 @@ export function PerformanceExtras() {
 // ============ Goals ============
 
 type GoalDraft = {
+  /** PERSON (default) | TEAM | COMPANY. */
+  scope: 'PERSON' | 'TEAM' | 'COMPANY';
+  parentGoalId: string | null;
   associate: PickedAssociate | null;
   kind: 'GOAL' | 'OBJECTIVE';
   title: string;
@@ -251,6 +266,7 @@ function GoalsTab() {
   const [assocFilter, setAssocFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<GoalStatus | 'ALL'>('ALL');
   const [krGoalId, setKrGoalId] = useState<string | null>(null);
+  const [view, setView] = useState<'cascade' | 'table'>('cascade');
 
   const q = useQuery({
     queryKey: perfKeys.goals(),
@@ -265,7 +281,7 @@ function GoalsTab() {
     return rows.filter(
       (g) =>
         (statusFilter === 'ALL' || g.status === statusFilter) &&
-        (!needle || (g.associateName ?? '').toLowerCase().includes(needle)),
+        (!needle || `${g.associateName ?? ''} ${g.ownerName ?? ''} ${g.title}`.toLowerCase().includes(needle)),
     );
   }, [rows, assocFilter, statusFilter]);
 
@@ -355,13 +371,22 @@ function GoalsTab() {
             </FilterChip>
           ),
         )}
+        <SegmentedControl
+          ariaLabel="How to show goals"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: 'cascade', label: 'Cascade' },
+            { value: 'table', label: 'Table' },
+          ]}
+        />
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <SearchInput
             wrapperClassName="w-52 max-w-full"
             value={assocFilter}
             onChange={(e) => setAssocFilter(e.target.value)}
-            placeholder="Filter by associate…"
-            aria-label="Filter goals by associate"
+            placeholder="Filter by name or title…"
+            aria-label="Filter goals by person or title"
           />
           <Button
             variant="outline"
@@ -373,6 +398,8 @@ function GoalsTab() {
           <Button
             onClick={() =>
               setDraft({
+                scope: 'PERSON',
+                parentGoalId: null,
                 associate: null,
                 kind: 'GOAL',
                 title: '',
@@ -399,9 +426,11 @@ function GoalsTab() {
               description={
                 rows && rows.length > 0
                   ? 'Try a different status chip or associate filter.'
-                  : 'Track personal goals or company-aligned OKRs with measurable key results.'
+                  : 'Start with a company goal, align team goals under it, and give each person goals that ladder up — each with measurable key results.'
               }
             />
+          ) : view === 'cascade' ? (
+            <GoalCascade goals={filtered} onOpen={(g) => setKrGoalId(g.id)} />
           ) : (
             <DataGrid<NonNullable<typeof filtered>[number]>
               id="goals"
@@ -779,8 +808,11 @@ function GoalDrawer({
 }) {
   const term = useTerm();
   const [saving, setSaving] = useState(false);
+  // Any company or team goal can be aligned to; people's goals are leaves.
+  const goalsQ = useQuery({ queryKey: perfKeys.goals(), queryFn: async () => (await listGoals()).goals });
+  const alignable = goalsQ.data?.filter((g) => (g.scope === 'COMPANY' || g.scope === 'TEAM') && g.status !== 'CANCELLED');
   const onSubmit = async () => {
-    if (!draft.associate) {
+    if (draft.scope === 'PERSON' && !draft.associate) {
       toast.error(pickOne(term));
       return;
     }
@@ -795,7 +827,9 @@ function GoalDrawer({
     setSaving(true);
     try {
       await createGoal({
-        associateId: draft.associate.id,
+        scope: draft.scope,
+        associateId: draft.scope === 'PERSON' ? (draft.associate?.id ?? null) : null,
+        parentGoalId: draft.parentGoalId,
         kind: draft.kind,
         title: draft.title.trim(),
         description: draft.description.trim() || null,
@@ -817,13 +851,45 @@ function GoalDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>{term('worker')}</Label>
-          <div className="mt-1">
-            <AssociatePicker
-              value={draft.associate}
-              onChange={(a) => setDraft({ ...draft, associate: a })}
-            />
+          <Label htmlFor="goal-scope">Whose goal</Label>
+          <Select
+            id="goal-scope"
+            className="mt-1"
+            value={draft.scope}
+            onChange={(e) => setDraft({ ...draft, scope: e.target.value as GoalDraft['scope'], associate: null })}
+          >
+            <option value="PERSON">A person’s</option>
+            <option value="TEAM">A team’s (you own it)</option>
+            <option value="COMPANY">The company’s</option>
+          </Select>
+        </div>
+        {draft.scope === 'PERSON' && (
+          <div>
+            <Label>{term('worker')}</Label>
+            <div className="mt-1">
+              <AssociatePicker
+                value={draft.associate}
+                onChange={(a) => setDraft({ ...draft, associate: a })}
+              />
+            </div>
           </div>
+        )}
+        <div>
+          <Label htmlFor="goal-parent">Aligns to</Label>
+          <Select
+            id="goal-parent"
+            className="mt-1"
+            value={draft.parentGoalId ?? ''}
+            onChange={(e) => setDraft({ ...draft, parentGoalId: e.target.value || null })}
+          >
+            <option value="">Doesn’t align to another goal</option>
+            {(alignable ?? []).map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.scope === 'COMPANY' ? 'Company: ' : g.scope === 'TEAM' ? 'Team: ' : ''}
+                {g.title}
+              </option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>Kind</Label>

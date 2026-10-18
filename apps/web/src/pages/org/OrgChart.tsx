@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { ChevronDown, ChevronUp, Download, Network, Printer } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, MapPinPlus, Network, Plus, Printer } from 'lucide-react';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { getOrgChart, type OrgChartView, type OrgNode } from '@/lib/orgChartApi';
 import { useClients } from '@/lib/useClients';
@@ -21,7 +21,9 @@ import {
   SkeletonRows,
 } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
-import { ChartCanvas, ReportsToDialog, TreeList, type Painter } from './OrgChartParts';
+import { ChartCanvas, ReportsToDialog, TreeList, type Painter, type StructureActions } from './OrgChartParts';
+import { AddRegionDialog, AddSiteDialog, MoveToRegionDialog, StructureDrawer, storeRegion, useMoveStore } from './StructureEditor';
+import { regionIdOf } from '@/lib/structureApi';
 import {
   PALETTE,
   ancestorsOf,
@@ -71,6 +73,13 @@ export function OrgChart() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<OrgNode | null>(null);
   const canEdit = can('manage:org') && view === 'company';
+  // The field view is where the structure is edited: regions, stores, cost centers.
+  const canStructure = can('manage:org') && view === 'field';
+  const [details, setDetails] = useState<OrgNode | null>(null);
+  const [moving, setMoving] = useState<OrgNode | null>(null);
+  const [addingRegion, setAddingRegion] = useState(false);
+  const [addingSite, setAddingSite] = useState<{ clientId?: string | null; regionId?: string | null } | null>(null);
+  const moveStore = useMoveStore();
 
   /** Change one or more URL params in a single update (two in a row would drop the first). */
   const setParam = (key: string | Record<string, string | null>, value?: string | null) => {
@@ -98,6 +107,24 @@ export function OrgChart() {
   const nodes = useMemo(() => filterByDepartment(chart.data?.nodes ?? [], view === 'company' ? departmentId || null : null), [chart.data, departmentId, view]);
   const index = useMemo(() => indexNodes(nodes), [nodes]);
   const departments = useMemo(() => departmentsOf(chart.data?.nodes ?? []), [chart.data]);
+  const structure: StructureActions | undefined = useMemo(() => {
+    if (!canStructure) return undefined;
+    const regions = nodes.filter((n) => n.kind === 'region');
+    return {
+      regions,
+      onDetails: setDetails,
+      onMove: setMoving,
+      onDropStore: (siteId, regionNodeId) => {
+        const store = index.byId.get(`s:${siteId}`);
+        const target = regionNodeId ? index.byId.get(regionNodeId) : null;
+        const from = store ? storeRegion(index, store) : null;
+        const to = regionNodeId ? regionIdOf(regionNodeId) : null;
+        if (!store || from === to) return;
+        moveStore.mutate({ siteId, regionId: to, name: store.name, regionName: target?.name ?? null });
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canStructure, nodes, index]);
   const colour = useMemo(() => colourKeys(nodes, colourBy), [nodes, colourBy]);
   const painter: Painter = useMemo(() => {
     const slot = new Map(colour.legend.map((l) => [l.key, l.slot]));
@@ -166,7 +193,19 @@ export function OrgChart() {
       }
       breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Org chart' }]}
       secondaryActions={
-        <div className="flex items-center gap-2 print:hidden">
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
+          {canStructure && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setAddingRegion(true)}>
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                Region
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setAddingSite({})}>
+                <MapPinPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                {term('label.store')}
+              </Button>
+            </>
+          )}
           <Button variant="ghost" size="sm" className="hidden md:inline-flex" onClick={() => window.print()} disabled={!nodes.length}>
             <Printer className="h-3.5 w-3.5" aria-hidden="true" />
             Print or save as PDF
@@ -345,6 +384,13 @@ export function OrgChart() {
                 </>
               )}
             </p>
+            {canStructure && (
+              <p className="text-xs text-ink-muted print:hidden">
+                {layout === 'chart'
+                  ? `Drag a ${term('label.store').toLowerCase()} onto a region to move it — a bar of every region appears while you drag. The gear opens details; the arrow moves it from the keyboard.`
+                  : `The arrow moves a ${term('label.store').toLowerCase()} to a region; the gear opens details. From the keyboard: M to move, I for details.`}
+              </p>
+            )}
             {canEdit && view === 'company' && !nodes.some((n) => n.parentId && (n.kind === 'person' || n.kind === 'staff')) && (
               <ErrorBanner severity="info">
                 Nobody on this chart has a manager recorded yet. Use “Reports to” on a card (the person-and-gear button) to build the reporting lines.
@@ -359,6 +405,7 @@ export function OrgChart() {
                 painter={painter}
                 topLabel={topLabel}
                 onEdit={canEdit ? setEditing : undefined}
+                structure={structure}
               />
             ) : (
               <Card>
@@ -370,6 +417,7 @@ export function OrgChart() {
                     highlightId={current?.id ?? null}
                     painter={painter}
                     onEdit={canEdit ? setEditing : undefined}
+                    structure={structure}
                     label={view === 'company' ? 'Company org chart' : 'Field org chart'}
                   />
                 </CardContent>
@@ -379,6 +427,14 @@ export function OrgChart() {
         )}
       </div>
       <ReportsToDialog subject={editing} index={index} onClose={() => setEditing(null)} />
+      {canStructure && (
+        <>
+          <StructureDrawer node={details} index={index} onClose={() => setDetails(null)} onAddSite={(d) => setAddingSite(d)} />
+          <MoveToRegionDialog store={moving} currentRegionId={storeRegion(index, moving)} onClose={() => setMoving(null)} />
+          <AddRegionDialog open={addingRegion} onClose={() => setAddingRegion(false)} />
+          <AddSiteDialog open={!!addingSite} defaults={addingSite ?? {}} onClose={() => setAddingSite(null)} />
+        </>
+      )}
     </ListTemplate>
   );
 }

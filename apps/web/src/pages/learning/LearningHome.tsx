@@ -80,7 +80,7 @@ export function LearningHome() {
         className="space-y-5"
         title="Learning"
         subtitle="Courses, certifications, and expiration tracking."
-        breadcrumbs={[{ label: 'Compliance' }, { label: 'Learning' }]}
+        breadcrumbs={[{ label: 'Me' }, { label: 'Learning' }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>

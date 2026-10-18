@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CheckCircle2, Clock, Plus, ShieldQuestion, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -59,6 +59,7 @@ function parseLocalDate(s: string): Date | null {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export function ProbationHome() {
+  const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [filter, setFilter] = useState<ProbationStatus | 'ALL'>('ACTIVE');
@@ -66,11 +67,16 @@ export function ProbationHome() {
   const [decideRow, setDecideRow] = useState<ProbationRow | null>(null);
   const [extendRow, setExtendRow] = useState<ProbationRow | null>(null);
 
-  const refreshQuery = useQuery({
+  // Paged on the server; "Show more" reads the next page rather than the
+  // list silently stopping at the first hundred.
+  const refreshQuery = useInfiniteQuery({
     queryKey: ['ProbationHome', 'rows', filter],
-    queryFn: () => listProbations(filter === 'ALL' ? undefined : filter),
+    queryFn: ({ pageParam }) => listProbations(filter === 'ALL' ? undefined : filter, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => (last.hasMore ? all.length : undefined),
   });
-  const rows: ProbationRow[] | null = refreshQuery.isError ? [] : (refreshQuery.data?.probations ?? null);
+  const rows: ProbationRow[] | null = refreshQuery.isError ? [] : refreshQuery.data ? refreshQuery.data.pages.flatMap((p) => p.probations) : null;
+  const totalRows = refreshQuery.data?.pages[0]?.total ?? null;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load probations.' : null;
   const refresh2Query = useQuery({
     queryKey: ['ProbationHome', 'summary', filter],
@@ -86,7 +92,7 @@ export function ProbationHome() {
         className="space-y-5"
         title="Probation"
         subtitle="Track new-hire probation periods. Pass, extend, or fail before the end date."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Probation' }]}
+        breadcrumbs={[{ label: term('nav.people') }, { label: 'Probation' }]}
     >
 
       {/* Reserve the strip while loading (it used to pop in and shove the
@@ -271,6 +277,17 @@ export function ProbationHome() {
                   : []),
               ]}
             />
+          )}
+          {rows && refreshQuery.hasNextPage && (
+            <div className="mt-3 flex items-center justify-center gap-3 text-xs text-ink-muted">
+              <span>
+                Showing {rows.length}
+                {totalRows !== null ? ` of ${totalRows}` : ''}
+              </span>
+              <Button size="sm" variant="outline" onClick={() => void refreshQuery.fetchNextPage()} loading={refreshQuery.isFetchingNextPage}>
+                Show more
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

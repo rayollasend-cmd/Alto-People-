@@ -71,7 +71,7 @@ export function IntegrationsHome() {
     <ListTemplate
         className="space-y-5"
         title="Integrations"
-        subtitle="OAuth clients for the public API, legacy API keys, and outbound webhooks for event delivery."
+        subtitle="OAuth apps for the public API, legacy API keys, and outbound webhooks for event delivery."
         breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Integrations' }]}
     >
       {/* What the platform is connected to. The disbursement rail comes
@@ -87,7 +87,7 @@ export function IntegrationsHome() {
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="clients">
-            <ShieldCheck className="mr-2 h-4 w-4" /> API clients
+            <ShieldCheck className="mr-2 h-4 w-4" /> API apps
           </TabsTrigger>
           <TabsTrigger value="keys">
             <Key className="mr-2 h-4 w-4" /> API keys

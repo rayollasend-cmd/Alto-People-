@@ -29,10 +29,30 @@ export interface RampPlanRow {
   associateEmail: string;
   startDate: string;
   managerEmail: string | null;
+  managerName?: string | null;
+  template?: RampTemplate;
   total: number;
   achieved: number;
   missed: number;
+  /** Each checkpoint and how it went — the row's timeline. */
+  milestones?: Array<{ dayCheckpoint: number; status: RampMilestoneStatus; title: string }>;
 }
+
+export type RampTemplate = 'STANDARD' | 'SEASONAL';
+
+export const TEMPLATE_LABELS: Record<RampTemplate, string> = {
+  STANDARD: 'Standard — first shift to day 90',
+  SEASONAL: 'Seasonal — a 6–8 week season',
+};
+
+export interface RampOwner {
+  id: string;
+  name: string;
+  role: string;
+  siteName: string | null;
+}
+
+export const listRampOwners = () => apiFetch<{ owners: RampOwner[] }>('/ramp-plans/owners');
 
 export const STATUS_LABELS: Record<RampMilestoneStatus, string> = {
   PENDING: 'Pending',
@@ -54,6 +74,7 @@ export const createRampPlan = (input: {
   startDate: string;
   managerId?: string | null;
   notes?: string | null;
+  template?: RampTemplate;
   milestones?: { dayCheckpoint: number; title: string; description?: string | null }[];
 }) =>
   apiFetch<{ id: string }>('/ramp-plans', { method: 'POST', body: input });

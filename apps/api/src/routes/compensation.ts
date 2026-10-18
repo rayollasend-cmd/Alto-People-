@@ -11,6 +11,7 @@ import { loadApprovalPolicy, payChangeNeedsApproval, secondPersonExists } from '
 import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 import { applyPayRateChange, currentComp, listPayChanges } from '../lib/payChanges.js';
 import { coveringManagerIds } from '../lib/delegations.js';
+import { assertAssociateInScope, scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -125,6 +126,8 @@ compensationRouter.get(
   requireCapability('view:comp'),
   async (req, res) => {
     await assertSameTenant('associate', String(req.params.id));
+    // Pay is only readable for people in the caller's reach.
+    await assertAssociateInScope(prisma, req.user!, String(req.params.id));
     const associateId = req.params.id;
     const rows = await prisma.compensationRecord.findMany({
       take: 500,
@@ -140,6 +143,7 @@ compensationRouter.get(
   requireCapability('view:comp'),
   async (req, res) => {
     await assertSameTenant('associate', String(req.params.id));
+    await assertAssociateInScope(prisma, req.user!, String(req.params.id));
     const associateId = req.params.id;
     const row = await prisma.compensationRecord.findFirst({
       where: { associateId, effectiveTo: null },
@@ -153,6 +157,8 @@ compensationRouter.post(
   requireCapability('manage:comp'),
   async (req, res) => {
     await assertSameTenant('associate', String(req.params.id));
+    // A pay change is only for someone active in the caller's reach.
+    await assertAssociateInScope(prisma, req.user!, String(req.params.id), { former: false });
     const associateId = req.params.id;
     const input = RecordCreateSchema.parse(req.body);
     const associate = await prisma.associate.findUnique({ where: { id: associateId } });
@@ -395,15 +401,19 @@ compensationRouter.get(
   async (req, res) => {
     await assertInTenant('meritCycle', String(req.params.id), 'Cycle not found.');
     const cycleId = req.params.id;
-    const rows = await prisma.meritProposal.findMany({
-      take: 500,
-      where: { cycleId },
+    // Every proposal for the people in the caller's reach — up to the cap, said so past it.
+    const CAP = 5000;
+    const found = await prisma.meritProposal.findMany({
+      take: CAP + 1,
+      where: { cycleId, associate: { is: scopeActiveAssociates(req.user!, { former: true }) } },
       include: {
         associate: { select: { id: true, firstName: true, lastName: true } },
       },
       orderBy: [{ status: 'asc' }, { associate: { lastName: 'asc' } }],
     });
+    const rows = found.slice(0, CAP);
     res.json({
+      truncated: found.length > CAP,
       proposals: rows.map((p) => ({
         id: p.id,
         cycleId: p.cycleId,

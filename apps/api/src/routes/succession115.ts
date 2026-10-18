@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { scopeActiveAssociates, scopePositions } from '../lib/scope.js';
 
 /**
  * Phase 115 — Succession planning.
@@ -37,12 +38,11 @@ const READINESS = z.enum([
 
 succession115Router.get('/succession/positions', VIEW, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
-  const positions = await prisma.position.findMany({
-    take: 1000,
-    where: {
-      deletedAt: null,
-      ...(clientId ? { clientId } : {}),
-    },
+  const CAP = 1000;
+  const found = await prisma.position.findMany({
+    take: CAP + 1,
+    // This tenant's seats in the caller's reach (lib/scope.scopePositions).
+    where: { AND: [scopePositions(req.user!), clientId ? { clientId } : {}] },
     include: {
       client: { select: { name: true } },
       department: { select: { name: true } },
@@ -51,7 +51,9 @@ succession115Router.get('/succession/positions', VIEW, async (req, res) => {
     },
     orderBy: [{ clientId: 'asc' }, { title: 'asc' }],
   });
+  const positions = found.slice(0, CAP);
   res.json({
+    truncated: found.length > CAP,
     positions: positions.map((p) => ({
       id: p.id,
       code: p.code,
@@ -78,19 +80,20 @@ succession115Router.get(
   VIEW,
   async (req, res) => {
     const positionId = z.string().uuid().parse(req.params.id);
-    const position = await prisma.position.findUnique({
-      where: { id: positionId },
+    const position = await prisma.position.findFirst({
+      where: { AND: [{ id: positionId }, scopePositions(req.user!)] },
       include: {
         client: { select: { name: true } },
         filledBy: { select: { id: true, firstName: true, lastName: true } },
       },
     });
-    if (!position || position.deletedAt) {
+    if (!position) {
       throw new HttpError(404, 'not_found', 'Position not found.');
     }
+    // Active people only: a former employee is nobody's successor.
     const candidates = await prisma.successionCandidate.findMany({
       take: 500,
-      where: { positionId },
+      where: { positionId, associate: { is: scopeActiveAssociates(req.user!) } },
       include: {
         associate: {
           select: {
@@ -141,7 +144,7 @@ succession115Router.get(
     await assertSameTenant('associate', associateId);
     const rows = await prisma.successionCandidate.findMany({
       take: 500,
-      where: { associateId },
+      where: { associateId, associate: { is: scopeActiveAssociates(req.user!, { former: true }) }, position: { is: scopePositions(req.user!) } },
       include: {
         position: {
           select: {
@@ -183,14 +186,15 @@ succession115Router.post(
   async (req, res) => {
     const input = CreateInputSchema.parse(req.body);
     const [position, associate] = await Promise.all([
-      prisma.position.findUnique({ where: { id: input.positionId } }),
-      prisma.associate.findUnique({ where: { id: input.associateId } }),
+      prisma.position.findFirst({ where: { AND: [{ id: input.positionId }, scopePositions(req.user!)] } }),
+      // A successor must be active, in this tenant and the caller's reach.
+      prisma.associate.findFirst({ where: { AND: [{ id: input.associateId }, scopeActiveAssociates(req.user!)] } }),
     ]);
-    if (!position || position.deletedAt) {
+    if (!position) {
       throw new HttpError(404, 'position_not_found', 'Position not found.');
     }
-    if (!associate || associate.deletedAt) {
-      throw new HttpError(404, 'associate_not_found', 'Associate not found.');
+    if (!associate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found — they must be active and within your reach.');
     }
     if (associate.id === position.filledByAssociateId) {
       throw new HttpError(
@@ -240,8 +244,9 @@ succession115Router.patch(
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
     const input = UpdateInputSchema.parse(req.body);
-    const existing = await prisma.successionCandidate.findUnique({
-      where: { id },
+    // Only a candidacy on a seat in the caller's reach.
+    const existing = await prisma.successionCandidate.findFirst({
+      where: { id, position: { is: scopePositions(req.user!) } },
     });
     if (!existing) {
       throw new HttpError(404, 'not_found', 'Candidate not found.');
@@ -262,8 +267,9 @@ succession115Router.delete(
   MANAGE,
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
-    const existing = await prisma.successionCandidate.findUnique({
-      where: { id },
+    // Only a candidacy on a seat in the caller's reach.
+    const existing = await prisma.successionCandidate.findFirst({
+      where: { id, position: { is: scopePositions(req.user!) } },
     });
     if (!existing) {
       throw new HttpError(404, 'not_found', 'Candidate not found.');
@@ -275,13 +281,15 @@ succession115Router.delete(
 
 // ----- Org-wide readiness rollup -------------------------------------------
 
-succession115Router.get('/succession/summary', VIEW, async (_req, res) => {
-  const positions = await prisma.position.count({ where: { deletedAt: null } });
+succession115Router.get('/succession/summary', VIEW, async (req, res) => {
+  const seats = scopePositions(req.user!);
+  const positions = await prisma.position.count({ where: seats });
   const positionsWithSuccessor = await prisma.position.count({
-    where: { deletedAt: null, successionPlan: { some: {} } },
+    where: { AND: [seats, { successionPlan: { some: {} } }] },
   });
   const byReadiness = await prisma.successionCandidate.groupBy({
     by: ['readiness'],
+    where: { position: { is: seats }, associate: { is: scopeActiveAssociates(req.user!) } },
     _count: { _all: true },
   });
   const counts: Record<string, number> = {

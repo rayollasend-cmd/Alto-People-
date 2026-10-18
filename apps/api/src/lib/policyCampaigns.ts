@@ -29,8 +29,12 @@ export const AudienceSchema = z.discriminatedUnion('kind', [
 ]);
 export type Audience = z.infer<typeof AudienceSchema>;
 
-/** The employed people an audience names — the recipients a launch creates. */
-export function audienceWhere(audience: Audience): Prisma.AssociateWhereInput {
+/** The employed people an audience names, in one tenant — the recipients a launch creates. */
+export function audienceWhere(audience: Audience, tenantId: string | null = null): Prisma.AssociateWhereInput {
+  return { AND: [tenantId ? { tenantId } : {}, audienceOf(audience)] };
+}
+
+function audienceOf(audience: Audience): Prisma.AssociateWhereInput {
   switch (audience.kind) {
     case 'ALL':
       return { ...EMPLOYED_WHERE };
@@ -45,8 +49,8 @@ export function audienceWhere(audience: Audience): Prisma.AssociateWhereInput {
   }
 }
 
-export async function audienceSize(audience: Audience, db: PrismaClient = defaultPrisma): Promise<number> {
-  return db.associate.count({ where: audienceWhere(audience) });
+export async function audienceSize(audience: Audience, db: PrismaClient = defaultPrisma, tenantId: string | null = null): Promise<number> {
+  return db.associate.count({ where: audienceWhere(audience, tenantId) });
 }
 
 /** The signature line's hash: what was shown + who signed + when, so a changed body can be proven. */
@@ -59,13 +63,29 @@ export async function launchCampaign(campaignId: string, db: PrismaClient = defa
   const campaign = await db.policyCampaign.findUnique({ where: { id: campaignId }, include: { version: true } });
   if (!campaign) throw new Error('campaign not found');
   const audience = AudienceSchema.parse(campaign.audience);
-  const people = await db.associate.findMany({ where: audienceWhere(audience), select: ASSOCIATE_CTX_SELECT, take: 5000 });
-  const rows: Prisma.PolicyCampaignRecipientCreateManyInput[] = people.map((a) => ({
-    campaignId,
-    associateId: a.id,
-    renderedBody: renderTemplateTokens(campaign.version.body, { associate: toAssociateCtx(a), campaign: { name: campaign.name, dueOn: campaign.dueOn.toISOString().slice(0, 10) } }).text,
-  }));
-  const created = rows.length ? (await db.policyCampaignRecipient.createMany({ data: rows, skipDuplicates: true })).count : 0;
+  // Everyone the audience names in the campaign's own tenant, in pages —
+  // the launch used to stop at 5,000 while the audience count had no cap.
+  const where = audienceWhere(audience, campaign.tenantId ?? null);
+  const people: Array<Prisma.AssociateGetPayload<{ select: typeof ASSOCIATE_CTX_SELECT }>> = [];
+  let created = 0;
+  for (let cursor: string | undefined; ; ) {
+    const page = await db.associate.findMany({
+      where,
+      select: ASSOCIATE_CTX_SELECT,
+      orderBy: { id: 'asc' },
+      take: 2000,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    const rows: Prisma.PolicyCampaignRecipientCreateManyInput[] = page.map((a) => ({
+      campaignId,
+      associateId: a.id,
+      renderedBody: renderTemplateTokens(campaign.version.body, { associate: toAssociateCtx(a), campaign: { name: campaign.name, dueOn: campaign.dueOn.toISOString().slice(0, 10) } }).text,
+    }));
+    if (rows.length) created += (await db.policyCampaignRecipient.createMany({ data: rows, skipDuplicates: true })).count;
+    people.push(...page);
+    if (page.length < 2000) break;
+    cursor = page[page.length - 1]!.id;
+  }
   await db.policyCampaign.update({ where: { id: campaignId }, data: { status: 'ACTIVE', launchedAt: campaign.launchedAt ?? now } });
   const { notifyAssociate } = await import('./notify.js');
   for (const a of people) {

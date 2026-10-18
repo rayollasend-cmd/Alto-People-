@@ -21,6 +21,7 @@ import {
 } from '../lib/associateClients.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import { scopeAssociates } from '../lib/scope.js';
 
 /**
  * Drug-test directorate — mirrors the background-check surface, with one
@@ -128,6 +129,8 @@ drugTestsRouter.get('/pending', MANAGE, async (req, res, next) => {
       where: {
         deletedAt: null,
         tenantId: tenantIdForWrite(),
+        // The caller's reach: a store-bound office account orders for its own people.
+        AND: [scopeAssociates(req.user!)],
         // No result filed inside the window…
         documents: {
           none: { kind: RESULT_KIND, deletedAt: null, createdAt: { gte: cutoff } },

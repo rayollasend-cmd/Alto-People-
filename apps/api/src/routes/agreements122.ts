@@ -7,6 +7,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 122 — Per-associate legal agreements.
@@ -48,6 +49,8 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
   const rows = await prisma.agreement.findMany({
     take: 500,
     where: {
+      // People in the caller's tenant and reach.
+      associate: { is: scopeActiveAssociates(req.user!, { former: true }) },
       deletedAt: null,
       ...(associateId ? { associateId } : {}),
       ...(kind ? { kind } : {}),

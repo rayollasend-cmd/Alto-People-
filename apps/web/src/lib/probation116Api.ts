@@ -35,10 +35,14 @@ export interface ProbationSummary {
   failedLast90Days: number;
 }
 
-export const listProbations = (status?: ProbationStatus) =>
-  apiFetch<{ probations: ProbationRow[] }>(
-    `/probations${status ? `?status=${status}` : ''}`,
-  );
+/** One page of probations: open ones soonest-ending first, decided ones newest first. */
+export const listProbations = (status?: ProbationStatus, page = 0) => {
+  const qs = new URLSearchParams();
+  if (status) qs.set('status', status);
+  if (page) qs.set('page', String(page));
+  const q = qs.toString();
+  return apiFetch<{ probations: ProbationRow[]; total?: number; page?: number; hasMore?: boolean }>(`/probations${q ? `?${q}` : ''}`);
+};
 
 export const listEndingSoon = (days = 14) =>
   apiFetch<{ days: number; probations: ProbationEndingSoonRow[] }>(

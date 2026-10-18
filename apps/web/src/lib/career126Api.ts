@@ -27,6 +27,10 @@ export interface Level {
   jobProfileId: string | null;
   jobProfileTitle: string | null;
   jobProfileCode: string | null;
+  /** What the rung asks for beyond skills. */
+  requiredQualificationCodes?: string[];
+  minTenureMonths?: number | null;
+  minReviewRating?: number | null;
   skills: LevelSkill[];
 }
 
@@ -67,6 +71,9 @@ export const addLevel = (
     title: string;
     description?: string | null;
     jobProfileId?: string | null;
+    requiredQualificationCodes?: string[];
+    minTenureMonths?: number | null;
+    minReviewRating?: number | null;
   },
 ) =>
   apiFetch<{ id: string }>(`/career-ladders/${ladderId}/levels`, {
@@ -80,6 +87,9 @@ export const updateLevel = (
     title: string;
     description: string | null;
     jobProfileId: string | null;
+    requiredQualificationCodes: string[];
+    minTenureMonths: number | null;
+    minReviewRating: number | null;
   }>,
 ) =>
   apiFetch<{ ok: true }>(`/career-levels/${id}`, {
@@ -107,3 +117,26 @@ export const archiveLadder = (id: string) =>
     method: 'POST',
     body: {},
   });
+
+/* ----- Where someone stands ---------------------------------------------- */
+
+export interface CareerRequirement {
+  kind: 'skill' | 'certification' | 'tenure' | 'review';
+  label: string;
+  met: boolean;
+  have: SkillLevel | number | null;
+  need: SkillLevel | number | null;
+}
+
+export interface CareerPosition {
+  ladder: { id: string; name: string; family: string | null; levels: Array<{ id: string; rank: number; title: string; description: string | null }> } | null;
+  currentLevelId: string | null;
+  placedBy: 'job_profile' | 'role' | 'field' | null;
+  next: { id: string; rank: number; title: string; requirements: CareerRequirement[]; progressPct: number } | null;
+  otherLadders: Array<{ id: string; name: string }>;
+}
+
+export const getMyCareerPosition = () => apiFetch<CareerPosition>('/career-ladders/me/position');
+export const getCareerPosition = (associateId: string) => apiFetch<CareerPosition>(`/career-ladders/people/${associateId}/position`);
+export const createFieldLeadershipLadder = () =>
+  apiFetch<{ id: string }>('/career-ladders/templates/field-leadership', { method: 'POST' });

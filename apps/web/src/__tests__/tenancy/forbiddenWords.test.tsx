@@ -53,7 +53,8 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
  */
 
 const FORBIDDEN = ['client', 'bill rate', 'housing', 'van', 'store', 'associate', 'alto'] as const;
-const EXEMPT_PHRASES = ['Alto People'];
+// OAuth's own field names: an integrator looks for exactly these words.
+const EXEMPT_PHRASES = ['Alto People', 'client ID', 'client secret', 'client_id', 'client_secret'];
 const FORBIDDEN_RE = new RegExp(`\\b(${FORBIDDEN.map((w) => w.replace(' ', '\\s+') + 's?').join('|')})\\b`, 'gi');
 
 vi.mock('@/lib/api', async (orig) => ({
@@ -96,6 +97,7 @@ import { TenantProfileHome } from '@/pages/admin/TenantProfileHome';
 import { EmployersAdmin } from '@/pages/admin/EmployersAdmin';
 import { OrgUnitsAdmin } from '@/pages/admin/OrgUnitsAdmin';
 import { SitesAdmin } from '@/pages/admin/SitesAdmin';
+import { OrgHome } from '@/pages/org/OrgHome';
 import { Settings } from '@/pages/Settings';
 import { MeHome } from '@/pages/me/MeHome';
 import { DocumentsHome } from '@/pages/documents/DocumentsHome';
@@ -105,6 +107,11 @@ import { AgreementsHome } from '@/pages/agreements/AgreementsHome';
 import { ApplicationsList } from '@/pages/onboarding/ApplicationsList';
 import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 import { BulkInviteDialog } from '@/pages/onboarding/BulkInviteDialog';
+import { Component as ReactComponent, type ComponentType, type ErrorInfo } from 'react';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { visibleModules } from '@/lib/modules';
 
 /* ------------------------------------------------------------------ *
  *  A lenient empty value: every property is another empty, every call
@@ -339,8 +346,9 @@ const SURFACES: Surface[] = [
   { name: 'Users & access', ui: () => <UsersAdmin />, route: '/admin/users' },
   { name: 'Organization profile', ui: () => <TenantProfileHome />, route: '/admin/organization', skip: 'exempt by the owner (2026-10-13): it names the module catalog' },
   { name: 'Employers of record', ui: () => <EmployersAdmin />, route: '/admin/employers' },
-  { name: 'Organizational tree', ui: () => <OrgUnitsAdmin />, route: '/admin/org-units' },
+  { name: 'Cost centers & ledger codes', ui: () => <OrgUnitsAdmin />, route: '/admin/org-units' },
   { name: 'Sites', ui: () => <SitesAdmin />, route: '/admin/sites' },
+  { name: 'Departments & job profiles', ui: () => <OrgHome />, route: '/org' },
   { name: 'Settings', ui: () => <Settings />, route: '/settings' },
   { name: 'Onboarding list', ui: () => <ApplicationsList />, route: '/onboarding' },
   { name: 'Invite dialog', ui: () => <NewApplicationDialog open onOpenChange={() => undefined} onCreated={() => undefined} />, route: '/onboarding' },
@@ -371,6 +379,84 @@ describe('the hotel tenant sees none of the staffing words', () => {
       await settle();
       const found = offenders(s.name, visibleText());
       expect(found, found.join('\n')).toEqual([]);
+    });
+  }
+});
+
+/* ----- Every page a hotel's HR admin can reach --------------------------- */
+
+/**
+ * The surfaces above are hand-picked; this sweep renders every module page
+ * the hotel's HR administrator has in the sidebar, mounted at its own path
+ * the way App.tsx mounts it, with the lenient fixture behind every call. A
+ * page that throws under the empty fixture is reported, not hidden.
+ */
+const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const APP_SRC = readFileSync(join(SRC_DIR, 'App.tsx'), 'utf8');
+
+function routeComponent(path: string): { name: string; file: string } | null {
+  const esc = path.replace(/^\//, '').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  const m = new RegExp(`path:\\s*'${esc}',\\s*element:\\s*(?:<RequireCapability[^>]*>\\s*)?<([A-Z][A-Za-z0-9]*)`).exec(APP_SRC);
+  if (!m) return null;
+  const name = m[1]!;
+  const imp =
+    new RegExp(`const ${name} = lazyNamed\\(\\(\\) => import\\('@/([^']+)'\\)`).exec(APP_SRC) ??
+    new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from '@/([^']+)'`).exec(APP_SRC);
+  if (!imp) return null;
+  const base = join(SRC_DIR, imp[1]!);
+  for (const ext of ['.tsx', '.ts']) if (existsSync(base + ext)) return { name, file: base + ext };
+  return null;
+}
+
+class Catch extends ReactComponent<{ children: ReactNode; onError: (e: Error) => void }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    this.props.onError(error);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+/** Already rendered above with their own fixtures, or exempt there. */
+const HAND_PICKED = new Set(SURFACES.map((s) => (s.route ?? '').split('?')[0]).filter(Boolean));
+/** Pages another builder is rebuilding this round — their owners clean them. */
+const OWNED_ELSEWHERE: Record<string, string> = {
+  org: 'rebuilt by STRUCTURE this round',
+  celebrations: 'rebuilt by TALENT this round',
+  assets: 'rebuilt by TALENT this round',
+  ramp: 'rebuilt by TALENT this round',
+  expirations: 'rebuilt by INSIGHT this round',
+  // Renders docs/design-system.md, the product's own written standard, verbatim:
+  // like the Organization profile it describes the product, not the tenant.
+  'design-system': 'the product standard, quoted verbatim',
+  'org-units': 'rebuilt by STRUCTURE this round',
+};
+
+const HOTEL_HR_PAGES = visibleModules('HR_ADMINISTRATOR', (c) => ROLE_CAPABILITIES.HR_ADMINISTRATOR.has(c), { modules: HOTEL.modules, tenantId: 't' })
+  .filter((m) => !HAND_PICKED.has(m.path) && m.path !== '/admin/organization');
+
+describe('every page a hotel HR administrator can reach is free of the staffing words', () => {
+  it('finds the pages to sweep', () => {
+    expect(HOTEL_HR_PAGES.length).toBeGreaterThan(40);
+  });
+  for (const m of HOTEL_HR_PAGES) {
+    const owned = OWNED_ELSEWHERE[m.key];
+    (owned ? it.skip : it)(`${m.label} (${m.path}) is clean${owned ? ` — ${owned}` : ''}`, async () => {
+      const found = routeComponent(m.path);
+      if (!found) return; // a route App.tsx mounts some other way (a redirect, a hub)
+      const mod = (await import(/* @vite-ignore */ found.file)) as Record<string, ComponentType>;
+      const Page = mod[found.name];
+      if (!Page) return;
+      let crashed: Error | null = null;
+      renderUnder(HOTEL, <Catch onError={(e) => (crashed = e)}><Page /></Catch>, m.path);
+      await settle();
+      const words = offenders(m.label, visibleText());
+      const why = crashed ? `CRASHED: ${String((crashed as Error).message).slice(0, 160)}` : words.join('\n');
+      expect(crashed === null && words.length === 0, why).toBe(true);
     });
   }
 });

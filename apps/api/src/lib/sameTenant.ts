@@ -21,6 +21,8 @@ const FINDERS = {
   user: (id: string) => prisma.user.findUnique({ where: { id }, select: { tenantId: true } }),
   garnishment: (id: string) => prisma.garnishment.findUnique({ where: { id }, select: { tenantId: true } }),
   meritCycle: (id: string) => prisma.meritCycle.findUnique({ where: { id }, select: { tenantId: true } }),
+  client: (id: string) => prisma.client.findUnique({ where: { id }, select: { tenantId: true } }),
+  site: (id: string) => prisma.site.findUnique({ where: { id }, select: { tenantId: true } }),
 } satisfies Record<string, (id: string) => Promise<TenantRow>>;
 
 export type SameTenantModel = keyof typeof FINDERS;

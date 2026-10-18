@@ -62,7 +62,11 @@ describe('client NPS', () => {
     expect(s.status).toBe(201);
     expect(s.body.invited).toBe(2);
     expect((await h.post('/executive/nps/send').send({})).status).toBe(409);
-    const [t1, t2] = tokens();
+    expect(tokens()).toHaveLength(2);
+    // Which link went to whom — sends page in a stable order, not creation order.
+    const tokenFor = (email: string) => sent.find((x) => x.to === email)?.body.match(/\/nps\/([A-Za-z0-9_-]+)/)?.[1];
+    const t1 = tokenFor(w.email);
+    const t2 = tokens().find((t) => t !== t1);
     expect(t1 && t2).toBeTruthy();
 
     // Outside the portal, no login.

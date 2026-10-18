@@ -35,7 +35,8 @@ import {
   updateShiftPosition,
   type AssociateHistoryEntry,
 } from '@/lib/orgApi';
-import { useAuth, useTerm } from '@/lib/auth';
+import { DepartmentTree } from './DepartmentTree';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { boundedClientOf, hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
@@ -94,6 +95,8 @@ const TAB_VALUES: readonly Tab[] = [
 
 export function OrgHome() {
   const { user } = useAuth();
+  const term = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   // Shared react-query cache — fetched at most once per 5 minutes app-wide.
   const {
@@ -140,13 +143,16 @@ export function OrgHome() {
   // /org?tab=people&associateId=….
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
+  // A staffing company runs on the shift positions each client staffs: they
+  // lead. A direct employer starts at its departments.
+  const defaultTab: Tab = hasClients ? 'shift-positions' : 'departments';
   const tab: Tab =
     tabParam && (TAB_VALUES as readonly string[]).includes(tabParam)
       ? (tabParam as Tab)
-      : 'departments';
+      : defaultTab;
   const setTab = (next: Tab) => {
     const params = new URLSearchParams(searchParams);
-    if (next === 'departments') params.delete('tab');
+    if (next === defaultTab) params.delete('tab');
     else params.set('tab', next);
     setSearchParams(params, { replace: true });
   };
@@ -173,9 +179,13 @@ export function OrgHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="space-y-5"
-        title="Org structure"
-        subtitle="Departments, cost centers, job profiles, and the people-to-org assignments that hold dimensional reporting and approval routing together."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Org' }]}
+        title="Departments & job profiles"
+        subtitle={
+          hasClients
+            ? `The shift positions each ${term('label.client').toLowerCase()} staffs, and the departments, job profiles and positions behind reporting and approvals.`
+            : 'Departments, job profiles, positions and the people assigned to them — the dimensions behind reporting and approvals.'
+        }
+        breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Departments & job profiles' }]}
     >
 
       {clientsError && (
@@ -189,20 +199,21 @@ export function OrgHome() {
         </ErrorBanner>
       )}
 
+      {hasClients && (
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
-          <span className="text-xs2 uppercase tracking-wider text-silver">
-            Client
+          <span className="text-xs2 uppercase tracking-wider text-ink-muted">
+            {term('label.client')}
           </span>
           <Select
             ref={clientSelectRef}
             size="sm"
-            aria-label="Filter by client"
+            aria-label={`Filter by ${term('label.client').toLowerCase()}`}
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
             disabled={!!boundedClientId}
           >
-            <option value="">All clients</option>
+            <option value="">Every {term('label.client').toLowerCase()}</option>
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -211,9 +222,16 @@ export function OrgHome() {
           </Select>
         </CardContent>
       </Card>
+      )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
+          {hasClients && (
+            <TabsTrigger value="shift-positions">
+              <CalendarClock className="h-3.5 w-3.5" />
+              Shift positions
+            </TabsTrigger>
+          )}
           <TabsTrigger value="departments">
             <FolderTree className="h-3.5 w-3.5" />
             Departments
@@ -230,10 +248,12 @@ export function OrgHome() {
             <Briefcase className="h-3.5 w-3.5" />
             Positions
           </TabsTrigger>
-          <TabsTrigger value="shift-positions">
-            <CalendarClock className="h-3.5 w-3.5" />
-            Shift positions
-          </TabsTrigger>
+          {!hasClients && (
+            <TabsTrigger value="shift-positions">
+              <CalendarClock className="h-3.5 w-3.5" />
+              Shift positions
+            </TabsTrigger>
+          )}
           <TabsTrigger value="people">
             <Users className="h-3.5 w-3.5" />
             People
@@ -301,8 +321,11 @@ function DepartmentsTab({
   canManage: boolean;
   onPickClient: () => void;
 }) {
-  const term = useTerm();
   const [drawerTarget, setDrawerTarget] = useState<Department | 'new' | null>(null);
+  const term = useTerm();
+  // A direct employer has no clients: its departments are the company's own.
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const canAdd = canManage && (!!clientId || !hasClients);
 
   const listQuery = useQuery({
     queryKey: ['org', 'departments', clientId],
@@ -321,8 +344,8 @@ function DepartmentsTab({
   return (
     <section>
       <div className="flex items-center justify-between gap-3 mb-4">
-        <h2 className="text-base font-medium text-white">Departments</h2>
-        {canManage && clientId && (
+        <h2 className="text-base font-medium text-ink">Departments</h2>
+        {canAdd && (
           <Button onClick={() => setDrawerTarget('new')} size="sm">
             <Plus className="h-4 w-4" />
             New department
@@ -345,16 +368,16 @@ function DepartmentsTab({
           icon={FolderTree}
           title="No departments yet"
           description={
-            clientId
-              ? 'Pick a client and create a department to start organizing.'
-              : 'Pick a client to start adding departments.'
+            !hasClients || clientId
+              ? 'Create a department to start organizing.'
+              : `Pick a ${term('label.client').toLowerCase()} to start adding departments.`
           }
           action={
-            !clientId ? (
+            hasClients && !clientId ? (
               <Button variant="outline" size="sm" onClick={onPickClient}>
-                Choose a client
+                Choose a {term('label.client').toLowerCase()}
               </Button>
-            ) : canManage ? (
+            ) : canAdd ? (
               <Button onClick={() => setDrawerTarget('new')} size="sm">
                 <Plus className="h-4 w-4" />
                 New department
@@ -363,25 +386,7 @@ function DepartmentsTab({
           }
         />
       )}
-      {rows && rows.length > 0 && (
-        <DataGrid<NonNullable<typeof rows>[number]>
-          id="org-departments"
-          caption="Departments"
-          rows={rows}
-          rowKey={(d) => d.id}
-          search={{ placeholder: 'Name, code…' }}
-          urlState={false}
-          exportCsv={{ filename: 'departments' }}
-          onRowClick={(d) => setDrawerTarget(d)}
-          rowActionLabel={(d) => `Open ${d.name}`}
-          columns={[
-            { key: 'name', header: 'Name', accessor: (d) => d.name, sortable: true, primary: true, className: 'font-medium' },
-            { key: 'code', header: 'Code', accessor: (d) => d.code, sortable: true, cardMeta: true, className: 'text-silver', cell: (d) => d.code ?? '—' },
-            { key: 'parent', header: 'Parent', accessor: (d) => (rows ?? []).find((pd) => pd.id === d.parentId)?.name ?? null, sortable: true, cardMeta: true, className: 'text-silver', cell: (d) => (rows ?? []).find((pd) => pd.id === d.parentId)?.name ?? '—' },
-            { key: 'associates', header: term('workers'), accessor: (d) => d.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
-          ]}
-        />
-      )}
+      {rows && rows.length > 0 && <DepartmentTree rows={rows} onOpen={(d) => setDrawerTarget(d)} />}
 
       <Drawer
         open={drawerTarget !== null}
@@ -438,7 +443,7 @@ function DepartmentDrawer({
     try {
       if (isNew) {
         await createDepartment({
-          clientId,
+          clientId: clientId || null,
           name: name.trim(),
           code: code.trim() || null,
           parentId: parentId || null,

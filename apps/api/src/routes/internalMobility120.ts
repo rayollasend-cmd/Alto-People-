@@ -5,6 +5,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { assertInTenant } from '../lib/sameTenant.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import {
   ADMIN_EMAIL_HIRING,
   notifyAllAdmins,
@@ -43,7 +45,7 @@ internalMobility120Router.get(
     const associateId = req.user!.associateId;
     const postings = await prisma.jobPosting.findMany({
       take: 100,
-      where: { status: 'OPEN' },
+      where: { status: 'OPEN', tenantId: tenantIdForWrite() },
       include: {
         client: { select: { name: true } },
         _count: { select: { internalApplications: true } },
@@ -278,7 +280,7 @@ internalMobility120Router.get(
     await assertInTenant('jobPosting', postingId, 'Job not found.');
     const apps = await prisma.internalJobApplication.findMany({
       take: 100,
-      where: { postingId, ...(status ? { status } : {}) },
+      where: { postingId, associate: { is: scopeActiveAssociates(req.user!, { former: true }) }, ...(status ? { status } : {}) },
       include: {
         associate: {
           select: {

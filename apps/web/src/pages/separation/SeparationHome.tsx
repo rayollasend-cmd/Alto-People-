@@ -184,8 +184,8 @@ export function SeparationHome() {
     <ListTemplate
         className="space-y-5"
         title="Separations"
-        subtitle="Plan, process, and complete associate departures. Capture exit-interview feedback."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Separations' }]}
+        subtitle="Plan, process, and complete departures. Capture exit-interview feedback."
+        breadcrumbs={[{ label: term('nav.people') }, { label: 'Separations' }]}
     >
 
       {/* Reserved while loading; explicit note on failure — an absent KPI

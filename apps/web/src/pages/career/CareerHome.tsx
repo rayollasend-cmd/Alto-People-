@@ -17,12 +17,16 @@ import {
   type LadderRow,
   type Level,
   type SkillLevel,
+  createFieldLeadershipLadder,
+  getMyCareerPosition,
 } from '@/lib/career126Api';
+import { CareerLadderView } from './CareerPosition';
+import { useI18n } from '@/lib/i18n';
 import { searchSkills } from '@/lib/skills111Api';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { listJobProfiles } from '@/lib/orgApi';
 import type { JobProfile } from '@alto-people/shared';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -56,7 +60,15 @@ const LEVEL_VARIANT: Record<SkillLevel, 'pending' | 'accent' | 'success' | 'dest
 
 export function CareerHome() {
   const { user } = useAuth();
+  const { t } = useI18n();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
+  // A workforce provider gets the field leadership ladder (crew → store manager) one click away.
+  const fieldTenant = useTenant().moduleOn('clientPortal');
+  const mine = useQuery({
+    queryKey: ['career', 'me'],
+    queryFn: getMyCareerPosition,
+    enabled: !!user?.associateId,
+  });
   const [openId, setOpenId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
@@ -95,8 +107,8 @@ export function CareerHome() {
     <ListTemplate
         className="space-y-5"
         title="Career ladders"
-        subtitle="Progression paths through your job family. See what level you're at, what skills the next rung needs."
-        breadcrumbs={[{ label: 'Performance' }, { label: 'Career' }]}
+        subtitle="Where you are, what the next step asks of you, and every path the company offers."
+        breadcrumbs={[{ label: 'Me', to: '/me' }, { label: 'Career ladders' }]}
         primaryAction={
           canManage ? (
             <Button onClick={() => setShowNew(true)}>
@@ -105,6 +117,40 @@ export function CareerHome() {
           ) : undefined
         }
     >
+
+      {user?.associateId && (
+        <section aria-labelledby="career-mine" className="space-y-2">
+          <h2 id="career-mine" className="sr-only">
+            {t('career.mine')}
+          </h2>
+          {mine.data ? <CareerLadderView position={mine.data} self /> : mine.isLoading ? <SkeletonRows count={3} /> : null}
+        </section>
+      )}
+
+      {canManage && fieldTenant && ladders && !ladders.some((l) => l.family === 'Field leadership') && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <p className="text-sm text-ink-muted">
+              Start from the field leadership ladder — crew member, lead, shift supervisor, store manager — with time-in-job and review requirements you can edit.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void createFieldLeadershipLadder()
+                  .then(() => {
+                    toast.success('Field leadership ladder added. People on the field are placed by their role.');
+                    refresh();
+                    void mine.refetch();
+                  })
+                  .catch((err) => toast.error(err instanceof ApiError ? err.message : 'Could not add the ladder.'))
+              }
+            >
+              Add the field leadership ladder
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <FilterBar>
         {families.map((f) => (

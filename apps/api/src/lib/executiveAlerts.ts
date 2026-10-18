@@ -112,8 +112,9 @@ export async function collectExecutiveAlerts(
   // 4 — margin vs the quarter's target pace.
   const y = now.getUTCFullYear();
   const q = Math.floor(now.getUTCMonth() / 3) + 1;
-  const target = await prisma.execTarget.findUnique({
-    where: { quarter: `${y}-Q${q}` },
+  // One target row per (tenant, quarter).
+  const target = await prisma.execTarget.findFirst({
+    where: { quarter: `${y}-Q${q}`, tenantId: currentTenantId() ?? undefined },
     select: { marginTarget: true },
   });
   if (target?.marginTarget) {

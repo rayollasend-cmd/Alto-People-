@@ -8,6 +8,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { BATON_LABELS, computeRelayBoard, computeSingleLane } from '../lib/relayBoard.js';
 import { notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { isInternallyScoped, scopeAssociates } from '../lib/scope.js';
 
 /**
  * THE RELAY + threads on the work.
@@ -67,7 +68,8 @@ relayRouter.get('/relay/board', STAFF, async (req, res, next) => {
   try {
     // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
     const tenantId = tenantIdForWrite();
-    const board = await computeRelayBoard(prisma, new Date(), { tenantId });
+    // A site/region-bound office account sees its own people's lanes and batons.
+    const board = await computeRelayBoard(prisma, new Date(), { tenantId, ...(isInternallyScoped(req.user!) ? { people: scopeAssociates(req.user!) } : {}) });
     const laneIds = board.lanes.map((l) => l.associateId);
     const [deskUsers, claims, noteCounts] = await Promise.all([
       prisma.user.findMany({

@@ -525,7 +525,7 @@ function ClaimsTab() {
         ) : sorted.length === 0 ? (
           <EmptyState
             title="No pending claims"
-            description="Claims show up here when associates pick up open shifts."
+            description="Claims show up here when people pick up open shifts."
           />
         ) : (
           <>

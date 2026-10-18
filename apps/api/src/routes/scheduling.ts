@@ -83,9 +83,12 @@ import {
   benchFor,
   effectiveClientIdFilter,
   placedAtSite,
+  internalSites,
+  scopeAssociates,
   scopeClients,
   scopeShifts,
   scopeTimeEntries,
+  siteInScope,
 } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { moduleOn } from '../lib/tenantProfile.js';
@@ -1355,10 +1358,12 @@ schedulingRouter.get('/staffing-targets', SCHED_READ, async (req, res, next) => 
     const stClientId = clamped === null ? NO_MATCH_ID : clamped;
     const locations = await prisma.site.findMany({
       where: {
-        deletedAt: null,
-        isActive: true,
-        tenantId: tenantIdForWrite(),
-        ...(stClientId ? { clientId: stClientId } : {}),
+        AND: [
+          { deletedAt: null, isActive: true, tenantId: tenantIdForWrite() },
+          stClientId ? { clientId: stClientId } : {},
+          // A site-scoped manager sees only the stores in their reach.
+          internalSites(req.user!) ?? {},
+        ],
       },
       select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
       orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
@@ -1531,12 +1536,18 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
     for (let i = 0; i < 4; i++) {
       bounds.push(startOfWeekUTC(new Date(bounds[i].getTime() - 36 * 3600_000)));
     }
-    const entries = await prisma.timeEntry.findMany({
+    const TREND_CAP = 50_000;
+    const fetchedEntries = await prisma.timeEntry.findMany({
       where: {
-        status: { in: ['APPROVED', 'COMPLETED'] },
-        clockInAt: { gte: bounds[4], lt: bounds[0] },
-        ...(trendClientId ? { clientId: trendClientId } : {}),
+        AND: [
+          { status: { in: ['APPROVED', 'COMPLETED'] }, clockInAt: { gte: bounds[4], lt: bounds[0] } },
+          { tenantId: tenantIdForWrite() },
+          // The caller's reach: a site-scoped manager trends only their stores.
+          scopeTimeEntries(req.user!),
+          trendClientId ? { clientId: trendClientId } : {},
+        ],
       },
+      orderBy: { clockInAt: 'desc' },
       select: {
         associateId: true,
         clientId: true,
@@ -1545,8 +1556,10 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
         clockOutAt: true,
         breaks: { select: { startedAt: true, endedAt: true } },
       },
-      take: 50_000,
+      take: TREND_CAP + 1,
     });
+    const trendsTruncated = fetchedEntries.length > TREND_CAP;
+    const entries = trendsTruncated ? fetchedEntries.slice(0, TREND_CAP) : fetchedEntries;
     const netMin = (e: (typeof entries)[number]): number => {
       if (!e.clockOutAt) return 0;
       let ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
@@ -1655,7 +1668,7 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
     });
     const best = Math.max(0, ...out.map((s) => s.avgMarginPerHour ?? 0));
     out.sort((a, b) => (b.avgMarginPerHour ?? -999) - (a.avgMarginPerHour ?? -999));
-    res.json({ stores: out, bestMarginPerHour: best });
+    res.json({ stores: out, bestMarginPerHour: best, truncated: trendsTruncated });
   } catch (err) {
     next(err);
   }
@@ -1689,9 +1702,12 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
     const fnClientId = clamped === null ? NO_MATCH_ID : clamped;
     const locations = await prisma.site.findMany({
       where: {
-        deletedAt: null,
-        isActive: true,
-        ...(fnClientId ? { clientId: fnClientId } : {}),
+        AND: [
+          { deletedAt: null, isActive: true, tenantId: tenantIdForWrite() },
+          fnClientId ? { clientId: fnClientId } : {},
+          // A site-scoped manager's floor is their stores only.
+          internalSites(req.user!) ?? {},
+        ],
       },
       select: {
         id: true,
@@ -1713,11 +1729,7 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
     const now = new Date();
     const [activeEntries, targets] = await Promise.all([
       prisma.timeEntry.findMany({
-        where: {
-          status: 'ACTIVE',
-          locationId: { in: ids },
-          ...scopeTimeEntries(req.user!),
-        },
+        where: { AND: [{ status: 'ACTIVE', locationId: { in: ids } }, scopeTimeEntries(req.user!)] },
         select: {
           associateId: true,
           locationId: true,
@@ -1971,21 +1983,28 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (r
     const now = new Date();
     const weekStart = startOfWeekUTC(now);
     const weekEnd = endOfWeekUTC(now);
-    const weekShifts = await prisma.shift.findMany({
+    const OT_CAP = 5000;
+    const fetchedShifts = await prisma.shift.findMany({
       where: {
-        status: 'ASSIGNED',
-        assignedAssociateId: { not: null },
-        startsAt: { gte: weekStart, lt: weekEnd },
-        ...(otClientId ? { clientId: otClientId } : {}),
+        AND: [
+          { status: 'ASSIGNED', assignedAssociateId: { not: null }, startsAt: { gte: weekStart, lt: weekEnd } },
+          { tenantId: tenantIdForWrite() },
+          // The caller's reach: a site-scoped manager sees only their stores' people.
+          scopeShifts(req.user!),
+          otClientId ? { clientId: otClientId } : {},
+        ],
       },
+      orderBy: { startsAt: 'asc' },
       select: {
         assignedAssociateId: true,
         startsAt: true,
         endsAt: true,
         client: { select: { name: true } },
       },
-      take: 5000,
+      take: OT_CAP + 1,
     });
+    const otTruncated = fetchedShifts.length > OT_CAP;
+    const weekShifts = otTruncated ? fetchedShifts.slice(0, OT_CAP) : fetchedShifts;
     const remaining = new Map<string, { min: number; clients: Set<string> }>();
     for (const s of weekShifts) {
       const from = new Date(Math.max(s.startsAt.getTime(), now.getTime()));
@@ -2070,7 +2089,7 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (r
       .filter((r) => r.projectedOtMinutes > 0)
       .sort((a, b) => b.projectedOtMinutes - a.projectedOtMinutes);
     res.json(
-      OtOutlookResponseSchema.parse({ rows, generatedAt: now.toISOString() }),
+      OtOutlookResponseSchema.parse({ rows, generatedAt: now.toISOString(), truncated: otTruncated }),
     );
   } catch (err) {
     next(err);
@@ -2332,6 +2351,11 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
       clientId = bounded;
       locationId = undefined;
     }
+    // A site-scoped office account names only a store inside its reach.
+    if (locationId && !(await siteInScope(prisma, req.user!, locationId))) {
+      res.json(AssociateListResponseSchema.parse({ associates: [] }));
+      return;
+    }
 
     // Scope the roster to the selected work-site so the grid rows + the
     // create-dialog picker show only people who actually work there. An
@@ -2397,7 +2421,8 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
     const ROSTER_PAGE = 500;
     const rows = await prisma.associate.findMany({
       // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
-      where: { AND: [where, { tenantId: tenantIdForWrite() }] },
+      // …and the caller's reach: a site-scoped manager never gets the org-wide roster.
+      where: { AND: [where, { tenantId: tenantIdForWrite() }, scopeAssociates(req.user!)] },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       select: { id: true, firstName: true, lastName: true, email: true },
       take: ROSTER_PAGE + 1,
@@ -5492,32 +5517,40 @@ schedulingRouter.get('/availability-overview', MANAGE, async (req, res, next) =>
     // Bounded roles (SHIFT_SUPERVISOR) only see their own client's people
     // in the availability heatmap.
     const availBounded = effectiveClientIdFilter(req.user!, undefined);
-    const [associates, ptoRows, exceptionRows] = await Promise.all([
-      prisma.associate.findMany({
-        where: {
-          AND: [
-            ACTIVE_ASSOCIATE_FILTER,
-            ...(availBounded !== undefined
-              ? [availBounded ? associatesOfClient(availBounded) : { id: NO_MATCH_ID }]
-              : []),
-          ],
+    const AVAIL_PAGE = 2000;
+    const fetched = await prisma.associate.findMany({
+      where: {
+        AND: [
+          ACTIVE_ASSOCIATE_FILTER,
+          { tenantId: tenantIdForWrite() },
+          // The caller's reach: a site-scoped manager sees only their sites' people.
+          scopeAssociates(req.user!),
+          ...(availBounded !== undefined
+            ? [availBounded ? associatesOfClient(availBounded) : { id: NO_MATCH_ID }]
+            : []),
+        ],
+      },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        availability: {
+          select: { dayOfWeek: true, startMinute: true, endMinute: true },
         },
-        select: {
-          id: true,
-          availability: {
-            select: { dayOfWeek: true, startMinute: true, endMinute: true },
-          },
-        },
-        take: 1000,
-      }),
+      },
+      take: AVAIL_PAGE + 1,
+    });
+    const truncated = fetched.length > AVAIL_PAGE;
+    const associates = truncated ? fetched.slice(0, AVAIL_PAGE) : fetched;
+    // Time off and exceptions for exactly these people — never a tenant-wide
+    // capped read, where someone whose row fell off the end shows as free.
+    const shownIds = associates.map((a) => a.id);
+    const [ptoRows, exceptionRows] = await Promise.all([
       prisma.timeOffRequest.findMany({
-        take: 2000,
-        where: { status: 'APPROVED', startDate: { lte: to }, endDate: { gte: from } },
+        where: { associateId: { in: shownIds }, status: 'APPROVED', startDate: { lte: to }, endDate: { gte: from } },
         select: { associateId: true, startDate: true, endDate: true },
       }),
       prisma.availabilityException.findMany({
-        take: 2000,
-        where: { date: { gte: from, lte: to } },
+        where: { associateId: { in: shownIds }, date: { gte: from, lte: to } },
         select: { associateId: true, date: true },
       }),
     ]);
@@ -5551,6 +5584,7 @@ schedulingRouter.get('/availability-overview', MANAGE, async (req, res, next) =>
           windows: a.availability,
           blockedDays: [...(blocked.get(a.id) ?? [])],
         })),
+        truncated,
       }),
     );
   } catch (err) {

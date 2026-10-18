@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { internalSites } from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
 import { z } from 'zod';
 import { ROLE_LABELS, termsIn, type Role, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -71,6 +73,17 @@ interface Asker {
   clientId: string | null;
   locationId?: string | null;
   language?: string | null;
+  /** Access pack: an office account narrowed to sites/regions (lib/scope.internalSites). */
+  scopeSiteIds?: string[];
+  scopeRegionIds?: string[];
+}
+
+/** The sites a site/region-bound office account reaches, or null when it isn't bound. */
+async function reachSiteIds(user: Asker, tenantId: string): Promise<string[] | null> {
+  const sites = internalSites(user as unknown as SessionUser);
+  if (!sites) return null;
+  const rows = await prisma.site.findMany({ where: { AND: [{ tenantId }, sites] }, select: { id: true } });
+  return rows.map((r) => r.id);
 }
 
 interface Answer {
@@ -121,10 +134,12 @@ const dayLabel = (ymd: string, lang: WaLang) =>
 /** coverage.forecast, on request: computed now, clamped to the desk's sites. */
 async function answerCoverage(user: Asker, tenantId: string, lang: WaLang, sitesNoun: string, now: Date): Promise<Answer> {
   const admin = can(user, 'manage:org');
+  // A site/region-bound office account — even one holding manage:org — sees its own sites.
+  const reach = await reachSiteIds(user, tenantId);
   const forecast = await computeCoverageForecast(prisma, now, {
     tenantId,
-    locationIds: !admin && user.locationId ? [user.locationId] : null,
-    clientId: !admin && !user.locationId ? user.clientId : null,
+    locationIds: reach ?? (!admin && user.locationId ? [user.locationId] : null),
+    clientId: !reach && !admin && !user.locationId ? user.clientId : null,
   });
   if (!forecast.length) return { reply: WA_REPLY.coverageNoTargets(lang, sitesNoun), linkUrl: null };
   const short = forecast
@@ -142,7 +157,10 @@ async function answerDesk(user: Asker, tenantId: string, lang: WaLang): Promise<
   const lines: string[] = [];
   let n = 0;
   if (can(user, 'manage:scheduling')) {
-    const fills = await pendingDeskShiftFills(prisma, tenantId, { clientId: user.clientId, locationId: user.locationId ?? null });
+    // A site/region-bound office account counts the fills at its own sites, never the whole tenant.
+    const reach = await reachSiteIds(user, tenantId);
+    const all = await pendingDeskShiftFills(prisma, tenantId, { clientId: user.clientId, locationId: user.locationId ?? null });
+    const fills = reach ? all.filter((f) => f.shift?.locationId && reach.includes(f.shift.locationId)) : all;
     n += fills.length;
     lines.push(...fills.slice(0, 4).map((f) => `• ${f.summary}`));
   }

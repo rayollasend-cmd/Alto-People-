@@ -247,8 +247,8 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
           <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search associate…"
-            aria-label="Search reviews by associate"
+            placeholder="Search by name…"
+            aria-label="Search reviews by name"
           />
         </div>
         <Button

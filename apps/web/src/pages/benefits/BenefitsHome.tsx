@@ -133,7 +133,7 @@ export function BenefitsHome() {
       <div className="mx-auto">
         <PageHeader
           title="Benefits"
-          subtitle="Benefits enrollment is for associates. This account isn't linked to one."
+          subtitle="Benefits enrollment belongs to a person record, and this account isn't linked to one."
           secondaryActions={lifecycleLink}
         />
       </div>

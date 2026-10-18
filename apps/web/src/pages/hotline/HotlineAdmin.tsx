@@ -32,7 +32,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
@@ -75,6 +75,7 @@ export const hotlineKeys = {
 };
 
 export function HotlineAdmin() {
+  const term = useTerm();
   const [statusFilter, setStatusFilter] = useState<ReportStatus | 'ALL'>(
     'RECEIVED',
   );
@@ -150,9 +151,9 @@ export function HotlineAdmin() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="space-y-5"
-        title="Hotline queue"
+        title="Hotline reports"
         subtitle="Anonymous reports filed via the public reporting page. Reporters see only your visible replies — internal notes stay HR-only."
-        breadcrumbs={[{ label: 'Compliance' }, { label: 'Hotline' }]}
+        breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Hotline reports' }]}
     >
 
       {summary && (

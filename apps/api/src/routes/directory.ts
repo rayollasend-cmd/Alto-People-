@@ -9,7 +9,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { activeAssociateIds } from '../lib/activeDefinition.js';
-import { atClient, scopeAssociates } from '../lib/scope.js';
+import { atClient, scopeAssociates, scopeWhere } from '../lib/scope.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { computePercent } from '../lib/checklist.js';
@@ -293,33 +293,28 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       ...(filters.cursor
         ? { cursor: { id: filters.cursor }, skip: 1 }
         : {}),
-      where: {
-        deletedAt: null,
-        tenantId: tenantIdForWrite(),
+      // AND, never spread: the store filter and the caller's scope both
+      // constrain `assignments`, and a search and the client filter both use
+      // `OR` — spread, the later one silently replaced the earlier (a
+      // site-bound lead could list any store; a search dropped the client).
+      where: scopeWhere<Prisma.AssociateWhereInput>(
+        { deletedAt: null, tenantId: tenantIdForWrite() },
         // Access pack: an internal role narrowed to sites/regions lists its people only.
-        ...scopeAssociates(req.user!),
-        ...(filters.employmentType ? { employmentType: filters.employmentType } : {}),
-        ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
-        ...(filters.locationId
-          ? {
-              assignments: {
-                some: { endedAt: null, locationId: filters.locationId },
-              },
-            }
-          : {}),
+        scopeAssociates(req.user!),
+        !!filters.employmentType && { employmentType: filters.employmentType },
+        !!filters.departmentId && { departmentId: filters.departmentId },
+        !!filters.locationId && { assignments: { some: { endedAt: null, locationId: filters.locationId } } },
         // Where they work now (a transfer moves them), else — nobody
         // placed yet — the client they applied to (lib/scope.atClient).
-        ...(filters.clientId ? atClient(filters.clientId) : {}),
-        ...(filters.q
-          ? {
-              OR: [
-                { firstName: { contains: filters.q, mode: 'insensitive' } },
-                { lastName: { contains: filters.q, mode: 'insensitive' } },
-                { email: { contains: filters.q, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
+        !!filters.clientId && atClient(filters.clientId),
+        !!filters.q && {
+          OR: [
+            { firstName: { contains: filters.q, mode: 'insensitive' } },
+            { lastName: { contains: filters.q, mode: 'insensitive' } },
+            { email: { contains: filters.q, mode: 'insensitive' } },
+          ],
+        },
+      ),
       select: DIRECTORY_SELECT,
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     });
@@ -365,7 +360,9 @@ directoryRouter.get('/directory/:id', VIEW, async (req, res, next) => {
     const id = z.string().uuid().safeParse(req.params.id);
     const row = id.success
       ? await prisma.associate.findFirst({
-          where: { id: id.data, deletedAt: null },
+          // Within the caller's tenant and reach: a site-bound lead can't open
+          // someone at another site by pasting their id.
+          where: scopeWhere<Prisma.AssociateWhereInput>({ id: id.data, deletedAt: null, tenantId: tenantIdForWrite() }, scopeAssociates(req.user!)),
           select: DIRECTORY_SELECT,
         })
       : null;

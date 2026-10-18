@@ -44,6 +44,9 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
         'headcount',
         'reports',
         'internal-jobs',
+        // The staffing plan — heads required vs placed per store and week —
+        // is the demand a recruiter hires against.
+        'headcount-plan',
       ]),
     );
   });
@@ -136,6 +139,7 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
         'agreements',
         'learning',
         'rides',
+        'celebrations', // their crew's birthdays and anniversaries
       ]),
     );
   });

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
 
 /**
  * Phase 111 — Skills & competencies.
@@ -36,10 +38,9 @@ const LEVEL_RANK: Record<typeof LEVELS[number], number> = {
 skills111Router.get('/skills', VIEW, async (req, res) => {
   const q = z.string().max(200).optional().parse(req.query.q);
   const rows = await prisma.skill.findMany({
-    where: q
-      ? { name: { contains: q, mode: 'insensitive' } }
-      : undefined,
-    include: { _count: { select: { associateSkills: true } } },
+    where: { tenantId: tenantIdForWrite(), ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}) },
+    // Counted over the active people in the caller's reach.
+    include: { _count: { select: { associateSkills: { where: { associate: { is: scopeActiveAssociates(req.user!) } } } } } },
     orderBy: { name: 'asc' },
     take: 200,
   });
@@ -136,7 +137,13 @@ skills111Router.post(
 );
 
 skills111Router.delete('/associate-skills/:id', MANAGE, async (req, res) => {
-  await prisma.associateSkill.delete({ where: { id: req.params.id } });
+  // Only a skill on someone in the caller's tenant and reach.
+  const row = await prisma.associateSkill.findFirst({
+    where: { id: String(req.params.id), associate: { is: scopeActiveAssociates(req.user!, { former: true }) } },
+    select: { id: true },
+  });
+  if (!row) throw new HttpError(404, 'not_found', 'Skill not found.');
+  await prisma.associateSkill.delete({ where: { id: row.id } });
   res.status(204).end();
 });
 
@@ -151,7 +158,8 @@ skills111Router.get('/associate-skills', VIEW, async (req, res) => {
   }
   const rows = await prisma.associateSkill.findMany({
     take: 500,
-    where: { associateId },
+    // Someone in the caller's tenant and reach (former people's skills still read on their record).
+    where: { associateId, associate: { is: scopeActiveAssociates(req.user!, { former: true }) } },
     include: {
       skill: { select: { id: true, name: true, category: true } },
       verifiedBy: { select: { email: true } },
@@ -178,9 +186,16 @@ skills111Router.get('/associate-skills', VIEW, async (req, res) => {
 skills111Router.get('/skills/search', VIEW, async (req, res) => {
   const q = z.string().min(1).parse(req.query.q ?? '');
   const minLevel = z.enum(LEVELS).optional().parse(req.query.minLevel);
+  // Staffing filters: only people placed at this client or store now.
+  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const locationId = z.string().uuid().optional().parse(req.query.locationId);
+  const placedAt: Prisma.AssociateWhereInput =
+    locationId || clientId
+      ? { assignments: { some: { endedAt: null, ...(locationId ? { locationId } : { location: { is: { clientId } } }) } } }
+      : {};
   const minRank = minLevel ? LEVEL_RANK[minLevel] : 1;
   const matches = await prisma.skill.findMany({
-    where: { name: { contains: q, mode: 'insensitive' } },
+    where: { tenantId: tenantIdForWrite(), name: { contains: q, mode: 'insensitive' } },
     select: { id: true, name: true },
     take: 5,
   });
@@ -189,29 +204,75 @@ skills111Router.get('/skills/search', VIEW, async (req, res) => {
     return;
   }
   const skillIds = matches.map((s) => s.id);
-  const claims = await prisma.associateSkill.findMany({
+  // The level and the person filter run in the query, before the cap — filtering
+  // after it used to return fewer people than there were. Active people in reach only.
+  const filtered = await prisma.associateSkill.findMany({
     where: {
       skillId: { in: skillIds },
-      // Filter by min level via raw rank — Prisma can't compare enums
-      // directly, so we filter in JS after. The cardinality is small.
+      level: { in: LEVELS.filter((l) => LEVEL_RANK[l] >= minRank) },
+      associate: { is: { AND: [scopeActiveAssociates(req.user!), placedAt] } },
     },
     include: {
       associate: {
-        select: { id: true, firstName: true, lastName: true, email: true, deletedAt: true },
+        select: { id: true, firstName: true, lastName: true, email: true },
       },
       skill: { select: { name: true } },
     },
     orderBy: { level: 'desc' },
     take: 200,
   });
-  const filtered = claims.filter(
-    (c) =>
-      c.associate.deletedAt === null &&
-      LEVEL_RANK[c.level as typeof LEVELS[number]] >= minRank,
-  );
+  // What a staffer needs beside the level: where they work now, the next
+  // day they're free, and the certifications they hold.
+  const ids = [...new Set(filtered.map((c) => c.associate.id))];
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const horizon = new Date(today.getTime() + 14 * 86_400_000);
+  const [placements, shifts, leave, quals] = ids.length
+    ? await Promise.all([
+        prisma.associateAssignment.findMany({
+          where: { associateId: { in: ids }, endedAt: null },
+          orderBy: { startedAt: 'desc' },
+          select: { associateId: true, location: { select: { id: true, name: true, client: { select: { name: true } } } } },
+        }),
+        prisma.shift.findMany({
+          where: { assignedAssociateId: { in: ids }, status: { not: 'CANCELLED' }, startsAt: { gte: today, lt: horizon } },
+          select: { assignedAssociateId: true, startsAt: true },
+        }),
+        prisma.timeOffRequest.findMany({
+          where: { associateId: { in: ids }, status: 'APPROVED', endDate: { gte: today }, startDate: { lt: horizon } },
+          select: { associateId: true, startDate: true, endDate: true },
+        }),
+        prisma.associateQualification.findMany({
+          where: { associateId: { in: ids }, deletedAt: null, qualification: { deletedAt: null }, OR: [{ expiresAt: null }, { expiresAt: { gt: today } }] },
+          select: { associateId: true, expiresAt: true, qualification: { select: { name: true, isCert: true } } },
+        }),
+      ])
+    : [[], [], [], []];
+  const placeOf = new Map<string, { locationId: string; siteName: string; clientName: string | null }>();
+  for (const p of placements) {
+    if (!placeOf.has(p.associateId)) placeOf.set(p.associateId, { locationId: p.location.id, siteName: p.location.name, clientName: p.location.client?.name ?? null });
+  }
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const nextFree = (id: string): string | null => {
+    const busy = new Set(shifts.filter((x) => x.assignedAssociateId === id).map((x) => ymd(x.startsAt)));
+    const away = leave.filter((l) => l.associateId === id);
+    for (let i = 0; i < 14; i++) {
+      const day = new Date(today.getTime() + i * 86_400_000);
+      const key = ymd(day);
+      if (busy.has(key)) continue;
+      if (away.some((l) => ymd(l.startDate) <= key && key <= ymd(l.endDate))) continue;
+      return key;
+    }
+    return null;
+  };
   res.json({
     skills: matches,
     associates: filtered.map((c) => ({
+      place: placeOf.get(c.associate.id) ?? null,
+      nextFreeDay: nextFree(c.associate.id),
+      certifications: quals
+        .filter((qq) => qq.associateId === c.associate.id)
+        .map((qq) => ({ name: qq.qualification.name, isCert: qq.qualification.isCert, expiresAt: qq.expiresAt ? ymd(qq.expiresAt) : null })),
       associateId: c.associate.id,
       name: `${c.associate.firstName} ${c.associate.lastName}`,
       email: c.associate.email,

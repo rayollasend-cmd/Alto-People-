@@ -398,8 +398,9 @@ export function laborCosts(params: {
 }
 
 /** Every in-scope store with its current expected floor headcount. */
-export function listStaffingTargets(): Promise<StaffingTargetsResponse> {
-  return apiFetch<StaffingTargetsResponse>('/scheduling/staffing-targets');
+export function listStaffingTargets(clientId?: string | null): Promise<StaffingTargetsResponse> {
+  // The server narrows by client (and the caller's reach) before it caps the list.
+  return apiFetch<StaffingTargetsResponse>(`/scheduling/staffing-targets${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`);
 }
 
 /** Record a new effective-dated target — history is never edited. */
@@ -490,13 +491,24 @@ export function moveRosterRow(
   });
 }
 
-export function floorNow(): Promise<FloorNowResponse> {
-  return apiFetch<FloorNowResponse>('/scheduling/floor-now');
+export function floorNow(clientId?: string | null): Promise<FloorNowResponse> {
+  return apiFetch<FloorNowResponse>(`/scheduling/floor-now${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`);
 }
 
 /** Everyone projected past 40h this week, by name — the OT radar's list. */
-export function otOutlook(): Promise<OtOutlookResponse> {
-  return apiFetch<OtOutlookResponse>('/scheduling/ot-outlook');
+export function otOutlook(clientId?: string | null): Promise<OtOutlookResponse> {
+  return apiFetch<OtOutlookResponse>(`/scheduling/ot-outlook${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`);
+}
+
+export interface StoreTrendsResponse<T> {
+  stores: T[];
+  bestMarginPerHour: number;
+  truncated?: boolean;
+}
+
+/** Four weeks of hours and margin per store — narrowed server-side by client. */
+export function storeTrends<T>(clientId?: string | null): Promise<StoreTrendsResponse<T>> {
+  return apiFetch<StoreTrendsResponse<T>>(`/scheduling/store-trends${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`);
 }
 
 /** Delete exact-twin DRAFT shifts in the window, keeping the oldest of

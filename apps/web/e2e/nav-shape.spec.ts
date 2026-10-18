@@ -70,7 +70,7 @@ test('an HR administrator sees a short rail of doors, and a door opens to its pa
 
   // The door holding the current page (People) is open; its pages show.
   await expect(nav.getByRole('button', { name: /hide people pages/i })).toBeVisible();
-  await expect(nav.getByRole('link', { name: /^reporting chart$/i })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /^org chart$/i })).toBeVisible();
 
   // Another door is closed, carries its waiting count, and opens on the chevron.
   const timeToggle = nav.getByRole('button', { name: /show time & scheduling pages/i });

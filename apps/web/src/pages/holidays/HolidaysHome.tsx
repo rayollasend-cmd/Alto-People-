@@ -256,9 +256,9 @@ export function HolidaysHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="space-y-5"
-        title="Holiday calendar"
-        subtitle="Federal, state, company, and client-specific holidays. Pay multipliers and shift planning use this list."
-        breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Holidays' }]}
+        title="Holidays"
+        subtitle="Federal, state, company, and site-specific holidays. Pay multipliers and shift planning use this list."
+        breadcrumbs={[{ label: 'Time & scheduling' }, { label: 'Holidays' }]}
     >
 
       <div className="flex flex-wrap items-center justify-between gap-3">

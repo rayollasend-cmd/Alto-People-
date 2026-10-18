@@ -520,6 +520,17 @@ async function fieldChart(
       }),
     );
   }
+  // An empty region still belongs on the chart — it's where stores get moved to.
+  // Only for someone who sees the whole field (no client filter, no site binding).
+  if (!opts.clientId && !reach && !(user.clientId && (user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR' || user.role === 'CLIENT_PORTAL'))) {
+    const empty = await prisma.region.findMany({
+      where: { tenantId, deletedAt: null, id: { notIn: [...regions.keys()] } },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      take: 500,
+    });
+    for (const r of empty) nodes.push(blank({ id: `r:${r.id}`, kind: 'region', name: r.name, subtitle: 'Region' }));
+  }
   if (unplacedCount > 0) {
     nodes.push(blank({ id: UNPLACED, kind: 'group', name: 'Not yet placed', subtitle: 'No open assignment anywhere', reports: unplacedCount }));
     for (const a of unplaced) {

@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { ROLE_LABELS } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { scopeAssociatesIncludingFormer } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -39,6 +42,9 @@ const KIND = z.enum([
 
 // ----- List ----------------------------------------------------------------
 
+/** Rows a discipline list draws per page. */
+const ACTION_PAGE = 100;
+
 discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const status = z
@@ -47,13 +53,21 @@ discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
     .parse(req.query.status);
   const kind = KIND.optional().parse(req.query.kind);
 
-  const rows = await prisma.disciplinaryAction.findMany({
-    take: 100,
-    where: {
-      ...(associateId ? { associateId } : {}),
-      ...(status ? { status } : {}),
-      ...(kind ? { kind } : {}),
-    },
+  const page = z.coerce.number().int().min(0).max(10_000).default(0).parse(req.query.page);
+  const where: Prisma.DisciplinaryActionWhereInput = {
+    AND: [
+      // This tenant's, for people (current or former) inside the caller's reach.
+      { tenantId: tenantIdForWrite(), associate: scopeAssociatesIncludingFormer(req.user!) },
+      associateId ? { associateId } : {},
+      status ? { status } : {},
+      kind ? { kind } : {},
+    ],
+  };
+  const [rows, total] = await Promise.all([
+    prisma.disciplinaryAction.findMany({
+    take: ACTION_PAGE,
+    skip: page * ACTION_PAGE,
+    where,
     include: {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -61,9 +75,14 @@ discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
       issuedBy: { select: { email: true } },
       rescindedBy: { select: { email: true } },
     },
-    orderBy: { effectiveDate: 'desc' },
-  });
+    orderBy: [{ effectiveDate: 'desc' }, { id: 'asc' }],
+    }),
+    prisma.disciplinaryAction.count({ where }),
+  ]);
   res.json({
+    total,
+    page,
+    hasMore: (page + 1) * ACTION_PAGE < total,
     actions: rows.map((a) => ({
       id: a.id,
       associateId: a.associateId,

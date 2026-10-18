@@ -31,7 +31,7 @@ import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
-import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
+import { associatesOfClient, effectiveClientIdFilter, internalSites, scopeAssociates } from '../lib/scope.js';
 import { EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { notifyClockOutEarnings } from '../lib/associateEarnings.js';
@@ -120,9 +120,17 @@ function nextTokenExpiry(now: Date = new Date()): Date {
 kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
   const requested = z.string().uuid().optional().parse(req.query.clientId);
   const clientId = kioskClientClamp(req.user!, requested);
+  const deviceReach = internalSites(req.user!);
   const rows = await prisma.kioskDevice.findMany({
     take: 500,
-    where: { ...(clientId ? { clientId } : {}) },
+    // This tenant's kiosks, at the stores inside the caller's reach.
+    where: {
+      AND: [
+        { tenantId: tenantIdForWrite() },
+        clientId ? { clientId } : {},
+        deviceReach ? { location: { is: deviceReach } } : {},
+      ],
+    },
     include: {
       client: { select: { name: true } },
       location: { select: { name: true } },
@@ -323,8 +331,13 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   const rows = await prisma.kioskPin.findMany({
     take: 1000,
     where: {
-      ...(associateId ? { associateId } : clientId ? { clientId } : {}),
-      ...(associateId && clientId ? { clientId } : {}),
+      AND: [
+        associateId ? { associateId } : clientId ? { clientId } : {},
+        associateId && clientId ? { clientId } : {},
+        // Decrypted numbers: this tenant's people inside the caller's reach only.
+        { tenantId: tenantIdForWrite() },
+        { associate: { is: scopeAssociates(req.user!) } },
+      ],
     },
     include: {
       associate: {
@@ -1011,6 +1024,9 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
             ],
           },
           ...(diagnoseSearchClamp ? [associatesOfClient(diagnoseSearchClamp)] : []),
+          // This tenant's people still on file, inside the caller's reach.
+          { tenantId: tenantIdForWrite(), deletedAt: null },
+          scopeAssociates(req.user!),
         ],
       },
       select: { id: true, firstName: true, lastName: true, email: true },
@@ -1065,6 +1081,16 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
   const diagnoseClamp = kioskClientClamp(req.user!);
   if (pin && diagnoseClamp && pin.clientId !== diagnoseClamp) {
     pin = null;
+  }
+  // …and the person behind the number must be this tenant's and inside the
+  // caller's reach — a decrypted number is never shown to anyone who
+  // couldn't open that person anyway.
+  if (pin) {
+    const holder = await prisma.associate.findFirst({
+      where: { AND: [{ id: pin.associateId, tenantId: tenantIdForWrite(), deletedAt: null }, scopeAssociates(req.user!)] },
+      select: { id: true },
+    });
+    if (!holder) pin = null;
   }
 
   if (!pin) {
@@ -1239,7 +1265,11 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   const dir: Prisma.SortOrder = sort === 'oldest' ? 'asc' : 'desc';
   // Bounded roles only see punches from their own client's devices.
   const punchClamp = kioskClientClamp(req.user!);
+  const punchReach = internalSites(req.user!);
   const where: Prisma.KioskPunchWhereInput = {
+    // This tenant's punches, from kiosks at stores inside the caller's reach.
+    tenantId: tenantIdForWrite(),
+    ...(punchReach ? { AND: [{ device: { is: { location: { is: punchReach } } } }] } : {}),
     ...(punchClamp ? { device: { is: { clientId: punchClamp } } } : {}),
     ...(associateId ? { associateId } : {}),
     ...(deviceId ? { kioskDeviceId: deviceId } : {}),
@@ -1492,7 +1522,13 @@ kiosk99Router.get('/kiosk-face-references', MANAGE, async (req, res) => {
   const faceClamp = kioskClientClamp(req.user!);
   const rows = await prisma.kioskFaceReference.findMany({
     take: 500,
-    where: faceClamp ? { associate: { is: associatesOfClient(faceClamp) } } : {},
+    where: {
+      AND: [
+        { tenantId: tenantIdForWrite() },
+        faceClamp ? { associate: { is: associatesOfClient(faceClamp) } } : {},
+        { associate: { is: scopeAssociates(req.user!) } },
+      ],
+    },
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
     },

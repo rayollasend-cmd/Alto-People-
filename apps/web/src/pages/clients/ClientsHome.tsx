@@ -21,7 +21,7 @@ import { fmtDate, fmtRelativeDate, ymdLocal } from '@/lib/format';
 // Org-week helper — despite the name it starts weeks on SATURDAY, the
 // Sat→Fri week every payroll/report surface runs on.
 import { startOfWeekMonday } from '@/pages/scheduling/WeekCalendarView';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { StatusBadge } from '@/lib/status';
 import { Avatar } from '@/components/ui/Avatar';
@@ -68,6 +68,7 @@ export function serviceReportWeekOptions(): Array<{ value: string; label: string
 }
 
 export function ClientsHome() {
+  const term = useTerm();
   const { can } = useAuth();
   const canManage = can('manage:clients');
   // The weekly service-report endpoint is billing-gated; the button only
@@ -205,7 +206,7 @@ export function ClientsHome() {
         className="mx-auto"
         title="Clients"
         subtitle="Configure work-site state, geofence, and per-client jobs."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Clients' }]}
+        breadcrumbs={[{ label: term('nav.clients') }]}
         secondaryActions={
           canReport ? (
             <Button asChild variant="outline">

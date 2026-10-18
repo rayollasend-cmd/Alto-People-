@@ -6,7 +6,7 @@ import { SITE_TYPES, SUPPORTED_TIMEZONES, type SiteType } from '@alto-people/sha
 import { ApiError } from '@/lib/api';
 import { Link } from 'react-router-dom';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
-import { ORG_UNIT_TYPE_LABEL, SITE_TYPE_LABEL, createSite, listOrgUnits, listSites, unitDepth, updateSite, type OrgUnitRow, type SiteRow, type SiteUpdateInput } from '@/lib/orgApi';
+import { ORG_UNIT_TYPE_LABEL, SITE_TYPE_LABEL, createSite, listSites, updateSite, type SiteRow, type SiteUpdateInput } from '@/lib/orgApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
@@ -19,9 +19,12 @@ import { Select } from '@/components/ui/Select';
 
 /**
  * Sites (Brief 2-1b steps 6–7): every place work happens, whatever the
- * tenant calls it. A direct employer adds a property, an office or a
- * warehouse here with no customer anywhere; a staffing tenant's stores
- * still arrive through the customer record and appear here read-only.
+ * tenant calls it — the list layout of the same structure the Org chart's
+ * field view draws (region → client → place). A direct employer adds a
+ * property, an office or a warehouse here; a client's stores arrive through
+ * the client record and are read-only here (the server refuses identity
+ * edits to them). Which region and cost center a place sits in is set in
+ * the Org chart, through the one placement rule.
  */
 export function SitesAdmin() {
   const { can } = useAuth();
@@ -30,8 +33,27 @@ export function SitesAdmin() {
   const canManage = can('manage:org');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<SiteRow | null>(null);
+  const [region, setRegion] = useState<string>('');
   const query = useQuery({ queryKey: ['org', 'sites'], queryFn: listSites });
-  const rows = useMemo(() => (query.data?.sites ?? []).filter((s): s is SiteRow => !!s && typeof s.id === 'string'), [query.data]);
+  const all = useMemo(() => (query.data?.sites ?? []).filter((s): s is SiteRow => !!s && typeof s.id === 'string'), [query.data]);
+  // Grouped the way the business runs: region, then client, then name.
+  const regions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of all) if (r.regionId && r.regionName) m.set(r.regionId, r.regionName);
+    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [all]);
+  const rows = useMemo(
+    () =>
+      all
+        .filter((r) => !region || (region === 'none' ? !r.regionId : r.regionId === region))
+        .sort(
+          (a, b) =>
+            (a.regionName ?? '\uffff').localeCompare(b.regionName ?? '\uffff') ||
+            (a.clientName ?? '').localeCompare(b.clientName ?? '') ||
+            a.name.localeCompare(b.name),
+        ),
+    [all, region],
+  );
   const sitesNoun = term('sites');
   const siteNoun = term('site');
   const clientNoun = term('label.client');
@@ -45,7 +67,12 @@ export function SitesAdmin() {
       primary: true,
       cell: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-white">{r.name}</span>
+          <span className="text-ink">{r.name}</span>
+          {r.clientId && (
+            <Badge variant="outline" size="sm" withDot={false}>
+              {clientNoun}’s
+            </Badge>
+          )}
           {!r.isActive && (
             <Badge variant="default" size="sm" withDot={false}>
               Inactive
@@ -57,29 +84,31 @@ export function SitesAdmin() {
     { key: 'type', header: 'Type', accessor: (r) => SITE_TYPE_LABEL[r.type] ?? r.type, sortable: true, cardMeta: true, className: 'text-xs' },
     { key: 'timezone', header: 'Time zone', accessor: (r) => r.timezone, className: 'text-xs text-silver' },
     { key: 'state', header: 'State', accessor: (r) => r.state ?? '—', sortable: true, className: 'text-xs' },
+    { key: 'region', header: 'Region', accessor: (r) => r.regionName ?? '—', sortable: true, cardMeta: true, className: 'text-xs' },
+    ...(moduleOn('clientPortal') ? [{ key: 'client', header: clientNoun, accessor: (r: SiteRow) => r.clientName ?? '—', sortable: true, cardMeta: true, className: 'text-xs' } satisfies GridColumn<SiteRow>] : []),
     {
       key: 'unit',
-      header: 'Unit',
-      accessor: (r) => r.orgUnitName ?? '—',
+      header: 'Cost center',
+      // A pin to the region's own unit is "no cost center", not a cost center named after the region.
+      accessor: (r) => (r.orgUnitType && r.orgUnitType !== 'REGION' ? (r.orgUnitName ?? '') : ''),
       sortable: true,
       cell: (r) =>
-        r.orgUnitName ? (
+        r.orgUnitName && r.orgUnitType !== 'REGION' ? (
           <span className="text-xs">
             {r.orgUnitName}
-            {r.orgUnitType ? <span className="text-silver"> · {ORG_UNIT_TYPE_LABEL[r.orgUnitType]}</span> : null}
+            {r.orgUnitType ? <span className="text-ink-muted"> · {ORG_UNIT_TYPE_LABEL[r.orgUnitType]}</span> : null}
           </span>
         ) : (
-          <span className="text-xs text-silver">—</span>
+          <span className="text-xs text-ink-muted">—</span>
         ),
     },
-    ...(moduleOn('clientPortal') ? [{ key: 'client', header: clientNoun, accessor: (r: SiteRow) => r.clientName ?? '—', className: 'text-xs' } satisfies GridColumn<SiteRow>] : []),
   ];
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHeader
         title={sitesNoun}
-        subtitle={`Every place work happens: its time zone, its state for tax and overtime, and the unit of the organizational tree it belongs to.`}
+        subtitle={`Every place work happens: its time zone and its state for tax and overtime. Regions and cost centers are set in the Org chart.`}
         breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: sitesNoun }]}
         primaryAction={
           canManage ? (
@@ -91,6 +120,23 @@ export function SitesAdmin() {
         }
       />
       {query.isError ? <QueryError what={sitesNoun.toLowerCase()} query={query} /> : null}
+      <div className="flex flex-wrap items-center gap-3">
+        <label htmlFor="sites-region" className="text-sm text-ink-muted">
+          Region
+        </label>
+        <Select id="sites-region" size="sm" value={region} onChange={(e) => setRegion(e.target.value)}>
+          <option value="">Every region</option>
+          {regions.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
+            </option>
+          ))}
+          <option value="none">No region</option>
+        </Select>
+        <Link to="/org/chart?view=field" className="text-sm text-accent underline-offset-2 hover:underline">
+          Arrange regions in the Org chart
+        </Link>
+      </div>
       <DataGrid<SiteRow>
         id="sites"
         caption={sitesNoun}
@@ -99,14 +145,14 @@ export function SitesAdmin() {
         rowKey={(r) => r.id}
         loading={query.isPending}
         urlState={false}
-        exportCsv={false}
+        exportCsv={{ filename: 'sites' }}
         search={{ placeholder: `Search ${sitesNoun.toLowerCase()}` }}
         empty={{ icon: Building2, title: `No ${sitesNoun.toLowerCase()} yet`, description: `Add the first ${siteNoun.toLowerCase()} to schedule shifts and pin people to it.` }}
-        onRowClick={canManage ? (r) => setEditing(r) : undefined}
+        onRowClick={(r) => setEditing(r)}
         rowActionLabel={(r) => `Edit ${r.name}`}
       />
       {adding && <SiteDialog onClose={() => setAdding(false)} />}
-      {editing && <SiteDialog site={editing} onClose={() => setEditing(null)} />}
+      {editing && (editing.clientId || !canManage ? <SiteReadOnly site={editing} onClose={() => setEditing(null)} /> : <SiteDialog site={editing} onClose={() => setEditing(null)} />)}
     </div>
   );
 }
@@ -117,12 +163,10 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
   const qc = useQueryClient();
   const term = useTerm();
   const siteNoun = term('site');
-  const units = useQuery({ queryKey: ['org', 'units'], queryFn: listOrgUnits });
-  const unitRows = useMemo(() => (units.data?.units ?? []).filter((u): u is OrgUnitRow => !!u && typeof u.id === 'string'), [units.data]);
   const [name, setName] = useState(site?.name ?? '');
-  const [type, setType] = useState<SiteType>(site?.type ?? 'PROPERTY');
+  // A workforce provider's places are stores; a direct employer's are properties.
+  const [type, setType] = useState<SiteType>(site?.type ?? (moduleOn('clientPortal') ? 'STORE' : 'PROPERTY'));
   const [timezone, setTimezone] = useState<string>(site?.timezone ?? 'America/New_York');
-  const [orgUnitId, setOrgUnitId] = useState(site?.orgUnitId ?? '');
   const [isActive, setIsActive] = useState(site?.isActive ?? true);
   const [line1, setLine1] = useState('');
   const [line2, setLine2] = useState('');
@@ -137,12 +181,11 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
     if (name.trim() !== site.name) out.name = name.trim();
     if (type !== site.type) out.type = type;
     if (timezone !== site.timezone) out.timezone = timezone;
-    if ((orgUnitId || null) !== site.orgUnitId) out.orgUnitId = orgUnitId || null;
     if (stateValue !== site.state) out.state = stateValue;
     if (isActive !== site.isActive) out.isActive = isActive;
     return out;
   };
-  const dirty = () => (site ? Object.keys(changes()).length > 0 : name !== '' || line1 !== '' || city !== '' || orgUnitId !== '');
+  const dirty = () => (site ? Object.keys(changes()).length > 0 : name !== '' || line1 !== '' || city !== '');
   const save = useMutation({
     mutationFn: () =>
       site
@@ -151,7 +194,6 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
             name: name.trim(),
             type,
             timezone,
-            orgUnitId: orgUnitId || null,
             addressLine1: line1.trim() || null,
             addressLine2: line2.trim() || null,
             city: city.trim() || null,
@@ -199,19 +241,15 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
               )}
             </Field>
           </div>
-          <Field label="Unit" hint="Where it sits in the organizational tree. Blank leaves it unpinned.">
-            {(p) => (
-              <Select {...p} value={orgUnitId} onChange={(e) => setOrgUnitId(e.target.value)} disabled={units.isPending}>
-                <option value="">— not pinned —</option>
-                {unitRows.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {' '.repeat(unitDepth(u.path) * 3)}
-                    {u.name} ({ORG_UNIT_TYPE_LABEL[u.type]})
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
+          {site && (
+            <p className="text-xs text-ink-muted">
+              {site.regionName ? `In ${site.regionName}` : 'In no region'}
+              {site.orgUnitName && site.orgUnitType !== 'REGION' ? ` · costed to ${site.orgUnitName}` : ''}.{' '}
+              <Link to="/org/chart?view=field" className="text-accent underline-offset-2 hover:underline">
+                Change in the Org chart
+              </Link>
+            </p>
+          )}
           {site ? (
             <div className="grid grid-cols-2 gap-3">
               <Field label="State" hint="Two letters.">
@@ -219,7 +257,7 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
               </Field>
               <Field label="Status" hint="Inactive keeps the history and takes it off the pickers.">
                 {(p) => (
-                  <div className="flex min-h-11 items-center gap-2 text-sm text-white">
+                  <div className="flex min-h-11 items-center gap-2 text-sm text-ink">
                     <input {...p} type="checkbox" className="h-4 w-4" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
                     <span aria-hidden="true">{isActive ? 'Active' : 'Inactive'}</span>
                   </div>
@@ -252,6 +290,45 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
           <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!valid || save.isPending}>
             {site ? 'Save changes' : `Add ${siteNoun.toLowerCase()}`}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A client's store (or any place, for someone who can't edit): what it is, and where to change it. */
+function SiteReadOnly({ site, onClose }: { site: SiteRow; onClose: () => void }) {
+  const term = useTerm();
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{site.name}</DialogTitle>
+          <DialogDescription>
+            {site.clientName
+              ? `This ${term('label.store').toLowerCase()} belongs to ${site.clientName}: its name, address and hours change on the ${term('label.client').toLowerCase()}’s page.`
+              : `Ask someone who manages the organization to change this ${term('site').toLowerCase()}.`}
+          </DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-ink-muted">Type</dt>
+          <dd className="text-ink">{SITE_TYPE_LABEL[site.type] ?? site.type}</dd>
+          <dt className="text-ink-muted">Time zone</dt>
+          <dd className="text-ink">{site.timezone}</dd>
+          <dt className="text-ink-muted">Region</dt>
+          <dd className="text-ink">{site.regionName ?? 'None'}</dd>
+          <dt className="text-ink-muted">Cost center</dt>
+          <dd className="text-ink">{site.orgUnitName && site.orgUnitType !== 'REGION' ? site.orgUnitName : 'None'}</dd>
+        </dl>
+        <DialogFooter>
+          <Button asChild variant="ghost">
+            <Link to="/org/chart?view=field">Place it in the Org chart</Link>
+          </Button>
+          {site.clientId && (
+            <Button asChild>
+              <Link to={`/clients/${site.clientId}`}>Edit in {site.clientName}</Link>
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

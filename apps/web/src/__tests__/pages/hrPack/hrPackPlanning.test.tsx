@@ -38,7 +38,8 @@ describe('headcount plan', () => {
       departments: [{ departmentId: 'd1', departmentName: 'Housekeeping', positions: 1, filled: 1, budget: 40000, projected: 41600, paidYearToDate: 30000, unbudgeted: 0, variance: -1600 }],
       totals: { positions: 1, filled: 1, budget: 40000, projected: 41600, paidYearToDate: 30000, unbudgeted: 0, variance: -1600 },
     });
-    renderAs('HR_ADMINISTRATOR', <HeadcountPlan />);
+    // The office seats are the plan's second tab; staffing leads.
+    renderAs('HR_ADMINISTRATOR', <HeadcountPlan />, '/headcount/plan?tab=office');
     expect((await screen.findAllByText('Room attendant')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('−$1,600.00').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Housekeeping').length).toBeGreaterThan(0);

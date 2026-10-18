@@ -2,7 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability, requireAnyCapability } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { scopeAssociates } from '../lib/scope.js';
+import { FIELD_LADDER_FAMILY, FIELD_LADDER_TEMPLATE, careerPositionFor } from '../lib/careerPosition.js';
 
 /**
  * Phase 126 — Career ladders.
@@ -23,7 +26,7 @@ const SKILL_LEVEL = z.enum(['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT']);
 career126Router.get('/career-ladders', requireAuth, async (_req, res) => {
   const rows = await prisma.careerLadder.findMany({
     take: 1000,
-    where: { archivedAt: null },
+    where: { tenantId: tenantIdForWrite(), archivedAt: null },
     include: {
       _count: { select: { levels: true } },
       client: { select: { name: true } },
@@ -42,12 +45,66 @@ career126Router.get('/career-ladders', requireAuth, async (_req, res) => {
   });
 });
 
+// ----- Where I stand --------------------------------------------------------
+
+/**
+ * GET /career-ladders/me/position — the signed-in person's rung ("you are
+ * here"), and the next rung's requirements measured against what they
+ * have. Registered before /career-ladders/:id so "me" isn't read as an id.
+ */
+career126Router.get('/career-ladders/me/position', requireAuth, async (req, res) => {
+  const associateId = req.user!.associateId;
+  if (!associateId) {
+    res.json({ ladder: null, currentLevelId: null, placedBy: null, next: null, otherLadders: [] });
+    return;
+  }
+  res.json(await careerPositionFor(associateId));
+});
+
+/** GET /career-ladders/people/:associateId/position — the same, for HR or a manager, inside their reach. */
+career126Router.get(
+  '/career-ladders/people/:associateId/position',
+  requireAnyCapability('manage:performance', 'view:org'),
+  async (req, res) => {
+    const associateId = z.string().uuid().parse(req.params.associateId);
+    const visible = await prisma.associate.findFirst({
+      where: { AND: [{ id: associateId, tenantId: tenantIdForWrite(), deletedAt: null }, scopeAssociates(req.user!)] },
+      select: { id: true },
+    });
+    if (!visible) throw new HttpError(404, 'not_found', 'Not found.');
+    res.json(await careerPositionFor(associateId));
+  },
+);
+
+/**
+ * POST /career-ladders/templates/field-leadership — the staffing ladder
+ * (crew → lead → shift supervisor → store manager) with sensible
+ * requirements, ready to edit. Once per tenant.
+ */
+career126Router.post('/career-ladders/templates/field-leadership', MANAGE, async (req, res) => {
+  const tenantId = tenantIdForWrite();
+  const existing = await prisma.careerLadder.findFirst({ where: { tenantId, family: FIELD_LADDER_FAMILY, archivedAt: null }, select: { id: true } });
+  if (existing) throw new HttpError(409, 'template_exists', 'The field leadership ladder is already set up.');
+  const created = await prisma.careerLadder.create({
+    data: {
+      tenantId,
+      name: 'Field leadership',
+      family: FIELD_LADDER_FAMILY,
+      description: 'From the crew to running a store. People are placed by their role until a job profile says otherwise.',
+      createdById: req.user!.id,
+      levels: { create: FIELD_LADDER_TEMPLATE.map((l) => ({ ...l, tenantId })) },
+    },
+    select: { id: true },
+  });
+  res.status(201).json({ id: created.id });
+});
+
 // ----- Ladder detail (with levels + skills) --------------------------------
 
 career126Router.get('/career-ladders/:id', requireAuth, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const ladder = await prisma.careerLadder.findUnique({
-    where: { id },
+  const ladder = await prisma.careerLadder.findFirst({
+    where: { id, tenantId: tenantIdForWrite() },
     include: {
       client: { select: { name: true } },
       levels: {
@@ -78,6 +135,9 @@ career126Router.get('/career-ladders/:id', requireAuth, async (req, res) => {
       jobProfileId: lv.jobProfileId,
       jobProfileTitle: lv.jobProfile?.title ?? null,
       jobProfileCode: lv.jobProfile?.code ?? null,
+      requiredQualificationCodes: lv.requiredQualificationCodes,
+      minTenureMonths: lv.minTenureMonths,
+      minReviewRating: lv.minReviewRating,
       skills: lv.skills.map((s) => ({
         id: s.id,
         skillId: s.skillId,
@@ -114,11 +174,18 @@ career126Router.post('/career-ladders', MANAGE, async (req, res) => {
 
 // ----- Add level -----------------------------------------------------------
 
+const RungRequirements = {
+  requiredQualificationCodes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  minTenureMonths: z.number().int().min(0).max(600).optional().nullable(),
+  minReviewRating: z.number().int().min(1).max(5).optional().nullable(),
+};
+
 const AddLevelInputSchema = z.object({
   rank: z.number().int().min(1).max(20),
   title: z.string().min(1).max(200),
   description: z.string().max(4000).optional().nullable(),
   jobProfileId: z.string().uuid().optional().nullable(),
+  ...RungRequirements,
 });
 
 career126Router.post(
@@ -127,8 +194,8 @@ career126Router.post(
   async (req, res) => {
     const ladderId = z.string().uuid().parse(req.params.id);
     const input = AddLevelInputSchema.parse(req.body);
-    const ladder = await prisma.careerLadder.findUnique({
-      where: { id: ladderId },
+    const ladder = await prisma.careerLadder.findFirst({
+      where: { id: ladderId, tenantId: tenantIdForWrite() },
     });
     if (!ladder) {
       throw new HttpError(404, 'ladder_not_found', 'Ladder not found.');
@@ -141,6 +208,9 @@ career126Router.post(
           title: input.title,
           description: input.description ?? null,
           jobProfileId: input.jobProfileId ?? null,
+          requiredQualificationCodes: input.requiredQualificationCodes ?? [],
+          minTenureMonths: input.minTenureMonths ?? null,
+          minReviewRating: input.minReviewRating ?? null,
         },
       });
       res.status(201).json({ id: created.id });
@@ -164,12 +234,13 @@ const UpdateLevelInputSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(4000).optional().nullable(),
   jobProfileId: z.string().uuid().optional().nullable(),
+  ...RungRequirements,
 });
 
 career126Router.patch('/career-levels/:id', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const input = UpdateLevelInputSchema.parse(req.body);
-  const level = await prisma.careerLevel.findUnique({ where: { id } });
+  const level = await prisma.careerLevel.findFirst({ where: { id, ladder: { tenantId: tenantIdForWrite() } } });
   if (!level) {
     throw new HttpError(404, 'not_found', 'Level not found.');
   }
@@ -179,6 +250,9 @@ career126Router.patch('/career-levels/:id', MANAGE, async (req, res) => {
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.jobProfileId !== undefined ? { jobProfileId: input.jobProfileId } : {}),
+      ...(input.requiredQualificationCodes !== undefined ? { requiredQualificationCodes: input.requiredQualificationCodes } : {}),
+      ...(input.minTenureMonths !== undefined ? { minTenureMonths: input.minTenureMonths } : {}),
+      ...(input.minReviewRating !== undefined ? { minReviewRating: input.minReviewRating } : {}),
     },
   });
   res.json({ ok: true });

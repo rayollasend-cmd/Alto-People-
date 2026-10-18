@@ -203,7 +203,7 @@ export function EquityHome() {
         className="space-y-5"
         title="Equity"
         subtitle="Stock and option grants. Vesting tranches generated at grant time — cliff plus monthly until fully vested."
-        breadcrumbs={[{ label: 'Total rewards' }, { label: 'Equity' }]}
+        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Equity' }]}
     >
 
       <div className="flex items-center justify-between">

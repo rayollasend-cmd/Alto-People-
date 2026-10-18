@@ -161,7 +161,7 @@ export function InternalJobsHome() {
         className="space-y-5"
         title="Internal jobs"
         subtitle="Open roles across the company. Apply directly — your manager and the hiring manager will see it."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Internal jobs' }]}
+        breadcrumbs={[{ label: 'Me' }, { label: 'Internal jobs' }]}
     >
 
       <SegmentedControl<'browse' | 'mine'>

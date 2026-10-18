@@ -12,7 +12,9 @@ import {
   type SkillLevel,
   type SkillSearchResult,
 } from '@/lib/skills111Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useClients } from '@/lib/useClients';
+import { listSites } from '@/lib/orgApi';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -38,7 +40,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
-import { ymdLocal } from '@/lib/format';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 
 const LEVELS: SkillLevel[] = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'];
 
@@ -87,7 +89,14 @@ export function SkillsHome() {
 function SearchTab({ canManage }: { canManage: boolean }) {
   const [q, setQ] = useState('');
   const [minLevel, setMinLevel] = useState<SkillLevel | ''>('');
+  const [clientId, setClientId] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [data, setData] = useState<SkillSearchResult | null>(null);
+  const termWord = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const { clients } = useClients({ enabled: hasClients });
+  const sitesQ = useQuery({ queryKey: ['skills', 'sites'], queryFn: listSites });
+  const stores = (sitesQ.data?.sites ?? []).filter((x) => x.isActive && (!clientId || x.clientId === clientId));
   const [loading, setLoading] = useState(false);
   // Catalog powering the combobox. null = not loaded (or failed) — the
   // input silently degrades to free text, which still searches fine.
@@ -127,7 +136,7 @@ function SearchTab({ canManage }: { canManage: boolean }) {
     setDropOpen(false);
     setLoading(true);
     try {
-      const r = await searchSkills(term.trim(), minLevel || undefined);
+      const r = await searchSkills(term.trim(), minLevel || undefined, { clientId: clientId || undefined, locationId: locationId || undefined });
       setData(r);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Search failed.');
@@ -194,6 +203,40 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                 ))}
               </Select>
             </div>
+            {hasClients && clients.length > 0 && (
+              <div>
+                <Label htmlFor="skills-search-client">{termWord('label.client')}</Label>
+                <Select
+                  id="skills-search-client"
+                  className="mt-1"
+                  value={clientId}
+                  onChange={(e) => {
+                    setClientId(e.target.value);
+                    setLocationId('');
+                  }}
+                >
+                  <option value="">Any</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+            {stores.length > 0 && (
+              <div>
+                <Label htmlFor="skills-search-store">{termWord('label.store')}</Label>
+                <Select id="skills-search-store" className="mt-1" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+                  <option value="">Any</option>
+                  {stores.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
             <Button onClick={() => runSearch(q)} disabled={loading}>
               {loading ? 'Searching…' : 'Search'}
             </Button>
@@ -223,7 +266,7 @@ function SearchTab({ canManage }: { canManage: boolean }) {
             ) : (
                 <DataGrid<(typeof associates)[number]>
                   id="skill-search"
-                  caption="Associates with this skill"
+                  caption="People with this skill"
                   rows={associates}
                   rowKey={(a) => `${a.associateId}-${a.skillName}`}
                   search={{ placeholder: 'Name, email…' }}
@@ -231,7 +274,32 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                   exportCsv={{ filename: `skill-search-${ymdLocal()}` }}
                   columns={[
                     { key: 'name', header: 'Name', accessor: (a) => a.name, sortable: true, primary: true, className: 'font-medium text-white' },
-                    { key: 'email', header: 'Email', accessor: (a) => a.email, sortable: true, cardMeta: true, className: 'text-silver' },
+                    {
+                      key: 'place',
+                      header: `Works at`,
+                      accessor: (a) => a.place?.siteName ?? '',
+                      sortable: true,
+                      cardMeta: true,
+                      cell: (a) =>
+                        a.place ? (
+                          <span>
+                            {a.place.siteName}
+                            {hasClients && a.place.clientName && <span className="text-xs text-silver"> · {a.place.clientName}</span>}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-silver">Not placed</span>
+                        ),
+                    },
+                    {
+                      key: 'free',
+                      header: 'Next free day',
+                      accessor: (a) => a.nextFreeDay ?? '9999',
+                      csv: (a) => a.nextFreeDay ?? '',
+                      sortable: true,
+                      searchable: false,
+                      cardMeta: true,
+                      cell: (a) => (a.nextFreeDay ? fmtDate(parseYmd(a.nextFreeDay)) : <span className="text-xs text-silver">Booked for two weeks</span>),
+                    },
                     { key: 'skill', header: 'Skill', accessor: (a) => a.skillName, sortable: true },
                     {
                       key: 'level',
@@ -241,6 +309,25 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                       sortable: true,
                       searchable: false,
                       cell: (a) => <Badge variant={levelVariant(a.level)}>{LEVEL_LABELS[a.level]}</Badge>,
+                    },
+                    {
+                      key: 'certs',
+                      header: 'Certifications',
+                      accessor: (a) => (a.certifications ?? []).map((c) => c.name).join(', '),
+                      sortable: false,
+                      cell: (a) =>
+                        a.certifications && a.certifications.length ? (
+                          <span className="flex flex-wrap gap-1">
+                            {a.certifications.slice(0, 3).map((c) => (
+                              <Badge key={c.name} size="sm" variant="outline" title={c.expiresAt ? `Valid to ${c.expiresAt}` : undefined}>
+                                {c.name}
+                              </Badge>
+                            ))}
+                            {a.certifications.length > 3 && <span className="text-xs text-silver">+{a.certifications.length - 3}</span>}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-silver">—</span>
+                        ),
                     },
                     { key: 'years', header: 'Years', accessor: (a) => a.yearsExperience, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (a) => a.yearsExperience ?? '—' },
                     {
