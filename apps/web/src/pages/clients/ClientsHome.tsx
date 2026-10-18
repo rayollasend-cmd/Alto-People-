@@ -203,7 +203,6 @@ export function ClientsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Clients"
         subtitle="Configure work-site state, geofence, and per-client jobs."
         breadcrumbs={[{ label: term('nav.clients') }]}

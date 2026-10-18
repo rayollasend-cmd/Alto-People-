@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, BookOpen, CalendarCheck, FileSignature, FileWarning, Inbox, MessageSquare, type LucideIcon } from 'lucide-react';
 import { useInbox } from '@/lib/inboxApi';
@@ -53,6 +54,7 @@ export function AssociateNeedsYou() {
       </ErrorBanner>
     );
   }
+  if (query.isPending) return <Skeleton className="h-16 w-full rounded-lg" />;
   if (!query.data) return null;
   if (rows.length === 0) return <p className="text-xs text-silver/70">{t('dash.allCaughtUp')}</p>;
 

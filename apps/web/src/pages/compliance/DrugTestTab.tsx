@@ -1,3 +1,4 @@
+import { DrugProviderPanel } from './providers/DrugProviderPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -702,6 +703,8 @@ function DrugTestDetailPanel({
           <DetailRow label="Provider">{test.provider}</DetailRow>
           <DetailRow label="External ref">{test.externalId ?? '—'}</DetailRow>
         </dl>
+
+        <DrugProviderPanel testId={test.id} personName={test.associateName} canManage={canManage} onChanged={onReportsChanged} />
 
         <div className="mt-6">
           <h3 className="mb-2 text-2xs uppercase tracking-widest text-silver/80">

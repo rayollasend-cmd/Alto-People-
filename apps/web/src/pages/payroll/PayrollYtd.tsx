@@ -45,7 +45,7 @@ export function PayrollYtd() {
     // it the Print button produced a blank page.
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto print:max-w-none print-area"
+        className="print:max-w-none print-area"
         title={`Year-to-date payroll report — ${year}`}
         subtitle="Per-associate gross, withholding, and net pay aggregated across all disbursed runs in the tax year."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'YTD report' }]}

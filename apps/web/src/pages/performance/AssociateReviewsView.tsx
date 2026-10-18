@@ -60,7 +60,6 @@ export function AssociateReviewsView() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title={t('reviews.title')}
         subtitle={t('reviews.subtitle')}
     >

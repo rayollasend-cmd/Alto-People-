@@ -16,6 +16,10 @@ vi.mock('@/lib/walletApi', () => ({
   getMyWallet: vi.fn(),
   shareMyWallet: vi.fn(),
   getPublicWallet: vi.fn(),
+  // The worker badge card on the wallet page (WorkerBadgeCard): no badge for this person.
+  getWorkerBadge: vi.fn().mockRejectedValue(Object.assign(new Error('no badge'), { code: 'no_badge' })),
+  getAppleWalletLink: vi.fn(),
+  getGoogleWalletLink: vi.fn(),
 }));
 vi.mock('@/lib/workforceApi', () => ({
   listSupervisorCorps: vi.fn(),

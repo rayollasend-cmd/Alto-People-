@@ -20,6 +20,7 @@
 // pay, negative clawback) that sum naturally to the corrected YTD.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { findInChunks } from './chunkedIn.js';
 
 type Tx = PrismaClient | Prisma.TransactionClient;
 
@@ -78,18 +79,20 @@ export async function computeYtdWagesBatch(
   beforeDate: Date
 ): Promise<Map<string, number>> {
   if (associateIds.length === 0) return new Map();
-  const groups = await tx.payrollItem.groupBy({
-    by: ['associateId'],
-    where: {
-      associateId: { in: associateIds },
-      status: 'DISBURSED',
-      payrollRun: {
-        periodStart: { gte: yearStart, lt: beforeDate },
-        status: { not: 'CANCELLED' },
+  const groups = await findInChunks(associateIds, (chunk) =>
+    tx.payrollItem.groupBy({
+      by: ['associateId'],
+      where: {
+        associateId: { in: chunk },
+        status: 'DISBURSED',
+        payrollRun: {
+          periodStart: { gte: yearStart, lt: beforeDate },
+          status: { not: 'CANCELLED' },
+        },
       },
-    },
-    _sum: { grossPay: true },
-  });
+      _sum: { grossPay: true },
+    }),
+  );
   return new Map(groups.map((g) => [g.associateId, Number(g._sum.grossPay ?? 0)]));
 }
 

@@ -19,8 +19,8 @@ afterAll(async () => {
 });
 
 // Platform rows, not any tenant's: the price list, the keyring canary, the security alerts
-// (their audit rows carry the tenant), SAML's request/assertion memory.
-const EXEMPT = new Set(['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache', 'BillingPrice', 'EncryptionCanary', 'SecurityAlert', 'SamlCache']);
+// (their audit rows carry the tenant), SAML's request/assertion memory, public wage data (BLS OEWS).
+const EXEMPT = new Set(['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache', 'MarketWage', 'BillingPrice', 'EncryptionCanary', 'SecurityAlert', 'SamlCache']);
 const NO_DEFAULT = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek', 'ComplianceEvidence', 'ComplianceEvidenceSignoff', 'AuditChainCheck', 'AuditArchive', 'LaborRuleSet']);
 
 describe('the schema', () => {

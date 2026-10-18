@@ -28,8 +28,28 @@ const TABLES = [
   // Marketing (2026-10-17): the careers view counter and the employer brand
   // page have no FK to anything either (photos cascade from the brand).
   'CareersPageView',
+  // TAXCOMP — tenant-keyed settings and acknowledgments with no FK to cascade from.
+  'WotcSettings',
+  'WotcDesignatedZip',
+  'StateTaxAcknowledgment',
+  'AcaSettings',
+  // Assistant proposals carry a user id but no foreign key.
+  'AssistantAction',
+  // Market rates and credentials: no cascading keys.
+  'MarketWage',
+  'PositionSocMap',
+  'CredentialStatusEntry',
+  'CredentialIssuerKey',
   // Floor leads' flags: tied to a client but not by a cascading key.
   'FloorFlag',
+  // Labor rules going live, and rounding: tenant rows with no cascading key.
+  'LaborRuleActivation',
+  'PunchRoundingPolicy',
+  // Per-tenant leave & claims settings: no foreign key to cascade from.
+  'LeaveSettings',
+  // Service-provider connections (and, by cascade, their event log).
+  'ProviderEvent',
+  'ProviderConnection',
   'EmployerBrand',
   'WebVitalDaily',
   // Reliability rollups: no FK reaches either, same as the two above.

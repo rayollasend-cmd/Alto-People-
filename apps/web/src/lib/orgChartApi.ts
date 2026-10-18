@@ -36,6 +36,8 @@ export interface OrgChartResponse {
   unplaced: number;
   truncated: boolean;
   limit: number;
+  /** Field view at enterprise size: crew loads per store (getStoreCrew) and search runs on the server. */
+  crewDeferred?: boolean;
 }
 
 export function getOrgChart(opts: { view: OrgChartView; clientId?: string | null; former?: boolean }): Promise<OrgChartResponse> {
@@ -43,6 +45,18 @@ export function getOrgChart(opts: { view: OrgChartView; clientId?: string | null
   if (opts.clientId) qs.set('clientId', opts.clientId);
   if (opts.former) qs.set('former', '1');
   return apiFetch<OrgChartResponse>(`/org/chart?${qs.toString()}`);
+}
+
+/** One store's crew, when the field view loads crew per store. */
+export function getStoreCrew(siteId: string, former = false): Promise<{ nodes: OrgNode[] }> {
+  return apiFetch<{ nodes: OrgNode[] }>(`/org/chart/crew?siteId=${encodeURIComponent(siteId)}${former ? '&former=1' : ''}`);
+}
+
+/** Search the whole field roster; each match comes with its store. */
+export function searchFieldPeople(q: string, clientId?: string | null): Promise<{ nodes: OrgNode[] }> {
+  const qs = new URLSearchParams({ q });
+  if (clientId) qs.set('clientId', clientId);
+  return apiFetch<{ nodes: OrgNode[] }>(`/org/chart/search?${qs.toString()}`);
 }
 
 /** Who an office account reports to (accounts with no person record, or a manager with none). */

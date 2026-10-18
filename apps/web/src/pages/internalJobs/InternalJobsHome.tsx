@@ -158,7 +158,6 @@ export function InternalJobsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Internal jobs"
         subtitle="Open roles across the company. Apply directly — your manager and the hiring manager will see it."
         breadcrumbs={[{ label: 'Me' }, { label: 'Internal jobs' }]}
@@ -215,7 +214,7 @@ export function InternalJobsHome() {
             </Card>
           ) : visibleJobs === null ? (
             <Card>
-              <CardContent className="p-6">
+              <CardContent>
                 <SkeletonRows count={4} />
               </CardContent>
             </Card>
@@ -254,7 +253,7 @@ export function InternalJobsHome() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {visibleJobs.map((j) => (
               <Card key={j.id}>
-                <CardContent className="p-4 space-y-2">
+                <CardContent className="space-y-2">
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="text-base font-semibold text-white">
@@ -349,7 +348,7 @@ export function InternalJobsHome() {
         </Card>
       ) : mine === null ? (
         <Card>
-          <CardContent className="p-6">
+          <CardContent>
             <SkeletonRows count={3} />
           </CardContent>
         </Card>
@@ -367,7 +366,7 @@ export function InternalJobsHome() {
         <div className="space-y-2">
           {mine.map((a) => (
             <Card key={a.id}>
-              <CardContent className="p-4">
+              <CardContent>
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
                     <div className="text-sm font-medium text-white">

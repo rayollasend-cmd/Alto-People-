@@ -93,6 +93,7 @@ const TASK_LABEL: Record<string, string> = {
   I9_VERIFICATION: 'I-9 verification',
   E_SIGN: 'E-sign agreements',
   BACKGROUND_CHECK: 'Background check',
+  WOTC_SCREENING: 'Tax credit questions',
   J1_DOCS: 'J-1 documents',
 };
 
@@ -238,7 +239,6 @@ export function InPersonOnboarding() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          className="mx-auto"
           title="In-person onboarding"
           breadcrumbs={[
             { label: 'Onboarding', to: '/onboarding' },
@@ -280,7 +280,6 @@ export function InPersonOnboarding() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="In-person onboarding"
         subtitle={
           <>
@@ -309,7 +308,7 @@ export function InPersonOnboarding() {
       <div className="space-y-5">
         {/* Status + progress strip */}
         <Card>
-          <CardContent className="pt-5 flex items-center justify-between gap-4 flex-wrap">
+          <CardContent className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <div className="text-2xs uppercase tracking-widest text-silver/80">
                 Application status

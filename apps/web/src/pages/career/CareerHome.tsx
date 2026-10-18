@@ -105,7 +105,6 @@ export function CareerHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Career ladders"
         subtitle="Where you are, what the next step asks of you, and every path the company offers."
         breadcrumbs={[{ label: 'Me', to: '/me' }, { label: 'Career ladders' }]}
@@ -129,7 +128,7 @@ export function CareerHome() {
 
       {canManage && fieldTenant && ladders && !ladders.some((l) => l.family === 'Field leadership') && (
         <Card>
-          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-ink-muted">
               Start from the field leadership ladder — crew member, lead, shift supervisor, store manager — with time-in-job and review requirements you can edit.
             </p>
@@ -182,7 +181,7 @@ export function CareerHome() {
         </ErrorBanner>
       ) : filtered === null ? (
         <Card>
-          <CardContent className="p-6">
+          <CardContent>
             <SkeletonRows count={3} />
           </CardContent>
         </Card>

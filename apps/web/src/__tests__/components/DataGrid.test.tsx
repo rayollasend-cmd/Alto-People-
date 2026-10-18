@@ -356,3 +356,26 @@ describe('DataGrid — grouping', () => {
     expect(csv).toHaveLength(4);
   });
 });
+
+describe('long lists window in every mode', () => {
+  const many: Row[] = Array.from({ length: 600 }, (_, i) => ({ id: `r${i}`, name: `Person ${i}`, store: i % 2 ? 'Destin' : 'Miramar', pct: i % 100, note: null }));
+
+  it('a grouped list (the roster by store) renders a window, not 600 rows', () => {
+    renderGrid({ rows: many, groupBy: { key: (r) => r.store, header: (k) => `Store ${k}` } });
+    // jsdom gives the scroll box no height, so the window is empty here; in
+    // a browser it is the rows on screen. Either way: never all 600.
+    expect(screen.getAllByRole('row').length).toBeLessThan(120);
+    expect(screen.queryByText('Person 599')).toBeNull();
+  });
+
+  it('an expandable list (a payroll run) renders a window too', () => {
+    renderGrid({ rows: many, expandable: { render: (r) => r.name } });
+    expect(screen.getAllByRole('row').length).toBeLessThan(120);
+  });
+
+  it('a short grouped list still renders every row', () => {
+    renderGrid({ rows: many.slice(0, 20), groupBy: { key: (r) => r.store, header: (k) => `Store ${k}` } });
+    // 20 rows + 2 group headings + the header row.
+    expect(screen.getAllByRole('row')).toHaveLength(23);
+  });
+});

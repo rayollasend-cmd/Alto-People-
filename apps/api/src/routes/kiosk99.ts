@@ -1,8 +1,10 @@
 import { Router, type Request, type Response } from 'express';
+import { breakQuestionsFor, isStaleOpenEntry, promptMissedClockOut, recordBreakAttestation } from '../lib/timeCorrections.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { ALTO_TENANT_ID, runWithTenant, tenantIdForWrite } from '../lib/tenant.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { signBadgeToken, verifyBadgeToken, type BadgeClaims } from '../lib/badgeToken.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -807,6 +809,56 @@ function pinEmailContent(
 // "With codes" list so someone who forgot their clock-in number gets it
 // without HR reading it aloud. The associate can already see it on their
 // My Profile page — this is just a convenience push to their inbox.
+/* ===== Badges ============================================================== *
+ * A badge is the signed credential an NFC tag carries and a Wallet pass
+ * shows as a QR (lib/badgeToken.ts). HR fetches the value to write a tag,
+ * and reissues after a loss — bumping badgeVersion, so every tag and pass
+ * made before stops working at once (the clock-in number itself is kept).
+ * ========================================================================= */
+
+async function pinInReach(req: Request, id: string) {
+  const clamp = kioskClientClamp(req.user!);
+  return prisma.kioskPin.findFirst({
+    where: {
+      AND: [
+        { id, tenantId: tenantIdForWrite(), ...(clamp ? { clientId: clamp } : {}) },
+        { associate: { is: scopeAssociates(req.user!) } },
+      ],
+    },
+    select: { id: true, associateId: true, badgeVersion: true, tenantId: true, associate: { select: { firstName: true, lastName: true } } },
+  });
+}
+
+/** GET /kiosk-pins/:id/badge — the value to write onto an NFC badge (audited). */
+kiosk99Router.get('/kiosk-pins/:id/badge', MANAGE, async (req, res) => {
+  const pin = await pinInReach(req, z.string().uuid().parse(req.params.id));
+  if (!pin) throw new HttpError(404, 'not_found', 'Employee number not found.');
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'badge.value_read', entityType: 'KioskPin', entityId: pin.id, metadata: { associateId: pin.associateId, version: pin.badgeVersion } },
+    'kiosk.badge',
+  );
+  res.json({
+    badgeToken: signBadgeToken({ associateId: pin.associateId, version: pin.badgeVersion, tenantId: pin.tenantId }),
+    badgeVersion: pin.badgeVersion,
+    workerName: `${pin.associate.firstName} ${pin.associate.lastName}`.trim(),
+  });
+});
+
+/** POST /kiosk-pins/:id/reissue-badge — old NFC tags and Wallet passes stop working. */
+kiosk99Router.post('/kiosk-pins/:id/reissue-badge', MANAGE, async (req, res) => {
+  const pin = await pinInReach(req, z.string().uuid().parse(req.params.id));
+  if (!pin) throw new HttpError(404, 'not_found', 'Employee number not found.');
+  const updated = await prisma.kioskPin.update({ where: { id: pin.id }, data: { badgeVersion: { increment: 1 } }, select: { badgeVersion: true } });
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'badge.reissued', entityType: 'KioskPin', entityId: pin.id, metadata: { associateId: pin.associateId, from: pin.badgeVersion, to: updated.badgeVersion } },
+    'kiosk.badge',
+  );
+  res.json({
+    badgeVersion: updated.badgeVersion,
+    badgeToken: signBadgeToken({ associateId: pin.associateId, version: updated.badgeVersion, tenantId: pin.tenantId }),
+  });
+});
+
 kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const emailClamp = kioskClientClamp(req.user!);
@@ -1639,7 +1691,10 @@ kiosk99Router.use(async function kioskTenantResolver(req, _res, next) {
 
 const PunchInputSchema = z.object({
   deviceToken: z.string().min(10),
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.'),
+  // The typed clock-in number — or a badge (NFC tag / Wallet pass QR) in its
+  // place. Exactly one of the two (see credentialLookup).
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  badgeToken: z.string().min(10).max(400).optional().nullable(),
   // Selfie as a base64 data URL or raw base64. Optional but strongly
   // encouraged — we surface it in HR for buddy-punching disputes.
   selfie: z.string().max(2_000_000).optional().nullable(),
@@ -1669,6 +1724,12 @@ const PunchInputSchema = z.object({
   // toggle: clock-in if not active, clock-out if active. 'BREAK'
   // toggles a break (start if no open break, end if one is open).
   intent: z.enum(['BREAK']).optional().nullable(),
+  // Where the state requires breaks: the answer to "did you get your meal
+  // break?", asked on the tablet before a clock-out (lib/timeCorrections).
+  breakAttestation: z
+    .object({ meal: z.enum(['YES', 'NO', 'WAIVED']), rest: z.enum(['YES', 'NO']).nullable().optional() })
+    .optional()
+    .nullable(),
 });
 
 // Phase 102 — bound how far in the past a queued punch can be replayed.
@@ -1744,9 +1805,49 @@ function decodeSelfie(s: string | null | undefined): Buffer<ArrayBuffer> | null 
 // and a mild info leak (an attacker probing PINs gets to see
 // themselves on camera regardless of success). With this preflight,
 // the camera only opens for a valid PIN.
+/* ===== Badge or number ===================================================== *
+ * A worker identifies themselves with the typed clock-in number OR a badge:
+ * an NFC tag or the QR on their Wallet pass, both carrying the signed badge
+ * credential (lib/badgeToken.ts). Either way the same KioskPin row comes
+ * back, so everything after — the wrong-site check, the backoff, the
+ * employment and schedule gates, the selfie and face match — is identical.
+ * A badge whose version no longer matches (reissued after a loss) reads as
+ * not recognized.
+ * ========================================================================= */
+
+const NO_MATCH = '00000000-0000-0000-0000-000000000000';
+
+interface CredentialLookup {
+  kind: 'pin' | 'badge';
+  where: Prisma.KioskPinWhereUniqueInput;
+  badge: BadgeClaims | null;
+}
+
+function credentialLookup(input: { pin?: string | null; badgeToken?: string | null }): CredentialLookup {
+  if (input.badgeToken) {
+    const badge = verifyBadgeToken(input.badgeToken);
+    return { kind: 'badge', badge, where: badge ? { associateId: badge.associateId } : { id: NO_MATCH } };
+  }
+  if (!input.pin) throw new HttpError(400, 'credential_required', 'Enter your clock-in number or scan your badge.');
+  return { kind: 'pin', badge: null, where: { pinHmac: hmacPin(input.pin) } };
+}
+
+/** The row, or null when a badge was reissued since this one was made. */
+function acceptCredential<T extends { badgeVersion: number }>(lookup: CredentialLookup, row: T | null): T | null {
+  if (!row) return null;
+  if (lookup.kind === 'badge' && lookup.badge && row.badgeVersion !== lookup.badge.version) return null;
+  return row;
+}
+
+const NOT_RECOGNIZED: Record<CredentialLookup['kind'], string> = {
+  pin: 'That PIN was not recognized at this kiosk. If you are at a new site, ask your manager to set up your kiosk site.',
+  badge: 'That badge isn’t recognized at this kiosk — it may have been reissued. Type your clock-in number instead, or ask your supervisor.',
+};
+
 const VerifyPinInputSchema = z.object({
   deviceToken: z.string().min(10),
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.'),
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  badgeToken: z.string().min(10).max(400).optional().nullable(),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
   // Same intent the punch will carry, so the preflight can predict the
@@ -2106,9 +2207,9 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   // whenever a tablet's location permission was denied.
 
   // PIN match — same global HMAC lookup + cross-client safety check.
-  const pinHmac = hmacPin(input.pin);
-  const pinRow = await prisma.kioskPin.findUnique({
-    where: { pinHmac },
+  const credential = credentialLookup(input);
+  const pinRow = acceptCredential(credential, await prisma.kioskPin.findUnique({
+    where: credential.where,
     include: {
       associate: {
         select: {
@@ -2122,7 +2223,7 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
         },
       },
     },
-  });
+  }));
   if (!pinRow || pinRow.clientId !== device.clientId) {
     // Two distinct failures that used to both read "Wrong PIN":
     //  - no PIN matches the hash → unrecognized number (or a changed
@@ -2136,8 +2237,8 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
         kioskDeviceId: device.id,
         action: 'REJECTED',
         rejectReason: wrongSite
-          ? 'pin_wrong_client_preflight'
-          : 'pin_not_recognized_preflight',
+          ? `${credential.kind}_wrong_client_preflight`
+          : `${credential.kind}_not_recognized_preflight`,
         // When the PIN matched someone (wrong-site case), attribute the
         // reject — the punch log's Associate column and its per-associate
         // filter are how HR discovers a stranded PIN, and an unattributed
@@ -2159,8 +2260,8 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     // still records which it was, so diagnosis is unaffected.
     throw new HttpError(
       401,
-      'invalid_pin',
-      'That PIN was not recognized at this kiosk. If you are at a new site, ask your manager to set up your kiosk site.',
+      credential.kind === 'badge' ? 'invalid_badge' : 'invalid_pin',
+      NOT_RECOGNIZED[credential.kind],
     );
   }
 
@@ -2242,6 +2343,30 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     }
   }
 
+  // Before a clock-out, where the state requires breaks and the shift was long enough: ask.
+  let breakQuestions: { meal: boolean; rest: boolean } | null = null;
+  if (predictedAction === 'CLOCK_OUT') {
+    const open = await prisma.timeEntry.findFirst({ where: { associateId: pinRow.associateId, status: 'ACTIVE' }, orderBy: { clockInAt: 'desc' }, select: { clockInAt: true, locationId: true } });
+    if (open) {
+      const site = open.locationId ? await prisma.site.findFirst({ where: { id: open.locationId }, select: { state: true } }) : null;
+      const q = breakQuestionsFor(site?.state ?? null);
+      const worked = (Date.now() - open.clockInAt.getTime()) / 3_600_000;
+      const meal = q.meal && q.mealAfterHours !== null && worked > q.mealAfterHours;
+      if (meal || q.rest) breakQuestions = { meal, rest: q.rest };
+    }
+  }
+
+  // A shift left open from a past day is a missed clock-out: the tablet says
+  // so, and the worker finishes the correction from their phone (lib/timeCorrections).
+  let missedClockOut: { entryId: string; clockInAt: string } | null = null;
+  {
+    const open = await prisma.timeEntry.findFirst({ where: { associateId: pinRow.associateId, status: 'ACTIVE' }, orderBy: { clockInAt: 'desc' }, select: { id: true, clockInAt: true, locationId: true } });
+    if (open && isStaleOpenEntry(open.clockInAt)) {
+      await promptMissedClockOut(prisma, tenantIdForWrite(), { id: open.id, associateId: pinRow.associateId, clockInAt: open.clockInAt, locationId: open.locationId });
+      missedClockOut = { entryId: open.id, clockInAt: open.clockInAt.toISOString() };
+    }
+  }
+
   res.json({
     ok: true,
     associateFirstName: pinRow.associate.firstName,
@@ -2250,6 +2375,10 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     // asks before the first selfie), DECLINED = PIN-only flow (camera
     // never opens), GRANTED = selfie as usual.
     faceConsent: pinRow.associate.faceConsentStatus,
+    // A missed clock-out from a past shift (null when there is none).
+    missedClockOut,
+    // Asked before a clock-out where the state requires breaks (null otherwise).
+    breakQuestions,
   });
 });
 
@@ -2262,7 +2391,8 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
 // immediately.
 const FaceConsentSchema = z.object({
   deviceToken: z.string().min(10),
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.'),
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  badgeToken: z.string().min(10).max(400).optional().nullable(),
   consent: z.boolean(),
 });
 
@@ -2288,13 +2418,14 @@ kiosk99Router.post('/kiosk/face-consent', async (req, res) => {
   enforcePunchRateLimit(device.id, 'preflight');
   enforcePinBackoff(device.id);
 
-  const pinRow = await prisma.kioskPin.findUnique({
-    where: { pinHmac: hmacPin(input.pin) },
-    select: { id: true, clientId: true, associateId: true },
-  });
+  const credential = credentialLookup(input);
+  const pinRow = acceptCredential(credential, await prisma.kioskPin.findUnique({
+    where: credential.where,
+    select: { id: true, clientId: true, associateId: true, badgeVersion: true },
+  }));
   if (!pinRow || pinRow.clientId !== device.clientId) {
     recordPinFailure(device.id);
-    throw new HttpError(401, 'invalid_pin', 'That PIN was not recognized at this kiosk.');
+    throw new HttpError(401, credential.kind === 'badge' ? 'invalid_badge' : 'invalid_pin', NOT_RECOGNIZED[credential.kind]);
   }
   clearPinFailures(device.id);
 
@@ -2507,9 +2638,9 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
   // — numbers are unique across the company. We then check the kiosk
   // device's clientId matches the number's home client so an associate
   // can't punch from a tablet at a different client's site.
-  const pinHmac = hmacPin(input.pin);
-  const pinRow = await prisma.kioskPin.findUnique({
-    where: { pinHmac },
+  const credential = credentialLookup(input);
+  const pinRow = acceptCredential(credential, await prisma.kioskPin.findUnique({
+    where: credential.where,
     include: {
       associate: {
         select: {
@@ -2523,7 +2654,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
         },
       },
     },
-  });
+  }));
 
   if (!pinRow || pinRow.clientId !== device.clientId) {
     // Two distinct failures, previously both surfaced as "Wrong PIN":
@@ -2538,7 +2669,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
       data: {
         kioskDeviceId: device.id,
         action: 'REJECTED',
-        rejectReason: wrongSite ? 'pin_wrong_client' : 'pin_not_recognized',
+        rejectReason: wrongSite ? `${credential.kind}_wrong_client` : `${credential.kind}_not_recognized`,
         // Wrong-site rejects are attributable (the PIN matched someone) —
         // stamp the associate so the punch log can name them and the
         // per-associate filter can find the pattern.
@@ -2562,8 +2693,8 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
     // punch log above still distinguishes them for diagnosis.
     throw new HttpError(
       401,
-      'invalid_pin',
-      'That PIN was not recognized at this kiosk. If you are at a new site, ask your manager to set up your kiosk site.',
+      credential.kind === 'badge' ? 'invalid_badge' : 'invalid_pin',
+      NOT_RECOGNIZED[credential.kind],
     );
   }
 
@@ -3050,6 +3181,10 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
     // bell/push, never this shared screen (a dollar figure here would
     // leak their pay rate to the next person in line).
     void notifyClockOutEarnings(prisma, result.timeEntry.id);
+    if (input.breakAttestation) {
+      const e = await prisma.timeEntry.findUnique({ where: { id: result.timeEntry.id }, select: { id: true, associateId: true, clientId: true, locationId: true, clockInAt: true } });
+      if (e) await recordBreakAttestation(prisma, { tenantId: tenantIdForWrite(), associateId: e.associateId, entry: e }, input.breakAttestation);
+    }
   }
 
   res.json({

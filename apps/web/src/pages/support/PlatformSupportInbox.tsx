@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
@@ -77,7 +78,6 @@ export function PlatformSupportInbox() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Support inbox" subtitle="Every customer’s open requests, oldest first." breadcrumbs={[{ label: 'Platform' }, { label: 'Support inbox' }]}
     >
       {q.isError ? (
@@ -86,7 +86,7 @@ export function PlatformSupportInbox() {
         <Card>
           <CardContent className="p-0">
             {q.data && q.data.requests.length === 0 ? (
-              <p className="p-6 text-sm text-silver">Nothing open.</p>
+              <EmptyState size="sm" title={"Nothing open."} />
             ) : (
               <ul className="divide-y divide-navy-secondary">
                 {(q.data?.requests ?? []).map((r) => (

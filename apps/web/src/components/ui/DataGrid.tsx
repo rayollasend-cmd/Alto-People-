@@ -311,9 +311,9 @@ function LocalStateGrid<T>(props: DataGridProps<T>) {
 
 /** One line of the table body, in the order it is drawn. */
 type GridItem<T> =
-  | { kind: 'group'; group: { key: string; rows: T[] } }
+  | { kind: 'group'; group: { key: string; rows: T[] }; v?: VirtualItem | null }
   | { kind: 'row'; row: T; child: boolean; v: VirtualItem | null }
-  | { kind: 'detail'; row: T };
+  | { kind: 'detail'; row: T; v?: VirtualItem | null };
 
 function GridCore<T>({
   id,
@@ -545,25 +545,7 @@ function GridCore<T>({
       groupBy!.header(g.key, g.rows)
     );
 
-  /* ---- virtualization ----------------------------------------------- */
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const virtualize = !groupBy && !expandable && !subRows && sorted.length > virtualizeAfter;
-  const virtualizer = useVirtualizer({
-    count: virtualize ? sorted.length : 0,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowHeight,
-    overscan: 12,
-  });
-  // The rows stay ORDINARY table rows. The first cut made the <tbody>
-  // `display:block` and each row `position:absolute` at a fixed 48px pitch;
-  // Chromium wraps a block tbody in an anonymous cell in column 1, so the
-  // whole body rendered 32px wide and every row taller than the estimate
-  // overlapped the next (the "Users & access collapsed" bug). Instead, two
-  // spacer rows hold the place of the rows above and below the window, and
-  // every rendered row reports its real height back to the virtualizer.
-  const vItems = virtualize ? virtualizer.getVirtualItems() : [];
-  const padTop = vItems.length ? vItems[0]!.start : 0;
-  const padBottom = vItems.length ? virtualizer.getTotalSize() - vItems[vItems.length - 1]!.end : 0;
 
   /* ---- phones: cards ------------------------------------------------- */
   const primary = primaryOf(columns);
@@ -604,14 +586,35 @@ function GridCore<T>({
     if (expandable && expanded.has(rowKey(row))) out.push({ kind: 'detail', row });
     return out;
   };
-  const items: GridItem<T>[] = virtualize
-    ? vItems.map((v) => ({ kind: 'row', row: sorted[v.index]!, child: false, v }))
-    : groups
-      ? groups.flatMap((g) => [
-          { kind: 'group', group: g } as GridItem<T>,
-          ...(closed.has(g.key) ? [] : g.rows.flatMap(withDetails)),
-        ])
-      : sorted.flatMap(withDetails);
+  // Everything the body draws, in order — group headings, rows, sub-rows,
+  // open details. Long lists window over THIS list, so a grouped roster or
+  // an expandable payroll run stays fast at 5,000 rows too.
+  const flat: GridItem<T>[] = groups
+    ? groups.flatMap((g) => [
+        { kind: 'group', group: g } as GridItem<T>,
+        ...(closed.has(g.key) ? [] : g.rows.flatMap(withDetails)),
+      ])
+    : sorted.flatMap(withDetails);
+
+  /* ---- virtualization ----------------------------------------------- */
+  const virtualize = flat.length > virtualizeAfter;
+  const virtualizer = useVirtualizer({
+    count: virtualize ? flat.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 12,
+  });
+  // The rows stay ORDINARY table rows. The first cut made the <tbody>
+  // `display:block` and each row `position:absolute` at a fixed 48px pitch;
+  // Chromium wraps a block tbody in an anonymous cell in column 1, so the
+  // whole body rendered 32px wide and every row taller than the estimate
+  // overlapped the next (the "Users & access collapsed" bug). Instead, two
+  // spacer rows hold the place of the rows above and below the window, and
+  // every rendered row reports its real height back to the virtualizer.
+  const vItems = virtualize ? virtualizer.getVirtualItems() : [];
+  const padTop = vItems.length ? vItems[0]!.start : 0;
+  const padBottom = vItems.length ? virtualizer.getTotalSize() - vItems[vItems.length - 1]!.end : 0;
+  const items: GridItem<T>[] = virtualize ? vItems.map((v) => ({ ...flat[v.index]!, v }) as GridItem<T>) : flat;
 
   /* ---- one card ------------------------------------------------------ */
   const cardBody = (row: T, child: boolean) => {
@@ -945,7 +948,12 @@ function GridCore<T>({
                       // a screen reader hears one grid with sections, not
                       // fourteen grids with the same five columns.
                       return (
-                        <TableRow key={`group:${item.group.key}`} className="bg-navy-secondary/30 hover:bg-navy-secondary/30">
+                        <TableRow
+                          key={`group:${item.group.key}`}
+                          className="bg-navy-secondary/30 hover:bg-navy-secondary/30"
+                          data-index={item.v ? item.v.index : undefined}
+                          ref={item.v ? virtualizer.measureElement : undefined}
+                        >
                           <TableCell colSpan={colSpan} className="py-2 text-xs font-medium text-white">
                             {groupHeading(item.group)}
                           </TableCell>
@@ -954,7 +962,12 @@ function GridCore<T>({
                     }
                     if (item.kind === 'detail') {
                       return (
-                        <TableRow key={`${rowKey(item.row)}:detail`} className="hover:bg-transparent">
+                        <TableRow
+                          key={`${rowKey(item.row)}:detail`}
+                          className="hover:bg-transparent"
+                          data-index={item.v ? item.v.index : undefined}
+                          ref={item.v ? virtualizer.measureElement : undefined}
+                        >
                           <TableCell colSpan={colSpan} className="bg-navy-secondary/20 p-3">
                             {expandable!.render(item.row)}
                           </TableCell>

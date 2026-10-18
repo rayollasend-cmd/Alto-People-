@@ -29,7 +29,6 @@ export function PayrollYearEndClose() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title={`Year-end close — ${year}`}
         subtitle="Single checklist that confirms the tax year is fully wrapped: runs disbursed, forms generated, forms filed, recipient copies sent."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Year-end close' }]}

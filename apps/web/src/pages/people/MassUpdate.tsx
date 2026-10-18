@@ -150,7 +150,7 @@ export function MassUpdate() {
       {step === 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
-            <CardContent className="space-y-3 pt-5">
+            <CardContent className="space-y-3">
               <SectionTitle as="h2" icon={Users} title="Who" description="Leave a filter blank to not narrow by it. Separated people are never included." />
               {tenant.modules.clientPortal && clients.length > 0 && (
                 <Field label={term('label.client')}>{(p) => <Select {...p} value={clientId} onChange={(e) => setClientId(e.target.value)}><option value="">Any</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select>}</Field>
@@ -162,7 +162,7 @@ export function MassUpdate() {
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="space-y-3 pt-5">
+            <CardContent className="space-y-3">
               <SectionTitle as="h2" title="What changes" description="Only the fields you set change; the rest stay as they are." />
               <Field label={`Move to ${term('site').toLowerCase()}`} hint="Closes today's open placement and opens one at the new site.">
                 {(p) => <Select {...p} value={newSiteId} onChange={(e) => setNewSiteId(e.target.value)}><option value="">Leave as is</option>{(sites ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}
@@ -194,7 +194,7 @@ export function MassUpdate() {
 
       {step === 1 && preview.data && (
         <Card>
-          <CardContent className="space-y-3 pt-5">
+          <CardContent className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-ink">
                 <span className="font-medium">{preview.data.willChange}</span> of {preview.data.matched} matched {preview.data.matched === 1 ? 'person' : 'people'} will change.

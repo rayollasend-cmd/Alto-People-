@@ -58,7 +58,7 @@ export function CareerLadderView({ position, self }: { position: CareerPosition;
   if (!ladder) {
     return (
       <Card>
-        <CardContent className="p-4 text-sm text-ink-muted">{self ? t('career.noLadderSelf') : t('career.noLadderOther')}</CardContent>
+        <CardContent className="text-sm text-ink-muted">{self ? t('career.noLadderSelf') : t('career.noLadderOther')}</CardContent>
       </Card>
     );
   }
@@ -66,7 +66,7 @@ export function CareerLadderView({ position, self }: { position: CareerPosition;
   const rungs = [...ladder.levels].sort((a, b) => b.rank - a.rank);
   return (
     <Card>
-      <CardContent className="p-4 md:p-5">
+      <CardContent>
         <SectionTitle
           as="h3"
           title={ladder.name}

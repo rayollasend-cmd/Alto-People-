@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { round2, sumApprovedHours } from './payroll.js';
+import { findInChunks } from './chunkedIn.js';
 
 /**
  * Retroactive pay.
@@ -53,11 +54,13 @@ export async function computeRetroPay(
   const ids = [...new Set(input.associateIds)];
   if (ids.length === 0) return out;
 
-  const comps = await tx.compensationRecord.findMany({
-    where: { associateId: { in: ids }, payType: 'HOURLY', effectiveFrom: { lt: input.asOf } },
-    orderBy: [{ associateId: 'asc' }, { effectiveFrom: 'asc' }],
-    select: { id: true, associateId: true, amount: true, effectiveFrom: true, effectiveTo: true, createdAt: true },
-  });
+  const comps = await findInChunks(ids, (chunk) =>
+    tx.compensationRecord.findMany({
+      where: { associateId: { in: chunk }, payType: 'HOURLY', effectiveFrom: { lt: input.asOf } },
+      orderBy: [{ associateId: 'asc' }, { effectiveFrom: 'asc' }],
+      select: { id: true, associateId: true, amount: true, effectiveFrom: true, effectiveTo: true, createdAt: true },
+    }),
+  );
   if (comps.length === 0) return out;
 
   // A record created after it took effect is the only kind that can owe
@@ -66,9 +69,9 @@ export async function computeRetroPay(
   if (backdated.length === 0) return out;
   const backdatedAssociates = [...new Set(backdated.map((c) => c.associateId))];
 
-  const items = await tx.payrollItem.findMany({
+  const items = await findInChunks(backdatedAssociates, (chunk) => tx.payrollItem.findMany({
     where: {
-      associateId: { in: backdatedAssociates },
+      associateId: { in: chunk },
       status: { in: ['DISBURSED', 'PENDING'] },
       hourlyRate: { gt: 0 },
       payrollRun: { kind: 'REGULAR', status: { in: ['FINALIZED', 'DISBURSED'] } },
@@ -81,13 +84,15 @@ export async function computeRetroPay(
       payrollRun: { select: { id: true, periodStart: true, periodEnd: true, finalizedAt: true } },
       earnings: { select: { kind: true, hours: true } },
     },
-  });
+  }));
   if (items.length === 0) return out;
 
-  const existing = await tx.retroPayAdjustment.findMany({
-    where: { associateId: { in: backdatedAssociates } },
-    select: { id: true, compensationRecordId: true, sourcePayrollItemId: true, status: true, paidRunId: true },
-  });
+  const existing = await findInChunks(backdatedAssociates, (chunk) =>
+    tx.retroPayAdjustment.findMany({
+      where: { associateId: { in: chunk } },
+      select: { id: true, compensationRecordId: true, sourcePayrollItemId: true, status: true, paidRunId: true },
+    }),
+  );
   const existingByPair = new Map(existing.map((e) => [`${e.compensationRecordId}:${e.sourcePayrollItemId}`, e]));
 
   const compsByAssociate = new Map<string, typeof comps>();

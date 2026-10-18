@@ -135,7 +135,6 @@ export function AnalyticsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Analytics"
         subtitle={hasClients ? 'Live operational and financial KPIs across all clients.' : 'Live operational and financial KPIs across the organization.'}
         primaryAction={
@@ -407,7 +406,7 @@ function SkeletonGrid({ count = 2 }: { count?: number }) {
     <div className={`grid grid-cols-1 ${cols} gap-3`}>
       {Array.from({ length: count }).map((_, i) => (
         <Card key={i}>
-          <CardContent className="pt-5">
+          <CardContent>
             <Skeleton className="h-3 w-2/3 mb-3" />
             <Skeleton className="h-8 w-1/2 mb-2" />
             <Skeleton className="h-3 w-1/3" />

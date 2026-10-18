@@ -35,7 +35,7 @@ export function ConnectionsSection({ canManage }: { canManage: boolean }) {
           Couldn’t load the connections.
         </ErrorBanner>
       ) : rows === null ? (
-        <Card><CardContent className="p-5"><SkeletonRows count={2} /></CardContent></Card>
+        <Card><CardContent><SkeletonRows count={2} /></CardContent></Card>
       ) : rows.length === 0 ? (
         <Card>
           <CardContent className="p-0">

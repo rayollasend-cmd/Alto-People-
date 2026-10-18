@@ -558,7 +558,7 @@ export function ClientPortalHome() {
                 : 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-gold)/0.14),transparent_50%)]',
           )}
         />
-        <CardContent className="relative p-5">
+        <CardContent className="relative">
           <div className="grid gap-5 md:grid-cols-12">
             <div className="md:col-span-4">
               <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
@@ -642,7 +642,6 @@ export function ClientPortalHome() {
           </div>
         </CardContent>
       </Card>
-
         }
         banners={isPortal ? <PushPrompt /> : undefined}
         assistant={<HugoSeat />}
@@ -768,7 +767,7 @@ export function ClientPortalHome() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
         {/* ---- Today by shift (the full list lives on /portal/today) ---- */}
         <Card className="animate-enter xl:col-span-5" style={enterStagger(2)}>
-          <CardContent className="p-5">
+          <CardContent>
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="text-sm font-medium text-white">{t('portal.todayByShift')}</h2>
               <Link to={`/portal/today${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
@@ -837,7 +836,7 @@ export function ClientPortalHome() {
 
         {/* ---- Your Alto lead ------------------------------------------ */}
         <Card className="animate-enter xl:col-span-3" style={enterStagger(3)}>
-          <CardContent className="p-5">
+          <CardContent>
             <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
               <HardHat className="h-4 w-4 text-gold" aria-hidden="true" />
               {t('portal.leadTitle')}
@@ -909,7 +908,7 @@ export function ClientPortalHome() {
 
         {/* ---- Last night's work (ops evidence) ------------------------- */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(4)}>
-          <CardContent className="p-5">
+          <CardContent>
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <ClipboardCheck className="h-4 w-4 text-gold" aria-hidden="true" />
@@ -1027,7 +1026,7 @@ export function ClientPortalHome() {
 
         {/* ---- This week: fill by day ------------------------------------ */}
         <Card className="animate-enter xl:col-span-7" style={enterStagger(5)}>
-          <CardContent className="p-5">
+          <CardContent>
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
@@ -1067,7 +1066,7 @@ export function ClientPortalHome() {
 
         {/* ---- Reliability (4 weeks) ------------------------------------ */}
         <Card className="animate-enter xl:col-span-5" style={enterStagger(6)}>
-          <CardContent className="p-5">
+          <CardContent>
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <ShieldCheck className="h-4 w-4 text-gold" aria-hidden="true" />
@@ -1144,7 +1143,7 @@ export function ClientPortalHome() {
 
         {/* ---- Crew clearance ------------------------------------------- */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(7)}>
-          <CardContent className="p-5">
+          <CardContent>
             <h2 className="text-sm font-medium text-white">{t('portal.clearance')}</h2>
             {cl.total === 0 ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.clNone')}</p>
@@ -1185,7 +1184,7 @@ export function ClientPortalHome() {
 
         {/* ---- Safety ---------------------------------------------------- */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(8)}>
-          <CardContent className="p-5">
+          <CardContent>
             <h2 className="text-sm font-medium text-white">{t('portal.safety')}</h2>
             <div className="mt-2 text-4xl font-bold tracking-tight text-white">
               {data.safety.daysSinceLast === null ? '365+' : data.safety.daysSinceLast}
@@ -1202,7 +1201,7 @@ export function ClientPortalHome() {
 
         {/* ---- Statements ------------------------------------------------ */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(9)}>
-          <CardContent className="p-5">
+          <CardContent>
             <h2 className="text-sm font-medium text-white">{t('portal.statements')}</h2>
             {data.statements.length === 0 ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>

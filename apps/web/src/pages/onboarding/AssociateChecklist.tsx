@@ -150,6 +150,7 @@ const TASK_LABEL_KEY: Record<string, MessageKey> = {
   POLICY_ACK: 'ob.check.task.policies',
   J1_DOCS: 'ob.check.task.j1',
   I9_VERIFICATION: 'ob.check.task.i9',
+  WOTC_SCREENING: 'ob.check.task.wotc',
 };
 
 function taskLabel(t: Translate, task: Pick<ChecklistTask, 'kind' | 'title'>): string {
@@ -173,6 +174,8 @@ const REAL_KINDS = new Set([
   'E_SIGN',
   // Live headshot (camera capture).
   'PROFILE_PHOTO',
+  // WOTC tax credit pre-screening (optional for the applicant).
+  'WOTC_SCREENING',
 ]);
 
 // Which checklist row a rejected document belongs to. The checklist task

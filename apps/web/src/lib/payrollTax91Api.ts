@@ -114,6 +114,10 @@ export interface TaxForm {
   ein: string | null;
   recipientCopySentAt: string | null;
   createdAt: string;
+  /** E-file through the connected filing partner. */
+  efileStatus?: 'SUBMITTED' | 'SENT_TO_AGENCY' | 'ACCEPTED' | 'REJECTED' | null;
+  efileStatusAt?: string | null;
+  efileRejectionReason?: string | null;
 }
 
 export const listTaxForms = (params?: {

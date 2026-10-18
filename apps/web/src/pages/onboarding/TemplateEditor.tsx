@@ -50,6 +50,7 @@ const TASK_KIND_OPTIONS: Array<{ value: TaskKind; label: string }> = [
   { value: 'E_SIGN', label: 'E-signature' },
   { value: 'BACKGROUND_CHECK', label: 'Background check' },
   { value: 'W4', label: 'W-4 tax withholding' },
+  { value: 'WOTC_SCREENING', label: 'WOTC tax credit questions' },
   { value: 'DIRECT_DEPOSIT', label: 'Direct deposit' },
   { value: 'POLICY_ACK', label: 'Policy acknowledgment' },
   { value: 'J1_DOCS', label: 'J-1 documents' },

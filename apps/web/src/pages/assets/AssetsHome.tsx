@@ -160,7 +160,6 @@ export function AssetsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Assets"
         subtitle="Laptops, phones, badges, keys, and other physical items assigned to associates."
         breadcrumbs={[{ label: 'Assets' }]}

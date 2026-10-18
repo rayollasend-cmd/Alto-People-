@@ -93,6 +93,7 @@ export function CashForecastPage() {
         <div className="space-y-4">
           <Card>
             <CardContent className="p-0">
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-2xs uppercase tracking-wider text-ink-muted">
                   <tr>
@@ -115,6 +116,7 @@ export function CashForecastPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -159,7 +161,7 @@ export function CashForecastPage() {
 function Stat({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
     <Card>
-      <CardContent className="pt-4">
+      <CardContent>
         <div className="text-2xs font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</div>
         <div className={cn('mt-2 font-display text-2xl leading-none tabular-nums', tone)}>{value}</div>
       </CardContent>

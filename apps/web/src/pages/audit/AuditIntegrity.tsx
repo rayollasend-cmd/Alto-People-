@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Download, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -46,12 +47,13 @@ export function AuditIntegrity() {
       toast.error(message(err));
     }
   };
+  if (q.isPending) return <Skeleton className="h-40 w-full rounded-lg" />;
   if (!q.data) return null;
   const d = q.data;
   const last = d.checks[0];
   return (
     <Card className="mb-4">
-      <CardContent className="space-y-4 p-4">
+      <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-base text-white">
             {last && !last.ok ? <ShieldAlert className="h-4 w-4 text-alert" /> : <ShieldCheck className="h-4 w-4 text-success" />}

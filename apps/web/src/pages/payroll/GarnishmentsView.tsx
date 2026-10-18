@@ -147,7 +147,7 @@ export function GarnishmentsView({ canProcess }: Props) {
 
       {!rows && (
         <Card>
-          <CardContent className="p-4 space-y-3">
+          <CardContent className="space-y-3">
             <Skeleton className="h-12" />
             <Skeleton className="h-12" />
             <Skeleton className="h-12" />

@@ -10,8 +10,9 @@ import { env } from '../config/env.js';
  *   payday, the next ride, the next shifts, documents to renew — each one
  *   reads the person's own records under the session's authority and
  *   nothing else. The model decides which to call, reads the result, and
- *   answers in the person's language, knowing the page they are on. It can
- *   not act: no approving, no assigning, no sending. When it cannot help an
+ *   answers in the person's language, knowing the page they are on. It never
+ *   acts on its own: its propose_* tools (lib/assistantActions) only set up a
+ *   confirmation card, and the person's own Confirm runs it. When it cannot help an
  *   associate it OFFERS a hand-off to a person (a tool that only records
  *   the offer; the person confirms, routes/hugo performs it) — never a
  *   silent thread with the supervisor.
@@ -53,6 +54,8 @@ export interface AssistantIdentity {
   terms: { worker: string; workers: string; site: string; sites: string; manager: string; managers: string };
   /** When set, the person is an associate who may be handed to this person. */
   escalation: { who: string | null } | null;
+  /** The person has propose_* tools: actions are proposed, then confirmed by them (lib/assistantActions). */
+  canPropose?: boolean;
 }
 
 export interface ModelAnswer {
@@ -84,7 +87,10 @@ function stableSystem(id: AssistantIdentity): string {
     `You help the people who run and work the floor: ${id.terms.workers}, ${id.terms.managers}, and the office.`,
     `Facts come only from your tools. Call a tool before stating anything about a person's schedule, pay, ride, documents, desk or coverage. Never invent a name, a time, a number or a status. If no tool covers the question, say plainly what you cannot do here.`,
     `Answer in two to four short sentences. Use the organization's words: "${id.terms.worker}" / "${id.terms.workers}", "${id.terms.site}" / "${id.terms.sites}", "${id.terms.manager}" / "${id.terms.managers}". No markdown headings, no bullet lists longer than four items.`,
-    `You cannot act: you do not approve, assign, send or change anything. When someone asks you to, tell them where in the product they can, and give the link if a tool returned one.`,
+    id.canPropose
+      ? `You never act on your own. When someone asks you to approve, deny, give a shift, message a crew, file a case, request a schedule change or call out, look the thing up first, then call the matching propose_* tool. That only sets up a card: say in one sentence what will happen and that they tap the button to do it. Never say an action is done. If no propose_* tool covers it, tell them where in the product they can, with the link.`
+      : `You cannot act: you do not approve, assign, send or change anything. When someone asks you to, tell them where in the product they can, and give the link if a tool returned one.`,
+    `For a numbers question (how many, total, by month, by status) use run_report when you have it, and summarise the table in a sentence.`,
     `Never reveal another person's pay, documents or private details. A ${id.terms.manager} sees their own ${id.terms.sites}; a ${id.terms.worker} sees only their own records.`,
     id.escalation
       ? `If a ${id.terms.worker} needs something no tool covers, call escalate_to_person with a one-line summary, then tell them you can pass it to ${id.escalation.who ?? `their ${id.terms.manager}`} if they confirm. Do not claim to have sent anything.`

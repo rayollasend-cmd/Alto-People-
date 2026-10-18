@@ -1,5 +1,6 @@
+import { appendFileSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
-import { tenantContext } from './tenant.js';
+import { adoptTenant, tenantContext } from './tenant.js';
 
 /**
  * The application wall, step two of Brief 2-1: OBSERVE mode.
@@ -25,7 +26,8 @@ export type TenancyMode = 'off' | 'observe' | 'enforce';
 
 export function tenancyMode(): TenancyMode {
   const m = process.env.TENANCY_MODE;
-  return m === 'off' || m === 'enforce' ? m : 'observe';
+  // Unset means enforce (config/env.ts); observe and off only when named.
+  return m === 'off' || m === 'observe' ? m : 'enforce';
 }
 
 /** Shared reference data: no tenant column at all. */
@@ -40,7 +42,7 @@ export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set(
     .map((m) => m.name),
 );
 
-export type TenantObservationKind = 'no_context' | 'other_tenant_write' | 'other_tenant_filter';
+export type TenantObservationKind = 'no_context' | 'other_tenant_write' | 'other_tenant_filter' | 'anonymous_read';
 
 export interface TenantObservation {
   kind: TenantObservationKind;
@@ -62,6 +64,22 @@ export function tenantObservations(): TenantObservation[] {
 
 export function resetTenantObservations(): void {
   observations.clear();
+}
+
+// TENANCY_OBSERVE_DUMP=<file>: every process appends what it observed on
+// exit (one JSON line per observation), so a whole test run — or a soak of
+// the server — leaves the list of places to fix before enforcing.
+if (process.env.TENANCY_OBSERVE_DUMP) {
+  const file = process.env.TENANCY_OBSERVE_DUMP;
+  process.on('exit', () => {
+    if (observations.size === 0) return;
+    try {
+      const lines = [...observations.values()].map((o) => JSON.stringify(o)).join('\n') + '\n';
+      appendFileSync(file, lines);
+    } catch {
+      /* the dump is a diagnostic */
+    }
+  });
 }
 
 const CWD = process.cwd().replace(/\\/g, '/');
@@ -112,6 +130,8 @@ function record(kind: TenantObservationKind, model: string, operation: string): 
 }
 
 const WRITES_WITH_DATA = new Set(['create', 'createMany', 'createManyAndReturn']);
+/** The single-record lookups an anonymous request resolves its tenant with. */
+const RESOLVING = new Set(['findUnique', 'findUniqueOrThrow', 'findFirst', 'findFirstOrThrow']);
 const FILTERED = new Set(['findFirst', 'findFirstOrThrow', 'findMany', 'findUnique', 'findUniqueOrThrow', 'count', 'aggregate', 'groupBy', 'update', 'updateMany', 'delete', 'deleteMany', 'upsert']);
 
 type Args = Record<string, unknown>;
@@ -151,7 +171,12 @@ export function guardTenantQuery(model: string | undefined, operation: string, a
   const enforce = mode === 'enforce';
   if (!ctx) {
     record('no_context', model, operation);
-    if (enforce) throw new Error(`[tenancy] ${model}.${operation} ran with no tenant in context`);
+    // TENANCY_UNSCOPED=platform: code outside any request or job (test
+    // fixtures, a one-off script) runs unnarrowed instead of throwing. Never
+    // set in a deployed environment — there a missing context is a bug.
+    if (enforce && process.env.TENANCY_UNSCOPED !== 'platform') {
+      throw new Error(`[tenancy] ${model}.${operation} ran with no tenant in context`);
+    }
     return args;
   }
   const a = (args ?? {}) as Args;
@@ -159,6 +184,22 @@ export function guardTenantQuery(model: string | undefined, operation: string, a
     stampCreate(a.data, ctx.tenantId, ctx.platform, model, operation, enforce);
   } else if (operation === 'upsert') {
     stampCreate(a.create, ctx.tenantId, ctx.platform, model, operation, enforce);
+  }
+  // An anonymous request (a public link, a webhook, a sign-in) hasn't got a
+  // tenant until it resolves one: its first single-record lookup — by a
+  // token, a slug, a unique id — is not narrowed, and the record it finds
+  // binds the request to that record's tenant (adoptFromResult). List and
+  // count reads before then stay narrowed to the default tenant, so an
+  // anonymous search can never sweep across tenants.
+  const unbound = ctx.source === 'default' && !ctx.platform && !ctx.adopted;
+  if (unbound && RESOLVING.has(operation)) {
+    if (a.select && typeof a.select === 'object' && !(a.select as Args).tenantId) {
+      a.select = { ...(a.select as Args), tenantId: true };
+    }
+    return a;
+  }
+  if (unbound && FILTERED.has(operation)) {
+    record('anonymous_read', model, operation);
   }
   if (FILTERED.has(operation) && !ctx.platform && filterNamesOtherTenant(a.where, ctx.tenantId)) {
     record('other_tenant_filter', model, operation);
@@ -175,4 +216,17 @@ export function guardTenantQuery(model: string | undefined, operation: string, a
     return a;
   }
   return args;
+}
+
+/**
+ * After a query: an unbound anonymous request adopts the tenant of the first
+ * record a single-record lookup returned (see guardTenantQuery). Called by
+ * db.ts with the query's result.
+ */
+export function adoptFromResult(model: string | undefined, operation: string, result: unknown): void {
+  if (tenancyMode() === 'off' || !model || !TENANT_SCOPED_MODELS.has(model) || !RESOLVING.has(operation)) return;
+  const ctx = tenantContext();
+  if (!ctx || ctx.platform || ctx.adopted || ctx.source !== 'default') return;
+  const t = result && typeof result === 'object' ? (result as Args).tenantId : undefined;
+  if (typeof t === 'string') adoptTenant(t);
 }

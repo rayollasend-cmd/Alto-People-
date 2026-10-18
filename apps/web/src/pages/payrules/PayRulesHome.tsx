@@ -86,7 +86,6 @@ export function PayRulesHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Pay rules"
         subtitle="Project codes, premium-pay differentials (OT, night, holiday), and tip pools."
         breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Pay rules' }]}
@@ -102,7 +101,7 @@ export function PayRulesHome() {
         }
     >
       <Card>
-        <CardContent className="p-4 flex items-center gap-3 flex-wrap">
+        <CardContent className="flex items-center gap-3 flex-wrap">
           <label
             htmlFor="payrules-client"
             className="text-xs2 uppercase tracking-wider text-silver"
@@ -1016,7 +1015,7 @@ function TipPoolDrawer({
         </div>
         {pool.status === 'OPEN' && (
           <Card>
-            <CardContent className="p-4 space-y-3">
+            <CardContent className="space-y-3">
               <div className="text-sm text-white font-medium">
                 Auto-allocate by hours worked
               </div>
@@ -1048,7 +1047,7 @@ function TipPoolDrawer({
         )}
         {pool.status === 'OPEN' && (
           <Card>
-            <CardContent className="p-4 space-y-3">
+            <CardContent className="space-y-3">
               <div className="text-sm text-white font-medium">
                 Add manual allocation
               </div>

@@ -269,6 +269,16 @@ export function fmtPercent(
  * here means every caller is right by default instead of each screen
  * needing to remember its own workaround.
  */
+/**
+ * A calendar day stored as midnight UTC ("2026-03-02T00:00:00.000Z", a
+ * @db.Date column or a credential's validFrom) as the day it names
+ * ("2026-03-02"), so fmtDate doesn't render the day before west of
+ * Greenwich. A real instant passes through untouched.
+ */
+export function calendarDay(value: string): string {
+  return /T00:00:00(\.000)?Z$/.test(value) ? value.slice(0, 10) : value;
+}
+
 export function fmtDate(value: string | Date | null | undefined): string {
   if (!value) return DASH;
   // isDateOnly is a STRICT full match: a genuine timestamp

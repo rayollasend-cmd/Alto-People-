@@ -104,7 +104,6 @@ export function ProgramsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto space-y-5"
         title="Programs"
         subtitle="J-1 and H-2B participants, their sponsors, the dates that fire alerts, and the season's transition calendar."
         secondaryActions={
@@ -609,7 +608,7 @@ function ProgramDialog(
             ) : vault.isLoading ? (
               <Skeleton className="h-10" />
             ) : (vault.data?.documents ?? []).length === 0 ? (
-              <span className="text-sm text-silver">No documents in the vault yet.</span>
+              <EmptyState size="sm" title={"No documents in the vault yet."} />
             ) : (
               <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-navy-secondary p-2">
                 {(vault.data?.documents ?? []).map((doc) => (
@@ -890,6 +889,7 @@ function SponsorReportDialog({ sponsor, onClose }: { sponsor: Sponsor; onClose: 
               {report.data.totals.participants} participants · {report.data.totals.hours} hours · {report.data.totals.incidents} incidents · {report.data.totals.departures} departures
             </p>
             <div className="max-h-56 overflow-y-auto rounded-md border border-navy-secondary">
+              <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="text-silver">
                   <tr>
@@ -912,6 +912,7 @@ function SponsorReportDialog({ sponsor, onClose }: { sponsor: Sponsor; onClose: 
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </div>
         ) : null}
@@ -1035,6 +1036,7 @@ function CalendarTab() {
                   {cells.length === 0 ? (
                     <p className="text-xs text-silver">—</p>
                   ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="text-xs text-silver">
                         <tr>
@@ -1057,6 +1059,7 @@ function CalendarTab() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </div>
               );

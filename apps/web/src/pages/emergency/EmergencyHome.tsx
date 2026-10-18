@@ -63,7 +63,6 @@ export function EmergencyHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Emergency mode"
         subtitle={`One switch for a storm: shifts suspended without penalty, everyone told in their language, a live check-in board${hasVans ? ', evacuation vans' : ''}.`}
         primaryAction={
@@ -82,7 +81,7 @@ export function EmergencyHome() {
         <ActiveEmergency emergency={active} canManage={canManage} />
       ) : (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <EmptyState
               icon={Siren}
               title="No emergency in effect"
@@ -99,7 +98,7 @@ export function EmergencyHome() {
         </CardHeader>
         <CardContent className="overflow-x-auto">
           {past.length === 0 ? (
-            <p className="text-sm text-silver">Nothing yet.</p>
+            <EmptyState size="sm" title={"Nothing yet."} />
           ) : (
             <DataGrid<EmergencySummary>
               id="emergency-history"

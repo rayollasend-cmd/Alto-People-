@@ -1,3 +1,4 @@
+import { EVerifyProviderPanel } from './providers/EVerifyProviderPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -956,15 +957,25 @@ function CaseDrawer({
             </Section>
 
             <Section title="Case">
-              <CaseRecorder
+              <EVerifyProviderPanel
                 associateId={associateId}
-                detail={detail}
+                personName={`${detail.firstName} ${detail.lastName}`}
                 canManage={canManage}
-                onSaved={() => {
+                onChanged={() => {
                   void load();
                   onSaved();
                 }}
-              />
+              >
+                <CaseRecorder
+                  associateId={associateId}
+                  detail={detail}
+                  canManage={canManage}
+                  onSaved={() => {
+                    void load();
+                    onSaved();
+                  }}
+                />
+              </EVerifyProviderPanel>
             </Section>
 
             <Section title="E-Verify packet">

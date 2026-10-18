@@ -87,7 +87,6 @@ export function WhatsNewPage() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-4"
         title={t('whatsnew.pageTitle')}
         subtitle={t('whatsnew.pageSubtitle')}
         secondaryActions={

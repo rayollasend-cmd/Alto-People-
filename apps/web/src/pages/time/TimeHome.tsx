@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { PunchFixes } from './PunchFixes';
 import { ArrowLeft, ScanLine } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -139,7 +140,6 @@ function AssociateKioskOnlyView({
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         // The person's own view is "My time" — the same words as the home's
         // quick link and the floor's way back; "Time & attendance" is the
         // floor's title.
@@ -147,6 +147,9 @@ function AssociateKioskOnlyView({
         subtitle={t('time.subtitle')}
         secondaryActions={headerActions}
     >
+      {/* A shift they forgot to clock out of, extra hours offered, and asking
+          to fix a punch (attested) — before the week, because each needs them. */}
+      <PunchFixes />
       {/* The week first: worked against scheduled, and the 40h line. */}
       <MyWeekHours />
       {/* Compact kiosk note — the "how punches happen" explainer stays,

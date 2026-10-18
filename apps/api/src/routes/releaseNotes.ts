@@ -6,7 +6,7 @@ import { prisma } from '../db.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
-import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
+import { ALTO_TENANT_ID, tenantIdForWrite, withPlatformScope } from '../lib/tenant.js';
 
 export const releaseNotesRouter = Router();
 
@@ -58,7 +58,7 @@ async function readableNotes(where: Prisma.ReleaseNoteWhereInput, take: number) 
 /** A note this tenant may change: its own, or (the operator only) a platform note. */
 async function editableNote(id: string) {
   const tenantId = tenantIdForWrite();
-  const row = (await prisma.releaseNote.findFirst({ where: { id, tenantId } })) ?? (tenantId === ALTO_TENANT_ID ? await prisma.releaseNote.findFirst({ where: { id, tenantId: null } }) : null);
+  const row = (await prisma.releaseNote.findFirst({ where: { id, tenantId } })) ?? (tenantId === ALTO_TENANT_ID ? await withPlatformScope(() => prisma.releaseNote.findFirst({ where: { id, tenantId: null } })) : null);
   if (!row) throw new HttpError(404, 'not_found', 'Release note not found');
   return row;
 }
@@ -149,7 +149,10 @@ releaseNotesRouter.patch('/:id', MANAGE, async (req, res, next) => {
     if (!parsed.success) throw new HttpError(400, 'invalid_body', 'Invalid release note', parsed.error.flatten());
     const existing = await editableNote(req.params.id);
     const { day, items, published } = parsed.data;
-    const row = await prisma.releaseNote.update({
+    // A platform note (no tenant) is written as the operator: enforce would
+    // otherwise narrow the write to the operator's own tenant and miss it.
+    const writeAs = existing.tenantId === null ? withPlatformScope : <T,>(fn: () => Promise<T>) => fn();
+    const row = await writeAs(() => prisma.releaseNote.update({
       where: { id: existing.id },
       data: {
         day: new Date(`${day}T00:00:00.000Z`),
@@ -157,7 +160,7 @@ releaseNotesRouter.patch('/:id', MANAGE, async (req, res, next) => {
         // Publishing stamps the moment; re-saving a published note keeps it.
         publishedAt: published ? (existing.publishedAt ?? new Date()) : null,
       },
-    });
+    }));
     enqueueAudit(
       {
         actorUserId: req.user!.id,
@@ -177,7 +180,7 @@ releaseNotesRouter.patch('/:id', MANAGE, async (req, res, next) => {
 releaseNotesRouter.delete('/:id', MANAGE, async (req, res, next) => {
   try {
     const existing = await editableNote(req.params.id);
-    await prisma.releaseNote.delete({ where: { id: existing.id } });
+    await (existing.tenantId === null ? withPlatformScope : <T,>(fn: () => Promise<T>) => fn())(() => prisma.releaseNote.delete({ where: { id: existing.id } }));
     enqueueAudit(
       { actorUserId: req.user!.id, action: 'release_note.deleted', entityType: 'ReleaseNote', entityId: existing.id, metadata: { day: existing.day.toISOString().slice(0, 10) } },
       'releaseNotes.delete',

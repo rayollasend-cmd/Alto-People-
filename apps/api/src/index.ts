@@ -29,6 +29,7 @@ import { startAccessGrantSweepCron } from './lib/accessChanges.js';
 import { startComplianceSnapshotCron } from './lib/complianceSnapshot.js';
 import { startForecastCron } from './lib/forecast/cron.js';
 import { startClientNpsCron } from './lib/clientNps.js';
+import { startMarketWageCron } from './lib/marketWages.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
 import { startCaseSlaCron } from './lib/hrCaseSla.js';
@@ -69,7 +70,7 @@ import { sampleRobots } from './lib/robots.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
 import { startTaskHandoffSweep } from './lib/tasks/sweep.js';
-import { onPlatformScope } from './lib/tenant.js';
+import { ALTO_TENANT_ID, onPlatformScope, runWithTenant, withPlatformScope } from './lib/tenant.js';
 import { enqueueAudit } from './lib/audit.js';
 import { BUILD_VERSION } from './routes/health.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
@@ -77,6 +78,7 @@ import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
 import { startNotificationRetentionCron } from './lib/notificationRetention.js';
 import { startNotificationDigestCron } from './lib/notificationDelivery.js';
 import { startCertificationReminderCron } from './lib/accessCertification.js';
+import { startRetentionCron } from './lib/retention.js';
 import { startVanTrailRetentionCron } from './lib/transportLive.js';
 import { startRideSeriesCron } from './lib/rideSeries.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
@@ -183,6 +185,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startForecastCron();
   // Client NPS: one question to every store manager in the first week of a quarter.
   startClientNpsCron();
+  startMarketWageCron();
   // Brief 2-2 step 3: the labor rules engine beside every finalized run (reads only; pays nothing).
   startLaborShadowCron(prisma);
   // Brief 2-3 step 2: the environment IdP and SCIM_TOKEN become Alto HR's first rows.
@@ -192,10 +195,11 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startSecurityAlertsCron(prisma);
   // Brief 2-3 step 4: each tenant's SIEM sink, every minute.
   startAuditSinkCron(prisma);
-  void Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)]).catch((err) => console.error('[alto-people/api] identity migration from the environment failed:', err));
+  // The environment's SSO / SCIM settings belong to Alto HR: written as that tenant.
+  void runWithTenant(ALTO_TENANT_ID, 'job', () => Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)])).catch((err) => console.error('[alto-people/api] identity migration from the environment failed:', err));
   // Brief 1D-1: a PERSON worker for every associate, at boot and every
   // quarter hour, so an import that bypassed the API still ends up owned.
-  const sweepWorkers = () => ensurePersonWorkers(prisma).catch((err) => logger.warn({ err }, 'worker sweep failed'));
+  const sweepWorkers = () => runForEachTenant('workers', () => ensurePersonWorkers(prisma)).catch((err) => logger.warn({ err }, 'worker sweep failed'));
   void sweepWorkers();
   setInterval(sweepWorkers, 15 * 60_000).unref();
   // Brief 1D-2: the agents Alto already runs are registered, and unanswered
@@ -251,6 +255,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // every ten minutes; overdue access certifications remind their reviewers.
   startNotificationDigestCron();
   startCertificationReminderCron();
+  startRetentionCron();
   startVanTrailRetentionCron();
   // Hourly: standing ride bookings booked forward a week.
   startRideSeriesCron();
@@ -313,7 +318,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // after boot uses the org's saved logo + colors instead of the
   // hard-coded defaults. Auto-refreshes every 5 min via ensureBrandingLoaded
   // call sites.
-  ensureBrandingLoaded(prisma).catch((err) => {
+  runForEachTenant('branding', (tenantId) => ensureBrandingLoaded(prisma, tenantId)).catch((err) => {
     logger.warn({ err }, 'branding preload failed');
   });
 
@@ -325,7 +330,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // payroll_config. Re-runs every January catch missing-IRS-tables drift.
   const currentYear = new Date().getFullYear();
   try {
-    await preloadPayrollTaxConfig(prisma, currentYear);
+    await withPlatformScope(() => preloadPayrollTaxConfig(prisma, currentYear));
     logger.info({ year: currentYear }, 'payroll tax config loaded');
   } catch (err) {
     logger.warn(

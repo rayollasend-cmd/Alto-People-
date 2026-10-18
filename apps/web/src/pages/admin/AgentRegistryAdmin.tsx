@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Bot, Copy, LayoutGrid, MoreHorizontal, Plus, Settings2, ShieldAlert, TableProperties } from 'lucide-react';
@@ -705,7 +706,7 @@ export function AgentRegistryAdmin() {
 
       {/* Hero: the approval queue. */}
       <section aria-labelledby="agent-queue-heading" className="space-y-3">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <MetricCard
             label="Waiting for a person"
             value={registry.isLoading && queue.isLoading ? '—' : String(pendingCount)}
@@ -1763,7 +1764,7 @@ export function ScorecardSection({ agent, canManage, onChanged }: { agent: Agent
         </div>
       </div>
       {scorecard.error && <QueryError what="the scorecard" query={scorecard} />}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <MetricCard label="Tasks completed" value={loading || !s ? dash : String(s.tasksCompleted)} hint={s ? `${s.errors} ${s.errors === 1 ? 'error' : 'errors'}` : undefined} />
         <MetricCard
           label="Error rate"
@@ -1911,7 +1912,7 @@ export function CredentialsSection({ agent, canManage, onChanged }: { agent: Age
       )}
 
       {agent.credentials.length === 0 ? (
-        <p className="text-sm text-silver/70">No credentials yet.</p>
+        <EmptyState size="sm" title={"No credentials yet."} />
       ) : (
         <ul className="divide-y divide-navy-secondary rounded-md border border-navy-secondary text-sm">
           {agent.credentials.map((c) => {
@@ -2033,6 +2034,7 @@ export function SpendSection({ agent, canManage, onChanged }: { agent: AgentDeta
       {agent.spend.length === 0 ? (
         <p className="text-sm text-silver/70">No spend recorded.</p>
       ) : (
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-left text-xs2 text-silver/70">
             <tr>
@@ -2055,6 +2057,7 @@ export function SpendSection({ agent, canManage, onChanged }: { agent: AgentDeta
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -2161,7 +2164,7 @@ function summariseMeta(meta: Record<string, unknown> | null): string {
 }
 
 export function TrailSection({ agent }: { agent: AgentDetail }) {
-  if (agent.trail.length === 0) return <p className="text-sm text-silver/70">Nothing in the trail yet.</p>;
+  if (agent.trail.length === 0) return <EmptyState size="sm" title={"Nothing in the trail yet."} />;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">

@@ -219,7 +219,6 @@ export function RelayBoard() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          className="space-y-4"
           title="The relay" subtitle="Where the desks work together — the board, the questions between HR, Recruiting, Workforce and Finance, and the documents the work runs on."
       >
         <ErrorBanner

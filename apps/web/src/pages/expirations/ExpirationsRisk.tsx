@@ -362,7 +362,7 @@ export function ExpirationTimeline({ filters, setFilters, onRenew }: { filters: 
 
       {picked.length > 0 && (
         <Card>
-          <CardContent className="p-4">
+          <CardContent>
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="text-sm font-medium text-ink">
                 {picked.length} at {picked[0]!.storeName ?? 'no placement'} · {pick?.week === 'expired' ? 'already expired' : `week of ${fmtDayShort(data.weeks[pick!.week as number]!)}`}

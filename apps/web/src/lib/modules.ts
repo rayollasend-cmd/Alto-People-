@@ -37,6 +37,7 @@ export type ModuleKey =
   | 'portal-requests'
   | 'portal-candidates'
   | 'floor-today'
+  | 'call-outs'
   | 'relay'
   | 'statements'
   | 'timesheets'
@@ -58,7 +59,11 @@ export type ModuleKey =
   | 'payroll-tax'
   | 'payroll-compliance'
   | 'cash-forecast'
+  | 'market-rates'
   | 'earned-wage'
+  | 'state-tax'
+  | 'wotc'
+  | 'aca'
   | 'documents'
   | 'doc-templates'
   | 'communications'
@@ -77,6 +82,7 @@ export type ModuleKey =
   | 'pulse'
   | 'headcount'
   | 'headcount-plan'
+  | 'retention'
   | 'policy-campaigns'
   | 'document-retention'
   | 'skills'
@@ -92,6 +98,9 @@ export type ModuleKey =
   | 'vaccinations'
   | 'agreements'
   | 'hr-cases'
+  | 'leave'
+  | 'unemployment-claims'
+  | 'workers-comp'
   | 'help-center'
   | 'ramp'
   | 'career'
@@ -196,6 +205,8 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'client-nps',
   'trust-center',
   'season-planner',
+  // Pay against the local market, for rate negotiations.
+  'market-rates',
 ]);
 
 /** The floor supervisor's sidebar: their floor, the faces on it, the live
@@ -237,6 +248,7 @@ export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'internal-jobs',
   'agreements', // pending e-signatures land here from the to-do card
   'hr-cases', // "talk to HR" — the escape valve stays one tap away
+  'leave', // request leave, send the certification, read the notices
   'help-center',
 ]);
 
@@ -265,7 +277,11 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'payroll-tax',
   'payroll-compliance',
   'cash-forecast',
+  'market-rates',
   'earned-wage',
+  'state-tax',
+  'wotc',
+  'aca',
   'payrules',
   'benefits',
   'compensation',
@@ -296,6 +312,8 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  coverage, standards, safety, the supervisor pipeline. No money pages. */
 const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'inbox',
+  'call-outs',
+  'retention',
   'me',
   'messages',
   'relay',
@@ -407,6 +425,8 @@ const SHIFT_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'learning',
   'rides', // they ride the vans too
   'celebrations', // their crew's birthdays and anniversaries
+  'call-outs', // who can't make it today, and how cover is going
+  'retention', // who on their crew might leave, and what to do
 ]);
 
 /** The Transportation Director's nav: the command center, and the
@@ -433,6 +453,7 @@ const DRIVER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  */
 export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   scheduling: 'scheduling',
+  'call-outs': 'scheduling',
   marketplace: 'scheduling',
   approvals: 'scheduling',
   holidays: 'scheduling',
@@ -465,6 +486,7 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   statements: 'billRates',
   portal: 'clientPortal',
   'client-nps': 'clientPortal',
+  'market-rates': 'clientPortal',
   'portal-today': 'clientPortal',
   'portal-ops': 'clientPortal',
   'portal-schedule': 'clientPortal',
@@ -906,6 +928,16 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'retention',
+    path: '/retention',
+    label: 'Retention',
+    description:
+      'Who might leave soon and why — hours, attendance, pay against the local market, rides — with the plays that keep people, and which ones work.',
+    requires: 'view:org',
+    requiresAny: ['view:org', 'manage:scheduling'],
+    group: 'workforce-management',
+  },
+  {
     key: 'policy-campaigns',
     path: '/policy-campaigns',
     label: 'Policy campaigns',
@@ -1036,6 +1068,33 @@ export const MODULES: ModuleNav[] = [
     description:
       'Ticketing for HR. File a question or concern, HR triages and replies. Internal notes stay hidden from the requester.',
     requires: 'view:dashboard',
+    group: 'compliance',
+  },
+  {
+    key: 'leave',
+    path: '/leave',
+    label: 'Leave of absence',
+    description:
+      'FMLA, state paid leave, military and accommodation leave: eligibility, notices, certifications, approvals and the return to work.',
+    requires: 'view:dashboard',
+    group: 'compliance',
+  },
+  {
+    key: 'unemployment-claims',
+    path: '/claims/unemployment',
+    label: 'Unemployment claims',
+    description:
+      'State notices answered on time, argued from the record — the separation, warnings, attendance and offers of suitable work.',
+    requires: 'manage:claims',
+    group: 'compliance',
+  },
+  {
+    key: 'workers-comp',
+    path: '/claims/workers-comp',
+    label: 'Workers’ comp claims',
+    description:
+      'From the injury to the carrier: the first report, lost and restricted days, restrictions and modified-duty shifts.',
+    requires: 'manage:claims',
     group: 'compliance',
   },
   {
@@ -1246,6 +1305,16 @@ export const MODULES: ModuleNav[] = [
     group: 'workforce-management',
   },
   {
+    key: 'call-outs',
+    path: '/call-outs',
+    label: 'Call-outs',
+    description:
+      'Who can’t make their shift — by phone, text, WhatsApp or the app — the reason, and how cover is going. Cover starts on its own.',
+    requires: 'view:scheduling',
+    requiresAny: ['view:scheduling', 'manage:scheduling'],
+    group: 'workforce-management',
+  },
+  {
     key: 'robots',
     path: '/robots',
     label: 'Robots',
@@ -1308,11 +1377,47 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'market-rates',
+    path: '/market-rates',
+    label: 'Market rates',
+    description:
+      'Every role at every store against its local market: where pay sits among the metro’s wages, what fill looks like at each pay level, and the bill rate that keeps the margin.',
+    requires: 'view:clients',
+    group: 'payroll-finance',
+  },
+  {
     key: 'earned-wage',
     path: '/payroll/earned-wage',
     label: 'Earned-wage access',
     description:
       'Pay before payday: every advance drawn, the exposure until the next check, and the cap, fee and limit the organization offers.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'state-tax',
+    path: '/payroll/state-tax',
+    label: 'State tax coverage',
+    description:
+      'Where payroll can withhold state income tax, the states waiting on a review with your tax adviser, and a calculator to check them.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'wotc',
+    path: '/payroll/wotc',
+    label: 'WOTC tax credits',
+    description:
+      'Work Opportunity Tax Credit screening, the 28-day state filing deadline, certifications and the credit earned by hours worked.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'aca',
+    path: '/benefits/aca',
+    label: 'ACA hours',
+    description:
+      'Variable-hour work measured against 130 hours a month: who is full-time, who is close, offers of coverage owed and the 1095-C months.',
     requires: 'process:payroll',
     group: 'payroll-finance',
   },
@@ -1764,7 +1869,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   people: {
     key: 'people',
     label: (term) => term('nav.people'),
-    children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'headcount-plan', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-paths', 'separations'],
+    children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'headcount-plan', 'retention', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-paths', 'separations'],
   },
   // Marketing sits under Hiring for the admins (the top of the same funnel);
   // the marketing manager's own rail opens its Marketing door first.
@@ -1772,17 +1877,17 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   time: {
     key: 'time',
     label: 'Time & scheduling',
-    children: ['scheduling', 'approvals', 'marketplace', 'time-attendance', 'timesheets', 'kiosk', 'time-off', 'holidays', 'fieldglass', 'labor-costs', 'forecast', 'season-planner', 'supervisor-corps', 'emergency'],
+    children: ['scheduling', 'call-outs', 'approvals', 'marketplace', 'time-attendance', 'timesheets', 'kiosk', 'time-off', 'holidays', 'fieldglass', 'labor-costs', 'forecast', 'season-planner', 'supervisor-corps', 'emergency'],
   },
   pay: {
     key: 'pay',
     label: 'Pay & finance',
-    children: ['payroll', 'cash-forecast', 'payroll-tax', 'earned-wage', 'payrules', 'compensation', 'benefits', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
+    children: ['payroll', 'cash-forecast', 'market-rates', 'payroll-tax', 'state-tax', 'wotc', 'earned-wage', 'payrules', 'compensation', 'benefits', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
   },
   compliance: {
     key: 'compliance',
     label: (term) => term('nav.compliance'),
-    children: ['compliance', 'documents', 'doc-templates', 'policy-campaigns', 'expirations', 'vaccinations', 'agreements', 'hr-cases', 'discipline', 'hotline', 'payroll-compliance', 'programs', 'audit'],
+    children: ['compliance', 'documents', 'doc-templates', 'policy-campaigns', 'expirations', 'vaccinations', 'agreements', 'hr-cases', 'leave', 'unemployment-claims', 'workers-comp', 'discipline', 'hotline', 'payroll-compliance', 'programs', 'audit'],
   },
   operations: { key: 'operations', label: 'Operations', children: ['control-room', 'tasks', 'ops', 'robots'] },
   transport: { key: 'transport', label: (term) => term('nav.transport'), children: ['transport'] },
@@ -1799,7 +1904,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   // The associate's doors — the same modules, in the first person.
   'my-schedule': { key: 'my-schedule', label: 'My schedule', children: ['scheduling', 'marketplace', 'time-off', 'time-attendance'] },
   'my-pay': { key: 'my-pay', label: 'My pay', children: ['payroll', 'benefits', 'reimbursements'] },
-  'my-records': { key: 'my-records', label: 'My records', children: ['documents', 'agreements', 'hr-cases', 'communications'] },
+  'my-records': { key: 'my-records', label: 'My records', children: ['documents', 'agreements', 'hr-cases', 'leave', 'communications'] },
   more: { key: 'more', label: 'More', children: [] },
 };
 

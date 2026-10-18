@@ -591,14 +591,18 @@ export async function runCapabilityFixture(
       return { ...verdict, answer, refAnswer };
     });
   } finally {
-    await db.shift.deleteMany({ where: { id: { in: created.shifts } } });
-    await db.associateAssignment.deleteMany({ where: { id: { in: created.assignments } } });
-    // Documents and applications hold their person (onDelete: Restrict): they go first.
-    await db.documentRecord.deleteMany({ where: { associateId: { in: created.associates } } });
-    await db.application.deleteMany({ where: { associateId: { in: created.associates } } });
-    await db.worker.deleteMany({ where: { associateId: { in: created.associates } } });
-    await db.associate.deleteMany({ where: { id: { in: created.associates } } });
-    await db.site.deleteMany({ where: { id: { in: created.sites } } });
+    // Removed as the throwaway tenant: under TENANCY_MODE=enforce a delete
+    // runs in the caller's tenant otherwise, and would leave the world behind.
+    await runWithTenant(tenantId, 'job', async () => {
+      await db.shift.deleteMany({ where: { id: { in: created.shifts } } });
+      await db.associateAssignment.deleteMany({ where: { id: { in: created.assignments } } });
+      // Documents and applications hold their person (onDelete: Restrict): they go first.
+      await db.documentRecord.deleteMany({ where: { associateId: { in: created.associates } } });
+      await db.application.deleteMany({ where: { associateId: { in: created.associates } } });
+      await db.worker.deleteMany({ where: { associateId: { in: created.associates } } });
+      await db.associate.deleteMany({ where: { id: { in: created.associates } } });
+      await db.site.deleteMany({ where: { id: { in: created.sites } } });
+    });
     await db.tenant.deleteMany({ where: { id: tenantId } });
   }
 }

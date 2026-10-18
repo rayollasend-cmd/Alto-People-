@@ -1,3 +1,4 @@
+import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -164,7 +165,8 @@ export function OrgCard({
   const dropTarget = !!structure && n.kind === 'region';
   const isPerson = n.kind === 'person' || n.kind === 'staff' || n.kind === 'lead';
   const team = index.teamSize.get(n.id) ?? 0;
-  const hasTeam = (index.children.get(n.id) ?? []).length > 0;
+  // A store whose crew loads on demand still has a team to open.
+  const hasTeam = (index.children.get(n.id) ?? []).length > 0 || (n.kind === 'store' && n.reports > 0);
   return (
     <div
       data-node={n.id}
@@ -482,7 +484,8 @@ export function ChartCanvas({
 
 /* ----- The list (an accessible tree) ------------------------------------ */
 
-const LIST_CAP = 1500;
+/** Past this many open rows the list windows: only what's on screen is in the DOM. */
+const WINDOW_AFTER = 300;
 
 export function TreeList({
   index,
@@ -504,8 +507,8 @@ export function TreeList({
   structure?: StructureActions;
 }) {
   const [active, setActive] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
   const rowsRef = useRef<HTMLUListElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // The rows as drawn: depth-first, into what's open.
   const visible = useMemo(() => {
@@ -519,20 +522,53 @@ export function TreeList({
     walk(null, 0);
     return out;
   }, [index, expanded]);
-  const shown = showAll ? visible : visible.slice(0, LIST_CAP);
+  const shown = visible;
   const current = active && shown.some((r) => r.n.id === active) ? active : (shown[0]?.n.id ?? null);
+
+  // A 5,000-person field tree stays light: past WINDOW_AFTER open rows only
+  // the rows in view are rendered, with spacers holding the rest's height.
+  const windowed = visible.length > WINDOW_AFTER;
+  const virtualizer = useVirtualizer({
+    count: windowed ? visible.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 52,
+    overscan: 15,
+  });
+  const vItems = windowed ? virtualizer.getVirtualItems() : [];
+  const rendered: Array<{ n: OrgNode; depth: number; v: VirtualItem | null }> = windowed
+    ? vItems.map((v) => ({ ...visible[v.index]!, v }))
+    : visible.map((r) => ({ ...r, v: null }));
+  const padTop = vItems.length ? vItems[0]!.start : 0;
+  const padBottom = vItems.length ? virtualizer.getTotalSize() - vItems[vItems.length - 1]!.end : 0;
+
+  /** Bring a row on screen (rendering it first when windowed), then act on it. */
+  const reveal = (id: string, then?: (el: HTMLElement) => void) => {
+    const find = () => rowsRef.current?.querySelector(`[data-row="${CSS.escape(id)}"]`) as HTMLElement | null;
+    const i = visible.findIndex((r) => r.n.id === id);
+    if (windowed && i >= 0) virtualizer.scrollToIndex(i, { align: 'auto' });
+    const el = find();
+    if (el) {
+      el.scrollIntoView?.({ block: 'nearest' });
+      then?.(el);
+      return;
+    }
+    requestAnimationFrame(() => {
+      const late = find();
+      if (late) then?.(late);
+    });
+  };
 
   useEffect(() => {
     if (!highlightId) return;
     setActive(highlightId);
-    const el = rowsRef.current?.querySelector(`[data-row="${CSS.escape(highlightId)}"]`);
-    (el as HTMLElement | null)?.scrollIntoView?.({ block: 'nearest' });
+    reveal(highlightId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightId]);
 
   const move = (id: string | null) => {
     if (!id) return;
     setActive(id);
-    (rowsRef.current?.querySelector(`[data-row="${CSS.escape(id)}"]`) as HTMLElement | null)?.focus();
+    reveal(id, (el) => el.focus());
   };
   const toggle = (id: string, open?: boolean) => {
     const next = new Set(expanded);
@@ -543,7 +579,8 @@ export function TreeList({
 
   const onKey = (e: KeyboardEvent<HTMLElement>, n: OrgNode) => {
     const i = shown.findIndex((r) => r.n.id === n.id);
-    const hasKids = (index.children.get(n.id) ?? []).length > 0;
+    const kids = index.children.get(n.id) ?? [];
+    const hasKids = kids.length > 0 || (n.kind === 'store' && n.reports > 0);
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
@@ -556,7 +593,7 @@ export function TreeList({
       case 'ArrowRight':
         e.preventDefault();
         if (hasKids && !expanded.has(n.id)) toggle(n.id, true);
-        else if (hasKids) move(index.children.get(n.id)![0]!.id);
+        else if (kids.length > 0) move(kids[0]!.id);
         break;
       case 'ArrowLeft':
         e.preventDefault();
@@ -594,9 +631,11 @@ export function TreeList({
 
   return (
     <div>
+      <div ref={scrollRef} className={windowed ? 'max-h-[70vh] overflow-auto' : undefined}>
       <ul ref={rowsRef} role="tree" aria-label={label} className="space-y-0.5">
-        {shown.map(({ n, depth }) => {
-          const hasKids = (index.children.get(n.id) ?? []).length > 0;
+        {padTop > 0 && <li role="none" style={{ height: padTop }} />}
+        {rendered.map(({ n, depth, v }) => {
+          const hasKids = (index.children.get(n.id) ?? []).length > 0 || (n.kind === 'store' && n.reports > 0);
           const open = expanded.has(n.id);
           const slot = painter.slotOf(n);
           const isPerson = n.kind === 'person' || n.kind === 'staff' || n.kind === 'lead';
@@ -604,6 +643,8 @@ export function TreeList({
             <li
               key={n.id}
               data-row={n.id}
+              data-index={v ? v.index : undefined}
+              ref={v ? virtualizer.measureElement : undefined}
               role="treeitem"
               aria-level={depth + 1}
               aria-expanded={hasKids ? open : undefined}
@@ -680,14 +721,9 @@ export function TreeList({
             </li>
           );
         })}
+        {padBottom > 0 && <li role="none" style={{ height: padBottom }} />}
       </ul>
-      {!showAll && visible.length > LIST_CAP && (
-        <div className="mt-3 text-center">
-          <Button size="sm" variant="outline" onClick={() => setShowAll(true)}>
-            Show all {visible.length} rows
-          </Button>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

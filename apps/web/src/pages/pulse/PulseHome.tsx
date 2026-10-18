@@ -90,7 +90,6 @@ export function PulseHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Pulse"
         subtitle="One-question check-ins. Anonymous — only the score and comment are stored, never the responder."
         breadcrumbs={[{ label: 'Pulse' }]}

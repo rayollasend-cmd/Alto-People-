@@ -388,6 +388,10 @@ payrollTax91Router.get('/tax-forms', VIEW, async (req, res) => {
       filingConfirmation: f.filingConfirmation ?? null,
       ein: f.ein,
       recipientCopySentAt: f.recipientCopySentAt?.toISOString() ?? null,
+      // E-file through the connected filing partner (lib/providers).
+      efileStatus: f.efileStatus ?? null,
+      efileStatusAt: f.efileStatusAt?.toISOString() ?? null,
+      efileRejectionReason: f.efileRejectionReason ?? null,
       createdAt: f.createdAt.toISOString(),
     })),
   });

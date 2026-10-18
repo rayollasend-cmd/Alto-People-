@@ -269,7 +269,6 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Communications"
         subtitle={
           canManage

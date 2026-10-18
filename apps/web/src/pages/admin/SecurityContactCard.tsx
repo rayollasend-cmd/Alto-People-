@@ -29,7 +29,7 @@ export function SecurityContactCard({ canManage }: { canManage: boolean }) {
   };
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-end gap-3 p-4">
+      <CardContent className="flex flex-wrap items-end gap-3">
         <Field label="Security contact" hint="Hears every security alert by email.">
           {(p) => <Input {...p} type="email" className="w-72" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!canManage} placeholder="security@yourcompany.com" />}
         </Field>

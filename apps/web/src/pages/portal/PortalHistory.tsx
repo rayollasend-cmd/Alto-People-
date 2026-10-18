@@ -416,7 +416,7 @@ export function PortalHistory() {
           {/* ---- Market accounts: the stores side by side ------------------ */}
           {data.stores.length > 0 && (
             <Card>
-              <CardContent className="p-4 sm:p-5">
+              <CardContent>
                 <div className="flex items-baseline justify-between gap-3">
                   <h2 className="text-sm font-medium text-white">{t('portal.storesRanked')}</h2>
                   <span className="text-xs text-silver/60">{t('portal.storesRankedSub')}</span>
@@ -469,7 +469,7 @@ export function PortalHistory() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
             {/* ---- Fill per day ------------------------------------------ */}
             <Card className="xl:col-span-7">
-              <CardContent className="p-4 sm:p-5">
+              <CardContent>
                 <h2 className="text-sm font-medium text-white">{t('portal.histFillTitle')}</h2>
                 <div className="mt-3">
                   <WeekFillChart
@@ -500,7 +500,7 @@ export function PortalHistory() {
 
             {/* ---- Hours scheduled vs delivered --------------------------- */}
             <Card className="xl:col-span-5">
-              <CardContent className="p-4 sm:p-5">
+              <CardContent>
                 <h2 className="text-sm font-medium text-white">{t('portal.histHoursTitle')}</h2>
                 <div className="mt-3">
                   <HoursChart
@@ -525,7 +525,7 @@ export function PortalHistory() {
 
             {/* ---- Checklist evidence ------------------------------------- */}
             <Card className="xl:col-span-4">
-              <CardContent className="p-5">
+              <CardContent>
                 <h2 className="text-sm font-medium text-white">{t('portal.histOpsTitle')}</h2>
                 {!data.ops ? (
                   <p className="mt-3 text-sm text-silver/60">{t('portal.opsNone')}</p>
@@ -568,7 +568,7 @@ export function PortalHistory() {
 
             {/* ---- Safety --------------------------------------------------- */}
             <Card className="xl:col-span-4">
-              <CardContent className="p-5">
+              <CardContent>
                 <h2 className="text-sm font-medium text-white">{t('portal.safety')}</h2>
                 <div className="mt-2 text-4xl font-bold tracking-tight text-white">
                   {data.safety.incidents}
@@ -586,7 +586,7 @@ export function PortalHistory() {
 
             {/* ---- Statements + service reports ----------------------------- */}
             <Card className="xl:col-span-4">
-              <CardContent className="p-5">
+              <CardContent>
                 <h2 className="text-sm font-medium text-white">{t('portal.histDocs')}</h2>
                 {data.statements.length === 0 && data.serviceReports.length === 0 ? (
                   <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>

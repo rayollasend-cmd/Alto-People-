@@ -40,12 +40,13 @@ import { getNextPayday, getPeriodAfter } from '../lib/payrollSchedule.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
 import { applyRideCharges, planRideCharges, releaseRideCharges } from '../lib/transport.js';
 import { round2 } from '../lib/payroll.js';
-import { isStateTaxSupported } from '../lib/payrollTax.js';
+import { isStateTaxSupported, primeStateAcknowledgments } from '../lib/payrollTax.js';
 import { aggregatePayrollProjection, type AddOnKind } from '../lib/payrollAggregator.js';
 import { z } from 'zod';
 import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
 import { persistRetroForItem, releaseRetroForRun } from '../lib/retroPay.js';
+import { markPremiumsPaid, releasePremiumsForRun } from '../lib/predictabilityPay.js';
 import { recoverEarnedWageAdvances, releaseEarnedWageRecoveryForRun } from '../lib/earnedWage.js';
 import { rerouteReturnedItem } from '../lib/payoutReroute.js';
 import { expenseSplitsForItems } from '../lib/quickbooks.js';
@@ -56,7 +57,7 @@ import {
   paystubItemInclude,
 } from '../lib/paystubData.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
-import { checkAdapter, pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
+import { checkAdapter, resolveAdapter, type DisbursementInput } from '../lib/disbursement.js';
 import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
 import { accrueDepositsForRun } from '../lib/taxDeposits.js';
 import { renderEftpsWorksheetPdf } from '../lib/eftpsWorksheet.js';
@@ -817,6 +818,7 @@ export async function aggregateAndPersistRun(
   await releaseRideCharges(tx, run.id);
   // Retro pairs and earned-wage recoveries this run stamped: same rule.
   await releaseRetroForRun(tx, run.id);
+  await releasePremiumsForRun(tx, run.id);
   await releaseEarnedWageRecoveryForRun(tx, run.id);
 
   // Same idempotency rule for garnishments: remove THIS run's ledger rows
@@ -997,6 +999,8 @@ export async function aggregateAndPersistRun(
         if (p.retro.length > 0) {
           await persistRetroForItem(tx, p.retro, { runId: run.id, itemId: upserted.id });
         }
+        // Predictability pay this check pays (lib/predictabilityPay).
+        await markPremiumsPaid(tx, p.premiumIds, run.id);
 
         // Replace earning lines on every (re-)aggregation.
         await tx.payrollItemEarning.deleteMany({ where: { payrollItemId: upserted.id } });
@@ -1301,6 +1305,8 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, idempotent, async (req, res, n
     // No run finalizes with a W-2 person whose state the engine cannot
     // withhold for — nothing would be withheld, and that is a liability,
     // not a rounding error. (lib/payrollExceptions.ts UNSUPPORTED_STATE)
+    // An added state counts only once this tenant's payroll admin reviewed it.
+    await primeStateAcknowledgments(prisma);
     const unsupported = (
       await prisma.payrollItem.findMany({
         where: { payrollRunId: run.id, associate: { employmentType: 'W2_EMPLOYEE' } },
@@ -1426,6 +1432,7 @@ payrollRouter.delete('/runs/:id', VOID, async (req, res, next) => {
       await releaseRideCharges(tx, run.id);
       await releaseRetroForRun(tx, run.id);
       await releaseEarnedWageRecoveryForRun(tx, run.id);
+      await releasePremiumsForRun(tx, run.id);
 
       // Items + their earnings cascade on the run delete, but delete
       // explicitly for clarity, then the run.
@@ -1593,7 +1600,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
       );
     }
 
-    const adapter = pickAdapter();
+    const adapter = await resolveAdapter();
     // Snapshot ALL pending item ids up front, then work in batches of 100.
     // The old single `take: 100` silently paid only the first 100 people on
     // a large run while still marking it DISBURSED — everyone past the cap
@@ -1907,6 +1914,7 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
       else if (i.status === 'FAILED') byStatus.failed += 1;
       else byStatus.voided += 1;
     }
+    await primeStateAcknowledgments(prisma);
     const name = (i: (typeof items)[number]) => `${i.associate.firstName} ${i.associate.lastName}`;
     const readiness = {
       missingW4: items.filter((i) => i.associate.employmentType === 'W2_EMPLOYEE' && !i.associate.w4Submission).map(name),
@@ -2574,7 +2582,7 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, idempotent, async (req, 
         'Only FINALIZED or DISBURSED runs can have failures retried'
       );
     }
-    const adapter = pickAdapter();
+    const adapter = await resolveAdapter();
     // Optional subset: retry only the given item ids (per-item / selected
     // retry from the failure queue). Absent → every HELD item, paginated —
     // the old take:100 quietly skipped the rest while reporting done.
@@ -3818,6 +3826,7 @@ payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
       },
     });
 
+    await primeStateAcknowledgments(prisma);
     const rows = associates.map((a) => {
       const primary = a.payoutMethods[0] ?? null;
       const w4OnFile =
@@ -4235,6 +4244,27 @@ payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, nex
 
     let health: 'healthy' | 'idle' | 'stale' | 'erroring' | 'unconfigured' | 'stub';
     let detail: string;
+    // The tenant's own payout connection (Settings & trust → Integrations →
+    // Payouts) takes over from the platform rail: report on it instead.
+    const { activeConnection } = await import('../lib/providers/connections.js');
+    const ownPayout = await activeConnection('PAYOUT');
+    if (ownPayout) {
+      const failing = (ownPayout.lastErrorAt?.getTime() ?? 0) > (ownPayout.lastSuccessAt?.getTime() ?? 0);
+      res.json({
+        provider: ownPayout.provider,
+        health: failing ? 'erroring' : 'healthy',
+        detail: failing
+          ? `Payments go out from your own Wise balance, but the connection is failing: ${ownPayout.lastError ?? 'see Integrations'}.`
+          : `Payments go out from your own Wise balance${ownPayout.environment === 'SANDBOX' ? ' (sandbox — no real money moves)' : ''}; transfer updates come back by webhook.`,
+        lastEventAt: ownPayout.lastSuccessAt?.toISOString() ?? null,
+        minutesSinceLastEvent: ownPayout.lastSuccessAt ? Math.floor((Date.now() - ownPayout.lastSuccessAt.getTime()) / 60_000) : null,
+        eventsLast24h: 0,
+        errorsLast7d: failing ? 1 : 0,
+        pendingFinalizedItems: pendingFinalizedCount,
+        latestError: failing && ownPayout.lastErrorAt ? { at: ownPayout.lastErrorAt.toISOString(), eventType: 'connection', notes: ownPayout.lastError } : null,
+      });
+      return;
+    }
     if (provider === 'STUB') {
       health = 'stub';
       // Product copy, not an operator's note: the environment variable that

@@ -109,7 +109,7 @@ export function TaskPolicyPage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
-            <CardContent className="space-y-4 pt-5">
+            <CardContent className="space-y-4">
               <SectionTitle title="When a machine stalls" />
               <Field label="Seconds before a person takes over" hint="A robot's or agent's task that stalled or failed waits this long, then goes to the best person on shift and the crew lead is told.">
                 {(p) => <Input {...p} type="number" min={5} max={900} value={handoff} onChange={(e) => setHandoff(e.target.value)} disabled={!canEdit} className="w-32" />}
@@ -137,7 +137,7 @@ export function TaskPolicyPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="space-y-4 pt-5">
+            <CardContent className="space-y-4">
               <SectionTitle title="What the engine may spend" />
               <Field label="Assign on its own up to ($ per task)" hint="Leave empty for no cap. Dearer work queues for a person.">
                 {(p) => <Input {...p} type="number" min={0} step="0.01" value={maxAuto} onChange={(e) => setMaxAuto(e.target.value)} disabled={!canEdit} className="w-40" placeholder="No cap" />}

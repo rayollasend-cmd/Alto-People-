@@ -26,6 +26,8 @@ import { samlAuthRouter } from './routes/samlAuth.js';
 import { clientsAccessGate, clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
+import { timeCorrectionsRouter } from './routes/timeCorrections.js';
+import { overtimeOffersRouter } from './routes/overtimeOffers.js';
 import { timeOffRouter } from './routes/timeOff.js';
 import { timeOffPoliciesRouter } from './routes/timeOffPolicies.js';
 import { earnedWageRouter } from './routes/earnedWage.js';
@@ -58,6 +60,9 @@ import { statusRouter } from './routes/status.js';
 import { forecastRouter } from './routes/forecast.js';
 import { controlRoomRouter } from './routes/controlRoom.js';
 import { integrationConnectionsRouter } from './routes/integrationConnections.js';
+import { providerConnectionsRouter } from './routes/providerConnections.js';
+import { providerActionsRouter } from './routes/providerActions.js';
+import { providerWebhooksRouter } from './routes/providerWebhooks.js';
 import { tasksRouter } from './routes/tasks.js';
 import { robotsRouter } from './routes/robots.js';
 import { billingRouter, stripeWebhookRouter } from './routes/billing.js';
@@ -110,7 +115,12 @@ import { recruiting90Router } from './routes/recruiting90.js';
 import { candidatePortalRouter } from './routes/candidatePortal.js';
 import { marketingRouter } from './routes/marketing.js';
 import { clientNpsRouter } from './routes/clientNps.js';
+import { marketRatesRouter } from './routes/marketRates.js';
+import { credentialsRouter } from './routes/credentials.js';
 import { payrollTax91Router } from './routes/payrollTax91.js';
+import { stateTaxRouter } from './routes/stateTax.js';
+import { wotcRouter } from './routes/wotc.js';
+import { acaRouter } from './routes/aca.js';
 import { benefitsLifecycle92Router } from './routes/benefitsLifecycle92.js';
 import { apiKeysWebhooks93Router } from './routes/apiKeysWebhooks93.js';
 import { lms94Router } from './routes/lms94.js';
@@ -143,6 +153,8 @@ import { probation116Router } from './routes/probation116.js';
 import { holiday117Router } from './routes/holiday117.js';
 import { discipline118Router } from './routes/discipline118.js';
 import { separation119Router } from './routes/separation119.js';
+import { leaveRouter } from './routes/leave.js';
+import { claimsRouter } from './routes/claims.js';
 import { internalMobility120Router } from './routes/internalMobility120.js';
 import { vaccination121Router } from './routes/vaccination121.js';
 import { agreements122Router } from './routes/agreements122.js';
@@ -160,6 +172,7 @@ import { anonReport128Router } from './routes/anonReport128.js';
 import { equity129Router } from './routes/equity129.js';
 import { vto130Router } from './routes/vto130.js';
 import { profilePhotoRouter } from './routes/profilePhoto.js';
+import { nativeAppRouter } from './routes/nativeApp.js';
 import { usersRouter } from './routes/users.js';
 import { employersRouter } from './routes/employers.js';
 import { orgUnitsRouter } from './routes/orgUnits.js';
@@ -169,6 +182,9 @@ import { accessCertificationsRouter } from './routes/accessCertifications.js';
 import { shiftWindowsRouter } from './routes/shiftWindows.js';
 import { floorTeamRouter } from './routes/floorTeam.js';
 import { floorRouter } from './routes/floor.js';
+import { callOutsRouter } from './routes/callOuts.js';
+import { voiceRouter } from './routes/voice.js';
+import { retentionRouter } from './routes/retention.js';
 import { walletRouter } from './routes/wallet.js';
 import { transportRouter } from './routes/transport.js';
 import { transportOpsRouter } from './routes/transportOps.js';
@@ -375,17 +391,25 @@ export function createApp() {
     }),
   );
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  // Webhooks run before the session parser, so each gets an anonymous
+  // tenant context (tenantMiddleware with no user) and resolves its
+  // subject's tenant itself (lib/tenant.ts resolveTenantFrom).
   // Branch webhook MUST be mounted before express.json() so the raw body
   // bytes survive for HMAC verification (the global parser would consume
   // the stream and re-serialization breaks signatures on whitespace).
-  app.use('/branch/webhook', branchWebhookRouter);
+  app.use('/branch/webhook', tenantMiddleware, branchWebhookRouter);
   // Same deal for Resend's email-event webhook — the Svix signature is
   // computed over the exact raw bytes.
-  app.use('/resend/webhook', resendWebhookRouter);
+  app.use('/resend/webhook', tenantMiddleware, resendWebhookRouter);
   // And Meta's WhatsApp webhook — X-Hub-Signature-256 over the raw body.
-  app.use('/whatsapp/webhook', whatsappWebhookRouter);
+  app.use('/whatsapp/webhook', tenantMiddleware, whatsappWebhookRouter);
+  // And Twilio's call-out line (voice + SMS) — X-Twilio-Signature over the URL and form body.
+  app.use('/voice', tenantMiddleware, voiceRouter);
   // And Stripe's billing events (Brief 2-6 step 4) — Stripe-Signature over the raw body.
-  app.use('/billing/stripe/webhook', stripeWebhookRouter);
+  app.use('/billing/stripe/webhook', tenantMiddleware, stripeWebhookRouter);
+  // And every connected service provider (E-Verify agents, Checkr, eScreen, Quest, TaxBandits,
+  // Wise) — each adapter verifies its own signature over the raw body.
+  app.use('/webhooks/providers', tenantMiddleware, providerWebhooksRouter);
   // 2mb to accommodate base64-encoded kiosk selfies (1MB raw → ~1.4MB
   // base64 → headroom for the JSON envelope).
   app.use(express.json({ limit: '2mb' }));
@@ -437,6 +461,9 @@ export function createApp() {
   app.use('/status', statusRouter);
   // Brief 3-5: the tenant admin's HR and VMS connections and their sync log.
   app.use('/integration-connections', integrationConnectionsRouter);
+  // The service providers (E-Verify, screening, drug tests, tax filing, payouts) and the buttons that use them.
+  app.use('/provider-connections', providerConnectionsRouter);
+  app.use('/provider-actions', providerActionsRouter);
   // Brief 3-2: tasks and the assignment engine.
   app.use('/tasks', tasksRouter);
   // Brief 3-1: the robot registry, the fleet's status and the safety rules.
@@ -470,6 +497,8 @@ export function createApp() {
     requireCapability('view:onboarding'),
     onboardingRouter
   );
+  app.use('/time-corrections', requireCapability('view:time'), timeCorrectionsRouter);
+  app.use('/overtime-offers', overtimeOffersRouter);
   app.use('/time', requireCapability('view:time'), timeRouter);
   // Policies before the catch-all: /time-off/policies/* is its own router.
   app.use('/time-off/policies', requireCapability('view:time'), timeOffPoliciesRouter);
@@ -648,9 +677,20 @@ export function createApp() {
   app.use('/', candidatePortalRouter);
   // Client NPS: /executive/nps for the readers, /nps/:token for the answer.
   app.use('/', clientNpsRouter);
+  // Pay and bill-rate intelligence: the market rates desk (routes self-gate on view:clients).
+  app.use('/', marketRatesRouter);
+  // Standards-based credentials: the worker's signed credentials, the issuer's
+  // DID documents and revocation list, and the public verifier (routes self-gate).
+  app.use('/', credentialsRouter);
   // Phase 91 — garnishments + tax forms (941, 940, W-2, 1099-NEC).
   // Self-gates per-handler with view:payroll / process:payroll.
   app.use('/', payrollTax91Router);
+  // TAXCOMP — state withholding coverage, acknowledgments and certificates.
+  app.use('/', stateTaxRouter);
+  // TAXCOMP — WOTC screening, filing tracker and credit.
+  app.use('/', wotcRouter);
+  // TAXCOMP — ACA look-back measurement and the 1095-C feed.
+  app.use('/', acaRouter);
   // Phase 92 — open enrollment, QLE, COBRA, ACA reporting. Self-gates
   // per-handler with view:payroll / process:payroll.
   app.use('/', benefitsLifecycle92Router);
@@ -726,6 +766,9 @@ export function createApp() {
   app.use('/', holiday117Router);
   app.use('/', discipline118Router);
   app.use('/', separation119Router);
+  // Leave of absence and claims (manage:leave / manage:claims; /me/leave for the worker).
+  app.use('/', leaveRouter);
+  app.use('/', claimsRouter);
   app.use('/', internalMobility120Router);
   app.use('/', vaccination121Router);
   app.use('/', agreements122Router);
@@ -746,6 +789,9 @@ export function createApp() {
   // Profile photo upload + stream. Self-gated with requireAuth, plus an
   // associate-only check on the /me/profile-photo write paths.
   app.use('/', profilePhotoRouter);
+  // Native apps (apps/mobile): devices + push tokens, the Keychain session,
+  // the system-browser sign-in handoff, and the worker's Wallet badge.
+  app.use('/', nativeAppRouter);
   // HR user-admin (list / patch role + status / force password reset).
   // Self-gates per route on view:hr-admin.
   app.use('/', usersRouter);
@@ -761,6 +807,10 @@ export function createApp() {
   // The floor from a phone: incidents with a photo, flags, the week, a text
   // to the crew, the handover, and "Cover this shift" (routes/floor.ts).
   app.use('/', floorRouter);
+  // Call-outs: a worker's "I can't make it" from any channel, and the leads' view (lib/callOuts).
+  app.use('/', callOutsRouter);
+  // Retention desk: flight-risk scores with their reasons, and the plays leads take (lib/retention).
+  app.use('/', retentionRouter);
   // The credential wallet: mine, and the link I share (public by its token).
   app.use('/', walletRouter);
   // Transportation — the Alto vans: rides, dispatch, drivers, the

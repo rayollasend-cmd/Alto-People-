@@ -182,7 +182,6 @@ export function SeparationHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Separations"
         subtitle="Plan, process, and complete departures. Capture exit-interview feedback."
         breadcrumbs={[{ label: term('nav.people') }, { label: 'Separations' }]}
@@ -398,7 +397,7 @@ export function SeparationHome() {
 function KpiCard({ label, value }: { label: string; value: string }) {
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent>
         <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>

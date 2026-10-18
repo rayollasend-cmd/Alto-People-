@@ -255,7 +255,6 @@ export function HolidaysHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Holidays"
         subtitle="Federal, state, company, and site-specific holidays. Pay multipliers and shift planning use this list."
         breadcrumbs={[{ label: 'Time & scheduling' }, { label: 'Holidays' }]}
@@ -337,7 +336,7 @@ export function HolidaysHome() {
 
       {error ? (
         <Card>
-          <CardContent className="p-6">
+          <CardContent>
             <ErrorBanner
               action={
                 <Button size="sm" variant="secondary" onClick={refresh}>
@@ -351,7 +350,7 @@ export function HolidaysHome() {
         </Card>
       ) : grouped === null ? (
         <Card>
-          <CardContent className="p-6">
+          <CardContent>
             <SkeletonRows count={4} />
           </CardContent>
         </Card>

@@ -62,7 +62,7 @@ export function BillingHome() {
       ) : (
         <>
           <Card>
-            <CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
+            <CardContent className="flex flex-wrap items-center gap-3 text-sm">
               <span className="text-silver">Plan</span>
               <span className="font-semibold capitalize text-white">{d.plan}</span>
               {!d.invoiced && <Badge variant="default" size="sm">Not invoiced</Badge>}
@@ -80,7 +80,7 @@ export function BillingHome() {
                 const Icon = TYPE[t].icon;
                 return (
                   <Card key={t}>
-                    <CardContent className="flex items-center gap-3 p-4">
+                    <CardContent className="flex items-center gap-3">
                       <Icon className="h-5 w-5 text-silver" aria-hidden="true" />
                       <div>
                         <div className="text-2xl font-semibold text-white">{d.running[t] ?? 0}</div>

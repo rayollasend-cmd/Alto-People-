@@ -25,7 +25,6 @@ export function TimeOffHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Time off"
         subtitle="Approve requests, set how leave is earned, and manage entitlement balances."
     >

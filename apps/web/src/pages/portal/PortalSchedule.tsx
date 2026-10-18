@@ -161,7 +161,7 @@ export function PortalSchedule() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto space-y-4 print-area"
+        className="print-area"
         title={data ? (data.store ? data.store.name : data.client.name) : t('portal.schedule')}
         topbarTitle={t('portal.schedule')}
         subtitle={
@@ -233,7 +233,7 @@ export function PortalSchedule() {
         <>
           {/* ---- When the floor is covered ------------------------------ */}
           <Card>
-            <CardContent className="p-4 sm:p-5">
+            <CardContent>
               <div className="flex items-baseline justify-between gap-3">
                 <h2 className="text-sm font-medium text-white">{t('portal.heatTitle')}</h2>
                 <span className="text-xs text-silver tabular-nums">
@@ -278,7 +278,7 @@ export function PortalSchedule() {
 
           {/* ---- How many, per day --------------------------------------- */}
           <Card className="print:hidden">
-            <CardContent className="p-4 sm:p-5">
+            <CardContent>
               <h2 className="text-sm font-medium text-white">{t('portal.week')}</h2>
               <div className="mt-2">
                 <WeekFillChart

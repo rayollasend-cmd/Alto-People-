@@ -32,10 +32,23 @@ import { beforeAll } from 'vitest';
 // pull in `config/env.ts`, which validates env at module load time.
 // `override: true` so test values win over an existing dev `.env`.
 loadDotenv({ path: resolve(__dirname, '../.env.test'), override: true });
+// ALTO_TEST_DATABASE_URL: a run on its own database (still schema=alto_test,
+// still checked below). Advisory locks are per database, so a parallel run
+// there neither waits on nor truncates under the shared one.
+if (process.env.ALTO_TEST_DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.ALTO_TEST_DATABASE_URL;
+  process.env.DIRECT_URL = process.env.ALTO_TEST_DATABASE_URL;
+}
 
 if (process.env.NODE_ENV !== 'test') {
   throw new Error('test/setup.ts: NODE_ENV is not "test"; check apps/api/.env.test');
 }
+
+// TENANCY_MODE defaults to enforce. Fixtures (createUser, prisma.x.create in
+// a test body) run outside any request or job, so they get the platform scope
+// here — shipped with the repo like the secrets below, so CI needs no extra
+// env. Never set this in a deployed environment.
+process.env.TENANCY_UNSCOPED ??= 'platform';
 
 // Deterministic Branch webhook secret for tests. Lives here rather than in
 // .env.test (which is gitignored) so the value ships with the repo and CI

@@ -56,6 +56,8 @@ export function subjectPath(r: ApprovalRequestSummary): string | null {
       return '/admin/users';
     case 'WORKFLOW_GATE':
       return '/workflows?tab=runs';
+    case 'LABOR_RULES_LIVE':
+      return '/payroll/labor-rules';
     default:
       return null;
   }
@@ -100,6 +102,16 @@ export function changeRows(r: ApprovalRequestSummary): Array<{ label: string; be
       ];
     case 'SEPARATION_COMPLETE':
       return [{ label: 'Status', before: b && typeof b.status === 'string' ? b.status.replace(/_/g, ' ').toLowerCase() : null, after: 'complete' }];
+    case 'LABOR_RULES_LIVE': {
+      const report = (p.changeReport ?? null) as { people?: number; amountDifference?: number; premiumAmount?: number } | null;
+      return [
+        { label: 'Pay by', before: 'Federal rules (shadow)', after: String(p.jurisdictionLabel ?? p.jurisdiction ?? 'the state') + ' rules' },
+        { label: 'Counsel', before: null, after: [p.counselName, p.counselFirm].filter(Boolean).join(', ') + (typeof p.counselSignedOn === 'string' ? ` · signed ${p.counselSignedOn}` : '') },
+        ...(report && typeof report.amountDifference === 'number'
+          ? [{ label: 'Recent runs', before: null, after: `${report.people ?? 0} people would be paid ${report.amountDifference >= 0 ? '+' : '−'}${money(Math.abs(report.amountDifference))}${report.premiumAmount ? `, incl. ${money(report.premiumAmount)} premiums` : ''}` }]
+          : []),
+      ];
+    }
     case 'SELF_SERVICE_CHANGE': {
       const op = String(p.op ?? '');
       if (op === 'profile') {

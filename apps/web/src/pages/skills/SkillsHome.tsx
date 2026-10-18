@@ -65,7 +65,6 @@ export function SkillsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Skills"
         subtitle="Find people by what they know — or browse the catalog and add new competencies."
         breadcrumbs={[{ label: 'Skills' }]}

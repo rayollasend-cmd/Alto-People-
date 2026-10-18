@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Alto People — offline</title>
+    <style>
+      :root {
+        --bg: #f7f5f0;
+        --ink: #0b1832;
+        --muted: #475569;
+        --accent: #87680c;
+        --btn: #0b1832;
+        --btn-ink: #ffffff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1827;
+          --ink: #ffffff;
+          --muted: #c0d0e0;
+          --accent: #d9b967;
+          --btn: #d9b967;
+          --btn-ink: #0b1832;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+        text-align: center;
+      }
+      main { max-width: 22rem; }
+      img { width: 72px; height: 72px; border-radius: 18px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18); }
+      h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 500; font-size: 2rem; margin: 24px 0 8px; }
+      p { color: var(--muted); font-size: 0.95rem; line-height: 1.5; margin: 0; }
+      button {
+        margin-top: 28px;
+        min-height: 48px;
+        width: 100%;
+        border: 0;
+        border-radius: 12px;
+        background: var(--btn);
+        color: var(--btn-ink);
+        font-size: 1rem;
+        font-weight: 600;
+      }
+      .note { margin-top: 16px; font-size: 0.8rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="icon.png" alt="" />
+      <h1 id="title">You’re offline</h1>
+      <p id="body">Alto People needs a connection to open. It reconnects on its own the moment you’re back online.</p>
+      <button id="retry" type="button">Try again</button>
+      <p class="note" id="note">Clock-ins made at a kiosk while offline are saved and sent later.</p>
+    </main>
+    <script>
+      // Spanish when the phone is set to it — the field speaks both.
+      if ((navigator.language || '').toLowerCase().startsWith('es')) {
+        document.documentElement.lang = 'es';
+        document.getElementById('title').textContent = 'Sin conexión';
+        document.getElementById('body').textContent = 'Alto People necesita conexión para abrirse. Se reconecta solo en cuanto vuelvas a estar en línea.';
+        document.getElementById('retry').textContent = 'Intentar de nuevo';
+        document.getElementById('note').textContent = 'Los registros hechos en un quiosco sin conexión se guardan y se envían después.';
+      }
+      function retry() { window.location.reload(); }
+      document.getElementById('retry').addEventListener('click', retry);
+      window.addEventListener('online', retry);
+    </script>
+  </body>
+</html>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { CalendarClock, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
@@ -869,7 +870,7 @@ export function CandidateTimeline({
       {events === null && !error ? (
         <SkeletonRows count={3} />
       ) : events && events.length === 0 ? (
-        <p className="text-sm text-silver/70">Nothing recorded yet.</p>
+        <EmptyState size="sm" title={"Nothing recorded yet."} />
       ) : (
         <ol className="space-y-3" aria-label="Timeline">
           {events?.map((e) => {

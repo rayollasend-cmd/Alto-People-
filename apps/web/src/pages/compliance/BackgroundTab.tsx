@@ -1,3 +1,4 @@
+import { BackgroundProviderPanel } from './providers/BackgroundProviderPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -697,6 +698,14 @@ function BackgroundCheckDetailPanel({
           <DetailRow label="Provider">{check.provider}</DetailRow>
           <DetailRow label="External ref">{check.externalId ?? '—'}</DetailRow>
         </dl>
+
+        <BackgroundProviderPanel
+          checkId={check.id}
+          personName={check.associateName}
+          canManage={canManage}
+          onCleared={() => onTransition('PASSED')}
+          onChanged={onReportsChanged}
+        />
 
         <div className="mt-6">
           <h3 className="mb-2 text-2xs uppercase tracking-widest text-silver/80">

@@ -41,7 +41,7 @@ export interface InboundMessage {
 }
 
 /** Hugo's intents as WhatsApp sees them (lib/hugo: the registry), plus the attendance.confirm answers. */
-export type Intent = HugoIntentKey | 'CONFIRM_YES' | 'CONFIRM_NO';
+export type Intent = HugoIntentKey | 'CONFIRM_YES' | 'CONFIRM_NO' | 'CALL_OUT';
 
 export { detectConfirmAnswer };
 
@@ -189,6 +189,13 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
     await logBuiltInAgentAction(db, 'whatsapp-assistant', { action: 'agent.whatsapp.reply', entityType: 'WhatsAppMessage', entityId: sent?.id ?? replyTo ?? 'unsent', metadata: { intent, kind, lang, associateId } });
     return out;
   };
+
+  // A call-out — "I can't make it", or the YES/NO to our "call out of …?" — before anything else:
+  // an open call-out ask is more recent than the Workforce agent's "are you coming?".
+  // Loaded on use: callOuts reaches the cover flow and the agents, which must stay out of this module's graph.
+  const { handleCallOutText } = await import('./callOutChannels.js');
+  const callOut = await handleCallOutText({ associateId, text: msg.text, channel: 'WHATSAPP', language: user?.language ?? null, now }, db);
+  if (callOut) return { intent: 'CALL_OUT', reply: await say(callOut.reply, 'SYSTEM'), associateId };
 
   // A bare YES/NO answers the Workforce agent's open ask, when there is one; otherwise it falls through.
   const yn = detectConfirmAnswer(msg.text);

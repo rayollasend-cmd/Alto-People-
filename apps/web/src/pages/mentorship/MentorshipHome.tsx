@@ -126,7 +126,6 @@ export function MentorshipHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Mentorship"
         subtitle="Pair experienced people with newer ones. Status tracks the lifecycle from proposal to completion."
         breadcrumbs={[{ label: 'Mentorship' }]}

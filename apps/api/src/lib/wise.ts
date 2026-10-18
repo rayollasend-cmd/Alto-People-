@@ -25,6 +25,20 @@ export function isWiseConfigured(): boolean {
   return !!(env.WISE_API_KEY && env.WISE_PROFILE_ID);
 }
 
+/**
+ * Which Wise account to use: a tenant's own connection (Settings & trust →
+ * Integrations → Payouts) or, when none is passed, the platform's env keys.
+ */
+export interface WiseConfig {
+  apiKey: string;
+  profileId: string;
+  baseUrl: string;
+}
+
+function envConfig(): WiseConfig {
+  return { apiKey: env.WISE_API_KEY ?? '', profileId: env.WISE_PROFILE_ID ?? '', baseUrl: env.WISE_API_BASE_URL };
+}
+
 interface WiseRecipientInput {
   fullName: string;
   routingNumber: string;
@@ -55,14 +69,16 @@ export interface WiseTransferResult {
 async function wiseFetch(
   path: string,
   body: unknown,
+  config: WiseConfig = envConfig(),
+  method: 'POST' | 'GET' = 'POST',
 ): Promise<{ ok: boolean; status: number; json: Record<string, unknown> }> {
-  const res = await fetch(`${env.WISE_API_BASE_URL}${path}`, {
-    method: 'POST',
+  const res = await fetch(`${config.baseUrl.replace(/\/+$/, '')}${path}`, {
+    method,
     headers: {
-      Authorization: `Bearer ${env.WISE_API_KEY}`,
+      Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(body),
+    body: method === 'GET' ? undefined : JSON.stringify(body),
   });
   let json: Record<string, unknown> = {};
   try {
@@ -87,8 +103,9 @@ function wiseError(step: string, status: number, json: Record<string, unknown>):
 
 export async function createWiseTransfer(
   input: WiseTransferInput,
+  config: WiseConfig = envConfig(),
 ): Promise<WiseTransferResult> {
-  const profileId = env.WISE_PROFILE_ID!;
+  const profileId = config.profileId;
 
   // 1. Quote — USD to USD, target-amount fixed so the recipient nets the
   // exact paycheck figure and any fee comes off the balance.
@@ -97,7 +114,7 @@ export async function createWiseTransfer(
     targetCurrency: 'USD',
     targetAmount: input.amount,
     payOut: 'BANK_TRANSFER',
-  });
+  }, config);
   if (!quote.ok || typeof quote.json.id !== 'string') {
     return { transferId: '', status: 'FAILED', failureReason: wiseError('quote', quote.status, quote.json) };
   }
@@ -131,7 +148,7 @@ export async function createWiseTransfer(
         firstLine: addr.line1,
       },
     },
-  });
+  }, config);
   if (!account.ok || typeof account.json.id !== 'number') {
     return { transferId: '', status: 'FAILED', failureReason: wiseError('recipient', account.status, account.json) };
   }
@@ -142,7 +159,7 @@ export async function createWiseTransfer(
     quoteUuid: quote.json.id,
     customerTransactionId: input.idempotencyKey,
     details: { reference: (input.memo ?? 'Payroll').slice(0, 100) },
-  });
+  }, config);
   if (!transfer.ok || transfer.json.id === undefined) {
     return { transferId: '', status: 'FAILED', failureReason: wiseError('transfer', transfer.status, transfer.json) };
   }
@@ -152,6 +169,7 @@ export async function createWiseTransfer(
   const fund = await wiseFetch(
     `/v3/profiles/${profileId}/transfers/${transferId}/payments`,
     { type: 'BALANCE' },
+    config,
   );
   const fundStatus =
     typeof fund.json.status === 'string' ? fund.json.status.toUpperCase() : '';
@@ -164,3 +182,15 @@ export async function createWiseTransfer(
   }
   return { transferId, status: 'SUCCESS', failureReason: null };
 }
+
+/** Connection test: the token can read the business profile. */
+export async function testWise(config: WiseConfig): Promise<{ ok: boolean; message: string | null }> {
+  const r = await wiseFetch('/v2/profiles', undefined, config, 'GET');
+  if (!r.ok) return { ok: false, message: wiseError('profiles', r.status, r.json) };
+  const list = Array.isArray(r.json) ? (r.json as Array<Record<string, unknown>>) : [];
+  const found = list.length === 0 || list.some((p) => String(p.id) === String(config.profileId));
+  return found ? { ok: true, message: null } : { ok: false, message: `The token works, but profile ${config.profileId} is not one of its profiles.` };
+}
+
+/** Wise transfer states that mean the money came back (or never left). */
+export const WISE_RETURN_STATES = new Set(['bounced_back', 'funds_refunded', 'charged_back', 'cancelled']);

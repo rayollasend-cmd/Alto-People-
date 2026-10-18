@@ -190,7 +190,7 @@ export function CampaignsPanel({ canEdit }: { canEdit: boolean }) {
             {rows.map((c) => (
               <li key={c.id}>
                 <Card className={selected === c.id ? 'border-accent/60' : undefined}>
-                  <CardContent className="p-4">
+                  <CardContent>
                     <div className="flex items-start justify-between gap-2">
                       <button type="button" className="min-w-0 text-left" onClick={() => setSelected(selected === c.id ? 'all' : c.id)}>
                         <div className="truncate text-sm font-medium text-ink">{c.name}</div>

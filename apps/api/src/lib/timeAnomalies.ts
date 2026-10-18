@@ -184,12 +184,18 @@ export function companyWorkweek(): { weekStartsOn: number; timezone: string } {
 /** UTC instant of local midnight for a YYYY-MM-DD in `tz`, DST-correct.
  *  Classic two-pass correction: guess, measure the local rendering of the
  *  guess, shift by the difference. */
-export function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
-  const [y, m, d] = ymdKey.split('-').map(Number);
-  const target = Date.UTC(y, m - 1, d, 0, 0, 0);
-  let guess = new Date(target);
-  for (let i = 0; i < 3; i++) {
-    const parts = new Intl.DateTimeFormat('en-US', {
+// Building an Intl.DateTimeFormat is expensive and this runs once per time
+// entry in a payroll — at 50,000 people it was more than half the run. The
+// formatter is cached per zone and the answer per (day, zone): it is a pure
+// function of the two.
+const midnightFormats = new Map<string, Intl.DateTimeFormat>();
+const midnightCache = new Map<string, number>();
+const MIDNIGHT_CACHE_MAX = 50_000;
+
+function midnightFormat(tz: string): Intl.DateTimeFormat {
+  let f = midnightFormats.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
       hourCycle: 'h23',
       year: 'numeric',
@@ -197,7 +203,22 @@ export function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-    }).formatToParts(guess);
+    });
+    midnightFormats.set(tz, f);
+  }
+  return f;
+}
+
+export function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
+  const cacheKey = `${tz}|${ymdKey}`;
+  const hit = midnightCache.get(cacheKey);
+  if (hit !== undefined) return new Date(hit);
+  const [y, m, d] = ymdKey.split('-').map(Number);
+  const target = Date.UTC(y, m - 1, d, 0, 0, 0);
+  let guess = new Date(target);
+  const fmt = midnightFormat(tz);
+  for (let i = 0; i < 3; i++) {
+    const parts = fmt.formatToParts(guess);
     const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? '0');
     const localAsUtc = Date.UTC(
       get('year'),
@@ -209,6 +230,8 @@ export function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
     if (localAsUtc === target) break;
     guess = new Date(guess.getTime() + (target - localAsUtc));
   }
+  if (midnightCache.size >= MIDNIGHT_CACHE_MAX) midnightCache.clear();
+  midnightCache.set(cacheKey, guess.getTime());
   return guess;
 }
 

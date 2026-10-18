@@ -46,7 +46,7 @@ import {
 import { notifyFinanceOfTransfer } from '../lib/fieldglassNotify.js';
 import { notifyAssociate, notifyManager, notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
-import { buildOrgChart } from '../lib/orgChart.js';
+import { buildOrgChart, searchFieldPeople, storeCrew } from '../lib/orgChart.js';
 import { decryptString } from '../lib/crypto.js';
 import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
 import { z } from 'zod';
@@ -637,6 +637,18 @@ orgRouter.delete(
  * client → store → leads → crew, with today's coverage. Both clamp to the
  * caller's reach.
  */
+/** GET /org/chart/crew?siteId= — one store's crew, when the field view loads crew per store. */
+orgRouter.get('/chart/crew', VIEW, async (req: Request, res: Response) => {
+  const q = z.object({ siteId: z.string().uuid(), former: z.enum(['0', '1']).optional() }).parse(req.query);
+  res.json({ nodes: await storeCrew(req.user!, q.siteId, { includeFormer: q.former === '1' }) });
+});
+
+/** GET /org/chart/search?q= — search the whole field roster; each match comes with its store. */
+orgRouter.get('/chart/search', VIEW, async (req: Request, res: Response) => {
+  const q = z.object({ q: z.string().max(80), clientId: z.string().uuid().optional() }).parse(req.query);
+  res.json({ nodes: await searchFieldPeople(req.user!, q.q, { clientId: q.clientId ?? null }) });
+});
+
 orgRouter.get('/chart', VIEW, async (req: Request, res: Response) => {
   const q = z
     .object({

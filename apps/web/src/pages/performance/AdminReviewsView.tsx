@@ -200,7 +200,6 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Performance"
         subtitle={
           canManage
@@ -316,7 +315,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                   setDrawerTarget(r);
                 }}
               >
-                <CardContent className="p-4">
+                <CardContent>
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                       {canManage && r.status === 'DRAFT' && (

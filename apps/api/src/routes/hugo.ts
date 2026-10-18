@@ -20,6 +20,7 @@ import { placedClientIds } from '../lib/openShiftEligibility.js';
 import { answerPayday, answerRide, answerSchedule, handoff } from '../lib/whatsappAssistant.js';
 import { helpCenterReply, helpCenterToolText, searchHelpCenter } from '../lib/helpCenterSearch.js';
 import { WA_REPLY, toWaLang, type WaLang } from '../lib/whatsappContent.js';
+import { ActionError, actionTools, decideAction, type ActionContext } from '../lib/assistantActions.js';
 
 /**
  * The assistant in the app (agent families step 3; docs/agent-families-investigation.md §4.5).
@@ -276,15 +277,18 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
   let source: 'model' | 'rules' = 'rules';
   let toolsUsed: string[] = [];
 
+  // What the model may propose (never do): confirmation cards and tables collected as it works.
+  const acting: ActionContext = { req, user: req.user!, proposals: [], tables: [] };
   if (modelAvailable()) {
     source = 'model';
     const escalation = audience === 'associate' ? await escalationFor(user) : null;
+    const actTools = actionTools(acting);
     try {
       const answer = await answerWithModel({
         text,
         history: history ?? [],
         page: (page ?? null) as AssistantPage | null,
-        tools,
+        tools: [...tools, ...actTools],
         identity: {
           name,
           product: getBrandingSync().orgName || 'Alto People',
@@ -293,6 +297,7 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
           lang,
           terms: { worker: terms.worker, workers: terms.workers, site: terms.site, sites: terms.sites, manager: terms.manager, managers: terms.managers },
           escalation,
+          canPropose: actTools.some((t) => t.name.startsWith('propose_')),
         },
         now,
       });
@@ -314,7 +319,27 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
   // On the assistant's trail and the audit log: the intent and the tools, never the words.
   await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent, tools: toolsUsed, source, channel: 'app', audience, lang } });
   enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: intent, metadata: { intent, tools: toolsUsed, source, channel: 'app', audience } }, 'hugo');
-  res.json({ intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source });
+  res.json({ intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source, actions: acting.proposals, tables: acting.tables });
+});
+
+const ConfirmSchema = z.object({ token: z.string().min(10).max(400), decision: z.enum(['confirm', 'cancel']).default('confirm') });
+
+/**
+ * POST /hugo/confirm — the person's tap on a confirmation card. Runs the
+ * proposed action once, as them, through the product's own route
+ * (lib/assistantActions); a token is single-use, expires in ten minutes,
+ * and is no use to anyone but the person it was made for.
+ */
+hugoRouter.post('/confirm', requireAuth, async (req, res) => {
+  const { token, decision } = ConfirmSchema.parse(req.body ?? {});
+  try {
+    const result = await decideAction(req, token, decision);
+    await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.action', entityType: 'User', entityId: req.user!.id, metadata: { decision, status: result.status } });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof ActionError) throw new HttpError(err.status, err.code, err.message);
+    throw err;
+  }
 });
 
 /** A question, as opposed to a statement: ends in "?" or opens with a question word. */

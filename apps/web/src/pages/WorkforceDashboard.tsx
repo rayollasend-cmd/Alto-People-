@@ -327,7 +327,7 @@ export function WorkforceDashboard() {
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
           />
-          <CardContent className="relative p-5">
+          <CardContent className="relative">
             <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
               <Link to="/time-attendance" className="group shrink-0">
                 <div className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white group-hover:text-gold-bright transition-colors">
@@ -436,7 +436,7 @@ export function WorkforceDashboard() {
                   )}
                   style={enterStagger(i, 40, 8)}
                 >
-                  <CardContent className="p-4">
+                  <CardContent>
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold text-white">
                         {s.clientName}
@@ -546,7 +546,7 @@ export function WorkforceDashboard() {
             )}
             style={enterStagger(4)}
           >
-            <CardContent className="p-4">
+            <CardContent>
               <div className="flex items-center justify-between gap-2">
                 <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                   <UserPlus className="h-4 w-4 text-gold" aria-hidden="true" />
@@ -596,7 +596,7 @@ export function WorkforceDashboard() {
         {/* ---- LIVE WIRE + dispatch ------------------------------------ */}
         <div className="space-y-4">
           <Card className="animate-enter" style={enterStagger(2)}>
-            <CardContent className="p-4">
+            <CardContent>
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <Radio className="h-4 w-4 text-gold" aria-hidden="true" />
                 {t('wf.wire')}
@@ -643,7 +643,7 @@ export function WorkforceDashboard() {
           {/* ---- The internal market: short stores vs the bench ---------- */}
           {data.rebalance.length > 0 && (
             <Card className="animate-enter border-warning/30" style={enterStagger(3)}>
-              <CardContent className="p-4">
+              <CardContent>
                 <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                   <Users className="h-4 w-4 text-gold" aria-hidden="true" />
                   {t('wf.rebalTitle')}
@@ -690,7 +690,7 @@ export function WorkforceDashboard() {
             )}
             style={enterStagger(3)}
           >
-            <CardContent className="p-4">
+            <CardContent>
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <Banknote className="h-4 w-4 text-gold" aria-hidden="true" />
                 {t('wf.closeTitle')}
@@ -730,7 +730,7 @@ export function WorkforceDashboard() {
             )}
             style={enterStagger(4)}
           >
-            <CardContent className="p-4">
+            <CardContent>
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <Inbox className="h-4 w-4 text-gold" aria-hidden="true" />
                 {t('wf.dispatchTitle')}

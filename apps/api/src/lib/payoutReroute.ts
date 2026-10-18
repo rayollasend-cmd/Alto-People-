@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { recordPayrollEvent } from './audit.js';
-import { checkAdapter, pickAdapter, type DisbursementInput, type DisbursementResult } from './disbursement.js';
+import { checkAdapter, resolveAdapter, type DisbursementInput, type DisbursementResult } from './disbursement.js';
 import { describeBranchFailure } from './achReturnCodes.js';
 import { notifyFinance } from './financialChanges.js';
 import { notifyUser } from './notify.js';
@@ -114,7 +114,7 @@ export async function rerouteReturnedItem(
           accountType: fallback.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
           ...address,
         };
-    const adapter = pickAdapter();
+    const adapter = await resolveAdapter();
     const attempts = await prisma.payrollDisbursementAttempt.count({ where: { payrollItemId: item.id } });
     to = describeMethod(fallback);
     result = await adapter

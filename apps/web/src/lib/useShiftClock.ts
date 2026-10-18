@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useBreakAttestationPrompt } from '@/components/time/BreakAttestationPrompt';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api';
@@ -55,12 +56,16 @@ export function useShiftClock(options: { enabled?: boolean } = {}) {
     }
   };
 
+  const breakPrompt = useBreakAttestationPrompt();
   const clockOutNow = async () => {
     if (busy) return;
     setBusy(true);
     try {
+      // Where the state requires breaks, ask before clocking out (lib/timeCorrections on the API).
+      const breakAnswer = await breakPrompt.ask();
+      if (breakAnswer === 'cancel') return;
       const geo = await tryGetGeolocation();
-      await clockOut({ geo: geo ?? undefined });
+      await clockOut({ geo: geo ?? undefined, breakAttestation: breakAnswer });
       hapticSuccess();
       toast.success('Clocked out — good shift.');
       await settle();
@@ -86,5 +91,7 @@ export function useShiftClock(options: { enabled?: boolean } = {}) {
     busy,
     clockInNow,
     clockOutNow,
+    /** The break question asked at clock-out; render it wherever the hook is used. */
+    breakPrompt: breakPrompt.element,
   };
 }

@@ -200,7 +200,6 @@ export function EquityHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Equity"
         subtitle="Stock and option grants. Vesting tranches generated at grant time — cliff plus monthly until fully vested."
         breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Equity' }]}
@@ -685,7 +684,7 @@ function MyDetailDrawer({
         </div>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent>
             <div className="flex justify-between items-baseline mb-2">
               <span className="text-sm text-silver">Vested</span>
               <span className="text-2xl font-semibold text-success">

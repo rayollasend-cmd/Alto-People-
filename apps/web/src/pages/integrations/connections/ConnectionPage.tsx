@@ -147,7 +147,7 @@ export function ConnectionPage() {
       {q.isError ? (
         <ErrorBanner action={<Button size="sm" variant="secondary" onClick={() => q.refetch()}>Retry</Button>}>Couldn’t load this connection.</ErrorBanner>
       ) : !c ? (
-        <Card><CardContent className="p-5"><SkeletonRows count={4} /></CardContent></Card>
+        <Card><CardContent><SkeletonRows count={4} /></CardContent></Card>
       ) : runs.length === 0 ? (
         <Card>
           <CardContent className="p-0">
@@ -157,6 +157,7 @@ export function ConnectionPage() {
       ) : (
         <Card>
           <CardContent className="p-0">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <caption className="sr-only">Sync log</caption>
               <thead>
@@ -200,6 +201,7 @@ export function ConnectionPage() {
                 })}
               </tbody>
             </table>
+            </div>
           </CardContent>
         </Card>
       )}

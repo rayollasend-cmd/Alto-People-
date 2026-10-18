@@ -56,9 +56,18 @@ export async function controlState(db: Db): Promise<AgentControlState> {
   return { allSuspendedAt: row?.allSuspendedAt?.toISOString() ?? null, suspendedBy: await userRef(db, row?.suspendedById ?? null), reason: row?.reason ?? null };
 }
 
+/**
+ * The platform switch is one row for every organization. It carries the
+ * operator's tenant id, so under TENANCY_MODE=enforce a model read from any
+ * other tenant would not see it — and that tenant's agents would keep
+ * running while the operator has stopped them all. A raw read is not
+ * narrowed by tenant, so every tenant sees the same switch.
+ */
 export async function allAgentsSuspended(db: Db): Promise<boolean> {
-  const row = await db.agentControl.findUnique({ where: { id: 'singleton' }, select: { allSuspendedAt: true } });
-  return row?.allSuspendedAt != null;
+  const rows = await (db as PrismaClient).$queryRawUnsafe<Array<{ suspended: boolean }>>(
+    `SELECT ("allSuspendedAt" IS NOT NULL) AS "suspended" FROM "AgentControl" WHERE "id" = 'singleton' LIMIT 1`,
+  );
+  return rows[0]?.suspended === true;
 }
 
 export async function suspendAgent(db: Db, workerId: string, actorUserId: string, reason: string, now: Date = new Date()): Promise<{ revoked: number }> {

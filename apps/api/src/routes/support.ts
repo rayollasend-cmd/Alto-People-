@@ -7,7 +7,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
-import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
+import { ALTO_TENANT_ID, runWithTenant, tenantIdForWrite, withPlatformScope } from '../lib/tenant.js';
 
 /**
  * Brief 2-6 step 5 — customer success basics (§4.5; decisions 8, 9).
@@ -51,12 +51,17 @@ supportRouter.post('/', requireAuth, async (req, res) => {
     data: { tenantId, requesterUserId: req.user!.id, category: input.category, subject: input.subject, body: input.body, pageUrl: input.pageUrl ?? null, appVersion: input.appVersion ?? null },
   });
   // The platform inbox: the operator's admins, in the bell (decision 8: our own inbox, not a helpdesk).
-  const inbox = await prisma.user.findMany({ where: { tenantId: ALTO_TENANT_ID, status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:org') } }, select: { id: true }, take: 10 });
-  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
-  for (const u of inbox) {
-    void notifyUser(u.id, { subject: `Support: ${input.subject}`, body: `${tenant?.name ?? 'A customer'} · ${input.category.toLowerCase()}`, linkUrl: `/platform/support?id=${row.id}` });
-  }
-  enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'support.requested', entityType: 'SupportRequest', entityId: row.id, metadata: { category: input.category } }, 'support');
+  // The platform inbox is the operator's: its admins are read, and told, as
+  // the operator (TENANCY_MODE=enforce refuses another tenant's rows from
+  // this request's context, and a notification must carry its reader's tenant).
+  await runWithTenant(ALTO_TENANT_ID, 'job', async () => {
+    const inbox = await prisma.user.findMany({ where: { tenantId: ALTO_TENANT_ID, status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:org') } }, select: { id: true }, take: 10 });
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
+    for (const u of inbox) {
+      void notifyUser(u.id, { subject: `Support: ${input.subject}`, body: `${tenant?.name ?? 'A customer'} · ${input.category.toLowerCase()}`, linkUrl: `/platform/support?id=${row.id}` });
+    }
+    enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'support.requested', entityType: 'SupportRequest', entityId: row.id, metadata: { category: input.category } }, 'support');
+  });
   res.status(201).json({ id: row.id, status: row.status });
 });
 
@@ -68,12 +73,13 @@ supportRouter.get('/mine', requireAuth, async (req, res) => {
 supportRouter.get('/inbox', requireCapability('manage:org'), async (req, res) => {
   operatorOnly();
   const status = z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED']).optional().parse(req.query.status);
-  const rows = await prisma.supportRequest.findMany({
+  // Every organization's requests: the operator reads across tenants, on the record.
+  const rows = await withPlatformScope(() => prisma.supportRequest.findMany({
     where: status ? { status } : { status: { not: 'RESOLVED' } },
     orderBy: { createdAt: 'asc' },
     take: 200,
     include: { requester: { select: { email: true } } },
-  });
+  }));
   const tenants = await prisma.tenant.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.tenantId).filter((t): t is string => !!t))] } }, select: { id: true, name: true } });
   const nameOf = new Map(tenants.map((t) => [t.id, t.name]));
   res.json({
@@ -85,17 +91,23 @@ supportRouter.patch('/:id', requireCapability('manage:org'), async (req, res) =>
   operatorOnly();
   const id = z.string().uuid().parse(req.params.id);
   const input = z.object({ status: z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED']), reply: z.string().trim().max(5000).nullable().optional() }).strict().parse(req.body);
-  const before = await prisma.supportRequest.findUnique({ where: { id } });
-  if (!before) throw new HttpError(404, 'not_found', 'Not found.');
-  const row = await prisma.supportRequest.update({
-    where: { id },
-    data: { status: input.status, ...(input.reply !== undefined ? { reply: input.reply } : {}), resolvedAt: input.status === 'RESOLVED' ? (before.resolvedAt ?? new Date()) : null },
+  // The request is another organization's: read and answered as the
+  // operator, and its requester is told in their own tenant.
+  const row = await withPlatformScope(async () => {
+    const before = await prisma.supportRequest.findUnique({ where: { id } });
+    if (!before) throw new HttpError(404, 'not_found', 'Not found.');
+    return prisma.supportRequest.update({
+      where: { id },
+      data: { status: input.status, ...(input.reply !== undefined ? { reply: input.reply } : {}), resolvedAt: input.status === 'RESOLVED' ? (before.resolvedAt ?? new Date()) : null },
+    });
   });
-  void notifyUser(row.requesterUserId, {
-    subject: input.status === 'RESOLVED' ? `Resolved: ${row.subject}` : `Update: ${row.subject}`,
-    body: input.reply ? input.reply.slice(0, 300) : `Your request is ${input.status.toLowerCase().replace('_', ' ')}.`,
-    linkUrl: '/support',
-  });
+  void runWithTenant(row.tenantId ?? ALTO_TENANT_ID, 'job', () =>
+    notifyUser(row.requesterUserId, {
+      subject: input.status === 'RESOLVED' ? `Resolved: ${row.subject}` : `Update: ${row.subject}`,
+      body: input.reply ? input.reply.slice(0, 300) : `Your request is ${input.status.toLowerCase().replace('_', ' ')}.`,
+      linkUrl: '/support',
+    }),
+  );
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId: row.tenantId, action: 'support.updated', entityType: 'SupportRequest', entityId: id, metadata: { status: input.status, replied: !!input.reply } }, 'support');
   res.json({ id: row.id, status: row.status });
 });

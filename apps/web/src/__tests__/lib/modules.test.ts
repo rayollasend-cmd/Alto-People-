@@ -140,6 +140,8 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
         'learning',
         'rides',
         'celebrations', // their crew's birthdays and anniversaries
+        'call-outs', // who can't make it today, and how cover is going
+        'retention', // who on their crew might leave, and what to do
       ]),
     );
   });

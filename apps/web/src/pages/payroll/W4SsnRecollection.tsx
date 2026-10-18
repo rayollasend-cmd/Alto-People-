@@ -71,7 +71,6 @@ export function W4SsnRecollection() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-6"
         title="W-4 SSN re-collection"
         subtitle="Each affected associate must re-enter their SSN on the W-4 step and upload a photo of their Social Security card — email them the request from here."
     >
@@ -104,7 +103,7 @@ export function W4SsnRecollection() {
 
       {query.isLoading ? (
         <Card>
-          <CardContent className="pt-5 space-y-3">
+          <CardContent className="space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
               <Skeleton key={i} className="h-8 w-full" />
             ))}
@@ -125,7 +124,7 @@ export function W4SsnRecollection() {
         </Card>
       ) : rows.length > 0 ? (
         <Card>
-          <CardContent className="pt-4">
+          <CardContent>
             <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
               <div className="text-sm text-silver">
                 {selected.size > 0
@@ -287,7 +286,7 @@ function SummaryCard({
     tone === 'alert' ? 'text-alert' : tone === 'success' ? 'text-success' : 'text-gold';
   return (
     <Card>
-      <CardContent className="pt-5">
+      <CardContent>
         <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>

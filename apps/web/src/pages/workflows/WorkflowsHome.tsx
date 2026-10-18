@@ -184,7 +184,6 @@ export function WorkflowsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Workflows"
         subtitle="Trigger-condition-action automation. Replaces hard-coded chains in route handlers — define once, fire on every matching event."
         breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Workflows' }]}
@@ -1125,7 +1124,7 @@ function DefinitionDrawer({
               )}
             </div>
             {actionRows.length === 0 ? (
-              <p className="text-xs text-silver">No actions yet.</p>
+              <EmptyState size="sm" title={"No actions yet."} />
             ) : (
               <ol className="space-y-2">
                 {actionRows.map((a, idx) => (

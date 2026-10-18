@@ -1,4 +1,5 @@
 import { trackNotificationWork } from '../lib/notify.js';
+import { adoptTenant, withIdentityScope } from '../lib/tenant.js';
 import { notePortalSignIn } from '../lib/portalEngagement.js';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
@@ -375,9 +376,11 @@ authRouter.post(
       const email = parsed.data.email.trim().toLowerCase();
       const password = parsed.data.password;
 
-      const user = await prisma.user.findFirst({
+      const user = await withIdentityScope(() => prisma.user.findFirst({
         where: { email, deletedAt: null },
-      });
+      }));
+      // An anonymous request learns its tenant from the account it found.
+      adoptTenant(user?.tenantId);
 
       // Pick the hash to verify against. If no user, use DUMMY_HASH.
       const hashToCheck = user?.passwordHash ?? DUMMY_HASH;
@@ -608,9 +611,11 @@ authRouter.post(
       }
       const code = parsed.data.code;
 
-      const user = await prisma.user.findFirst({
+      const user = await withIdentityScope(() => prisma.user.findFirst({
         where: { id: payload.sub, deletedAt: null },
-      });
+      }));
+      // An anonymous request learns its tenant from the account it found.
+      adoptTenant(user?.tenantId);
       if (
         !user ||
         user.status !== 'ACTIVE' ||
@@ -737,6 +742,15 @@ authRouter.post('/logout', async (req, res, next) => {
       // warm cache entry past the cookie clear. (Defense in depth — the JWT
       // itself isn't invalidated server-side on logout in this codebase.)
       invalidateUserCache(req.user.id);
+      // The native app names its device: signing out there also ends its
+      // push and its Keychain credential (routes/nativeApp.ts).
+      const deviceId = req.headers['x-alto-device'];
+      if (typeof deviceId === 'string' && /^[0-9a-f-]{36}$/i.test(deviceId)) {
+        await prisma.nativeDevice.updateMany({
+          where: { id: deviceId, userId: req.user.id, revokedAt: null },
+          data: { pushToken: null, credentialHash: null, credentialExpiresAt: null, revokedAt: new Date() },
+        });
+      }
     }
     res.clearCookie(SESSION_COOKIE, cookieOptions());
     res.status(204).end();
@@ -778,7 +792,7 @@ authRouter.get('/me', async (req, res) => {
 authRouter.get('/invite/:token', async (req, res, next) => {
   try {
     const tokenHash = hashToken(req.params.token);
-    const invite = await prisma.inviteToken.findUnique({
+    const invite = await withIdentityScope(() => prisma.inviteToken.findUnique({
       where: { tokenHash },
       include: {
         user: {
@@ -787,7 +801,9 @@ authRouter.get('/invite/:token', async (req, res, next) => {
           },
         },
       },
-    });
+    }));
+    // An anonymous request learns its tenant from the account it found.
+    adoptTenant(invite?.user?.tenantId);
     // A disabled account's link is dead even if the token itself is
     // unused — a cancelled invite or an undone hire must not be revivable
     // from an old email.
@@ -818,10 +834,12 @@ authRouter.post('/invite/renew', acceptInviteIpLimiter, async (req, res, next) =
   try {
     const email = (req.body?.email ?? '').toString().trim().toLowerCase();
     if (email && email.length <= 320) {
-      const user = await prisma.user.findFirst({
+      const user = await withIdentityScope(() => prisma.user.findFirst({
         where: { email, status: 'INVITED', passwordHash: null },
-        select: { id: true },
-      });
+        select: { id: true, tenantId: true },
+      }));
+      // An anonymous request learns its tenant from the account it found.
+      adoptTenant(user?.tenantId);
       if (user) {
         // Fire-and-forget: response timing must not reveal whether the
         // email matched.
@@ -855,10 +873,12 @@ authRouter.post('/accept-invite', acceptInviteIpLimiter, async (req, res, next) 
     const { token, password } = parsed.data;
     const tokenHash = hashToken(token);
 
-    const invite = await prisma.inviteToken.findUnique({
+    const invite = await withIdentityScope(() => prisma.inviteToken.findUnique({
       where: { tokenHash },
       include: { user: true },
-    });
+    }));
+    // An anonymous request learns its tenant from the account it found.
+    adoptTenant(invite?.user?.tenantId);
     if (!invite || invite.consumedAt || invite.expiresAt <= new Date() || invite.user.status === 'DISABLED') {
       throw new HttpError(404, 'invite_not_found', 'Invitation not found or expired');
     }
@@ -1103,17 +1123,20 @@ authRouter.post(
       }
       const email = parsed.data.email.trim().toLowerCase();
 
-      const user = await prisma.user.findFirst({
+      const user = await withIdentityScope(() => prisma.user.findFirst({
         where: { email, deletedAt: null },
         select: {
           id: true,
+          tenantId: true,
           email: true,
           status: true,
           role: true,
           clientId: true,
           passwordHash: true,
         },
-      });
+      }));
+      // An anonymous request learns its tenant from the account it found.
+      adoptTenant(user?.tenantId);
 
       const eligible =
         !!user &&
@@ -1243,12 +1266,13 @@ authRouter.post('/reset-password', resetPasswordIpLimiter, async (req, res, next
     const { token, newPassword } = parsed.data;
     const tokenHash = hashResetToken(token);
 
-    const reset = await prisma.passwordResetToken.findUnique({
+    const reset = await withIdentityScope(() => prisma.passwordResetToken.findUnique({
       where: { tokenHash },
       include: {
         user: {
           select: {
             id: true,
+            tenantId: true,
             email: true,
             role: true,
             status: true,
@@ -1257,7 +1281,9 @@ authRouter.post('/reset-password', resetPasswordIpLimiter, async (req, res, next
           },
         },
       },
-    });
+    }));
+    // An anonymous request learns its tenant from the account it found.
+    adoptTenant(reset?.user?.tenantId);
     if (
       !reset ||
       reset.consumedAt ||

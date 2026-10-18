@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Award, BadgeCheck, Copy, GraduationCap, IdCard, Share2, type LucideIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Award, BadgeCheck, Copy, Download, GraduationCap, IdCard, QrCode, Share2, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getMyWallet, shareMyWallet, type WalletItem } from '@/lib/walletApi';
-import { fmtDate } from '@/lib/format';
+import { createCredentialOffer, getMyCredentials, saveCredentialFile } from '@/lib/credentialsApi';
+import { calendarDay, fmtDate, fmtTime } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -16,12 +17,16 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
+import { WorkerBadgeCard } from './WorkerBadgeCard';
 
 /**
  * The credential wallet — what this person has earned, carried with them:
  * qualifications, completed training, verified credential documents, each
  * with its expiry. "Share a link" makes a signed link another employer can
  * open for a while; it shows the name and these items and nothing else.
+ * Qualifications and trainings are also W3C Verifiable Credentials (Open
+ * Badges 3.0): download one as a signed file, or add them all to a wallet
+ * app from a QR code; anyone can check them at /verify.
  */
 
 const KIND_ICON: Record<WalletItem['kind'], LucideIcon> = { qualification: Award, training: GraduationCap, document: BadgeCheck };
@@ -29,12 +34,12 @@ const KIND_KEY: Record<WalletItem['kind'], MessageKey> = { qualification: 'walle
 const STATE_KEY: Record<WalletItem['state'], MessageKey> = { valid: 'wallet.state.valid', expiring: 'wallet.state.expiring', expired: 'wallet.state.expired' };
 const STATE_VARIANT: Record<WalletItem['state'], 'success' | 'pending' | 'destructive'> = { valid: 'success', expiring: 'pending', expired: 'destructive' };
 
-export function WalletItemRow({ item }: { item: WalletItem }) {
+export function WalletItemRow({ item, onDownload, downloading }: { item: WalletItem; onDownload?: (item: WalletItem) => void; downloading?: boolean }) {
   const { t } = useI18n();
   const Icon = KIND_ICON[item.kind];
   return (
     <li className="flex items-start gap-3 py-3">
-      <span className={cn('mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full', item.state === 'expired' ? 'bg-alert/10 text-alert' : 'bg-gold/10 text-gold')} aria-hidden="true">
+      <span className={cn('mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full', item.state === 'expired' ? 'bg-alert/10 text-alert' : 'bg-accent/10 text-accent')} aria-hidden="true">
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0 flex-1">
@@ -44,16 +49,21 @@ export function WalletItemRow({ item }: { item: WalletItem }) {
             {t(STATE_KEY[item.state])}
           </Badge>
         </div>
-        <div className="mt-0.5 text-xs text-silver">
+        <div className="mt-0.5 text-xs text-ink-muted">
           {t(KIND_KEY[item.kind])}
           {item.issuer ? ` · ${item.issuer}` : ''}
         </div>
-        <div className="mt-0.5 text-xs text-silver/70 tabular-nums">
-          {item.earnedAt ? t('wallet.earned', { date: fmtDate(item.earnedAt) }) : null}
+        <div className="mt-0.5 text-xs text-ink-muted tabular-nums">
+          {item.earnedAt ? t('wallet.earned', { date: fmtDate(calendarDay(item.earnedAt)) }) : null}
           {item.earnedAt && ' · '}
-          {item.expiresAt ? t('wallet.expires', { date: fmtDate(item.expiresAt) }) : t('wallet.noExpiry')}
+          {item.expiresAt ? t('wallet.expires', { date: fmtDate(calendarDay(item.expiresAt)) }) : t('wallet.noExpiry')}
         </div>
       </div>
+      {onDownload && item.kind !== 'document' && (
+        <Button size="icon-sm" variant="ghost" onClick={() => onDownload(item)} loading={downloading} aria-label={t('wallet.downloadAria', { title: item.title })} title={t('wallet.download')}>
+          <Download className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      )}
     </li>
   );
 }
@@ -61,12 +71,30 @@ export function WalletItemRow({ item }: { item: WalletItem }) {
 export function MyWallet() {
   const { t } = useI18n();
   const q = useQuery({ queryKey: ['me', 'wallet'], queryFn: getMyWallet });
+  const qc = useQueryClient();
   const [shareOpen, setShareOpen] = useState(false);
+  const [appOpen, setAppOpen] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const items = q.data?.items ?? [];
+  const signable = items.some((i) => i.kind !== 'document');
+
+  // The signed form of one credential, fetched when asked for (signing happens on the server).
+  const download = async (item: WalletItem) => {
+    setDownloading(item.id);
+    try {
+      const { credentials } = await qc.fetchQuery({ queryKey: ['me', 'wallet', 'credentials'], queryFn: getMyCredentials, staleTime: 60_000 });
+      const found = credentials.find((c) => c.subjectId === item.id);
+      if (!found) throw new Error('missing');
+      saveCredentialFile(item.title, found.credential);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('wallet.offerFailed'));
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   return (
     <ListTemplate
-      className="space-y-5"
       title={t('wallet.title')}
       subtitle={t('wallet.subtitle')}
       breadcrumbs={[{ label: t('wallet.crumb'), to: '/me' }, { label: t('wallet.title') }]}
@@ -76,7 +104,15 @@ export function MyWallet() {
           {t('wallet.share')}
         </Button>
       }
+      secondaryActions={
+        <Button variant="outline" onClick={() => setAppOpen(true)} disabled={!q.data || !signable}>
+          <QrCode className="mr-2 h-4 w-4" aria-hidden="true" />
+          {t('wallet.addToApp')}
+        </Button>
+      }
     >
+      {/* The worker badge — kiosk QR / NFC and Apple / Google Wallet (WorkerBadgeCard). */}
+      <WorkerBadgeCard />
       {q.isError ? (
         <ErrorBanner
           action={
@@ -94,15 +130,16 @@ export function MyWallet() {
       ) : (
         <Card>
           <CardContent className="px-5 py-1">
-            <ul className="divide-y divide-navy-secondary/60">
+            <ul className="divide-y divide-line">
               {items.map((i) => (
-                <WalletItemRow key={`${i.kind}-${i.id}`} item={i} />
+                <WalletItemRow key={`${i.kind}-${i.id}`} item={i} onDownload={(it) => void download(it)} downloading={downloading === i.id} />
               ))}
             </ul>
           </CardContent>
         </Card>
       )}
       <ShareDialog open={shareOpen} onOpenChange={setShareOpen} />
+      <AddToAppDialog open={appOpen} onOpenChange={setAppOpen} />
     </ListTemplate>
   );
 }
@@ -157,7 +194,7 @@ function ShareDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
                 {t('wallet.copy')}
               </Button>
             </div>
-            <p className="text-xs text-silver">{t('wallet.linkExpires', { date: fmtDate(link.expiresAt) })}</p>
+            <p className="text-xs text-ink-muted">{t('wallet.linkExpires', { date: fmtDate(link.expiresAt) })}</p>
           </div>
         ) : (
           <div role="radiogroup" aria-label={t('wallet.shareDays')} className="grid grid-cols-3 gap-2">
@@ -168,7 +205,7 @@ function ShareDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
                 role="radio"
                 aria-checked={days === d}
                 onClick={() => setDays(d)}
-                className={cn('rounded-md border px-3 py-2.5 text-sm coarse:min-h-11', days === d ? 'border-gold bg-gold/[0.08] text-ink' : 'border-navy-secondary text-silver')}
+                className={cn('rounded-md border px-3 py-2.5 text-sm coarse:min-h-11', days === d ? 'border-accent bg-accent/10 text-ink' : 'border-line text-ink-muted')}
               >
                 {t(d === 7 ? 'wallet.days7' : d === 30 ? 'wallet.days30' : 'wallet.days90')}
               </button>
@@ -184,6 +221,76 @@ function ShareDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: 
               {t('wallet.createLink')}
             </Button>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Every signed credential, handed to a wallet app by a 15-minute link in a QR code — or saved as one file. */
+function AddToAppDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { t } = useI18n();
+  const [qr, setQr] = useState<string | null>(null);
+  const offer = useMutation({ mutationFn: createCredentialOffer });
+  const all = useQuery({ queryKey: ['me', 'wallet', 'credentials'], queryFn: getMyCredentials, enabled: open, staleTime: 60_000 });
+
+  useEffect(() => {
+    if (!open) {
+      setQr(null);
+      offer.reset();
+      return;
+    }
+    offer.mutate(undefined, {
+      onSuccess: async (o) => {
+        const { default: QRCode } = await import('qrcode');
+        setQr(await QRCode.toDataURL(o.url, { margin: 1, width: 240, errorCorrectionLevel: 'M' }));
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const verifyUrl = `${window.location.origin}/verify`;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('wallet.addToAppTitle')}</DialogTitle>
+          <DialogDescription>{t('wallet.addToAppBody')}</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col items-center gap-3">
+          {offer.isError ? (
+            <ErrorBanner
+              action={
+                <Button size="sm" variant="outline" onClick={() => offer.mutate()}>
+                  {t('common.retry')}
+                </Button>
+              }
+            >
+              {t('wallet.offerFailed')}
+            </ErrorBanner>
+          ) : qr && offer.data ? (
+            <>
+              <img src={qr} alt={t('wallet.qrAlt')} width={240} height={240} className="rounded-lg border border-line bg-white p-2" />
+              <p className="text-center text-xs text-ink-muted">{t('wallet.offerExpires', { time: fmtTime(offer.data.expiresAt) })}</p>
+            </>
+          ) : (
+            <Skeleton className="h-[240px] w-[240px]" />
+          )}
+          <p className="text-center text-xs text-ink-muted">{t('wallet.verifyHint', { url: verifyUrl })}</p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={!all.data?.credentials.length}
+            loading={all.isLoading}
+            onClick={() => all.data && saveCredentialFile('credentials', all.data.credentials.map((c) => c.credential))}
+          >
+            <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
+            {t('wallet.downloadAll')}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

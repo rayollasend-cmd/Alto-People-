@@ -31,8 +31,10 @@ const APP = readFileSync(resolve(__dirname, '../../App.tsx'), 'utf8');
 const NOT_IN_THE_RAIL: Record<string, string> = {
   '/login': 'public',
   '/forgot-password': 'public',
+  '/verify': 'public: an outside employer checks a signed credential, no login',
   '/kiosk': 'the tablet, not a signed-in page',
   '/install': 'public install page',
+  '/native-handoff': 'public: the system browser lands here after SSO / a passkey and hands the sign-in back to the native app',
   '/status': 'public status page',
   '/accessibility': 'public statement',
   '/careers': 'public careers page',

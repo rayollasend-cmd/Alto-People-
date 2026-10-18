@@ -1,4 +1,5 @@
 import { Router, urlencoded } from 'express';
+import { adoptTenant, withIdentityScope } from '../lib/tenant.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { loginIpLimiter } from '../middleware/rateLimit.js';
@@ -25,7 +26,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function samlConnection(id: unknown) {
   if (typeof id !== 'string' || !UUID.test(id)) return null;
-  return prisma.identityConnection.findFirst({ where: { id, enabled: true, kind: 'SAML' } });
+  // Before any session: find the connection by its id, then run as its tenant.
+  const conn = await withIdentityScope(() => prisma.identityConnection.findFirst({ where: { id, enabled: true, kind: 'SAML' } }));
+  adoptTenant(conn?.tenantId);
+  return conn;
 }
 
 samlAuthRouter.get('/start', loginIpLimiter, async (req, res) => {

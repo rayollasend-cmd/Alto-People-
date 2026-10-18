@@ -7,7 +7,11 @@ describe('load harness (Brief 3-6)', () => {
     const keys = new Set(SCENARIOS.map((s) => s.key));
     expect(keys.size).toBe(SCENARIOS.length);
     for (const s of SCENARIOS) {
-      expect(s.budgetMs).toBe(P95_BUDGET_MS);
+      // Two seconds is the ceiling for anything a person waits on; a hot route may be
+      // held tighter (the inbox: 800 ms). The payroll preview is a batch run over
+      // every worker, one admin at a time, and carries its own named budget.
+      if (s.key === 'payroll-preview') expect(s.budgetMs).toBeLessThanOrEqual(30_000);
+      else expect(s.budgetMs).toBeLessThanOrEqual(P95_BUDGET_MS);
       expect(s.connections).toBeGreaterThan(0);
       expect(s.durationSeconds).toBeGreaterThan(0);
       expect(typeof s.path === 'string' ? s.path.startsWith('/') : s.path(1).startsWith('/')).toBe(true);

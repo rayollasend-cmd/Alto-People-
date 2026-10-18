@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { OvertimeRotationPanel } from './OvertimeRotationPanel';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -2581,7 +2582,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }
         summary={
               <>
-
           {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
           <div className="print-only mb-3">
             <div className="text-xl font-semibold">{t('schedHome.schedule')}</div>
@@ -2601,14 +2601,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               Generated {fmtDateTime(new Date())}
             </div>
           </div>
-
-
           {canSeeKpis && (
             <div className="no-print">
               <KpiStrip kpis={kpis} period={kpi.period} />
             </div>
           )}
-
           {canManage && (
             <CreateShiftDialog
               open={showCreate}
@@ -2648,7 +2645,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               }}
             />
           )}
-
               </>
         }
       >
@@ -4433,6 +4429,9 @@ function AssignDialog({
               </div>
             </div>
           )}
+
+          {/* Overtime offered fairly: who'd go over by taking it, in turn (lib/overtimeRotation on the API). */}
+          {target && target.status === 'OPEN' && <OvertimeRotationPanel shiftId={target.id} />}
 
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={onClose}>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowDown,
   ArrowUp,
@@ -124,8 +124,22 @@ interface AggregateRow {
 const defaultAlias = (a: AggregateRow) => (a.fn === 'count' ? 'count' : `${a.fn}_${a.column}`);
 
 interface BuilderSeed {
-  mode: 'edit' | 'duplicate';
+  /** draft: a spec handed over by the assistant (`?draft=`), opened as a new report. */
+  mode: 'edit' | 'duplicate' | 'draft';
   report: ReportFull;
+}
+
+/** Decode `?draft=` (base64url JSON {name, entity, spec}) into a builder seed, or null. */
+function draftSeed(raw: string | null): BuilderSeed | null {
+  if (!raw) return null;
+  try {
+    const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(decodeURIComponent(escape(atob(b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '='))))) as { name?: string; entity?: string; spec?: ReportFull['spec'] };
+    if (!json.entity || !ENTITIES.includes(json.entity as ReportEntity) || !json.spec?.columns?.length) return null;
+    return { mode: 'draft', report: { id: '', name: (json.name ?? 'Report').slice(0, 160), description: null, entity: json.entity as ReportEntity, spec: json.spec, isPublic: false } as unknown as ReportFull };
+  } catch {
+    return null;
+  }
 }
 
 /** One CSV mapping for both the row's one-click download and the preview
@@ -163,7 +177,19 @@ export function ReportsHome() {
     '',
     (v): v is '' | ReportEntity => v === '' || ENTITIES.includes(v as ReportEntity),
   );
-  const [builder, setBuilder] = useState<{ seed: BuilderSeed | null } | null>(null);
+  const [params, setParams] = useSearchParams();
+  // A report the assistant drafted opens straight in the builder, unsaved.
+  const [builder, setBuilder] = useState<{ seed: BuilderSeed | null } | null>(() => {
+    const seed = draftSeed(params.get('draft'));
+    return seed ? { seed } : null;
+  });
+  useEffect(() => {
+    if (!params.get('draft')) return;
+    const next = new URLSearchParams(params);
+    next.delete('draft');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [schedulesFor, setSchedulesFor] = useState<ReportSummary | null>(null);
   const [running, setRunning] = useState<{
     name: string;
@@ -236,7 +262,6 @@ export function ReportsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Reports"
         subtitle="Build, save, and schedule reports across people, time, payroll, applications, and candidates."
         breadcrumbs={[{ label: 'Insights' }, { label: 'Reports' }]}

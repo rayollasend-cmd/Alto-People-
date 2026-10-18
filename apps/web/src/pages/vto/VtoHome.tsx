@@ -211,7 +211,6 @@ export function VtoHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Volunteer time"
         subtitle="Log volunteer hours and request employer match. Approved hours roll into your annual cap."
         breadcrumbs={[{ label: 'Me' }, { label: 'Volunteer' }]}
@@ -351,7 +350,7 @@ export function VtoHome() {
 
       {tab === 'mine' && mine && (
         <Card>
-          <CardContent className="p-4">
+          <CardContent>
             <div className="flex justify-between items-baseline mb-2">
               <div>
                 <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">

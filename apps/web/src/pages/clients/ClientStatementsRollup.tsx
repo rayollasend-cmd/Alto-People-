@@ -221,7 +221,6 @@ export function ClientStatementsRollup() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Client statements"
         subtitle="The weekly close: every client's recent statements in one place — generate the week's drafts, finalize in bulk, and record payments."
         breadcrumbs={[

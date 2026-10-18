@@ -63,6 +63,7 @@ export function ControlsTable({ items }: { items: TrustControlPublic[] }) {
   return (
     <Card>
       <CardContent className="p-0">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-2xs uppercase tracking-[0.18em] text-ink-muted">
@@ -86,6 +87,7 @@ export function ControlsTable({ items }: { items: TrustControlPublic[] }) {
             ))}
           </tbody>
         </table>
+        </div>
       </CardContent>
     </Card>
   );
@@ -113,6 +115,7 @@ export function SubProcessors({ data }: { data: TrustSummaryPublic }) {
       <SectionTitle id="trust-subprocessors" title="Sub-processors" description="The vendors that process customer data for the platform, and what for." />
       <Card>
         <CardContent className="p-0">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-2xs uppercase tracking-[0.18em] text-ink-muted">
@@ -135,6 +138,7 @@ export function SubProcessors({ data }: { data: TrustSummaryPublic }) {
               ))}
             </tbody>
           </table>
+          </div>
         </CardContent>
       </Card>
     </section>

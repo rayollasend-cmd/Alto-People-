@@ -27,6 +27,8 @@ export interface TenantContext {
   source: TenantSource;
   /** Set inside withPlatformScope: the caller may see every tenant. */
   platform: boolean;
+  /** An anonymous request that has learned its tenant from the record it resolved. */
+  adopted?: boolean;
 }
 
 const storage = new AsyncLocalStorage<TenantContext>();
@@ -86,6 +88,48 @@ export function withPlatformScope<T>(fn: () => Promise<T> | T): Promise<T> {
     }
   }
   return storage.run(ctx, async () => await fn());
+}
+
+/**
+ * Identity resolution: the reads that FIND whose request this is (the
+ * session's user, a public link's row, a webhook's subject) run before
+ * any tenant is known. They see every tenant, are not audited per call
+ * (they run on every request), and must only look rows up by a globally
+ * unique key — never search. Use `adoptTenant` with what they find.
+ */
+export function withIdentityScope<T>(fn: () => Promise<T> | T): Promise<T> {
+  const current = storage.getStore();
+  return storage.run({ tenantId: current?.tenantId ?? ALTO_TENANT_ID, source: 'platform', platform: true }, async () => await fn());
+}
+
+/**
+ * An anonymous request (a public link, a login, a kiosk device) learns its
+ * tenant from the row it just resolved: the rest of the request runs as
+ * that tenant. Only an unbound request may adopt — a signed-in session's
+ * tenant never changes mid-request. Returns false when refused.
+ */
+export function adoptTenant(tenantId: string | null | undefined, source: TenantSource = 'default'): boolean {
+  const ctx = storage.getStore();
+  if (!ctx || !tenantId || ctx.platform) return false;
+  if (ctx.source !== 'default' && ctx.tenantId !== tenantId) return false;
+  // Once bound, an anonymous request keeps that tenant: a second, different
+  // record can't move it.
+  if (ctx.adopted && ctx.tenantId !== tenantId) return false;
+  ctx.tenantId = tenantId;
+  ctx.adopted = true;
+  if (source !== 'default') ctx.source = source;
+  return true;
+}
+
+/**
+ * Resolve an anonymous request's tenant from a row found by a unique key,
+ * then adopt it. `find` runs in the identity scope and returns the row's
+ * tenantId (or null when there is no such row).
+ */
+export async function resolveTenantFrom(find: () => Promise<string | null | undefined>, source: TenantSource = 'default'): Promise<string | null> {
+  const tenantId = await withIdentityScope(find);
+  if (tenantId) adoptTenant(tenantId, source);
+  return tenantId ?? null;
 }
 
 /**

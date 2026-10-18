@@ -79,7 +79,6 @@ export function TeamHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="My team"
         subtitle="Direct reports, pending timesheet reviews, and time-off decisions awaiting your sign-off."
         breadcrumbs={[{ label: 'My team' }]}

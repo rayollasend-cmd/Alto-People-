@@ -135,7 +135,7 @@ export function ReviewCalibration() {
           <section aria-labelledby="cal-spread">
             <SectionTitle id="cal-spread" title="How ratings spread" />
             <Card>
-              <CardContent className="space-y-4 p-4 md:p-5">
+              <CardContent className="space-y-4">
                 <div className="flex flex-wrap items-center gap-6">
                   <div>
                     <div className="mb-1 text-xs text-ink-muted">Everyone</div>

@@ -323,6 +323,7 @@ const CHAINABLE_KINDS = new Set([
   'BACKGROUND_CHECK',
   'J1_DOCS',
   'E_SIGN',
+  'WOTC_SCREENING',
 ]);
 
 // Short names for the "Save & continue → …" button suffix.
@@ -351,6 +352,8 @@ function taskShortLabel(
       return t('ob.shell.task.j1Docs');
     case 'I9_VERIFICATION':
       return t('ob.shell.task.i9');
+    case 'WOTC_SCREENING':
+      return t('ob.shell.task.wotc');
     default:
       return null;
   }

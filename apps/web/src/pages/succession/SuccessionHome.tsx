@@ -245,7 +245,7 @@ export function SuccessionPositions() {
         </ErrorBanner>
       ) : (
         summary && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <MetricCard label="Positions" value={summary.positionCount} />
             <MetricCard
               label="With successor"
@@ -740,7 +740,6 @@ export function SuccessionHome() {
   const tab: SuccessionTab = raw === 'positions' || raw === 'nine-box' ? raw : 'stores';
   return (
     <ListTemplate
-      className="space-y-5"
       title="Succession"
       subtitle={`Who could lead each ${term('label.store').toLowerCase()} next, who could step into each role, and where your talent sits.`}
       breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Succession' }]}

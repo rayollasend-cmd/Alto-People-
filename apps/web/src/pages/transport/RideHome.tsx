@@ -176,7 +176,7 @@ export function RideHome() {
           <QueryError what="your rides" query={me} />
         ) : (
           <Card>
-            <CardContent className="space-y-3 p-5">
+            <CardContent className="space-y-3">
               <Skeleton className="h-3 w-28" />
               <Skeleton className="h-9 w-3/4" />
               <Skeleton className="h-4 w-1/2" />
@@ -354,7 +354,7 @@ function AuthorizationStatusCard({ data }: { data: MyTransport }) {
   if (!auth?.signedAt) return null;
   return (
     <Card className="mb-4">
-      <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-5">
+      <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1">
           <div className="text-xs font-medium uppercase tracking-wider text-silver">{t('ride.authorizationTitle')}</div>
           <div className="mt-0.5 text-sm text-white">
@@ -922,7 +922,7 @@ export function ShiftRides({ data, onCustom }: { data: MyTransport; onCustom: (s
 
   return (
     <Card className="mb-4">
-      <CardContent className="pt-5">
+      <CardContent>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">{t('ride.forShifts')}</h2>
@@ -1120,7 +1120,7 @@ function RideCalendar({ data }: { data: MyTransport }) {
   };
   return (
     <Card className="mb-4">
-      <CardContent className="pt-5">
+      <CardContent>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">{t('ride.calendar')}</h2>
         <div className="-mx-1 mt-3 flex gap-1.5 overflow-x-auto px-1 pb-1 scrollbar-none" role="tablist" aria-label={t('ride.calendar')}>
           {days.map((d) => {
@@ -1284,7 +1284,7 @@ export function RideFeedbackCard() {
   const when = ride.completedAt ? `${fmtRelativeDayTz(ride.completedAt, ride.timezone)} ${fmtTimeTz(ride.completedAt, ride.timezone)}` : ride.store;
   return (
     <Card className="mb-4">
-      <CardContent className="pt-5">
+      <CardContent>
         <SectionTitle className="mb-0" title={t('ride.fbTitle')} description={t('ride.fbBody', { van: ride.van ?? '', driver: ride.driver ?? '', when })} />
         <div className="mt-3 flex flex-wrap gap-2 coarse:gap-3">
           <Button size="sm" variant="secondary" onClick={() => send.mutate({ rideId: ride.rideId, thumbsUp: true })} disabled={send.isPending}>
@@ -1359,7 +1359,7 @@ export function StandingBookings() {
   };
   return (
     <Card className="mb-4">
-      <CardContent className="pt-5">
+      <CardContent>
         <SectionTitle className="mb-0" title={t('ride.seriesTitle')} icon={Repeat} description={t('ride.seriesBody')} />
         <ul className="mt-2 divide-y divide-navy-secondary/60">
           {series.map((x) => (
@@ -1394,7 +1394,7 @@ function ChargesCard({ data }: { data: MyTransport }) {
   const payday = c.nextPayday ? parseYmd(c.nextPayday.payDate) : null;
   return (
     <Card className="mb-4">
-      <CardContent className="flex items-center gap-4 pt-5">
+      <CardContent className="flex items-center gap-4">
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gold/15 text-gold" aria-hidden="true">
           <Wallet className="h-5 w-5" />
         </div>
@@ -1443,7 +1443,7 @@ function PastRides({
   if (past.length === 0) return null;
   return (
     <Card className="mb-4">
-      <CardContent className="pt-5">
+      <CardContent>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">{t('ride.past')}</h2>
         <ul className="divide-y divide-navy-secondary/60">
           {past.map((r) => (
@@ -1486,7 +1486,7 @@ function SavedPlaces({ data }: { data: MyTransport }) {
   };
   return (
     <Card className="mb-4">
-      <CardContent className="pt-5">
+      <CardContent>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">{t('ride.places')}</h2>
         <ul className="divide-y divide-navy-secondary/60">
           {data.places.map((p) => (

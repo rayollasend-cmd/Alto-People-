@@ -65,7 +65,6 @@ export function SupportPage() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Support" subtitle="Ask Alto People for help. We answer here and in your notifications." breadcrumbs={[{ label: 'Help' }, { label: 'Support' }]}
     >
       {config.data?.statusPageUrl && (
@@ -74,7 +73,7 @@ export function SupportPage() {
         </a>
       )}
       <Card>
-        <CardContent className="space-y-4 p-4">
+        <CardContent className="space-y-4">
           <form
             className="space-y-4"
             onSubmit={(e) => {

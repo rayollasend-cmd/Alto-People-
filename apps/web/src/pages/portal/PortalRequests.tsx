@@ -154,7 +154,7 @@ export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: Requ
 
   return (
     <Card className="animate-enter print:hidden" id="requests">
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-white">{t('portal.reqTitle')}</h2>
           <Button size="md" className="w-full sm:w-auto" onClick={() => setOpen(true)}>

@@ -150,7 +150,6 @@ export function HotlineAdmin() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Hotline reports"
         subtitle="Anonymous reports filed via the public reporting page. Reporters see only your visible replies — internal notes stay HR-only."
         breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Hotline reports' }]}

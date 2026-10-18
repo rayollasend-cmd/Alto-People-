@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { ChevronDown, ChevronUp, Download, MapPinPlus, Network, Plus, Printer } from 'lucide-react';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
-import { getOrgChart, type OrgChartView, type OrgNode } from '@/lib/orgChartApi';
+import { getOrgChart, getStoreCrew, searchFieldPeople, type OrgChartView, type OrgNode } from '@/lib/orgChartApi';
 import { useClients } from '@/lib/useClients';
 import { useMediaQuery } from '@/lib/useViewport';
 import { downloadCsv } from '@/lib/csv';
@@ -104,7 +104,48 @@ export function OrgChart() {
   const { clients } = useClients({ enabled: view === 'field' && hasClients });
 
   const roleLabel = useMemo(() => roleLabelFor(term), [term]);
-  const nodes = useMemo(() => filterByDepartment(chart.data?.nodes ?? [], view === 'company' ? departmentId || null : null), [chart.data, departmentId, view]);
+  // At enterprise size the field view sends structure and counts; a store's
+  // crew loads when it is opened, and search asks the server.
+  const crewDeferred = view === 'field' && !!chart.data?.crewDeferred;
+  const [crewSites, setCrewSites] = useState<string[]>([]);
+  useEffect(() => setCrewSites([]), [view, clientId, former]);
+  const crewQueries = useQueries({
+    queries: (crewDeferred ? crewSites : []).map((siteId) => ({
+      queryKey: ['org', 'chart', 'crew', siteId, former],
+      queryFn: () => getStoreCrew(siteId, former),
+    })),
+  });
+  const serverSearch = useQuery({
+    queryKey: ['org', 'chart', 'search', query.trim(), clientId ?? ''],
+    queryFn: () => searchFieldPeople(query.trim(), clientId),
+    enabled: crewDeferred && query.trim().length >= 2,
+  });
+  const openCrewOf = (nodeId: string | null) => {
+    if (!crewDeferred || !nodeId?.startsWith('s:')) return;
+    const siteId = nodeId.slice(2);
+    setCrewSites((prev) => (prev.includes(siteId) ? prev : [...prev, siteId]));
+  };
+  const crewData = crewQueries.map((q) => q.data);
+  const merged = useMemo(() => {
+    const base = chart.data?.nodes ?? [];
+    if (!crewDeferred) return base;
+    const byId = new Map(base.map((n) => [n.id, n]));
+    for (const d of crewData) for (const n of d?.nodes ?? []) byId.set(n.id, n);
+    for (const n of serverSearch.data?.nodes ?? []) byId.set(n.id, n);
+    return [...byId.values()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chart.data, crewDeferred, serverSearch.data, ...crewData]);
+  const nodes = useMemo(() => filterByDepartment(merged, view === 'company' ? departmentId || null : null), [merged, departmentId, view]);
+  // Opening a store — focusing it in the chart, expanding it in the list —
+  // loads its crew when crew is deferred.
+  useEffect(() => {
+    openCrewOf(focusId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, crewDeferred]);
+  useEffect(() => {
+    for (const id of expanded) openCrewOf(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, crewDeferred]);
   const index = useMemo(() => indexNodes(nodes), [nodes]);
   const departments = useMemo(() => departmentsOf(chart.data?.nodes ?? []), [chart.data]);
   const structure: StructureActions | undefined = useMemo(() => {
@@ -351,7 +392,7 @@ export function OrgChart() {
           <QueryError what="the org chart" query={chart} />
         ) : chart.isLoading || !chart.data ? (
           <Card>
-            <CardContent className="p-4">
+            <CardContent>
               <SkeletonRows count={6} />
             </CardContent>
           </Card>

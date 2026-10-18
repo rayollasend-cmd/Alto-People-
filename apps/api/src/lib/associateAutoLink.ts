@@ -28,9 +28,11 @@ import { enqueueAudit } from './audit.js';
 export async function autoLinkAssociateByEmail(user: {
   id: string;
   email: string;
+  /** The login's tenant: a person record in another organization is never a match. */
+  tenantId?: string | null;
 }): Promise<string | null> {
   const matches = await prisma.associate.findMany({
-    where: { email: { equals: user.email, mode: 'insensitive' }, deletedAt: null },
+    where: { email: { equals: user.email, mode: 'insensitive' }, deletedAt: null, ...(user.tenantId ? { tenantId: user.tenantId } : {}) },
     select: { id: true },
     take: 2,
   });

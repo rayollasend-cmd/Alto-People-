@@ -467,7 +467,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                     setDrawerTarget(r);
                   }}
                 >
-                  <CardContent className="p-4">
+                  <CardContent>
                     <div className="flex items-center justify-between gap-4 flex-wrap">
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} email={r.associateEmail} size="md" />

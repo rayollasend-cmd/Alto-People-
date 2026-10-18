@@ -27,11 +27,36 @@ const FINDERS = {
 
 export type SameTenantModel = keyof typeof FINDERS;
 
+/**
+ * The table behind each model, for the one raw lookup below. Under
+ * TENANCY_MODE=enforce the guard narrows the finders to the caller's tenant,
+ * so another tenant's row reads as missing — and a handler that answers a
+ * missing parent with an empty 200 would "answer" for it. A raw query is not
+ * narrowed, so when the finder comes back empty we ask the table directly
+ * whether the id exists elsewhere. Only on a miss: the common path is the
+ * one finder call, as before.
+ */
+const TABLES: Record<SameTenantModel, string> = {
+  associate: 'Associate',
+  user: 'User',
+  garnishment: 'Garnishment',
+  meritCycle: 'MeritCycle',
+  client: 'Client',
+  site: 'Location',
+};
+
 /** True when the row exists and belongs to a tenant other than the caller's. */
 export async function belongsToAnotherTenant(model: SameTenantModel, id: string): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
+  const tenantId = tenantIdForWrite();
   const row = await FINDERS[model](id);
-  return !!row && row.tenantId !== null && row.tenantId !== tenantIdForWrite();
+  if (row) return row.tenantId !== null && row.tenantId !== tenantId;
+  const raw = await prisma.$queryRawUnsafe<Array<{ tenantId: string | null }>>(
+    `SELECT "tenantId"::text AS "tenantId" FROM "${TABLES[model]}" WHERE "id" = $1::uuid LIMIT 1`,
+    id,
+  );
+  const other = raw[0];
+  return !!other && other.tenantId !== null && other.tenantId !== tenantId;
 }
 
 /** 404 when the row is another tenant's; otherwise a no-op. */

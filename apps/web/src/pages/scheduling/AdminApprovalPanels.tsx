@@ -72,7 +72,7 @@ export function AdminUnconfirmedPanel({ className = 'mt-8', emptyFallback = null
 
   return (
     <Card className={className}>
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-sm font-medium text-white">
             <BellRing className="h-4 w-4 text-warning" aria-hidden="true" />

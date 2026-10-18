@@ -43,8 +43,8 @@ function readDictionary(source, name) {
 const i18nSource = readFileSync(join(root, 'src/lib/i18n.tsx'), 'utf8');
 const dictionaries = {
   en: readDictionary(i18nSource, 'en'),
-  es: readDictionary(i18nSource, 'es'),
-  tr: new Set([...readDictionary(i18nSource, 'tr'), ...readDictionary(readFileSync(join(root, 'src/lib/i18n/tr.ts'), 'utf8'), 'tr')]),
+  es: readDictionary(readFileSync(join(root, 'src/lib/i18n/es.ts'), 'utf8'), 'es'),
+  tr: new Set([...readDictionary(readFileSync(join(root, 'src/lib/i18n/trStaff.ts'), 'utf8'), 'tr'), ...readDictionary(readFileSync(join(root, 'src/lib/i18n/tr.ts'), 'utf8'), 'tr')]),
   ht: readDictionary(readFileSync(join(root, 'src/lib/i18n/ht.ts'), 'utf8'), 'ht'),
   pt: readDictionary(readFileSync(join(root, 'src/lib/i18n/pt.ts'), 'utf8'), 'pt'),
   uk: readDictionary(readFileSync(join(root, 'src/lib/i18n/uk.ts'), 'utf8'), 'uk'),

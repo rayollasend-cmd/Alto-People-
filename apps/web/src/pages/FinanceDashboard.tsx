@@ -244,7 +244,7 @@ export function FinanceDashboard() {
         )}
         style={enterStagger(5)}
       >
-        <CardContent className="p-5">
+        <CardContent>
           <button
             type="button"
             onClick={() => setFgCollapsed(!fgCollapsed)}
@@ -300,7 +300,7 @@ export function FinanceDashboard() {
         {/* ---- The chase list, as bars -------------------------------- */}
         {chaseHot && (
           <Card className="animate-enter border-warning/30" style={enterStagger(5)}>
-            <CardContent className="p-5">
+            <CardContent>
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <ClockAlert className="h-4 w-4 text-warning" aria-hidden="true" />
                 {t('fin.close')}
@@ -432,7 +432,7 @@ function FinKpi({
         interactive
         className="h-full animate-enter border-l-2 border-l-gold/40 transition-colors group-hover:border-l-gold"
       >
-        <CardContent className="pt-5">
+        <CardContent>
           <div className="flex items-center justify-between">
             <div className="text-2xs font-medium uppercase tracking-[0.14em] text-silver/70">
               {label}

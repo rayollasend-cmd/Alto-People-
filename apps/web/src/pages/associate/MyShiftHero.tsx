@@ -9,11 +9,12 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { fmtMoney, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime, fmtTimeTz, fmtWeekday, mapsUrl, parseYmd, zonedDayKey } from '@/lib/format';
-import { acknowledgeMyShift, declineMyShift, getMyShiftDetail } from '@/lib/schedulingApi';
+import { acknowledgeMyShift, getMyShiftDetail } from '@/lib/schedulingApi';
+import { listMyCallOuts, withinADay } from '@/lib/callOutsApi';
+import { CallOutDialog } from '@/components/callouts/CallOutDialog';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { useMyEarnings, useTickSeconds } from '@/components/EarningsCard';
@@ -91,8 +92,9 @@ export function MyShiftHero({
   const now = useNow();
   const queryClient = useQueryClient();
   const [acking, setAcking] = useState(false);
-  const [declineOpen, setDeclineOpen] = useState(false);
-  const [declining, setDeclining] = useState(false);
+  const [callOutOpen, setCallOutOpen] = useState(false);
+  // A call-out from the last day: say so calmly, once, above the next shift.
+  const recentCallOuts = useQuery({ queryKey: ['me', 'callOuts'], queryFn: listMyCallOuts, staleTime: 60_000 });
   const next = shifts ? pickNextShift(shifts, now) : null;
   const detail = useQuery({
     queryKey: ['me', 'shiftDetail', next?.id],
@@ -104,7 +106,7 @@ export function MyShiftHero({
   if (active === undefined || shifts === undefined) {
     return (
       <Card className="mb-4">
-        <CardContent className="space-y-3 p-5">
+        <CardContent className="space-y-3">
           <Skeleton className="h-3 w-28" />
           <Skeleton className="h-9 w-3/4" />
           <Skeleton className="h-4 w-1/2" />
@@ -128,26 +130,13 @@ export function MyShiftHero({
   const confirmed = !!next && next.status === 'ASSIGNED' && !!next.acknowledgedAt && !started;
   // The Workforce agent asked (attendance.confirm): "I can't make it" is the other answer.
   const ask = next?.confirmationAsk ?? null;
-  const canDecline = !!next && next.status === 'ASSIGNED' && !!ask && ask.answer !== 'NO' && !started;
+  // Anyone with an upcoming shift can call out of it — the agent's ask or not (lib/callOuts).
+  const canCallOut = !!next && next.status === 'ASSIGNED' && !started && ask?.answer !== 'NO';
+  const lastCallOut = (recentCallOuts.data?.callOuts ?? []).find((c) => withinADay(c.createdAt)) ?? null;
   const declined = !!next && next.status === 'ASSIGNED' && ask?.answer === 'NO' && !started;
   const place = next ? [next.locationName, next.location].filter(Boolean).join(' · ') : '';
   const supervisors = detail.data?.supervisors ?? [];
   const teammates = detail.data?.teammates ?? [];
-
-  const decline = async () => {
-    if (!next || declining) return;
-    setDeclining(true);
-    try {
-      await declineMyShift(next.id);
-      toast.success(t('shift.declinedToast'));
-      setDeclineOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ['me', 'shifts'] });
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : t('shift.declineFailed'));
-    } finally {
-      setDeclining(false);
-    }
-  };
 
   const acknowledge = async () => {
     if (!next || acking) return;
@@ -316,6 +305,12 @@ export function MyShiftHero({
           </div>
         )}
 
+        {lastCallOut && (
+          <p role="status" className="mt-4 rounded-md border border-line/60 bg-surface-raised/60 px-3 py-2 text-sm text-ink-muted">
+            {t('callout.recent', { position: lastCallOut.position, when: fmtRelativeDayTz(lastCallOut.startsAt, lastCallOut.timezone, now) })}
+          </p>
+        )}
+
         {/* What to do. */}
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
           {needsConfirm && (
@@ -324,8 +319,8 @@ export function MyShiftHero({
               {t('shift.illBeThere')}
             </Button>
           )}
-          {canDecline && (
-            <Button size="sm" variant="secondary" onClick={() => setDeclineOpen(true)} disabled={declining}>
+          {canCallOut && (
+            <Button size="sm" variant="secondary" onClick={() => setCallOutOpen(true)}>
               {t('shift.cantMakeIt')}
             </Button>
           )}
@@ -353,14 +348,10 @@ export function MyShiftHero({
         </div>
         {state !== 'on' && footer?.(state)}
       </div>
-      <ConfirmDialog
-        open={declineOpen}
-        onOpenChange={setDeclineOpen}
-        title={t('shift.cantMakeItTitle')}
-        description={t('shift.cantMakeItBody')}
-        confirmLabel={t('shift.cantMakeItConfirm')}
-        busy={declining}
-        onConfirm={decline}
+      <CallOutDialog
+        shift={next ? { id: next.id, position: next.position, startsAt: next.startsAt, endsAt: next.endsAt, timezone: next.timezone } : null}
+        open={callOutOpen}
+        onOpenChange={setCallOutOpen}
       />
     </section>
   );
@@ -390,7 +381,7 @@ export function MyWeekStrip({ shifts }: { shifts: Shift[] | null | undefined }) 
 
   return (
     <Card className="mb-4 animate-enter">
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="text-sm font-medium text-white">{t('week.title')}</h2>
           <span className="text-xs text-silver/70">

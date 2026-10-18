@@ -82,7 +82,7 @@ export function EmployerBrandEditor({ canEdit }: { canEdit: boolean }) {
     <div className="grid gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
         <Card>
-          <CardContent className="space-y-4 p-4 md:p-5">
+          <CardContent className="space-y-4">
             <SectionTitle
               title="Words"
               description="The headline and introduction above the open jobs."
@@ -107,7 +107,7 @@ export function EmployerBrandEditor({ canEdit }: { canEdit: boolean }) {
         </Card>
 
         <Card>
-          <CardContent className="space-y-3 p-4 md:p-5">
+          <CardContent className="space-y-3">
             <SectionTitle
               title="Values"
               description="Up to eight, each with a line underneath."
@@ -142,7 +142,7 @@ export function EmployerBrandEditor({ canEdit }: { canEdit: boolean }) {
         </Card>
 
         <Card>
-          <CardContent className="space-y-3 p-4 md:p-5">
+          <CardContent className="space-y-3">
             <SectionTitle title="Perks" description="Short, concrete: weekly pay, rides to work, a uniform on day one." as="h3" />
             <div className="flex flex-wrap gap-2">
               {draft.perks.map((p, i) => (
@@ -189,7 +189,7 @@ export function EmployerBrandEditor({ canEdit }: { canEdit: boolean }) {
       </div>
 
       <Card className="h-fit">
-        <CardContent className="space-y-3 p-4 md:p-5">
+        <CardContent className="space-y-3">
           <SectionTitle
             title="Photos"
             description="Up to eight, shown above the jobs. Real people on real shifts beat stock."

@@ -214,10 +214,10 @@ describe('computeStateIncomeTax', () => {
   });
 
   it('withholds nothing for an unsupported state — the run is blocked upstream, never guessed at 4%', () => {
-    // AR has no table (not in NO_SIT, not flat-rate, not bracketed): no fallback.
-    const t = computeStateIncomeTax({ grossPay: 1000, state: 'AR', payFrequency: 'BIWEEKLY' });
+    // PR has no table (every state and DC has one now; a new one waits on adviser review): no fallback.
+    const t = computeStateIncomeTax({ grossPay: 1000, state: 'PR', payFrequency: 'BIWEEKLY' });
     expect(t).toBe(0);
-    expect(isStateTaxSupported('AR')).toBe(false);
+    expect(isStateTaxSupported('PR')).toBe(false);
     expect(supportedStates()).toContain('CA');
     expect(supportedStates()).toContain('FL');
     expect(supportedStates()).not.toContain('AR');

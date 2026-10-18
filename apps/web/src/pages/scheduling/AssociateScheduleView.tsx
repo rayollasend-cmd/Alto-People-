@@ -373,7 +373,6 @@ export function AssociateScheduleView() {
       <PullToRefreshIndicator state={pullState} />
       {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
       <ListTemplate
-        className="mx-auto"
         title={t('sched.title')} subtitle={t('sched.subtitle')}
       >
 

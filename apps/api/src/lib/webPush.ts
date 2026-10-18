@@ -1,10 +1,12 @@
 import webpush from 'web-push';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
+import { sendNativePushToUser } from './nativePush.js';
 
 /**
- * Web-push sender. Fires a lock-screen notification at every device the
- * user has subscribed (a user can have several: phone + tablet).
+ * Push sender. Fires a lock-screen notification at every device the user
+ * has: browsers subscribed to web push (VAPID) and phones with the native
+ * app (APNs / FCM, lib/nativePush.ts).
  *
  * - No VAPID keys configured → hard no-op (dev/test default).
  * - Dead endpoints (404/410 from the push service) are pruned inline, so
@@ -37,6 +39,10 @@ function ensureVapid(): void {
 }
 
 export async function sendPushToUser(userId: string, payload: PushPayload): Promise<void> {
+  // The native apps (iOS / Android) first — independent of VAPID, so a
+  // deployment with only APNs/FCM configured still reaches phones. Every
+  // caller has already applied quiet hours / digest choices.
+  await sendNativePushToUser(userId, payload);
   if (!pushConfigured()) return;
   ensureVapid();
   const subs = await prisma.pushSubscription.findMany({ where: { userId } });

@@ -115,7 +115,12 @@ const PayrollReadiness = lazyNamed(
 const PayrollYtd = lazyNamed(() => import('@/pages/payroll/PayrollYtd'), 'PayrollYtd');
 const PayrollClosePage = lazyNamed(() => import('@/pages/payroll/PayrollClosePage'), 'PayrollClosePage');
 const EarnedWageDesk = lazyNamed(() => import('@/pages/payroll/EarnedWageDesk'), 'EarnedWageDesk');
+const StateTaxCoverage = lazyNamed(() => import('@/pages/payroll/StateTaxCoverage'), 'StateTaxCoverage');
+const WotcDesk = lazyNamed(() => import('@/pages/payroll/WotcDesk'), 'WotcDesk');
+const AcaHours = lazyNamed(() => import('@/pages/benefits/AcaHours'), 'AcaHours');
+const WotcScreeningTask = lazyNamed(() => import('@/pages/onboarding/tasks/WotcScreeningTask'), 'WotcScreeningTask');
 const CashForecastPage = lazyNamed(() => import('@/pages/finance/CashForecastPage'), 'CashForecastPage');
+const MarketRatesHome = lazyNamed(() => import('@/pages/market/MarketRatesHome'), 'MarketRatesHome');
 const LaborRulesPage = lazyNamed(() => import('@/pages/payroll/LaborRulesPage'), 'LaborRulesPage');
 const PayrollYearEndClose = lazyNamed(
   () => import('@/pages/payroll/PayrollYearEndClose'),
@@ -153,7 +158,10 @@ const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientSta
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
 const PersonRecord = lazyNamed(() => import('@/pages/people/PersonRecord'), 'PersonRecord');
 const OrgHome = lazyNamed(() => import('@/pages/org/OrgHome'), 'OrgHome');
+const NativeHandoff = lazyNamed(() => import('@/pages/NativeHandoff'), 'NativeHandoff');
 const OrgChart = lazyNamed(() => import('@/pages/org/OrgChart'), 'OrgChart');
+const CallOutsDesk = lazyNamed(() => import('@/pages/callouts/CallOutsDesk'), 'CallOutsDesk');
+const RetentionDesk = lazyNamed(() => import('@/pages/retention/RetentionDesk'), 'RetentionDesk');
 const HeadcountHome = lazyNamed(() => import('@/pages/headcount/HeadcountHome'), 'HeadcountHome');
 const HeadcountPlan = lazyNamed(() => import('@/pages/headcount/HeadcountPlan'), 'HeadcountPlan');
 const MassUpdate = lazyNamed(() => import('@/pages/people/MassUpdate'), 'MassUpdate');
@@ -177,6 +185,9 @@ const ExpirationsHome = lazyNamed(() => import('@/pages/expirations/ExpirationsH
 // Communications / HR cases
 const CommunicationsHome = lazyNamed(() => import('@/pages/communications/CommunicationsHome'), 'CommunicationsHome');
 const HrCasesHome = lazyNamed(() => import('@/pages/hrCases/HrCasesHome'), 'HrCasesHome');
+const LeaveHome = lazyNamed(() => import('@/pages/leave/LeaveHome'), 'LeaveHome');
+const UnemploymentClaimsHome = lazyNamed(() => import('@/pages/claims/UnemploymentClaimsHome'), 'UnemploymentClaimsHome');
+const WorkersCompHome = lazyNamed(() => import('@/pages/claims/WorkersCompHome'), 'WorkersCompHome');
 const RelayBoard = lazyNamed(() => import('@/pages/relay/RelayBoard'), 'RelayBoard');
 const HotlineAdmin = lazyNamed(() => import('@/pages/hotline/HotlineAdmin'), 'HotlineAdmin');
 
@@ -245,6 +256,7 @@ const SiteSafetyZones = lazyNamed(() => import('@/pages/robots/SiteSafetyZones')
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const MyWallet = lazyNamed(() => import('@/pages/me/MyWallet'), 'MyWallet');
 const WalletVerifyPage = lazyNamed(() => import('@/pages/public/WalletVerifyPage'), 'WalletVerifyPage');
+const VerifyCredentialPage = lazyNamed(() => import('@/pages/public/VerifyCredentialPage'), 'VerifyCredentialPage');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
 const CelebrationsHome = lazyNamed(() => import('@/pages/celebrations/CelebrationsHome'), 'CelebrationsHome');
 const AssetsHome = lazyNamed(() => import('@/pages/assets/AssetsHome'), 'AssetsHome');
@@ -401,6 +413,7 @@ const ONBOARDING_ROUTES = [
     element: <ProfileInfoTask />,
   },
   { path: 'onboarding/me/:applicationId/tasks/w4', element: <W4Task /> },
+  { path: 'onboarding/me/:applicationId/tasks/wotc_screening', element: <WotcScreeningTask /> },
   {
     path: 'onboarding/me/:applicationId/tasks/direct_deposit',
     element: <DirectDepositTask />,
@@ -572,6 +585,8 @@ const LAYOUT_ROUTES = [
   { path: 'people/:associateId', element: <RequireCapability cap="view:org"><PersonRecord /></RequireCapability> },
   { path: 'org', element: <RequireCapability cap="view:org"><OrgHome /></RequireCapability> },
   { path: 'org/chart', element: <RequireCapability cap="view:org"><OrgChart /></RequireCapability> },
+  { path: 'call-outs', element: <RequireCapability cap="view:scheduling" anyOf={['manage:scheduling']}><CallOutsDesk /></RequireCapability> },
+  { path: 'retention', element: <RequireCapability cap="view:org" anyOf={['manage:scheduling']}><RetentionDesk /></RequireCapability> },
   { path: 'celebrations', element: <CelebrationsHome /> },
   { path: 'assets', element: <AssetsHome /> },
   { path: 'pulse', element: <PulseHome /> },
@@ -593,6 +608,9 @@ const LAYOUT_ROUTES = [
   { path: 'vaccinations', element: <VaccinationsHome /> },
   { path: 'agreements', element: <AgreementsHome /> },
   { path: 'hr-cases', element: <HrCasesHome /> },
+  { path: 'leave', element: <LeaveHome /> },
+  { path: 'claims/unemployment', element: <RequireCapability cap="manage:claims"><UnemploymentClaimsHome /></RequireCapability> },
+  { path: 'claims/workers-comp', element: <RequireCapability cap="manage:claims"><WorkersCompHome /></RequireCapability> },
   { path: 'policy-campaigns', element: <RequireCapability cap="view:hr-admin"><PolicyCampaignsHome /></RequireCapability> },
   { path: 'relay', element: <RequireCapability cap="view:org"><RelayBoard /></RequireCapability> },
   { path: 'help-center', element: <KbHome /> },
@@ -629,7 +647,11 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/runs/:id/close', element: <RequireCapability cap="process:payroll"><PayrollClosePage /></RequireCapability> },
   { path: 'payroll/earned-wage', element: <RequireCapability cap="process:payroll"><EarnedWageDesk /></RequireCapability> },
+  { path: 'payroll/state-tax', element: <RequireCapability cap="process:payroll"><StateTaxCoverage /></RequireCapability> },
+  { path: 'payroll/wotc', element: <RequireCapability cap="process:payroll" anyOf={['manage:onboarding']}><WotcDesk /></RequireCapability> },
+  { path: 'benefits/aca', element: <RequireCapability cap="process:payroll"><AcaHours /></RequireCapability> },
   { path: 'finance/cash-forecast', element: <RequireCapability cap="process:payroll"><CashForecastPage /></RequireCapability> },
+  { path: 'market-rates', element: <RequireCapability cap="view:clients"><MarketRatesHome /></RequireCapability> },
   { path: 'payroll/labor-rules', element: <RequireCapability cap="process:payroll" anyOf={['manage:org', 'view:executive']}><LaborRulesPage /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
@@ -679,6 +701,17 @@ export const router = createBrowserRouter([
   // Public landing for "add this app to your home screen" — no auth, so we
   // can drop the link in invite emails before the associate has a password.
   { path: '/install', element: <Install />, errorElement: <RouterErrorPage /> },
+  // The native app's system-browser sign-in (SSO, passkeys) lands here and
+  // hands back to the app with a one-time code (pages/NativeHandoff).
+  {
+    path: '/native-handoff',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <NativeHandoff />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   // The public Trust Center (UX upgrade step 4): no auth and no Layout; a
   // prospect's security review has no account.
   {
@@ -771,6 +804,17 @@ export const router = createBrowserRouter([
   },
   // A candidate's offer: read the letter, sign it. The link in the offer
   // email is the key — no login, retired once used.
+  // Check a signed credential (W3C Verifiable Credential) — no login: an
+  // outside employer pastes or uploads what a worker gave them.
+  {
+    path: '/verify',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <VerifyCredentialPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   // A shared credential wallet: the link is the key, there is no account.
   {
     path: '/w/:token',

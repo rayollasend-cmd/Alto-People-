@@ -182,3 +182,24 @@ The failover workflow's first run the same day: Postgres restarted at 20 s under
 What the runs before this one found and fixed, in order: production boot refuses to start without MFA_SECRET_ENCRYPTION_KEY and KIOSK_PIN_SECRET (the workflow carries throwaway values at job level); a shell line continuation handed the secrets to npm; associates are never in the messenger, so the burst writes to the first person the admin may message; the per-user API cap of 600 a minute called one runner a loop (DEFAULT_API_LIMIT, like LOGIN_IP_LIMIT, exists for this stack only); associates clock in at the kiosk, so the scale seed registers twenty kiosks with one PIN each and the scenario punches a second apart per device; the active definition negated a status while filtering 50,000 ids, which Prisma could not split and Postgres refused (the people directory answered 500 and the billing usage tick failed) — it reads evidence in batches of 10,000 now; and the directory computed every associate's standing per page (five seconds) — it asks about its page's rows now.
 
 Still slow enough to watch: the one-week schedule at 1.8 s p95 on 50,000 shifts and the per-site control room at 0.7 s. The workers roster at `/workers` returns up to 5,000 rows with their placements in about 4 s and is not on the list; it needs server-side paging before a tenant that size opens it.
+
+## Second pass at 50,000 workers (2026-10-17, local)
+
+Seeded with `scripts/load/seed-history.ts` into a scratch `alto_scale` database: 50,000 workers across 500 stores and 50 clients, 775,000 shifts and 625,000 approved time entries over 30 days. Served by `scripts/load/serve.ts` (the app without its crons), 8 callers × 10 s per route; payroll preview with one caller.
+
+| Route | p95 before | p95 after | What changed |
+|---|---|---|---|
+| People directory, first page / search | 30 ms | 28 ms | — |
+| Scheduling, one store / all stores, a week | 67 / 762 ms | 65 / 793 ms | — |
+| Time, entries last week | 201 ms | 222 ms | — |
+| Inbox | 950 ms (2,485 ms with the new sources) | **85 ms** | The Fieldglass-setup count built the whole 50,000-person queue on every call; it is now shared by concurrent callers and reused for 30 s. Every source's time is in a `Server-Timing` header. |
+| Org chart, field | 3,637 ms, and only 5,000 of 50,000 crew | **63 ms**, 273 KB | Today's coverage was a 60,000-shift load filtered once per store (~30 M date conversions); it is two grouped counts per time zone. Crew past 3,000 loads per store (`/org/chart/crew`) and search runs on the server (`/org/chart/search`). |
+| Org chart, company | 224 ms | 202 ms | — |
+| Payroll preview, two weeks | **failed** (500; with 8 callers the server ran out of memory) | **19 s** (11 s for the computation itself) | Four bugs, below. |
+
+What payroll at this size exposed:
+
+- **Postgres refuses more than 32,767 bind parameters**, and every `{ in: ids }` with one id per person sends one each. Retro pay, year-to-date wages, payroll exceptions and the aggregator's benefits, garnishment, reimbursement and people lookups all failed past ~32,000 people. They run through `lib/chunkedIn.ts` (10,000 at a time).
+- `utcInstantOfLocalMidnight` built a new `Intl.DateTimeFormat` on every call — 16.8 s of a 30 s run. The formatter is cached per zone and the answer per (day, zone).
+
+The new scenarios (inbox, org chart field/crew/company, payroll preview) are in `src/lib/loadHarness.ts`, so the CI workflow runs them.

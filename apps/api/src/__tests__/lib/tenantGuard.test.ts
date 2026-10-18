@@ -21,7 +21,8 @@ const T2 = '22222222-2222-4222-8222-222222222222';
 beforeEach(async () => {
   await truncateAll();
   resetTenantObservations();
-  delete process.env.TENANCY_MODE;
+  // Unset now means enforce; these tests name the mode they exercise.
+  process.env.TENANCY_MODE = 'observe';
 });
 afterEach(() => {
   delete process.env.TENANCY_MODE;
@@ -99,7 +100,12 @@ describe('observe mode', () => {
 describe('enforce mode (step four, available to the tests)', () => {
   it('throws on a missing context and on another tenant\'s id', async () => {
     process.env.TENANCY_MODE = 'enforce';
+    // A run with TENANCY_UNSCOPED=platform (the fixtures' escape hatch) turns
+    // a missing context into the platform scope; production never sets it.
+    const unscoped = process.env.TENANCY_UNSCOPED;
+    delete process.env.TENANCY_UNSCOPED;
     await expect(app.associate.findMany()).rejects.toThrow(/no tenant in context/);
+    if (unscoped !== undefined) process.env.TENANCY_UNSCOPED = unscoped;
     await expect(
       runWithTenant(T2, 'job', () => app.associate.findMany({ where: { tenantId: ALTO_TENANT_ID } })),
     ).rejects.toThrow(/another tenant/);

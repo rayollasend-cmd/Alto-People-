@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { PunchFixes } from './PunchFixes';
+import { useBreakAttestationPrompt } from '@/components/time/BreakAttestationPrompt';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import type { BreakType, Job, TimeEntry } from '@alto-people/shared';
@@ -182,14 +184,18 @@ export function AssociateTimeView({
     }
   };
 
+  const breakPrompt = useBreakAttestationPrompt();
   const handleClockOut = async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
     setInfo(null);
     try {
+      // Where the state requires breaks, ask before clocking out (a "no" is put right on pay).
+      const breakAnswer = await breakPrompt.ask();
+      if (breakAnswer === 'cancel') return;
       const geo = await tryGetGeolocation();
-      await clockOut({ geo: geo ?? undefined });
+      await clockOut({ geo: geo ?? undefined, breakAttestation: breakAnswer });
       hapticSuccess();
       setOnBreak(false);
       await refresh();
@@ -328,6 +334,7 @@ export function AssociateTimeView({
         </div>
         {error && <ErrorBanner className="w-full">{error}</ErrorBanner>}
         {info && <p className="w-full text-xs text-silver">{info}</p>}
+        {breakPrompt.element}
       </section>
     );
   }
@@ -335,11 +342,12 @@ export function AssociateTimeView({
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title={headerActions ? 'My time' : 'Time & attendance'}
         subtitle="Clock in when you start. Clock out when you stop."
         secondaryActions={headerActions}
     >
+      {breakPrompt.element}
+      <PunchFixes />
 
       {overtimeNudge && (
         <div

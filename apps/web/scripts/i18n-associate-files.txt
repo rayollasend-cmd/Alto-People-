@@ -65,3 +65,10 @@ src/pages/agreements/MyPolicies.tsx
 src/pages/documents/LettersSection.tsx
 src/components/EarnedWageCard.tsx
 src/pages/career/CareerPosition.tsx
+src/pages/NativeHandoff.tsx
+src/pages/leave/MyLeave.tsx
+src/pages/me/WorkerBadgeCard.tsx
+src/components/settings/PhonesCard.tsx
+src/pages/onboarding/tasks/WotcScreeningTask.tsx
+src/pages/time/PunchFixes.tsx
+src/components/time/BreakAttestationPrompt.tsx

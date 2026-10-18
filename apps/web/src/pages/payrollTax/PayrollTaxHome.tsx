@@ -1,3 +1,4 @@
+import { EfileAction, EfileStatus } from './EfileAction';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -101,7 +102,6 @@ export function PayrollTaxHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Tax forms & garnishments"
         subtitle="Garnishment orders and federal tax forms (941, 940, W-2, 1099-NEC, W-3)."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Tax forms' }]}
@@ -1062,7 +1062,18 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                 { key: 'kind', header: 'Kind', accessor: (f) => FORM_KIND_LABEL[f.kind], sortable: true, primary: true, className: 'font-medium text-white' },
                 { key: 'year', header: 'Year / Q', accessor: (f) => `${f.taxYear}${f.quarter ? ` Q${f.quarter}` : ''}`, sortable: true, cardMeta: true },
                 { key: 'recipient', header: 'Recipient', accessor: (f) => f.associateName ?? 'Aggregate', sortable: true, cardMeta: true },
-                { key: 'status', header: 'Status', accessor: (f) => f.status, sortable: true, cell: (f) => <StatusBadge status={f.status} overrides={FORM_TONES} /> },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  accessor: (f) => f.status,
+                  sortable: true,
+                  cell: (f) => (
+                    <span className="flex flex-col items-start gap-1">
+                      <StatusBadge status={f.status} overrides={FORM_TONES} />
+                      <EfileStatus status={f.efileStatus} at={f.efileStatusAt} reason={f.efileRejectionReason} />
+                    </span>
+                  ),
+                },
                 {
                   key: 'filed',
                   header: 'Filed',
@@ -1159,8 +1170,11 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                           Correct (W-2c)
                         </Button>
                       )}
+                      {canManage && (
+                        <EfileAction formId={f.id} formLabel={FORM_KIND_LABEL[f.kind]} status={f.status} efileStatus={f.efileStatus} onChanged={refresh} />
+                      )}
                       {canManage && f.status === 'DRAFT' && (
-                        <Button size="sm" onClick={() => onFile(f.id)}>
+                        <Button size="sm" variant={f.efileStatus ? 'ghost' : 'primary'} onClick={() => onFile(f.id)}>
                           Mark filed
                         </Button>
                       )}

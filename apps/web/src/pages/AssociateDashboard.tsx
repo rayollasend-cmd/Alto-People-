@@ -326,7 +326,7 @@ function LoadFailedCard({
   const { t } = useI18n();
   return (
     <Card className={className}>
-      <CardContent className="pt-5">
+      <CardContent>
         <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}

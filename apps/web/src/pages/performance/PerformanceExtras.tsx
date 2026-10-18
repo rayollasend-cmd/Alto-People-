@@ -215,7 +215,6 @@ export function PerformanceExtras() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Goals, 1:1s & feedback"
         subtitle="Goals and OKRs from the company down to each person, 1:1s, kudos, improvement plans and 360 reviews."
         breadcrumbs={[{ label: 'Performance', to: '/performance' }, { label: 'Goals, 1:1s & feedback' }]}
@@ -1131,7 +1130,7 @@ function KudosTab() {
           </CardContent>
         </Card>
       ) : rows === null ? (
-        <Card><CardContent className="p-6"><SkeletonRows count={3} /></CardContent></Card>
+        <Card><CardContent><SkeletonRows count={3} /></CardContent></Card>
       ) : rows.length === 0 ? (
         <EmptyState
           icon={Heart}
@@ -1142,7 +1141,7 @@ function KudosTab() {
         <div className="space-y-3">
           {rows.map((k) => (
             <Card key={k.id}>
-              <CardContent className="p-4">
+              <CardContent>
                 <div className="text-sm text-silver mb-1">
                   <span className="text-white">{k.fromUserEmail}</span> →{' '}
                   <span className="text-white">{k.toAssociateName}</span>
@@ -1956,7 +1955,7 @@ function AggregateDrawer({
               </div>
             </div>
             {data.entries.length === 0 && (
-              <p className="text-sm text-silver">No feedback submitted yet.</p>
+              <EmptyState size="sm" title={"No feedback submitted yet."} />
             )}
             {data.entries.map((f) => (
               <div
@@ -2100,7 +2099,7 @@ function TimelineTab() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="p-4">
+        <CardContent>
           <Label>{term('worker')}</Label>
           <div className="mt-1">
             <AssociatePicker value={associate} onChange={setAssociate} />

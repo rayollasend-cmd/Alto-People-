@@ -34,12 +34,15 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
     <div
       ref={ref}
       className={cn(
-        'rounded-lg border border-navy-secondary bg-navy text-white elev-1',
+        // data-card: an EmptyState inside reads it and drops its own dashed
+        // frame, so an empty card is one box, not a box in a box.
+        'group/card rounded-lg border border-navy-secondary bg-navy text-white elev-1',
         animate && 'animate-enter',
         interactive &&
           'transition-colors hover:border-steel hover:bg-navy-secondary/30 hover:elev-2 focus-within:border-steel cursor-pointer',
         className,
       )}
+      data-card=""
       {...props}
     />
   ),
@@ -90,7 +93,10 @@ export const CardContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn('p-[var(--d-card)] pt-[var(--d-card-top)]', className)} {...props} />
+  // Under a CardHeader the content tucks up (--d-card-top); as the card's
+  // first child it gets the full card padding, so a header-less card never
+  // needs a hand-written p-4/p-5/pt-5 to look right.
+  <div ref={ref} className={cn('p-[var(--d-card)] pt-[var(--d-card-top)] first:pt-[var(--d-card)]', className)} {...props} />
 ));
 CardContent.displayName = 'CardContent';
 

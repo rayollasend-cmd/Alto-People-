@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Download, FileText, Landmark, Scale, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -49,7 +50,6 @@ export function PayrollCompliance() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Payroll compliance"
         subtitle="Federal tax deposits, garnishment remittances, and state new-hire reporting — every deadline in one place."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Compliance' }]}
@@ -85,23 +85,17 @@ export function PayrollCompliance() {
 function TaxDepositsTab() {
   const prompt = usePrompt();
   const [year, setYear] = useState(() => new Date().getFullYear());
-  const [deposits, setDeposits] = useState<TaxDeposit[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const depositsQuery = useQuery({ queryKey: ['payroll', 'tax-deposits', year], queryFn: () => listTaxDeposits(year) });
+  const deposits = depositsQuery.data?.deposits ?? null;
+  const error = depositsQuery.error ? (depositsQuery.error instanceof ApiError ? depositsQuery.error.message : 'Failed to load tax deposits.') : null;
   const [busyId, setBusyId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = useCallback(() => {
-    setDeposits(null);
-    setError(null);
     setSelectedIds(new Set());
-    listTaxDeposits(year)
-      .then((r) => setDeposits(r.deposits))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load tax deposits.'),
-      );
-  }, [year]);
-  useEffect(refresh, [refresh]);
+    void depositsQuery.refetch();
+  }, [depositsQuery]);
 
   const overdueCount = deposits?.filter((d) => d.overdue).length ?? 0;
   const pendingTotal = useMemo(
@@ -374,24 +368,18 @@ function TaxDepositsTab() {
 
 function RemittancesTab() {
   const prompt = usePrompt();
-  const [remittances, setRemittances] = useState<GarnishmentRemittance[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const remittancesQuery = useQuery({ queryKey: ['payroll', 'garnishment-remittances'], queryFn: () => listGarnishmentRemittances() });
+  const remittances: GarnishmentRemittance[] | null = remittancesQuery.data?.remittances ?? null;
+  const error = remittancesQuery.error ? (remittancesQuery.error instanceof ApiError ? remittancesQuery.error.message : 'Failed to load remittances.') : null;
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showSent, setShowSent] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = useCallback(() => {
-    setRemittances(null);
-    setError(null);
     setSelectedIds(new Set());
-    listGarnishmentRemittances()
-      .then((r) => setRemittances(r.remittances))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load remittances.'),
-      );
-  }, []);
-  useEffect(refresh, [refresh]);
+    void remittancesQuery.refetch();
+  }, [remittancesQuery]);
 
   const visible = (remittances ?? []).filter((r) => showSent || r.status === 'PENDING');
   const pendingTotal = (remittances ?? [])
@@ -629,20 +617,14 @@ function NewHireTab() {
   // which is the half of this tab that tells an ops manager to go chase
   // someone. They just cannot pull the file.
   const canExport = useAuth().can('export:payroll-pii');
-  const [rows, setRows] = useState<NewHireRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const reportQuery = useQuery({ queryKey: ['payroll', 'new-hire-report'], queryFn: () => getNewHireReport() });
+  const rows: NewHireRow[] | null = reportQuery.data?.unreported ?? null;
+  const error = reportQuery.error ? (reportQuery.error instanceof ApiError ? reportQuery.error.message : 'Failed to load new-hire report.') : null;
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
-    setRows(null);
-    setError(null);
-    getNewHireReport()
-      .then((r) => setRows(r.unreported))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load new-hire report.'),
-      );
-  }, []);
-  useEffect(refresh, [refresh]);
+    void reportQuery.refetch();
+  }, [reportQuery]);
 
   const reportable = (rows ?? []).filter((r) => r.reportable);
   const overdue = (rows ?? []).filter((r) => r.overdue);

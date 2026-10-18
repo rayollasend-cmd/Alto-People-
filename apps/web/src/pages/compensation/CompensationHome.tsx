@@ -141,14 +141,13 @@ export function CompensationHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Compensation"
         subtitle="Pay bands tied to job profiles, effective-dated history, and merit-cycle planning."
         breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Compensation' }]}
     >
 
       <Card>
-        <CardContent className="p-4 flex items-center gap-3 flex-wrap">
+        <CardContent className="flex items-center gap-3 flex-wrap">
           <label
             htmlFor="comp-client"
             className="text-xs2 uppercase tracking-wider text-silver"
@@ -209,7 +208,7 @@ export function CompensationHome() {
             <BandsTab clientId={clientId} canManage={canManage} />
           ) : (
             <Card>
-              <CardContent className="p-6 text-sm text-silver">
+              <CardContent className="text-sm text-silver">
                 Choose a {unit.toLowerCase()} to view its pay bands.
               </CardContent>
             </Card>
@@ -222,7 +221,7 @@ export function CompensationHome() {
             <CompPlanningTab clientId={clientId} />
           ) : (
             <Card>
-              <CardContent className="p-6 text-sm text-silver">
+              <CardContent className="text-sm text-silver">
                 Choose a {unit.toLowerCase()} to plan its merit cycle.
               </CardContent>
             </Card>
@@ -234,7 +233,7 @@ export function CompensationHome() {
             <CyclesTab clientId={clientId} canManage={canManage} />
           ) : (
             <Card>
-              <CardContent className="p-6 text-sm text-silver">
+              <CardContent className="text-sm text-silver">
                 Choose a {unit.toLowerCase()} to view its merit cycles.
               </CardContent>
             </Card>

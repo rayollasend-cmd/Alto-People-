@@ -13,6 +13,7 @@ import { fmtDateTime } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
+import { StateCertificateCard } from '@/components/payroll/StateCertificateCard';
 
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
 
@@ -400,6 +401,12 @@ export function W4Task() {
 
         <SubmitRow submitting={submitting} backTo={backTo} label={t('ob.w4.submit')} next={next} />
       </form>
+      {/* A work state with its own certificate (AL A-4, MD MW507 …) asks for it here too. */}
+      {isAssociate && (
+        <div className="mt-6">
+          <StateCertificateCard mode="self" />
+        </div>
+      )}
     </TaskShell>
   );
 }

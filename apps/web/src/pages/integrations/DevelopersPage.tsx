@@ -70,6 +70,7 @@ function Fields({ schema, doc }: { schema: SchemaObject | undefined; doc: OpenAp
   const props = s?.properties;
   if (!props) return <p className="font-mono text-xs text-silver">{typeOf(schema, doc)}</p>;
   return (
+    <div className="overflow-x-auto">
     <table className="w-full text-left text-xs">
       <thead>
         <tr className="text-silver">
@@ -91,6 +92,7 @@ function Fields({ schema, doc }: { schema: SchemaObject | undefined; doc: OpenAp
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -149,7 +151,6 @@ export function DevelopersPage() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="API reference"
         subtitle="The public API: OAuth 2 client credentials, cursor pagination, an Idempotency-Key on every POST, signed webhooks."
         breadcrumbs={[{ label: 'Settings' }, { label: 'Integrations', to: '/integrations' }, { label: 'API reference' }]}
@@ -161,7 +162,7 @@ export function DevelopersPage() {
     >
 
       <Card>
-        <CardContent className="space-y-3 p-4">
+        <CardContent className="space-y-3">
           <h2 className="text-base font-semibold text-white">Quick start</h2>
           <p className="text-sm text-silver">
             Create a client on the Integrations page, grant it only the scopes it needs, and name its owner. Tokens last 15 minutes; ask for a new one when a call answers 401. Limits: 600 requests a minute per client, 3,000 per organization.
@@ -171,7 +172,7 @@ export function DevelopersPage() {
       </Card>
 
       <Card>
-        <CardContent className="space-y-3 p-4">
+        <CardContent className="space-y-3">
           <h2 className="text-base font-semibold text-white">Webhooks</h2>
           <p className="text-sm text-silver">
             Each delivery is a POST of <span className="font-mono text-xs">{'{ event, timestamp, data }'}</span> with the same shapes the API returns. Verify the signature on the raw body and refuse a timestamp older than five minutes. Failed deliveries retry for about 15 hours; any one can be sent again from <span className="font-mono text-xs">/v1/webhooks/{'{id}'}/deliveries</span>.

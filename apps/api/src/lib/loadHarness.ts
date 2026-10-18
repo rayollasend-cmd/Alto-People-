@@ -73,6 +73,27 @@ export const SCENARIOS: readonly Scenario[] = [
   { key: 'people-directory', title: 'People directory', method: 'GET', path: '/people/directory', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The 50,000-row list behind the People page.' },
   { key: 'control-room-workers', title: 'Control room poll: one site', method: 'GET', path: '/control-room?locationId={site}', auth: 'admin', connections: 20, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The roster the control room refreshes.' },
   { key: 'control-room-status', title: 'Control room poll: status', method: 'GET', path: '/status/public', auth: 'none', connections: 20, durationSeconds: 10, budgetMs: P95_BUDGET_MS, why: 'The public status page, cached 60 s; the cheap end of the poll.' },
+  { key: 'inbox', title: 'Inbox', method: 'GET', path: '/me/inbox', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: 800, why: 'Every row badge in the sidebar; it counts every desk queue at once (Server-Timing names the slow one).' },
+  { key: 'org-chart-field', title: 'Org chart, field', method: 'GET', path: '/org/chart?view=field', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: 1000, why: 'Region → client → store with today’s coverage; at this size crew loads per store.' },
+  { key: 'org-chart-crew', title: 'Org chart, one store’s crew', method: 'GET', path: '/org/chart/crew?siteId={site}', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: 400, why: 'Opening a store on the field chart.' },
+  { key: 'org-chart-company', title: 'Org chart, company', method: 'GET', path: '/org/chart?view=company', auth: 'admin', connections: 10, durationSeconds: 10, budgetMs: 1500, why: 'The office and every reporting line.' },
+  {
+    key: 'payroll-preview',
+    title: 'Payroll preview, two weeks',
+    method: 'POST',
+    path: '/payroll/runs/preview',
+    auth: 'admin',
+    body: () => {
+      const end = new Date();
+      const start = new Date(end.getTime() - 14 * 86_400_000);
+      return { periodStart: start.toISOString().slice(0, 10), periodEnd: end.toISOString().slice(0, 10), defaultHourlyRate: 15 };
+    },
+    // One payroll admin at a time; it's the heaviest read in the product.
+    connections: 1,
+    durationSeconds: 30,
+    budgetMs: 20_000,
+    why: 'Every worker’s pay, taxes and deductions; failed outright past 32,767 people before the bind-limit fix.',
+  },
 ];
 
 export interface ScenarioResult {

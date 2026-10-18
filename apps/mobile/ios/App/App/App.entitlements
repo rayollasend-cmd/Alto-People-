@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push (APNs). Xcode flips this to production for App Store builds. -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- Universal links (web pages that open in the app) and passkeys. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:app.altohr.com</string>
+		<string>webcredentials:app.altohr.com</string>
+	</array>
+	<!-- Read NFC badges (NDEF) and write them (HR). -->
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>NDEF</string>
+		<string>TAG</string>
+	</array>
+	<!-- Keychain items stay on this device (the device credential). -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	</array>
+</dict>
+</plist>

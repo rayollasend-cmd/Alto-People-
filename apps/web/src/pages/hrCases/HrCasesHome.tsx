@@ -281,25 +281,25 @@ export function HrCasesHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={t('hrc.title')}
         subtitle={t('hrc.subtitle')}
         breadcrumbs={[{ label: term('nav.compliance') }, { label: term('nav.hrCases') }]}
     >
 
-      <div className="flex items-center justify-between">
+      {/* Phone: the view switch, then the filters full width. Desktop: one row. */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <SegmentedControl<'mine' | 'queue'>
           ariaLabel="Case view"
           value={tab}
           onChange={setTab}
           options={tabOptions}
         />
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
           {canManage && tab === 'queue' && (
             <>
               <SearchInput
                 aria-label={`Search subject or ${term('worker').toLowerCase()}`}
-                className="h-8 w-52 text-xs"
+                className="h-8 w-full text-xs sm:w-52"
                 placeholder={`Search subject/${term('worker').toLowerCase()}`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}

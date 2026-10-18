@@ -275,7 +275,7 @@ function CostTrendCard({
 }) {
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm font-medium text-white">
             Daily labor cost vs billable value
@@ -341,7 +341,7 @@ function CostByGroupCard({
   const height = Math.max(120, data.length * 44 + 40);
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm font-medium text-white">{title}</div>
           <ChartLegend marks="bar" />
@@ -758,7 +758,7 @@ function StoreTrendsCard() {
 
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -979,7 +979,7 @@ function FloorNowCard() {
 
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent>
         <div className={cn('flex flex-wrap items-center justify-between gap-2', open && 'mb-3')}>
           <button
             type="button"
@@ -2299,7 +2299,7 @@ export function LaborCostsHome() {
             {/* Part-to-whole share — only meaningful with 2+ groups. */}
             {shareData.length >= 2 && (
               <Card>
-                <CardContent className="p-4">
+                <CardContent>
                   <div className="mb-2 text-sm font-medium text-white">
                     {clientFilter
                       ? 'Share of scheduled cost by store'

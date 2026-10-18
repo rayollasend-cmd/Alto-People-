@@ -722,7 +722,6 @@ export function PeopleDirectory() {
           </FilterBar>
         }
         drawer={
-
           <Drawer
             open={target !== null}
             onOpenChange={(o) => !o && closeDrawer()}

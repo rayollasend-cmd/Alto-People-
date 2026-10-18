@@ -4,6 +4,7 @@ import type { SessionUser } from '../types/express.js';
 import { atClient, internalSites, scopeAssociates } from './scope.js';
 import { accountPhotoUrlFor, profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { localDateKey } from './timezone.js';
+import { utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { tenantIdForWrite } from './tenant.js';
 
 /**
@@ -72,12 +73,20 @@ export interface OrgChart {
   /** True when the people list hit the cap and the chart is partial. */
   truncated: boolean;
   limit: number;
+  /**
+   * Field view at enterprise size: the crew is too many names to send at
+   * once, so stores carry their counts and each store's crew is fetched when
+   * it is opened (storeCrew), and search runs on the server (searchFieldPeople).
+   */
+  crewDeferred?: boolean;
 }
 
 const LIMIT = 5000;
 const UNPLACED = 'group:unplaced';
 const OPEN_SEATS = 'group:open-seats';
 const UNPLACED_DRAWN = 500;
+/** Up to this many crew names ride along with the field view; past it, they load per store. */
+const CREW_INLINE = 3000;
 
 /** Roles that are the field, not the office: drawn in Field (leads) or not at all. */
 const NOT_STAFF: Role[] = ['ASSOCIATE', 'CLIENT_PORTAL', 'SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'];
@@ -109,7 +118,7 @@ function blank(partial: Partial<OrgNode> & Pick<OrgNode, 'id' | 'kind' | 'name'>
 
 export async function buildOrgChart(
   user: SessionUser,
-  opts: { view: OrgChartView; clientId?: string | null; includeFormer?: boolean },
+  opts: { view: OrgChartView; clientId?: string | null; includeFormer?: boolean; crewInline?: number },
   now = new Date(),
 ): Promise<OrgChart> {
   return opts.view === 'field' ? fieldChart(user, opts, now) : companyChart(user, opts);
@@ -280,7 +289,7 @@ async function companyChart(
 
 async function fieldChart(
   user: SessionUser,
-  opts: { clientId?: string | null; includeFormer?: boolean },
+  opts: { clientId?: string | null; includeFormer?: boolean; crewInline?: number },
   now: Date,
 ): Promise<OrgChart> {
   const tenantId = tenantIdForWrite();
@@ -321,7 +330,12 @@ async function fieldChart(
       { assignments: { none: { endedAt: null } } },
     ],
   };
-  const [leads, crew, shifts, positions, unplaced] = await Promise.all([
+  const crewWhere = (ids: string[]): Prisma.AssociateAssignmentWhereInput => ({
+    endedAt: null,
+    locationId: { in: ids },
+    associate: { AND: [{ tenantId, deletedAt: null }, scopeAssociates(user), opts.includeFormer ? {} : { deactivatedAt: null }] },
+  });
+  const [leads, crewGroups, positions, unplaced, coverage] = await Promise.all([
     prisma.user.findMany({
       where: {
         tenantId,
@@ -343,36 +357,10 @@ async function fieldChart(
         supervisorShiftWindows: { select: { label: true, locationId: true } },
       },
     }),
-    prisma.associateAssignment.findMany({
-      where: {
-        endedAt: null,
-        locationId: { in: siteIds },
-        associate: { AND: [{ tenantId, deletedAt: null }, scopeAssociates(user), opts.includeFormer ? {} : { deactivatedAt: null }] },
-      },
-      take: LIMIT + 1,
-      orderBy: { associate: { lastName: 'asc' } },
-      select: {
-        locationId: true,
-        associate: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            photoS3Key: true,
-            photoUpdatedAt: true,
-            deactivatedAt: true,
-            jobProfile: { select: { title: true } },
-          },
-        },
-      },
-    }),
-    prisma.shift.findMany({
-      where: {
-        locationId: { in: siteIds },
-        status: { not: 'CANCELLED' },
-        startsAt: { gte: new Date(now.getTime() - 36 * 3_600_000), lte: new Date(now.getTime() + 36 * 3_600_000) },
-      },
-      select: { locationId: true, startsAt: true, assignedAssociateId: true },
+    prisma.associateAssignment.groupBy({
+      by: ['locationId'],
+      where: crewWhere(siteIds),
+      _count: { _all: true },
     }),
     prisma.position.findMany({
       where: {
@@ -392,9 +380,20 @@ async function fieldChart(
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true, jobProfile: { select: { title: true } } },
     }),
+    todaysCoverage(live, now),
   ]);
+  const crewBySite = new Map(crewGroups.map((g) => [g.locationId, g._count._all]));
+  const totalCrew = [...crewBySite.values()].reduce((a, b) => a + b, 0);
+  const crewDeferred = totalCrew > (opts.crewInline ?? CREW_INLINE);
+  const crew = crewDeferred
+    ? []
+    : await prisma.associateAssignment.findMany({
+        where: crewWhere(siteIds),
+        orderBy: { associate: { lastName: 'asc' } },
+        select: CREW_SELECT,
+      });
   const unplacedCount = unplaced.length < UNPLACED_DRAWN ? unplaced.length : await prisma.associate.count({ where: unplacedWhere });
-  const truncated = crew.length > LIMIT;
+  const truncated = false;
 
   const nodes: OrgNode[] = [];
   const regions = new Map<string, string>();
@@ -421,9 +420,7 @@ async function fieldChart(
         }),
       );
     }
-    const tz = s.timezone || 'America/New_York';
-    const today = localDateKey(now, tz);
-    const mine = shifts.filter((x) => x.locationId === s.id && localDateKey(x.startsAt, tz) === today);
+    const cov = coverage.get(s.id) ?? { total: 0, filled: 0 };
     nodes.push(
       blank({
         id: `s:${s.id}`,
@@ -433,8 +430,8 @@ async function fieldChart(
         clientId: s.clientId,
         clientName: s.client?.name ?? null,
         siteName: s.name,
-        shiftsToday: mine.length,
-        filledToday: mine.filter((x) => x.assignedAssociateId).length,
+        shiftsToday: cov.total,
+        filledToday: cov.filled,
       }),
     );
   }
@@ -481,28 +478,11 @@ async function fieldChart(
       }),
     );
   }
-  const crewCount = new Map<string, number>();
-  for (const c of crew.slice(0, LIMIT)) {
+  for (const c of crew) {
     const site = storeOf.get(c.locationId);
-    if (!site) continue;
-    crewCount.set(site.id, (crewCount.get(site.id) ?? 0) + 1);
-    nodes.push(
-      blank({
-        id: `a:${c.associate.id}@${site.id}`,
-        parentId: `s:${site.id}`,
-        kind: 'person',
-        name: name(c.associate),
-        subtitle: c.associate.jobProfile?.title ?? null,
-        photoUrl: profilePhotoUrlFor(c.associate),
-        associateId: c.associate.id,
-        clientId: site.clientId,
-        clientName: site.client?.name ?? null,
-        siteName: site.name,
-        former: !!c.associate.deactivatedAt,
-      }),
-    );
+    if (site) nodes.push(crewNode(c, site));
   }
-  for (const n of nodes) if (n.kind === 'store') n.reports = crewCount.get(n.id.slice(2)) ?? 0;
+  for (const n of nodes) if (n.kind === 'store') n.reports = crewBySite.get(n.id.slice(2)) ?? 0;
 
   // Open seats under the client they hire for (its first node, when it spans regions).
   for (const p of positions) {
@@ -547,5 +527,109 @@ async function fieldChart(
       );
     }
   }
-  return { view: 'field', nodes, fieldOnly: 0, unplaced: unplacedCount, truncated, limit: LIMIT };
+  return { view: 'field', nodes, fieldOnly: 0, unplaced: unplacedCount, truncated, limit: LIMIT, crewDeferred };
+}
+
+/* ----- Field helpers ------------------------------------------------------- */
+
+const CREW_SELECT = {
+  locationId: true,
+  associate: {
+    select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true, deactivatedAt: true, jobProfile: { select: { title: true } } },
+  },
+} satisfies Prisma.AssociateAssignmentSelect;
+type CrewRow = Prisma.AssociateAssignmentGetPayload<{ select: typeof CREW_SELECT }>;
+type CrewSite = { id: string; name: string; clientId: string | null; client: { name: string } | null };
+
+function crewNode(c: CrewRow, site: CrewSite): OrgNode {
+  return blank({
+    id: `a:${c.associate.id}@${site.id}`,
+    parentId: `s:${site.id}`,
+    kind: 'person',
+    name: name(c.associate),
+    subtitle: c.associate.jobProfile?.title ?? null,
+    photoUrl: profilePhotoUrlFor(c.associate),
+    associateId: c.associate.id,
+    clientId: site.clientId,
+    clientName: site.client?.name ?? null,
+    siteName: site.name,
+    former: !!c.associate.deactivatedAt,
+  });
+}
+
+/**
+ * Today's shifts and how many have someone on them, per store — counted in
+ * the database over each time zone's local day (two grouped counts per zone),
+ * not by loading every shift and converting each one's date.
+ */
+async function todaysCoverage(sites: Array<{ id: string; timezone: string | null }>, now: Date): Promise<Map<string, { total: number; filled: number }>> {
+  const out = new Map<string, { total: number; filled: number }>();
+  const byZone = new Map<string, string[]>();
+  for (const s of sites) {
+    const tz = s.timezone || 'America/New_York';
+    byZone.set(tz, [...(byZone.get(tz) ?? []), s.id]);
+  }
+  await Promise.all(
+    [...byZone.entries()].map(async ([tz, ids]) => {
+      const today = localDateKey(now, tz);
+      const from = utcInstantOfLocalMidnight(today, tz);
+      const to = utcInstantOfLocalMidnight(localDateKey(new Date(from.getTime() + 36 * 3_600_000), tz), tz);
+      const where = { locationId: { in: ids }, status: { not: 'CANCELLED' as const }, startsAt: { gte: from, lt: to } };
+      const [all, filled] = await Promise.all([
+        prisma.shift.groupBy({ by: ['locationId'], where, _count: { _all: true } }),
+        prisma.shift.groupBy({ by: ['locationId'], where: { ...where, assignedAssociateId: { not: null } }, _count: { _all: true } }),
+      ]);
+      const filledBy = new Map(filled.map((f) => [f.locationId, f._count._all]));
+      for (const a of all) if (a.locationId) out.set(a.locationId, { total: a._count._all, filled: filledBy.get(a.locationId) ?? 0 });
+    }),
+  );
+  return out;
+}
+
+/** One store's crew, for a field view whose crew loads per store. Same reach as the chart. */
+export async function storeCrew(user: SessionUser, siteId: string, opts: { includeFormer?: boolean } = {}): Promise<OrgNode[]> {
+  const tenantId = tenantIdForWrite();
+  const reach = internalSites(user);
+  const site = await prisma.site.findFirst({
+    where: { AND: [{ id: siteId, tenantId, deletedAt: null }, reach ?? {}] },
+    select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
+  });
+  if (!site) return [];
+  const rows = await prisma.associateAssignment.findMany({
+    where: {
+      endedAt: null,
+      locationId: site.id,
+      associate: { AND: [{ tenantId, deletedAt: null }, scopeAssociates(user), opts.includeFormer ? {} : { deactivatedAt: null }] },
+    },
+    orderBy: { associate: { lastName: 'asc' } },
+    take: LIMIT,
+    select: CREW_SELECT,
+  });
+  return rows.map((r) => crewNode(r, site));
+}
+
+/** Search the whole field roster (when crew loads per store): matching people, each under their store. */
+export async function searchFieldPeople(user: SessionUser, q: string, opts: { clientId?: string | null } = {}): Promise<OrgNode[]> {
+  const term = q.trim();
+  if (term.length < 2) return [];
+  const tenantId = tenantIdForWrite();
+  const reach = internalSites(user);
+  const parts = term.split(/\s+/).slice(0, 3);
+  const rows = await prisma.associateAssignment.findMany({
+    where: {
+      endedAt: null,
+      location: { AND: [{ tenantId, deletedAt: null }, reach ?? {}, opts.clientId ? { clientId: opts.clientId } : {}] },
+      associate: {
+        AND: [
+          { tenantId, deletedAt: null, deactivatedAt: null },
+          scopeAssociates(user),
+          ...parts.map((p) => ({ OR: [{ firstName: { contains: p, mode: 'insensitive' as const } }, { lastName: { contains: p, mode: 'insensitive' as const } }, { email: { contains: p, mode: 'insensitive' as const } }] })),
+        ],
+      },
+    },
+    take: 100,
+    orderBy: { associate: { lastName: 'asc' } },
+    select: { ...CREW_SELECT, location: { select: { id: true, name: true, clientId: true, client: { select: { name: true } } } } },
+  });
+  return rows.map((r) => crewNode(r, r.location));
 }

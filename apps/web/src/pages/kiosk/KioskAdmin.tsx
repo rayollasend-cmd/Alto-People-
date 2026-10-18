@@ -14,6 +14,7 @@ import {
   Mail,
   Plus,
   RotateCw,
+  Nfc,
   ScanFace,
   ScrollText,
   Search,
@@ -91,6 +92,7 @@ import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
+import { BadgeDialog } from './BadgeDialog';
 
 type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces';
 
@@ -156,7 +158,6 @@ export function KioskAdmin() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={term('nav.kiosk')}
         subtitle="Register tablets, issue 4-digit clock-in numbers, and review the punch log."
         breadcrumbs={[{ label: 'Time & attendance', to: '/time-attendance' }, { label: term('nav.kiosk') }]}
@@ -1063,6 +1064,8 @@ function PinsTab({
     storeScope.setClientId(id === ALL_CLIENTS ? '' : id);
   };
   const [showNew, setShowNew] = useState(false);
+  // The badge dialog (write an NFC badge, reissue) for one clock-in number.
+  const [badgeFor, setBadgeFor] = useState<{ id: string; name: string } | null>(null);
   const [showDiagnose, setShowDiagnose] = useState(false);
   const [showPin, setShowPin] = useState<{
     associateName: string;
@@ -1743,6 +1746,9 @@ function PinsTab({
                             >
                               <RotateCw className="h-3.5 w-3.5" /> Rotate
                             </Button>
+                            <Button variant="ghost" size="xs" onClick={() => setBadgeFor({ id: pn.id, name: pn.associateName })} className="gap-1">
+                              <Nfc className="h-3.5 w-3.5" /> Badge
+                            </Button>
                             <Button
                               variant="ghost"
                               size="xs"
@@ -1777,6 +1783,7 @@ function PinsTab({
           )}
         </CardContent>
       </Card>
+      <BadgeDialog pinId={badgeFor?.id ?? null} name={badgeFor?.name ?? ''} onClose={() => setBadgeFor(null)} />
       {showNew && (
         <NewPinDrawer
           clientId={clientId}

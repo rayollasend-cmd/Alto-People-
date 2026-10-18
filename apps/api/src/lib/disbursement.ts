@@ -6,7 +6,7 @@ import {
   mapBranchStatus,
   type BranchBankRail,
 } from './branch.js';
-import { createWiseTransfer, isWiseConfigured } from './wise.js';
+import { createWiseTransfer, isWiseConfigured, type WiseConfig } from './wise.js';
 
 /**
  * Disbursement adapter (Phase 22).
@@ -18,11 +18,11 @@ import { createWiseTransfer, isWiseConfigured } from './wise.js';
  *
  * Three adapters today:
  *  - StubAdapter (default): returns synthetic STUB-... refs, status SUCCESS.
- *  - WiseAdapter: scaffolded; throws unless WISE_API_KEY is set, in which
- *    case it would POST to the Wise transfers endpoint. Currently still
- *    stubbed even when configured (returns a STUB ref) — switching to a
- *    real call is a single file edit when the business signs the Wise
- *    contract.
+ *  - WiseAdapter: real Wise transfers (lib/wise.ts: quote → recipient →
+ *    transfer → fund), from a tenant's own Wise connection when it has
+ *    one (resolveAdapter) or the platform's WISE_API_KEY/WISE_PROFILE_ID.
+ *    Transfer state changes arrive on the provider webhook
+ *    (routes/providerWebhooks.ts); a bounce re-routes the paycheck.
  *  - BranchAdapter: same pattern for Branch.
  *
  * `pickAdapter()` returns the configured adapter based on env. Routes call
@@ -100,6 +100,8 @@ class StubAdapter implements DisbursementAdapter {
 
 class WiseAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider = 'WISE';
+  /** A tenant's own Wise connection; the platform's env keys when absent. */
+  constructor(private readonly config?: WiseConfig) {}
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
     if (input.currency !== 'USD') {
       return {
@@ -133,7 +135,7 @@ class WiseAdapter implements DisbursementAdapter {
           zip: input.recipient.zip ?? null,
         },
       },
-    });
+    }, this.config);
     return {
       provider: 'WISE',
       externalRef: result.transferId,
@@ -283,6 +285,25 @@ export function pickAdapter(): DisbursementAdapter {
   cached = chosen;
   cachedFor = fp;
   return chosen;
+}
+
+/**
+ * The adapter for this request's tenant: its own active Wise connection
+ * (Settings & trust → Integrations → Payouts) when it has one, else the
+ * platform's env-configured rail. Callers use this, not pickAdapter(), so
+ * a tenant that connects Wise pays from its own balance.
+ */
+export async function resolveAdapter(): Promise<DisbursementAdapter> {
+  if (cached && cachedFor === '__test__') return cached;
+  const { activeConnection, contextFor } = await import('./providers/connections.js');
+  const conn = await activeConnection('PAYOUT');
+  if (conn && conn.provider === 'WISE') {
+    const ctx = contextFor(conn);
+    if (ctx.credentials.apiKey && ctx.credentials.profileId) {
+      return new WiseAdapter({ apiKey: ctx.credentials.apiKey, profileId: ctx.credentials.profileId, baseUrl: ctx.baseUrl });
+    }
+  }
+  return pickAdapter();
 }
 
 // Test-only: lets unit tests force a specific adapter instance without

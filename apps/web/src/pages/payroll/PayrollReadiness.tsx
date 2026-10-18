@@ -55,7 +55,6 @@ export function PayrollReadiness() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Payroll readiness"
         subtitle="Every active associate, with the five data points payroll needs. Fix any red flags before creating a run."
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Readiness' }]}

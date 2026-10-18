@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const askHugo = vi.fn();
 const handoffToPerson = vi.fn();
+const decideAssistantAction = vi.fn();
 vi.mock('@/lib/hugoApi', () => ({
   getHugo: vi.fn(async () => ({
     name: 'Hugo',
@@ -15,6 +16,7 @@ vi.mock('@/lib/hugoApi', () => ({
   })),
   askHugo: (...a: unknown[]) => askHugo(...a),
   handoffToPerson: (...a: unknown[]) => handoffToPerson(...a),
+  decideAssistantAction: (...a: unknown[]) => decideAssistantAction(...a),
 }));
 vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ user: { id: 'u1', role: 'ASSOCIATE', email: 'a@example.com' }, can: () => true }),
@@ -91,5 +93,29 @@ describe('<AssistantPane>', () => {
     await waitFor(() => expect(handoffToPerson).toHaveBeenCalledWith('my badge broke'));
     await screen.findByText('I have passed this to Dana Reyes.');
     expect(screen.queryByRole('button', { name: 'Send to Dana Reyes' })).toBeNull();
+  });
+
+  it('an action is a card: nothing happens until Confirm, and the result lands in place', async () => {
+    askHugo.mockResolvedValue({
+      intent: 'MODEL',
+      reply: 'I can call you out of tomorrow’s shift — tap Call out to do it.',
+      linkUrl: null,
+      handoff: null,
+      source: 'model',
+      actions: [{ id: 'a1', token: 'a1.sig', kind: 'call_out', title: 'Call out of Cashier at Front Beach', detail: 'Reason: sick.', confirmLabel: 'Call out', expiresAt: new Date(Date.now() + 600_000).toISOString() }],
+      tables: [],
+    });
+    decideAssistantAction.mockResolvedValue({ status: 'done', title: 'Call out of Cashier at Front Beach', message: 'Done.', linkUrl: '/' });
+    mount();
+    fireEvent.click(screen.getByText('spark'));
+    const input = await screen.findByLabelText(/ask hugo/i);
+    fireEvent.change(input, { target: { value: 'I am sick tomorrow' } });
+    fireEvent.submit(input.closest('form')!);
+    const card = await screen.findByRole('group', { name: /proposed: call out of cashier/i });
+    expect(decideAssistantAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Call out' }));
+    await waitFor(() => expect(decideAssistantAction).toHaveBeenCalledWith('a1.sig', 'confirm'));
+    expect(await screen.findByText(/Done\./)).toBeInTheDocument();
+    expect(card.querySelector('button')?.textContent).not.toBe('Call out');
   });
 });

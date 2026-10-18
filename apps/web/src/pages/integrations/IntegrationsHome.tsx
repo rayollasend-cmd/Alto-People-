@@ -60,6 +60,7 @@ const WEBHOOK_EVENT_TYPES = WEBHOOK_EVENTS;
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { WebhookHealthTile } from '@/pages/payroll/WebhookHealthTile';
 import { ConnectionsSection } from './connections/ConnectionsSection';
+import { ProvidersSection } from './providers/ProvidersSection';
 
 export function IntegrationsHome() {
   const { user } = useAuth();
@@ -69,7 +70,6 @@ export function IntegrationsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Integrations"
         subtitle="OAuth apps for the public API, legacy API keys, and outbound webhooks for event delivery."
         breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Integrations' }]}
@@ -83,6 +83,9 @@ export function IntegrationsHome() {
         {/* Brief 3-5: the HR and VMS systems the customer already runs. */}
         <ConnectionsSection canManage={canManage} />
       </section>
+
+      {/* E-Verify, screening, drug tests, tax filing and payouts (lib/providers). */}
+      <ProvidersSection canManage={canManage} />
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>

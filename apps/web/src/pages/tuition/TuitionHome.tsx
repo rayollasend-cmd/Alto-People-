@@ -246,7 +246,6 @@ export function TuitionHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Tuition reimbursement"
         subtitle="Submit course expenses for reimbursement. After grades land, attach them to your request."
         breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Tuition' }]}

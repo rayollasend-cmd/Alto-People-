@@ -4,7 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
-import { pickAdapter, type DisbursementInput } from './disbursement.js';
+import { resolveAdapter, type DisbursementInput } from './disbursement.js';
 import { notifyFinance, resolvePayoutForPayroll } from './financialChanges.js';
 import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
 import { getCurrentPeriod } from './payrollSchedule.js';
@@ -251,7 +251,7 @@ export async function requestEarnedWageAdvance(
           }
         : {}),
   };
-  const adapter = pickAdapter();
+  const adapter = await resolveAdapter();
   const result = await adapter
     .disburse({
       amount: input.amountCents / 100,

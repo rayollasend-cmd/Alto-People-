@@ -98,7 +98,6 @@ export function CelebrationsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Celebrations"
         subtitle={isCrewLead ? 'Your crew’s upcoming birthdays and work anniversaries.' : 'Upcoming birthdays and work anniversaries, by where people work.'}
         breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Celebrations' }]}

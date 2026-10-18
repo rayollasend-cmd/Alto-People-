@@ -21,7 +21,9 @@ const MAX_QUEUE = 100;
 export interface QueuedPunch {
   idempotencyKey: string;
   deviceToken: string;
+  /** The typed number, or '' when the person used a badge (badgeToken). */
   pin: string;
+  badgeToken?: string | null;
   selfie: string | null;
   faceDescriptor: number[] | null;
   latitude: number | null;
@@ -199,7 +201,7 @@ async function drainItems(
     try {
       await kioskPunch({
         deviceToken: currentDeviceToken ?? item.deviceToken,
-        pin: item.pin,
+        ...(item.badgeToken ? { badgeToken: item.badgeToken } : { pin: item.pin }),
         selfie: item.selfie,
         latitude: item.latitude,
         longitude: item.longitude,

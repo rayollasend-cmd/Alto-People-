@@ -89,7 +89,6 @@ export function ProbationHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Probation"
         subtitle="Track new-hire probation periods. Pass, extend, or fail before the end date."
         breadcrumbs={[{ label: term('nav.people') }, { label: 'Probation' }]}
@@ -344,7 +343,7 @@ function KpiCard({
         : 'text-white';
   return (
     <Card>
-      <CardContent className="p-4 flex items-center gap-3">
+      <CardContent className="flex items-center gap-3">
         <Icon className={`h-5 w-5 ${toneClass}`} />
         <div>
           <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">

@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from 'express';
+import { ChangeReasonSchema, noteScheduleChange } from '../lib/predictabilityPay.js';
 import { Prisma } from '@prisma/client';
 import {
   AdminOpenShiftClaimListResponseSchema,
@@ -2942,6 +2943,12 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
 
     const skipped = [...notFoundSkips, ...conflictedSkips];
     const createdCount = assignedCount + openCount * occurrences.length;
+    // Predictability pay: a published, assigned shift added inside the notice window (lib/predictabilityPay).
+    if (publishedAt && assignedCount > 0) {
+      const added = await prisma.shift.findMany({ where: { id: { in: createdIds }, assignedAssociateId: { not: null } }, select: { id: true, assignedAssociateId: true, locationId: true, startsAt: true, endsAt: true, status: true } });
+      const why = ChangeReasonSchema.parse((req.body as { changeReason?: unknown })?.changeReason);
+      for (const x of added) void noteScheduleChange(prisma, { tenantId: tenantIdForWrite(), before: null, after: { id: x.id, assignedAssociateId: x.assignedAssociateId, locationId: x.locationId, startsAt: x.startsAt, endsAt: x.endsAt, status: x.status }, actorUserId: req.user!.id, exemptReason: why, reasonText: lateNoticeReason });
+    }
     await recordShiftEvent({
       actorUserId: req.user!.id,
       action: 'shift.bulk_created',
@@ -3284,6 +3291,14 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     }
 
     emitShiftEvent(updated.id, 'updated');
+    void noteScheduleChange(prisma, {
+      tenantId: tenantIdForWrite(),
+      before: { id: existing.id, assignedAssociateId: existing.assignedAssociateId, locationId: existing.locationId, startsAt: existing.startsAt, endsAt: existing.endsAt, status: existing.status },
+      after: { id: updated.id, assignedAssociateId: updated.assignedAssociateId, locationId: updated.locationId, startsAt: updated.startsAt, endsAt: updated.endsAt, status: updated.status },
+      actorUserId: req.user!.id,
+      exemptReason: ChangeReasonSchema.parse((req.body as { changeReason?: unknown })?.changeReason),
+      reasonText: (req.body as { lateNoticeReason?: string })?.lateNoticeReason ?? null,
+    });
     res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
@@ -3404,6 +3419,14 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       });
     }
 
+    // Predictability pay: assigning a published shift inside the notice window is an added shift.
+    void noteScheduleChange(prisma, {
+      tenantId: tenantIdForWrite(),
+      before: { id: shift.id, assignedAssociateId: shift.assignedAssociateId, locationId: shift.locationId, startsAt: shift.startsAt, endsAt: shift.endsAt, status: shift.status },
+      after: { id: updated.id, assignedAssociateId: updated.assignedAssociateId, locationId: updated.locationId, startsAt: updated.startsAt, endsAt: updated.endsAt, status: updated.status },
+      actorUserId: req.user!.id,
+      exemptReason: ChangeReasonSchema.parse((req.body as { changeReason?: unknown })?.changeReason),
+    });
     res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
@@ -3484,6 +3507,14 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
     // The cancel and everything it closes (live swaps, the person told) live in
     // lib/shiftCreate, one copy with POST /v1/shifts/:id/cancel.
     const updated = await cancelShiftWithinRules(prisma, shift, parsed.data.reason, { userId: req.user!.id, req }, SHIFT_INCLUDE);
+    void noteScheduleChange(prisma, {
+      tenantId: tenantIdForWrite(),
+      before: { id: shift.id, assignedAssociateId: shift.assignedAssociateId, locationId: shift.locationId, startsAt: shift.startsAt, endsAt: shift.endsAt, status: shift.status },
+      after: { id: updated.id, assignedAssociateId: updated.assignedAssociateId, locationId: updated.locationId, startsAt: updated.startsAt, endsAt: updated.endsAt, status: updated.status },
+      actorUserId: req.user!.id,
+      exemptReason: ChangeReasonSchema.parse((req.body as { changeReason?: unknown })?.changeReason),
+      reasonText: parsed.data.reason ?? null,
+    });
 
     res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {

@@ -253,7 +253,7 @@ function OnTheFloorNow({ data, onOpen }: { data: StoreOpsDay; onOpen: (id: strin
   if (live.length === 0) return null;
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent>
         <h2 className="flex items-center gap-2 text-sm font-medium text-white">
           <span className="relative flex h-2 w-2" aria-hidden="true">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
@@ -339,7 +339,7 @@ function FromTheFloor({
   const photos = data.photos ?? [];
   return (
     <Card>
-      <CardContent className="p-4">
+      <CardContent>
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
             <Camera className="h-4 w-4 text-gold" aria-hidden="true" />

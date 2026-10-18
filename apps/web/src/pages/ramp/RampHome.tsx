@@ -101,7 +101,6 @@ export function RampHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="30/60/90 plans"
         subtitle="Every new hire's first weeks, from the first shift on — owned by their manager or the store's shift supervisor."
         breadcrumbs={[{ label: 'People', to: '/people' }, { label: '30/60/90 plans' }]}
@@ -417,7 +416,7 @@ function PlanDetailDrawer({
 
             <ol className="relative space-y-2 border-l-2 border-line pl-5" aria-label="The plan's timeline">
               {plan.milestones.length === 0 ? (
-                <li className="text-sm text-silver">No milestones yet.</li>
+                <li className="list-none"><EmptyState size="sm" title={"No milestones yet."} /></li>
               ) : (
                 plan.milestones.map((m) => (
                   <li

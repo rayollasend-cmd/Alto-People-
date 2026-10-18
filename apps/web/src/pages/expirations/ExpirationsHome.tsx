@@ -79,7 +79,6 @@ export function ExpirationsHome() {
   };
   return (
     <ListTemplate
-      className="space-y-5"
       title="Expirations"
       subtitle="Credentials that lapse — first the ones that would stop someone working a shift they’re already on."
       breadcrumbs={[{ label: 'Compliance', to: '/compliance' }, { label: 'Expirations' }]}

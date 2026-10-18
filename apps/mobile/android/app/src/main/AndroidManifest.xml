@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- The sign-in handoff and app links (altopeople://…). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="altopeople" />
+            </intent-filter>
+
+            <!-- Verified app links: these pages of the web app open in the app
+                 (assetlinks.json on the host — apps/mobile/scripts/well-known.mjs). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${appLinkHost}" />
+                <data android:pathPrefix="/rides" />
+                <data android:pathPrefix="/me" />
+                <data android:pathPrefix="/shifts" />
+                <data android:pathPrefix="/track" />
+                <data android:pathPrefix="/w/" />
+                <data android:pathPrefix="/candidate" />
+                <data android:pathPrefix="/nps" />
+                <data android:pathPrefix="/inbox" />
+            </intent-filter>
+
+            <!-- A tapped badge (NDEF text) while the app is open goes to the app. -->
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- Default channel and small icon for notifications (FCM). -->
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="alto_default" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_alto" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/alto_gold" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Shift, ride and pay notifications (Android 13+ asks; we explain first). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Face / fingerprint to open the app. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Tap a badge at the kiosk; write badges (HR). -->
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- Kiosk selfies and badge QR scanning (getUserMedia in the web view). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- The driver's live position on a run; the kiosk's advisory geofence. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+</manifest>

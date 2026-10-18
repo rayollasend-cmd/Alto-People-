@@ -712,6 +712,7 @@ const EXCEPTION_COPY: Record<PayrollException['kind'], { label: string }> = {
   UNAPPROVED_TIME: { label: 'Unapproved time' },
   MISSING_COMP_RECORD: { label: 'No comp record' },
   RETRO_PAY: { label: 'Retroactive pay' },
+  STATE_W4_INCOMPLETE: { label: 'State certificate incomplete' },
 };
 
 /**

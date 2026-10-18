@@ -217,7 +217,7 @@ function ScimGroups({ roles }: { roles: TenantRoleRow[] }) {
   };
   return (
     <Card>
-      <CardContent className="space-y-3 p-4">
+      <CardContent className="space-y-3">
         <div>
           <h3 className="text-sm font-semibold text-white">Directory groups</h3>
           <p className="text-xs text-silver">A member of a mapped group holds its role. Leaving every mapped group changes nothing; deactivate in your directory instead.</p>
@@ -291,7 +291,7 @@ function CompareBuiltIns({ roles }: { roles: TenantRoleRow[] }) {
   );
   return (
     <Card>
-      <CardContent className="space-y-3 p-4">
+      <CardContent className="space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <h3 className="text-base font-semibold text-ink">What changed between built-ins</h3>
@@ -382,7 +382,7 @@ export function RolesMatrix() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 p-4">
+        <CardContent className="flex flex-wrap items-end gap-3">
           <Field label="Role">
             {(p) => (
               <Select {...p} value={role.id} onChange={(e) => choose(e.target.value)} className="w-72">
@@ -408,7 +408,7 @@ export function RolesMatrix() {
       </Card>
 
       <Card>
-        <CardContent className="space-y-4 p-4">
+        <CardContent className="space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 className="text-base font-semibold text-white">{role.system ? roleLabel(role.archetype) : role.name}</h3>

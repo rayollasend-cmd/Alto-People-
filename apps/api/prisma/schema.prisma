@@ -134,6 +134,9 @@ enum TaskKind {
   // Live headshot taken in the onboarding flow (camera-only for the
   // associate; HR can set one from the People drawer as the escape hatch).
   PROFILE_PHOTO
+  // WOTC pre-screening (IRS Form 8850 + ETA 9061 applicant questions).
+  // Voluntary for the applicant: "prefer not to answer" completes it.
+  WOTC_SCREENING
 }
 
 enum TaskStatus {
@@ -340,6 +343,9 @@ enum PayrollEarningKind {
   // Retroactive pay: a rate change dated into a period already paid, settled
   // as the delta on the next regular run (lib/retroPay.ts). Regular wages.
   RETRO
+  // A labor-law premium paid under a LIVE rule pack (meal, rest, rest
+  // between shifts, predictability pay); the note cites the rule.
+  PREMIUM
 }
 
 enum NotificationChannel {
@@ -587,6 +593,8 @@ model User {
   mfaRecoveryCodes                  MfaRecoveryCode[]
   webauthnCredentials               WebAuthnCredential[]
   pushSubscriptions                 PushSubscription[]
+  nativeDevices                     NativeDevice[]
+  nativeHandoffCodes                NativeHandoffCode[]
   notificationPreferences           NotificationPreference[]
   emailChangeRequests               EmailChangeRequest[]
   createdEsignAgreements            EsignAgreement[]              @relation("EsignAgreementCreator")
@@ -816,6 +824,8 @@ model Client {
   // (lib/statementDunning.ts) pauses per client when Finance says so.
   poNumber               String?                 @db.VarChar(60)
   paymentTermsDays       Int                     @default(30)
+  /// The margin its bill rates are priced to (market rates desk).
+  targetMarginPct        Decimal?                @db.Decimal(5, 2)
   dunningPausedAt        DateTime?               @db.Timestamptz(6)
   dunningPausedById      String?                 @db.Uuid
   dunningPauseNote       String?
@@ -893,6 +903,8 @@ model Client {
   surveys                 Survey[]
   // Phase 88 — OSHA incidents.
   oshaIncidents           OshaIncident[]
+  unemploymentClaims      UnemploymentClaim[]
+  wcClaims                WcClaim[]
   // Phase 89 — document templates can be client-scoped.
   documentTemplates       DocumentTemplate[]
   // Phase 90 — recruiting catalog.
@@ -950,6 +962,9 @@ model Site {
   city                   String?                 @db.VarChar(120)
   state                  String?                 @db.VarChar(2)
   zip                    String?                 @db.VarChar(10)
+  /// Metro area (CBSA) its wages are benchmarked against (lib/marketWages).
+  marketAreaCode         String?                 @db.VarChar(7)
+  marketAreaName         String?                 @db.VarChar(160)
   latitude               Decimal?                @db.Decimal(10, 7)
   longitude              Decimal?                @db.Decimal(10, 7)
   geofenceRadiusMeters   Int?
@@ -1098,6 +1113,157 @@ enum AttendanceKind {
   EARLY_OUT // punched out > 30 min before linked shift end
   CALL_OUT // missed shift, but a time-off request covered the day
   NO_CALL_NO_SHOW // missed shift, no request, no word
+}
+
+// ----- AIOPS: call-outs, retention, assistant actions ----------------------
+
+enum CallOutChannel {
+  WHATSAPP
+  SMS
+  APP
+  VOICE
+  STAFF
+}
+
+enum CallOutReason {
+  SICK
+  FAMILY
+  TRANSPORT
+  EMERGENCY
+  BEREAVEMENT
+  JURY_DUTY
+  OTHER
+}
+
+enum CallOutStatus {
+  PENDING // asked on WhatsApp/SMS, waiting for the worker's YES
+  CONFIRMED
+  CANCELLED
+}
+
+/// A worker saying they can't make a shift — by WhatsApp, text, the app or a call.
+/// One per (shift, worker): a repeated text never counts twice (lib/callOuts).
+model CallOut {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  shiftId            String         @db.Uuid
+  associateId        String         @db.Uuid
+  clientId           String?        @db.Uuid
+  locationId         String?        @db.Uuid
+  channel            CallOutChannel
+  reason             CallOutReason  @default(OTHER)
+  note               String?        @db.VarChar(1000)
+  recordingUrl       String?        @db.VarChar(500)
+  status             CallOutStatus  @default(CONFIRMED)
+  minutesBeforeStart Int
+  late               Boolean        @default(false)
+  excused            Boolean        @default(false)
+  excusedWhy         String?        @db.VarChar(200)
+  coverSteps         Json?
+  confirmedAt        DateTime?      @db.Timestamptz(6)
+  createdById        String?        @db.Uuid
+  createdAt          DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @db.Timestamptz(6)
+
+  shift     Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, associateId])
+  @@index([tenantId, createdAt])
+  @@index([clientId, createdAt])
+  @@index([associateId, status])
+}
+
+enum RiskBand {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RetentionPlayKind {
+  MORE_HOURS
+  CHECK_IN
+  SCHEDULE_FIX
+  RIDE_HELP
+  RECOGNITION
+  PAY_REVIEW
+}
+
+enum RetentionPlayStatus {
+  OPEN
+  DONE
+}
+
+enum RetentionOutcome {
+  PENDING
+  STAYED
+  LEFT
+}
+
+/// The latest flight-risk score for a worker (lib/retention). Never shown to the worker.
+model FlightRisk {
+  associateId String    @id @db.Uuid
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  score       Int
+  band        RiskBand
+  /// The factors behind the score, strongest first: [{ key, label, points, detail }].
+  reasons     Json
+  /// Suggested plays, in order: RetentionPlayKind[].
+  plays       Json
+  computedAt  DateTime  @db.Timestamptz(6)
+  associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, band])
+}
+
+/// Something a lead or HR did to keep a worker, and whether they stayed.
+model RetentionPlay {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?             @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId    String              @db.Uuid
+  kind           RetentionPlayKind
+  status         RetentionPlayStatus @default(OPEN)
+  note           String?             @db.VarChar(1000)
+  riskAtStart    Int
+  reasonsAtStart Json?
+  takenById      String?             @db.Uuid
+  approvalId     String?             @db.Uuid
+  doneAt         DateTime?           @db.Timestamptz(6)
+  outcome        RetentionOutcome    @default(PENDING)
+  outcomeAt      DateTime?           @db.Timestamptz(6)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(6)
+  associate      Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, kind])
+  @@index([associateId])
+}
+
+enum AssistantActionStatus {
+  PROPOSED
+  CONFIRMED
+  CANCELLED
+  FAILED
+}
+
+/// An action the assistant proposed; it runs only when the person taps Confirm (lib/assistantActions).
+model AssistantAction {
+  id           String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId       String                @db.Uuid
+  kind         String                @db.VarChar(60)
+  params       Json
+  title        String                @db.VarChar(300)
+  detail       String?               @db.VarChar(1000)
+  status       AssistantActionStatus @default(PROPOSED)
+  expiresAt    DateTime              @db.Timestamptz(6)
+  decidedAt    DateTime?             @db.Timestamptz(6)
+  resultStatus Int?
+  result       Json?
+  createdAt    DateTime              @default(now()) @db.Timestamptz(6)
+
+  @@index([userId, createdAt])
+  @@index([tenantId])
 }
 
 // One attendance signal, worth points on the rolling 90-day score.
@@ -2130,6 +2296,10 @@ model Associate {
   qles                     QualifyingLifeEvent[]
   cobraOffers              CobraOffer[]
   acaMonths                AcaMonth[]
+  acaWorkerClasses         AcaWorkerClass[]
+  acaOffers                AcaOffer[]
+  wotcScreenings           WotcScreening[]
+  stateW4s                 AssociateStateW4[]
   // Phase 94 — LMS course enrollments.
   courseEnrollments        CourseEnrollment[]
   // Phase 97 — reimbursement requests.
@@ -2156,6 +2326,11 @@ model Associate {
   disciplinaryActions      DisciplinaryAction[]
   // Phase 119 — separations + exit interviews.
   separations              Separation[]
+  // Leave of absence & claims (CLAIMS pack).
+  leaveCases               LeaveCase[]
+  unemploymentClaims       UnemploymentClaim[]
+  workOffers               WorkOffer[]
+  wcClaims                 WcClaim[]
   // Phase 120 — internal mobility applications.
   internalApplications     InternalJobApplication[]
   // Phase 121 — vaccination + medical records.
@@ -2201,6 +2376,13 @@ model Associate {
   referralBonuses          ReferralBonusPayout[]
   laborShadowDiffs         LaborShadowDiff[]
 
+  scheduleChangePremiums ScheduleChangePremium[]
+  timeCorrectionRequests TimeCorrectionRequest[]
+  breakAttestations      BreakAttestation[]
+  overtimeOffers         OvertimeOffer[]
+  callOuts                 CallOut[]
+  flightRisk               FlightRisk?
+  retentionPlays           RetentionPlay[]
   @@index([deletedAt])
   @@index([managerId])
   @@index([departmentId])
@@ -2945,12 +3127,28 @@ model BackgroundCheck {
   status      BgCheckStatus @default(INITIATED)
   initiatedAt DateTime      @default(now()) @db.Timestamptz(6)
   completedAt DateTime?     @db.Timestamptz(6)
+  connectionId        String?   @db.Uuid
+  packageCode         String?   @db.VarChar(80)
+  externalCandidateId String?   @db.VarChar(80)
+  invitationUrl       String?   @db.VarChar(500)
+  rawStatus           String?   @db.VarChar(40)
+  /// clear | consider (provider result before adjudication)
+  result              String?   @db.VarChar(20)
+  /// ENGAGED | PRE_ADVERSE | ADVERSE (FCRA adjudication)
+  adjudication        String?   @db.VarChar(20)
+  preAdverseSentAt    DateTime? @db.Timestamptz(6)
+  adverseWaitUntil    DateTime? @db.Timestamptz(6)
+  adverseSentAt       DateTime? @db.Timestamptz(6)
+  adverseActionId     String?   @db.VarChar(80)
+  lastSyncAt          DateTime? @db.Timestamptz(6)
+  lastError           String?   @db.VarChar(500)
   associate   Associate     @relation(fields: [associateId], references: [id], onDelete: Restrict)
 
   @@index([associateId])
   @@index([status])
   @@index([clientId])
   @@index([tenantId])
+  @@index([externalId])
 }
 
 // Drug-screen ledger — mirrors BackgroundCheck. The key difference lives
@@ -2969,12 +3167,25 @@ model DrugTest {
   status      DrugTestStatus @default(INITIATED)
   initiatedAt DateTime       @default(now()) @db.Timestamptz(6)
   completedAt DateTime?      @db.Timestamptz(6)
+  connectionId       String?   @db.Uuid
+  panelCode          String?   @db.VarChar(40)
+  reason             String?   @db.VarChar(30)
+  donorPassUrl       String?   @db.VarChar(500)
+  donorPassExpiresAt DateTime? @db.Timestamptz(6)
+  collectionSite     String?   @db.VarChar(300)
+  rawStatus          String?   @db.VarChar(40)
+  /// NEGATIVE | POSITIVE | DILUTE | CANCELLED (MRO-verified when mroVerifiedAt is set)
+  resultCode         String?   @db.VarChar(20)
+  mroVerifiedAt      DateTime? @db.Timestamptz(6)
+  lastSyncAt         DateTime? @db.Timestamptz(6)
+  lastError          String?   @db.VarChar(500)
   associate   Associate      @relation(fields: [associateId], references: [id], onDelete: Restrict)
 
   @@index([associateId])
   @@index([status])
   @@index([clientId])
   @@index([tenantId])
+  @@index([externalId])
 }
 
 model I9Verification {
@@ -3018,6 +3229,20 @@ model I9Verification {
   // of the point of having a queue.
   eVerifyCaseOpenedAt        DateTime?            @db.Timestamptz(6)
   eVerifyClosedAt            DateTime?            @db.Timestamptz(6)
+  /// Provider connection (ProviderConnection) that holds the case; null = recorded by hand.
+  eVerifyConnectionId        String?              @db.Uuid
+  /// First day worked + 3 business days.
+  eVerifyDueBy               DateTime?            @db.Date
+  eVerifyRawStatus           String?              @db.VarChar(80)
+  /// Tentative Nonconfirmation: when the employee was given the notice, and what they chose.
+  eVerifyTncNotifiedAt       DateTime?            @db.Timestamptz(6)
+  eVerifyTncDecision         String?              @db.VarChar(12)
+  eVerifyReferredAt          DateTime?            @db.Timestamptz(6)
+  /// 8 federal working days after referral for the employee to contact SSA/DHS.
+  eVerifyReferralDeadline    DateTime?            @db.Date
+  eVerifyClosureReason       String?              @db.VarChar(60)
+  eVerifyLastSyncAt          DateTime?            @db.Timestamptz(6)
+  eVerifyLastError           String?              @db.VarChar(500)
   associate                  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
   section2Verifier           User?                @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
   createdAt                  DateTime             @default(now()) @db.Timestamptz(6)
@@ -3244,6 +3469,8 @@ model Shift {
   createdAt              DateTime                        @default(now()) @db.Timestamptz(6)
   updatedAt              DateTime                        @updatedAt @db.Timestamptz(6)
 
+  overtimeOffers OvertimeOffer[]
+  callOuts                        CallOut[]
   @@index([clientId, startsAt])
   @@index([locationId, startsAt])
   @@index([assignedAssociateId, startsAt])
@@ -3579,6 +3806,56 @@ model PushSubscription {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([tenantId])
+}
+
+enum NativePlatform {
+  IOS
+  ANDROID
+}
+
+/// A phone a person has the native app on (iOS / Android). Holds the push
+/// token (APNs or FCM) and a refresh credential kept in the phone's
+/// Keychain / Keystore — only its hash lives here.
+model NativeDevice {
+  id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String?        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId              String         @db.Uuid
+  platform            NativePlatform
+  pushToken           String?        @unique @db.VarChar(400)
+  deviceName          String?        @db.VarChar(120)
+  deviceModel         String?        @db.VarChar(120)
+  osVersion           String?        @db.VarChar(40)
+  appVersion          String?        @db.VarChar(40)
+  credentialHash      Bytes?
+  credentialExpiresAt DateTime?      @db.Timestamptz(6)
+  tokenVersion        Int            @default(0)
+  biometricLock       Boolean        @default(false)
+  /// How the person signed in when the credential was issued ('password' | 'mfa' | 'passkey' | 'sso').
+  authMethod          String?        @db.VarChar(20)
+  lastSeenAt          DateTime       @default(now()) @db.Timestamptz(6)
+  revokedAt           DateTime?      @db.Timestamptz(6)
+  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([tenantId])
+}
+
+/// A one-time code that carries a sign-in finished in the system browser
+/// (SSO, passkeys) back into the app's web view. Two minutes, single use.
+model NativeHandoffCode {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId    String    @db.Uuid
+  codeHash  Bytes     @unique
+  expiresAt DateTime  @db.Timestamptz(6)
+  usedAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
   @@index([tenantId])
 }
 
@@ -3999,6 +4276,7 @@ model PayrollDisbursementAttempt {
   @@index([payrollItemId, attemptedAt])
   @@index([status])
   @@index([tenantId])
+  @@index([externalRef])
 }
 
 // Retroactive pay. A compensation record dated into a period that was
@@ -4902,6 +5180,46 @@ model ShiftRateDefault {
   @@index([tenantId])
 }
 
+/// Public wage data (BLS OEWS) by metro area (CBSA) and occupation (SOC).
+/// Reference data shared by every tenant, refreshed weekly (lib/marketWages).
+model MarketWage {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  areaCode   String   @db.VarChar(7)
+  areaName   String   @db.VarChar(160)
+  socCode    String   @db.VarChar(7)
+  socTitle   String   @db.VarChar(200)
+  year       Int
+  p10        Decimal? @db.Decimal(8, 2)
+  p25        Decimal? @db.Decimal(8, 2)
+  median     Decimal? @db.Decimal(8, 2)
+  p75        Decimal? @db.Decimal(8, 2)
+  p90        Decimal? @db.Decimal(8, 2)
+  mean       Decimal? @db.Decimal(8, 2)
+  employment Int?
+  source     String   @default("BLS_OEWS") @db.VarChar(20)
+  fetchedAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([areaCode, socCode, year])
+  @@index([socCode])
+}
+
+/// A role name — rate-card position, shift position or job profile — and the
+/// occupation (SOC) it is benchmarked against.
+model PositionSocMap {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  positionKey String   @db.VarChar(120)
+  position    String   @db.VarChar(120)
+  socCode     String   @db.VarChar(7)
+  socTitle    String   @db.VarChar(200)
+  updatedById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, positionKey])
+  @@index([tenantId])
+}
+
 model ShiftPosition {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId  String?   @db.Uuid
@@ -5103,6 +5421,7 @@ enum ApprovalRequestKind {
   REQUISITION
   ROLE_CHANGE
   WORKFLOW_GATE
+  LABOR_RULES_LIVE
 }
 
 enum ApprovalRequestStatus {
@@ -5925,6 +6244,34 @@ model AssociateQualification {
   @@index([associateId, deletedAt])
   @@index([qualificationId])
   @@index([tenantId])
+}
+
+/// Each tenant's credential-issuing key (Ed25519, lib/verifiableCredentials).
+/// The private key is encrypted with the field keyring.
+model CredentialIssuerKey {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?  @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  keyId         String   @default("key-1") @db.VarChar(40)
+  publicKey     Bytes
+  privateKeyEnc Bytes
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// An issued credential's slot in its tenant's Bitstring Status List.
+model CredentialStatusEntry {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  listIndex   Int
+  /// 'qualification' | 'training'
+  subjectType String    @db.VarChar(20)
+  subjectId   String    @db.Uuid
+  associateId String    @db.Uuid
+  revokedAt   DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([subjectType, subjectId])
+  @@unique([tenantId, listIndex])
+  @@index([associateId])
 }
 
 model ShiftQualificationRequirement {
@@ -7057,6 +7404,15 @@ model TaxForm {
   // marked filed. Alto renders and packages; transmission happens with the
   // partner or the agency portal, and this is its receipt.
   filingConfirmation  String?       @db.VarChar(80)
+  /// E-file through the filing partner: the submission, its status and the agency's answer.
+  efileConnectionId    String?       @db.Uuid
+  efileSubmissionId    String?       @db.VarChar(80)
+  efileRecordId        String?       @db.VarChar(80)
+  /// SUBMITTED | SENT_TO_AGENCY | ACCEPTED | REJECTED
+  efileStatus          String?       @db.VarChar(20)
+  efileSubmittedAt     DateTime?     @db.Timestamptz(6)
+  efileStatusAt        DateTime?     @db.Timestamptz(6)
+  efileRejectionReason String?       @db.VarChar(500)
   createdAt           DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt           DateTime      @updatedAt @db.Timestamptz(6)
 
@@ -7069,6 +7425,7 @@ model TaxForm {
   @@index([associateId])
   @@index([amendsTaxFormId])
   @@index([tenantId])
+  @@index([efileSubmissionId])
 }
 
 // Phase 92 — Open enrollment, qualifying life events, COBRA, ACA.
@@ -7203,6 +7560,211 @@ model AcaMonth {
 
   @@unique([associateId, year, month])
   @@index([year])
+  @@index([tenantId])
+}
+
+// ===== ACA look-back measurement (TAXCOMP 2026-10) =========================
+// Variable-hour workers are measured over a standard (or, for new hires,
+// initial) measurement period; whoever averages the full-time threshold
+// (130 h/month) must be offered coverage for the stability period that
+// follows. lib/acaMeasurement.ts computes; AcaMonth rows are written from it.
+
+enum AcaClassification {
+  FULL_TIME
+  VARIABLE_HOUR
+  SEASONAL
+  PART_TIME
+}
+
+enum AcaOfferResponse {
+  PENDING
+  ENROLLED
+  WAIVED
+}
+
+model AcaSettings {
+  id                       String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                 String?           @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// Standard measurement period length, 3–12 months.
+  measurementMonths        Int               @default(12)
+  /// Administrative period between measurement and stability, ≤ 90 days.
+  adminDays                Int               @default(60)
+  /// Stability period, ≥ the measurement period and ≥ 6 months.
+  stabilityMonths          Int               @default(12)
+  /// Initial measurement period for new variable-hour / seasonal hires.
+  initialMeasurementMonths Int               @default(12)
+  /// Where the standard stability period starts each year.
+  stabilityStartMonth      Int               @default(1)
+  stabilityStartDay        Int               @default(1)
+  fullTimeHoursPerMonth    Decimal           @default(130) @db.Decimal(6, 2)
+  /// Break in service after which a returning worker is treated as new.
+  breakInServiceWeeks      Int               @default(13)
+  ruleOfParity             Boolean           @default(true)
+  /// Line 14 code written for a month the worker was offered coverage.
+  defaultOfferCode         AcaCoverageOffer  @default(CODE_1E)
+  /// Line 16 affordability safe harbor (2F W-2, 2G FPL, 2H rate of pay).
+  affordabilitySafeHarbor  String?           @default("2H") @db.VarChar(3)
+  lowestPremiumCents       Int?
+  updatedById              String?           @db.Uuid
+  createdAt                DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime          @updatedAt @db.Timestamptz(6)
+}
+
+model AcaWorkerClass {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId    String            @db.Uuid
+  classification AcaClassification
+  effectiveFrom  DateTime          @db.Date
+  reason         String?           @db.VarChar(300)
+  setById        String?           @db.Uuid
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId, effectiveFrom])
+  @@index([tenantId])
+}
+
+model AcaOffer {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId        String           @db.Uuid
+  stabilityStart     DateTime         @db.Date
+  stabilityEnd       DateTime         @db.Date
+  offeredAt          DateTime         @default(now()) @db.Timestamptz(6)
+  offeredById        String?          @db.Uuid
+  response           AcaOfferResponse @default(PENDING)
+  respondedAt        DateTime?        @db.Timestamptz(6)
+  offerCode          AcaCoverageOffer @default(CODE_1E)
+  lowestPremiumCents Int?
+  note               String?          @db.VarChar(500)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, stabilityStart])
+  @@index([tenantId])
+}
+
+// ===== WOTC — Work Opportunity Tax Credit (TAXCOMP 2026-10) =================
+// The applicant answers the Form 8850 / ETA 9061 questions on or before the
+// job offer; HR completes the employer side and files with the state
+// workforce agency within 28 days of the start date (through the state
+// portal or a partner — the product does not transmit). lib/wotc.ts.
+
+enum WotcStatus {
+  NOT_STARTED
+  DECLINED
+  NOT_ELIGIBLE
+  LIKELY_ELIGIBLE
+  SUBMITTED
+  CERTIFIED
+  DENIED
+}
+
+model WotcSettings {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?  @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// Adds the screening to every new onboarding checklist.
+  enabled     Boolean  @default(false)
+  updatedById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+}
+
+model WotcScreening {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId         String     @db.Uuid
+  applicationId       String?    @unique @db.Uuid
+  status              WotcStatus @default(NOT_STARTED)
+  /// The applicant's answers, keyed by question (lib/wotc.ts WOTC_QUESTIONS).
+  answers             Json?
+  /// Target groups the answers point to (lib/wotc.ts targetGroupsFor).
+  targetGroups        String[]   @default([])
+  applicantSignedName String?    @db.VarChar(200)
+  applicantSignedAt   DateTime?  @db.Timestamptz(6)
+  applicantIp         String?    @db.VarChar(64)
+  /// Employer side (Form 8850 page 2 / ETA 9061).
+  offerDate           DateTime?  @db.Date
+  hireDate            DateTime?  @db.Date
+  startDate           DateTime?  @db.Date
+  startingWage        Decimal?   @db.Decimal(10, 2)
+  position            String?    @db.VarChar(120)
+  filingState         String?    @db.VarChar(2)
+  employerCompletedAt DateTime?  @db.Timestamptz(6)
+  employerCompletedBy String?    @db.Uuid
+  submittedAt         DateTime?  @db.Timestamptz(6)
+  submittedBy         String?    @db.Uuid
+  submissionRef       String?    @db.VarChar(120)
+  certifiedAt         DateTime?  @db.Timestamptz(6)
+  certifiedGroup      String?    @db.VarChar(40)
+  deniedAt            DateTime?  @db.Timestamptz(6)
+  denialReason        String?    @db.VarChar(500)
+  createdAt           DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime   @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([associateId])
+}
+
+/// Empowerment zones and rural renewal counties by ZIP — the designated
+/// community resident and summer youth groups read it. Loaded by HR from the
+/// published HUD/USDA lists; empty until then.
+model WotcDesignatedZip {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  zip       String   @db.VarChar(5)
+  /// 'EZ' empowerment zone · 'RRC' rural renewal county
+  kind      String   @db.VarChar(4)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenantId, zip])
+}
+
+// ===== State withholding (TAXCOMP 2026-10) ==================================
+
+/// A payroll admin's "reviewed with our tax adviser" for a state whose
+/// withholding table was added without independent verification — the state
+/// blocks payroll until acknowledged for its table's tax year.
+model StateTaxAcknowledgment {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  state            String   @db.VarChar(2)
+  taxYear          Int
+  acknowledgedById String?  @db.Uuid
+  acknowledgedAt   DateTime @default(now()) @db.Timestamptz(6)
+  note             String?  @db.VarChar(500)
+
+  @@unique([tenantId, state, taxYear])
+}
+
+/// A state's own withholding certificate (AL A-4, MD MW507, OR-W-4 …) —
+/// the state allowances, filing status, county and extra withholding.
+model AssociateStateW4 {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId              String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId           String    @db.Uuid
+  state                 String    @db.VarChar(2)
+  filingStatus          String    @default("SINGLE") @db.VarChar(24)
+  allowances            Int       @default(0)
+  dependents            Int       @default(0)
+  additionalWithholding Decimal   @default(0) @db.Decimal(10, 2)
+  exempt                Boolean   @default(false)
+  /// Maryland county (or Baltimore City) of residence, for the local tax.
+  county                String?   @db.VarChar(40)
+  signedAt              DateTime? @db.Timestamptz(6)
+  updatedById           String?   @db.Uuid
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, state])
   @@index([tenantId])
 }
 
@@ -7718,6 +8280,8 @@ model KioskPin {
   // number on /me/profile and HR can show it again in the directory.
   // Encryption uses the same AES-256-GCM helper as W4/payout secrets.
   pinEncrypted Bytes?
+  /// A badge (NFC tag or Wallet pass QR) carries this; reissuing bumps it so the old one stops working.
+  badgeVersion Int      @default(1)
   createdById  String?  @db.Uuid
   createdAt    DateTime @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
@@ -9256,6 +9820,8 @@ model OrgSetting {
   selfServiceApproval    Boolean                @default(false)
   roleChangeApproval     Boolean                @default(true)
   requisitionApproval    Boolean                @default(true)
+  /// Overtime offered fewest-overtime-first (lib/overtimeRotation).
+  otEqualization         Boolean                @default(false)
   updatedAt              DateTime               @updatedAt @db.Timestamptz(6)
 }
 
@@ -12729,6 +13295,71 @@ enum IntegrationSyncStatus {
   FAILED
 }
 
+/// A service provider the tenant has connected: E-Verify, background
+/// checks, drug tests, tax filing or payouts (lib/providers). Credentials
+/// and the webhook secret are encrypted under the keyring; settings holds
+/// non-secret configuration (packages per client/position, public keys).
+enum ProviderKind {
+  EVERIFY
+  BACKGROUND_CHECK
+  DRUG_TEST
+  TAX_FILING
+  PAYOUT
+}
+
+model ProviderConnection {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  kind             ProviderKind
+  /// CHECKR | GENERIC_SCREENING | DHS_EVERIFY | EVERIFY_AGENT | ESCREEN | QUEST_ESP | TAXBANDITS | WISE
+  provider         String          @db.VarChar(30)
+  name             String          @db.VarChar(120)
+  /// SANDBOX | PRODUCTION
+  environment      String          @default("SANDBOX") @db.VarChar(12)
+  active           Boolean         @default(true)
+  credentialsEnc   Bytes?
+  webhookSecretEnc Bytes?
+  settings         Json            @default("{}")
+  lastSuccessAt    DateTime?       @db.Timestamptz(6)
+  lastErrorAt      DateTime?       @db.Timestamptz(6)
+  lastError        String?         @db.VarChar(500)
+  lastTestAt       DateTime?       @db.Timestamptz(6)
+  lastTestOk       Boolean?
+  createdByUserId  String?         @db.Uuid
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+  events           ProviderEvent[]
+
+  @@index([tenantId, kind])
+}
+
+/// One inbound webhook delivery or outbound call, deduplicated on the
+/// provider's event id so a retried delivery is applied once.
+model ProviderEvent {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  connectionId String             @db.Uuid
+  connection   ProviderConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  kind         ProviderKind
+  /// IN (webhook) | OUT (our call)
+  direction    String             @db.VarChar(4)
+  eventType    String             @db.VarChar(80)
+  externalId   String             @db.VarChar(160)
+  subjectType  String?            @db.VarChar(40)
+  subjectId    String?            @db.Uuid
+  /// RECEIVED | PROCESSED | IGNORED | FAILED
+  status       String             @default("RECEIVED") @db.VarChar(12)
+  error        String?            @db.VarChar(500)
+  /// Redacted: never a credential, SSN or report body.
+  payload      Json?
+  createdAt    DateTime           @default(now()) @db.Timestamptz(6)
+  processedAt  DateTime?          @db.Timestamptz(6)
+
+  @@unique([connectionId, externalId])
+  @@index([tenantId, status, createdAt])
+  @@index([subjectType, subjectId])
+}
+
 model IntegrationConnection {
   id              String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
@@ -13196,5 +13827,464 @@ model RobotIncident {
 
   @@index([workerId, occurredAt(sort: Desc)])
   @@index([locationId])
+  @@index([tenantId])
+}
+
+/// A tenant's decision to pay a jurisdiction (or one site) by the labor-rules
+/// engine. PENDING waits on a second person; LIVE pays; ENDED went back to
+/// shadow. The rows counsel signed are pinned (signedSetIds): a newer pack
+/// version is not paid until it is signed again.
+model LaborRuleActivation {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  jurisdiction      String    @db.VarChar(60)
+  siteId            String?   @db.Uuid
+  /// PENDING | LIVE | ENDED | REJECTED
+  status            String    @default("PENDING") @db.VarChar(12)
+  signedSetIds      String[]  @default([])
+  signedLabels      String[]  @default([])
+  counselName       String    @db.VarChar(120)
+  counselFirm       String    @db.VarChar(160)
+  counselSignedOn   DateTime  @db.Date
+  attestation       String    @db.VarChar(2000)
+  changeReport      Json?
+  approvalRequestId String?   @db.Uuid
+  requestedById     String?   @db.Uuid
+  activatedById     String?   @db.Uuid
+  activatedAt       DateTime? @db.Timestamptz(6)
+  endedById         String?   @db.Uuid
+  endedAt           DateTime? @db.Timestamptz(6)
+  endReason         String?   @db.VarChar(500)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, jurisdiction, status])
+  @@index([approvalRequestId])
+}
+
+/// Predictability pay owed for a schedule change inside the notice window.
+model ScheduleChangePremium {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId   String    @db.Uuid
+  shiftId       String?   @db.Uuid
+  siteId        String?   @db.Uuid
+  workDate      DateTime  @db.Date
+  /// added | reduced | cancelled | moved
+  change        String    @db.VarChar(12)
+  noticeDays    Decimal   @db.Decimal(6, 2)
+  hoursAffected Decimal   @default(0) @db.Decimal(6, 2)
+  premiumHours  Decimal   @default(0) @db.Decimal(6, 2)
+  premiumCents  Int       @default(0)
+  exempt        Boolean   @default(false)
+  exemptReason  String?   @db.VarChar(40)
+  reasonText    String?   @db.VarChar(500)
+  rule          String    @db.VarChar(300)
+  /// Whether the jurisdiction was LIVE when the change was made (only live premiums are paid).
+  live          Boolean   @default(false)
+  payrollRunId  String?   @db.Uuid
+  createdById   String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, associateId, workDate])
+  @@index([payrollRunId])
+}
+
+/// Punch rounding, applied when pay is computed (never to the raw punch).
+/// NONE | NEAREST (the neutral rule: half the increment and under rounds down) | EMPLOYEE_FAVOR.
+model PunchRoundingPolicy {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  siteId      String?  @db.Uuid
+  mode        String   @default("NONE") @db.VarChar(16)
+  increment   Int      @default(15)
+  updatedById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, siteId])
+}
+
+/// A worker's missed-punch or correction request, with their signed attestation.
+model TimeCorrectionRequest {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId      String    @db.Uuid
+  timeEntryId      String?   @db.Uuid
+  /// MISSED_CLOCK_IN | MISSED_CLOCK_OUT | WRONG_TIME | NEW_ENTRY
+  kind             String    @db.VarChar(20)
+  /// PROMPTED (the kiosk asked) | SUBMITTED | APPROVED | DENIED | WITHDRAWN
+  status           String    @default("SUBMITTED") @db.VarChar(12)
+  workDate         DateTime? @db.Date
+  siteId           String?   @db.Uuid
+  proposedClockIn  DateTime? @db.Timestamptz(6)
+  proposedClockOut DateTime? @db.Timestamptz(6)
+  reason           String?   @db.VarChar(1000)
+  attestationText  String?   @db.VarChar(1000)
+  attestedAt       DateTime? @db.Timestamptz(6)
+  attestationIp    String?   @db.VarChar(64)
+  attestationUa    String?   @db.VarChar(300)
+  before           Json?
+  after            Json?
+  decidedById      String?   @db.Uuid
+  decidedAt        DateTime? @db.Timestamptz(6)
+  decisionReason   String?   @db.VarChar(1000)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([associateId, status])
+}
+
+/// "Did you get your meal break?" answered at clock-out where the state requires one.
+model BreakAttestation {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  timeEntryId String   @unique @db.Uuid
+  associateId String   @db.Uuid
+  /// YES | NO | WAIVED
+  meal        String   @db.VarChar(8)
+  /// YES | NO (where rest periods are required)
+  rest        String?  @db.VarChar(8)
+  note        String?  @db.VarChar(500)
+  /// Raised to the lead (a "no" where the rules aren't paid live yet).
+  flagged     Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, flagged])
+}
+
+/// Overtime offered fewest-overtime-first: who was offered an open shift that
+/// would put them into overtime, in which order, and what they said.
+model OvertimeOffer {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId              String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  shiftId               String    @db.Uuid
+  associateId           String    @db.Uuid
+  rank                  Int
+  overtimeHoursInPeriod Decimal   @default(0) @db.Decimal(8, 2)
+  wouldAddOvertimeHours Decimal   @default(0) @db.Decimal(8, 2)
+  /// OFFERED | ACCEPTED | DECLINED | EXPIRED | SKIPPED
+  status                String    @default("OFFERED") @db.VarChar(10)
+  offeredById           String?   @db.Uuid
+  offeredAt             DateTime  @default(now()) @db.Timestamptz(6)
+  respondedAt           DateTime? @db.Timestamptz(6)
+  note                  String?   @db.VarChar(500)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  shift     Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, offeredAt])
+  @@index([shiftId])
+}
+
+// ===== Leave of absence & claims (2026-12, CLAIMS pack) =====================
+// FMLA / state paid leave / USERRA / ADA / personal leave cases with their
+// usage and (restricted) documents; unemployment claims with the offers of
+// suitable work behind a contest; workers' comp claims with the FROI and
+// modified-duty offers. Medical documents are read only by leave admins.
+
+enum LeaveType {
+  FMLA
+  STATE_PFML
+  MILITARY_USERRA
+  ADA_ACCOMMODATION
+  PERSONAL
+  COMPANY
+}
+
+enum LeaveReason {
+  OWN_HEALTH
+  FAMILY_CARE
+  BONDING
+  PREGNANCY
+  MILITARY_EXIGENCY
+  MILITARY_CAREGIVER
+  MILITARY_SERVICE
+  ACCOMMODATION
+  OTHER
+}
+
+enum LeaveSchedule {
+  CONTINUOUS
+  INTERMITTENT
+  REDUCED
+}
+
+enum LeaveStatus {
+  REQUESTED
+  PENDING_CERTIFICATION
+  APPROVED
+  DENIED
+  RETURNED
+  CLOSED
+  CANCELLED
+}
+
+enum LeaveDocumentKind {
+  MEDICAL_CERTIFICATION
+  FITNESS_FOR_DUTY
+  MILITARY_ORDERS
+  OTHER
+}
+
+enum FmlaYearMethod {
+  ROLLING_BACKWARD
+  ROLLING_FORWARD
+  CALENDAR
+  FIXED
+}
+
+enum UnemploymentClaimStatus {
+  NEW
+  RESPONDED
+  DETERMINED
+  HEARING_SCHEDULED
+  APPEALED
+  CLOSED
+}
+
+enum UnemploymentDecision {
+  CONTEST
+  DO_NOT_CONTEST
+}
+
+enum UnemploymentDetermination {
+  ALLOWED
+  DENIED
+}
+
+enum WorkOfferResponse {
+  PENDING
+  ACCEPTED
+  DECLINED
+  NO_RESPONSE
+}
+
+enum WcClaimStatus {
+  OPEN
+  SUBMITTED
+  ACCEPTED
+  DENIED
+  CLOSED
+}
+
+enum WcClaimType {
+  MEDICAL_ONLY
+  INDEMNITY
+}
+
+/// Per-tenant leave and claims settings: how the FMLA year is counted, the
+/// covered-employer and 50-within-75-miles attestations, the SUI impact
+/// factor behind the "estimated tax impact" number, the default UI response
+/// window and FROI windows by state (defaults; your carrier's rules win).
+model LeaveSettings {
+  id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String?        @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  fmlaYearMethod      FmlaYearMethod @default(ROLLING_BACKWARD)
+  fmlaFixedYearStart  String?        @db.VarChar(5)
+  fmlaCoveredEmployer Boolean        @default(true)
+  worksiteAttestation Json           @default("{}")
+  suiImpactFactor     Decimal        @default(1.000) @db.Decimal(6, 3)
+  uiResponseDays      Int            @default(10)
+  froiDeadlineDays    Json           @default("{}")
+  updatedById         String?        @db.Uuid
+  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime       @updatedAt @db.Timestamptz(6)
+}
+
+model LeaveCase {
+  id                       String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                 String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId              String          @db.Uuid
+  type                     LeaveType
+  reason                   LeaveReason
+  /// State paid-leave program code (CA_PFL, NY_PFL, …) for STATE_PFML.
+  stateProgram             String?         @db.VarChar(20)
+  schedule                 LeaveSchedule   @default(CONTINUOUS)
+  startDate                DateTime        @db.Date
+  endDate                  DateTime?       @db.Date
+  intermittentPattern      String?         @db.VarChar(300)
+  reducedHoursPerWeek      Decimal?        @db.Decimal(5, 2)
+  status                   LeaveStatus     @default(REQUESTED)
+  requestedById            String?         @db.Uuid
+  requestedBySelf          Boolean         @default(false)
+  /// The FMLA eligibility check as it stood when the case was opened.
+  eligibility              Json?
+  noticeSentAt             DateTime?       @db.Timestamptz(6)
+  designationSentAt        DateTime?       @db.Timestamptz(6)
+  designatedFmla           Boolean?
+  certificationDueAt       DateTime?       @db.Date
+  certificationReceivedAt  DateTime?       @db.Timestamptz(6)
+  decidedById              String?         @db.Uuid
+  decidedAt                DateTime?       @db.Timestamptz(6)
+  decisionNote             String?         @db.VarChar(2000)
+  fitnessForDutyRequired   Boolean         @default(false)
+  fitnessForDutyReceivedAt DateTime?       @db.Timestamptz(6)
+  expectedReturnDate       DateTime?       @db.Date
+  actualReturnDate         DateTime?       @db.Date
+  benefitsNote             String?         @db.VarChar(1000)
+  shiftsReleased           Int             @default(0)
+  notes                    String?         @db.VarChar(4000)
+  createdAt                DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime        @updatedAt @db.Timestamptz(6)
+  associate                Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  usage                    LeaveUsage[]
+  documents                LeaveDocument[]
+
+  @@index([tenantId, status])
+  @@index([associateId, startDate])
+}
+
+model LeaveUsage {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  leaveCaseId String    @db.Uuid
+  date        DateTime  @db.Date
+  hours       Decimal   @db.Decimal(5, 2)
+  shiftId     String?   @db.Uuid
+  note        String?   @db.VarChar(500)
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  leaveCase   LeaveCase @relation(fields: [leaveCaseId], references: [id], onDelete: Cascade)
+
+  @@index([leaveCaseId, date])
+  @@index([tenantId])
+}
+
+model LeaveDocument {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  leaveCaseId  String            @db.Uuid
+  kind         LeaveDocumentKind
+  storageKey   String            @db.VarChar(300)
+  filename     String            @db.VarChar(255)
+  mimeType     String            @db.VarChar(100)
+  size         Int
+  uploadedById String?           @db.Uuid
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+  leaveCase    LeaveCase         @relation(fields: [leaveCaseId], references: [id], onDelete: Cascade)
+
+  @@index([leaveCaseId])
+  @@index([tenantId])
+}
+
+model UnemploymentClaim {
+  id               String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?                    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId      String                     @db.Uuid
+  separationId     String?                    @db.Uuid
+  clientId         String?                    @db.Uuid
+  state            String                     @db.VarChar(2)
+  claimDate        DateTime                   @db.Date
+  noticeReceivedAt DateTime                   @db.Date
+  responseDueAt    DateTime                   @db.Date
+  stateClaimNumber String?                    @db.VarChar(60)
+  status           UnemploymentClaimStatus    @default(NEW)
+  decision         UnemploymentDecision?
+  decisionReason   String?                    @db.VarChar(2000)
+  respondedAt      DateTime?                  @db.Timestamptz(6)
+  respondedById    String?                    @db.Uuid
+  determination    UnemploymentDetermination?
+  determinationAt  DateTime?                  @db.Date
+  chargesAmount    Decimal?                   @db.Decimal(12, 2)
+  hearingAt        DateTime?                  @db.Timestamptz(6)
+  hearingOutcome   UnemploymentDetermination?
+  appealFiledAt    DateTime?                  @db.Date
+  appealOutcome    UnemploymentDetermination?
+  notes            String?                    @db.VarChar(4000)
+  createdById      String?                    @db.Uuid
+  createdAt        DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                   @updatedAt @db.Timestamptz(6)
+  associate        Associate                  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  client           Client?                    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  workOffers       WorkOffer[]
+
+  @@index([tenantId, status])
+  @@index([responseDueAt])
+  @@index([associateId])
+}
+
+/// An offer of suitable work — recorded whether or not a claim exists yet,
+/// because many states disqualify a claimant who refused one.
+model WorkOffer {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId   String             @db.Uuid
+  claimId       String?            @db.Uuid
+  offeredAt     DateTime           @db.Timestamptz(6)
+  offeredById   String?            @db.Uuid
+  description   String             @db.VarChar(1000)
+  clientId      String?            @db.Uuid
+  locationId    String?            @db.Uuid
+  payRate       Decimal?           @db.Decimal(8, 2)
+  response      WorkOfferResponse  @default(PENDING)
+  respondedAt   DateTime?          @db.Timestamptz(6)
+  declineReason String?            @db.VarChar(1000)
+  createdAt     DateTime           @default(now()) @db.Timestamptz(6)
+  associate     Associate          @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  claim         UnemploymentClaim? @relation(fields: [claimId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, offeredAt])
+  @@index([tenantId])
+}
+
+model WcClaim {
+  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String?               @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  oshaIncidentId       String?               @unique @db.Uuid
+  associateId          String                @db.Uuid
+  clientId             String?               @db.Uuid
+  locationId           String?               @db.Uuid
+  jurisdiction         String                @db.VarChar(2)
+  injuryDate           DateTime              @db.Timestamptz(6)
+  reportedToEmployerAt DateTime              @db.Date
+  froiDueAt            DateTime              @db.Date
+  /// First Report of Injury fields as entered (employer, employee, injury, wages, witnesses).
+  froi                 Json                  @default("{}")
+  froiSubmittedAt      DateTime?             @db.Timestamptz(6)
+  submittedById        String?               @db.Uuid
+  carrierName          String?               @db.VarChar(160)
+  carrierClaimNumber   String?               @db.VarChar(80)
+  status               WcClaimStatus         @default(OPEN)
+  claimType            WcClaimType           @default(MEDICAL_ONLY)
+  lostTimeDays         Int                   @default(0)
+  restrictedDays       Int                   @default(0)
+  reserveMedical       Decimal?              @db.Decimal(12, 2)
+  reserveIndemnity     Decimal?              @db.Decimal(12, 2)
+  restrictions         String?               @db.VarChar(2000)
+  /// { maxHoursPerShift?, liftLimitLbs?, positions?: string[] } — matched against open shifts.
+  restrictionRules     Json?
+  rtwDate              DateTime?             @db.Date
+  notes                String?               @db.VarChar(4000)
+  createdById          String?               @db.Uuid
+  createdAt            DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime              @updatedAt @db.Timestamptz(6)
+  associate            Associate             @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  client               Client?               @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  dutyOffers           WcModifiedDutyOffer[]
+
+  @@index([tenantId, status])
+  @@index([froiDueAt])
+}
+
+model WcModifiedDutyOffer {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  wcClaimId   String            @db.Uuid
+  offeredAt   DateTime          @default(now()) @db.Timestamptz(6)
+  offeredById String?           @db.Uuid
+  shiftId     String?           @db.Uuid
+  description String            @db.VarChar(1000)
+  response    WorkOfferResponse @default(PENDING)
+  respondedAt DateTime?         @db.Timestamptz(6)
+  wcClaim     WcClaim           @relation(fields: [wcClaimId], references: [id], onDelete: Cascade)
+
+  @@index([wcClaimId])
   @@index([tenantId])
 }

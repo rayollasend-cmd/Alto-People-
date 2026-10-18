@@ -54,7 +54,6 @@ export function SupervisorCorps() {
 
   return (
     <ListTemplate
-      className="space-y-5"
       title="Supervisor corps"
       subtitle={`Who leads which ${term('site').toLowerCase()} and shift. Place a supervisor here; roles and access stay with HR.`}
       breadcrumbs={[{ label: 'Time & scheduling' }, { label: 'Supervisor corps' }]}
@@ -85,7 +84,7 @@ export function SupervisorCorps() {
         <div className="space-y-4">
           {byClient.map(([key, group]) => (
             <Card key={key} className={key === 'none' ? 'border-warning/40' : undefined}>
-              <CardContent className="p-5">
+              <CardContent>
                 <SectionTitle icon={Store} title={group.name} trailing={<span className="text-xs tabular-nums text-ink-muted">{group.rows.length}</span>} />
                 <ul className="divide-y divide-navy-secondary/60">
                   {group.rows.map((s) => (

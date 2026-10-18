@@ -1,5 +1,7 @@
 import type { Prisma, PrismaClient, W4FilingStatus } from '@prisma/client';
 import { round2 } from './payroll.js';
+import { STATE_SPECS, stateCycleWithholding, type StateW4Input } from './stateWithholding.js';
+import { currentTenantId } from './tenant.js';
 
 /**
  * Multi-jurisdiction payroll tax engine (Phase 18).
@@ -358,6 +360,12 @@ export interface StateInput {
   /** Two-letter state code, uppercased. null → use fallback. */
   state: string | null;
   payFrequency: PayFrequency;
+  /** The state's own withholding certificate (AL A-4, MD MW507 …), when on file. */
+  stateW4?: StateW4Input | null;
+  /** The federal W-4 filing status — the state default when no certificate. */
+  federalFilingStatus?: W4FilingStatus | null;
+  /** This cycle's federal withholding — AL and OR subtract it. */
+  federalCycleWithholding?: number;
 }
 
 export function computeStateIncomeTax(input: StateInput): number {
@@ -380,6 +388,20 @@ export function computeStateIncomeTax(input: StateInput): number {
     if (typeof configured === 'number' && configured >= 0 && configured < 1) {
       return round2(input.grossPay * configured);
     }
+
+    // TAXCOMP — the states added from their published methods. They compute
+    // here whether or not they are acknowledged; until a payroll admin
+    // records the review, payrollExceptions blocks the run (UNSUPPORTED_STATE).
+    const spec = STATE_SPECS[state];
+    if (spec) {
+      return stateCycleWithholding(spec, {
+        cycleWages: input.grossPay,
+        periods: PERIODS_PER_YEAR[input.payFrequency],
+        federalFilingStatus: input.federalFilingStatus ?? null,
+        federalCycleWithholding: input.federalCycleWithholding ?? 0,
+        stateW4: input.stateW4 ?? null,
+      });
+    }
   }
 
   // Not covered: nothing is withheld, and the run is blocked upstream
@@ -387,25 +409,73 @@ export function computeStateIncomeTax(input: StateInput): number {
   return 0;
 }
 
-/** Every state the engine withholds for, sorted — no-tax states included. */
-export function supportedStates(): string[] {
-  const configured = Object.entries(CONFIG_CACHE?.stateFlatRates ?? {})
-    .filter(([, v]) => typeof v === 'number')
-    .map(([k]) => k.toUpperCase());
-  return [...new Set([...NO_SIT_STATES, ...Object.keys(FLAT_STATE_RATES_2024), ...Object.keys(BRACKET_STATES_2024), ...configured])].sort();
+/**
+ * TAXCOMP — which of the added states each tenant's payroll admin has
+ * acknowledged ("reviewed with our tax adviser"), and for which tax year.
+ * Primed per tenant by primeStateAcknowledgments() before any coverage
+ * check (the exceptions, finalize and readiness paths call it), so the sync
+ * checks below can read it.
+ */
+const ACK_CACHE = new Map<string, Map<string, number>>();
+const tenantKey = () => currentTenantId() ?? '00000000-0000-4000-8000-000000000001';
+
+type AckDb = { stateTaxAcknowledgment: { findMany: (args: { where: { tenantId: string } }) => Promise<Array<{ state: string; taxYear: number }>> } };
+
+export async function primeStateAcknowledgments(db: AckDb): Promise<void> {
+  const key = tenantKey();
+  const rows = await db.stateTaxAcknowledgment.findMany({ where: { tenantId: key } });
+  ACK_CACHE.set(key, new Map(rows.map((r) => [r.state.toUpperCase(), r.taxYear])));
 }
 
-/** True if `state` has a real (non-fallback) tax model. Surfaced for the
- *  payroll wizard's state-coverage badge. */
-export function isStateTaxSupported(state: string | null): boolean {
-  if (!state) return false;
+/** Test-only: forget every tenant's acknowledgments. */
+export function __resetStateAcknowledgmentsForTesting(): void {
+  ACK_CACHE.clear();
+}
+
+/** An added state awaiting its review for this tenant (null when not an added state). */
+export function stateAwaitingReview(state: string | null): { state: string; name: string; taxYear: number } | null {
+  if (!state) return null;
   const s = state.toUpperCase().trim();
+  const spec = STATE_SPECS[s];
+  if (!spec) return null;
+  const acked = ACK_CACHE.get(tenantKey())?.get(s);
+  return acked === spec.taxYear ? null : { state: s, name: spec.name, taxYear: spec.taxYear };
+}
+
+function isVerifiedState(s: string): boolean {
   return (
     NO_SIT_STATES.has(s) ||
     s in FLAT_STATE_RATES_2024 ||
     s in BRACKET_STATES_2024 ||
     typeof CONFIG_CACHE?.stateFlatRates?.[s] === 'number'
   );
+}
+
+/** Every state the engine withholds for, sorted — no-tax states and acknowledged added states included. */
+export function supportedStates(): string[] {
+  const configured = Object.entries(CONFIG_CACHE?.stateFlatRates ?? {})
+    .filter(([, v]) => typeof v === 'number')
+    .map(([k]) => k.toUpperCase());
+  const acknowledged = Object.keys(STATE_SPECS).filter((s) => !stateAwaitingReview(s));
+  return [...new Set([...NO_SIT_STATES, ...Object.keys(FLAT_STATE_RATES_2024), ...Object.keys(BRACKET_STATES_2024), ...configured, ...acknowledged])].sort();
+}
+
+/** True if `state` has a real (non-fallback) tax model this tenant may withhold
+ *  with — an added state only once acknowledged. Surfaced for the payroll
+ *  wizard's state-coverage badge. */
+export function isStateTaxSupported(state: string | null): boolean {
+  if (!state) return false;
+  const s = state.toUpperCase().trim();
+  if (isVerifiedState(s)) return true;
+  return s in STATE_SPECS && !stateAwaitingReview(s);
+}
+
+/** The engine's view of one state, for the coverage page. */
+export function stateCoverageOf(state: string): 'verified' | 'acknowledged' | 'awaiting_review' | 'none' {
+  const s = state.toUpperCase().trim();
+  if (isVerifiedState(s)) return 'verified';
+  if (s in STATE_SPECS) return stateAwaitingReview(s) ? 'awaiting_review' : 'acknowledged';
+  return 'none';
 }
 
 function annualToCycle(table: Bracket[], annualGross: number, periods: number): number {
@@ -576,6 +646,8 @@ export interface PaycheckTaxInput {
   /** Tier-2 — per-client SUTA experience-rate override, passed through
    *  to computeEmployerTaxes. */
   sutaOverride?: { rate: number; wageBase: number | null } | null;
+  /** TAXCOMP — the state withholding certificate for `state`, when on file. */
+  stateW4?: StateW4Input | null;
 }
 
 export interface PaycheckTaxBreakdown {
@@ -620,6 +692,10 @@ export function computePaycheckTaxes(input: PaycheckTaxInput): PaycheckTaxBreakd
     grossPay: input.grossPay,
     state: input.state,
     payFrequency: input.payFrequency,
+    stateW4: input.stateW4 ?? null,
+    federalFilingStatus: input.filingStatus,
+    // AL and OR subtract federal tax; the W-4 4(c) extra is not a tax estimate.
+    federalCycleWithholding: Math.max(0, fit - Math.max(0, input.extraWithholding ?? 0)),
   });
   const totalEmployeeTax = round2(fit + ss + med + sit);
   // Net is computed against the FIT base because that's the actual cash

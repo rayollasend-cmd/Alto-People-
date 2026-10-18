@@ -262,7 +262,7 @@ export function SignInSettings() {
               <code className="mx-1 text-white">/login/&lt;your slug&gt;</code>instead.
             </p>
             <Card>
-              <CardContent className="space-y-3 p-4">
+              <CardContent className="space-y-3">
                 <form
                   className="flex flex-wrap items-end gap-2"
                   onSubmit={(e) => {
@@ -312,7 +312,7 @@ export function SignInSettings() {
               Your directory creates, updates and deactivates accounts at <code className="text-white">{`${window.location.origin}/api/scim/v2`}</code> with a token from here. Deactivation signs the person out everywhere within a minute.
             </p>
             <Card>
-              <CardContent className="space-y-3 p-4">
+              <CardContent className="space-y-3">
                 <form
                   className="flex flex-wrap items-end gap-2"
                   onSubmit={(e) => {

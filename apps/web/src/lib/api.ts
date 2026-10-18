@@ -3,6 +3,7 @@ import {
   emitApiConnectivity,
   isAuthFlowPath,
 } from './sessionEvents';
+import { nativeHeaders } from './native/platform';
 
 export class ApiError extends Error {
   constructor(
@@ -115,6 +116,8 @@ export async function apiFetch<T = unknown>(
     headers: {
       Accept: 'application/json',
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      // Inside the native app: which phone this is (lib/native/platform).
+      ...nativeHeaders(),
       ...(headers ?? {}),
     },
   };

@@ -77,7 +77,6 @@ export function LearningHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Learning"
         subtitle="Courses, certifications, and expiration tracking."
         breadcrumbs={[{ label: 'Me' }, { label: 'Learning' }]}
@@ -129,7 +128,6 @@ function MyTraining() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={t('lrn.myTitle')}
         subtitle={t('lrn.mySubtitle')}
         breadcrumbs={[{ label: t('lrn.crumb') }]}

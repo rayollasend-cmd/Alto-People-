@@ -45,7 +45,7 @@ export function LettersSection() {
     <section className="space-y-3" aria-labelledby="my-letters">
       <SectionTitle as="h2" icon={FileBadge} title={<span id="my-letters">{t('docs.letters.title')}</span>} description={t('docs.letters.subtitle')} />
       <Card>
-        <CardContent className="space-y-3 pt-5">
+        <CardContent className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label={t('docs.letters.kind')}>
               {(p) => (

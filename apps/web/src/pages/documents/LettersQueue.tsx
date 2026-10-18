@@ -116,7 +116,7 @@ export function LettersQueue({ canManage }: { canManage: boolean }) {
       </Card>
       {declining && (
         <Card>
-          <CardContent className="space-y-2 pt-5">
+          <CardContent className="space-y-2">
             <div className="text-sm text-ink">Decline {declining.associateName}'s letter</div>
             <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} placeholder="Why — the person reads this." />
             <div className="flex justify-end gap-2">

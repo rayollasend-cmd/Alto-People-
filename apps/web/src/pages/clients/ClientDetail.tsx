@@ -183,7 +183,6 @@ export function ClientDetail() {
 
   return (
     <RecordTemplate
-      className="mx-auto"
       breadcrumbs={[{ label: 'Clients', to: '/clients' }, { label: client.name }]}
       title={client.name}
       status={<StatusBadge status={client.status} />}

@@ -399,7 +399,7 @@ export function ApprovalsHome() {
   ) : openQueue === null ? (
     clear ? (
       <Card className="border-success/30 bg-success/5 animate-enter">
-        <CardContent className="flex items-center gap-3 p-5">
+        <CardContent className="flex items-center gap-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-success/15 text-success">
             <CalendarCheck className="h-5 w-5" aria-hidden="true" />
           </div>
@@ -555,7 +555,7 @@ function QueueCard({
       className={cn('scroll-mt-20 animate-enter', urgent && 'border-alert/40')}
       style={enterStagger(stagger)}
     >
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-sm font-medium text-white">
             <Icon className={cn('h-4 w-4', urgent ? 'text-alert' : 'text-gold')} aria-hidden="true" />

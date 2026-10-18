@@ -1,5 +1,5 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
-import { guardTenantQuery } from './lib/tenantGuard.js';
+import { adoptFromResult, guardTenantQuery } from './lib/tenantGuard.js';
 import { auditRequestStore, markRequestAudited, trackSideAudit } from './lib/auditRequestContext.js';
 import { AUDITED_MODELS, auditDiff, updatedFields } from './lib/auditDiff.js';
 
@@ -98,7 +98,10 @@ function makeClient(): PrismaClient {
         if (operation === 'update' && model && model in AUDITED_MODELS) {
           return auditedUpdate(model, args as { where: object; data: object }, exec);
         }
-        return exec();
+        const result = await exec();
+        // An anonymous request learns its tenant from the first record it resolves.
+        adoptFromResult(model, operation, result);
+        return result;
       },
     },
   }) as unknown as PrismaClient;

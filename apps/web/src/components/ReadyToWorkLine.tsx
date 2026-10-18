@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { CalendarCheck, CalendarClock, Users } from 'lucide-react';
 import { fmtDate } from '@/lib/format';
 import { getReadyToWorkStatus } from '@/lib/readyToWorkApi';
@@ -14,7 +15,7 @@ export function ReadyToWorkLine({ associateId }: { associateId: string }) {
     queryFn: () => getReadyToWorkStatus(associateId).catch(() => null),
     staleTime: 60_000,
   });
-  if (q.isPending) return null;
+  if (q.isPending) return <Skeleton className="inline-block h-4 w-56 align-middle" />;
   const status = q.data;
   if (!status) {
     return (

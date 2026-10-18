@@ -169,3 +169,40 @@ describe('field view', () => {
     expect(byName(nodes, 'Two Co')).toBeUndefined();
   });
 });
+
+describe('field view at enterprise size', () => {
+  it('sends structure and counts, loads a store’s crew on request, searches on the server — all within reach', async () => {
+    const { buildOrgChart } = await import('../../lib/orgChart.js');
+    const { runWithTenant, ALTO_TENANT_ID } = await import('../../lib/tenant.js');
+    const north = await createClient('North Co');
+    const south = await createClient('South Co');
+    const a = await prisma.site.findFirstOrThrow({ where: { clientId: north.id } });
+    const b = await prisma.site.findFirstOrThrow({ where: { clientId: south.id } });
+    const cal = await createAssociate({ firstName: 'Cal', lastName: 'Crew' });
+    const sam = await createAssociate({ firstName: 'Sam', lastName: 'South' });
+    await prisma.associateAssignment.create({ data: { associateId: cal.id, locationId: a.id, startedAt: new Date() } });
+    await prisma.associateAssignment.create({ data: { associateId: sam.id, locationId: b.id, startedAt: new Date() } });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR', email: 'hr-scale@example.com' });
+
+    // Past the inline threshold the chart carries no crew names, only counts.
+    const sessionUser = { id: hr.id, role: 'HR_ADMINISTRATOR', clientId: null, associateId: null, tenantId: ALTO_TENANT_ID, scopeSiteIds: [], scopeRegionIds: [] } as never;
+    const deferred = await runWithTenant(ALTO_TENANT_ID, 'session', () => buildOrgChart(sessionUser, { view: 'field', crewInline: 0 }));
+    expect(deferred.crewDeferred).toBe(true);
+    expect(deferred.nodes.some((n) => n.kind === 'person' && n.parentId === `s:${a.id}`)).toBe(false);
+    expect(deferred.nodes.find((n) => n.id === `s:${a.id}`)?.reports).toBe(1);
+
+    const h = await loginAs(hr.email);
+    const crew = await h.get(`/org/chart/crew?siteId=${a.id}`);
+    expect(crew.status).toBe(200);
+    expect(crew.body.nodes.map((n: { name: string }) => n.name)).toEqual(['Cal Crew']);
+    const found = await h.get('/org/chart/search?q=sam');
+    expect(found.body.nodes).toEqual([expect.objectContaining({ name: 'Sam South', parentId: `s:${b.id}` })]);
+
+    // A store-bound office account gets nothing from a store outside its reach.
+    const { user: ops } = await createUser({ role: 'OPERATIONS_MANAGER', email: 'ops-scale@example.com' });
+    await prisma.user.update({ where: { id: ops.id }, data: { scopeSiteIds: [a.id] } });
+    const o = await loginAs(ops.email);
+    expect((await o.get(`/org/chart/crew?siteId=${b.id}`)).body.nodes).toEqual([]);
+    expect((await o.get('/org/chart/search?q=sam')).body.nodes).toEqual([]);
+  });
+});

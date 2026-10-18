@@ -59,6 +59,8 @@ export const TaskKindSchema = /* @__PURE__ */ (() => z.enum([
   'I9_VERIFICATION',
   // Live headshot taken during onboarding (camera-only in the associate flow).
   'PROFILE_PHOTO',
+  // WOTC pre-screening (Form 8850 / ETA 9061) — voluntary for the applicant.
+  'WOTC_SCREENING',
 ]))();
 export type TaskKind = z.infer<typeof TaskKindSchema>;
 
@@ -2895,6 +2897,7 @@ export const PayrollEarningKindSchema = /* @__PURE__ */ (() => z.enum([
   'OVERTIME',
   'DOUBLE_TIME',
   'RETRO',
+  'PREMIUM',
   'HOLIDAY',
   'SICK',
   'VACATION',
@@ -3277,6 +3280,7 @@ export const PayrollExceptionKindSchema = /* @__PURE__ */ (() => z.enum([
   'UNAPPROVED_TIME',     // WARNING  — unapproved hours will NOT be paid this run
   'MISSING_COMP_RECORD', // WARNING  — no comp record; the default rate would apply
   'RETRO_PAY',           // INFO     — a back-dated rate change adds retroactive pay to this run
+  'STATE_W4_INCOMPLETE', // WARNING  — the state certificate is missing a field the state needs (MD county)
 ]))();
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
@@ -4957,6 +4961,14 @@ export type ClockInInputV2 = z.infer<typeof ClockInInputV2Schema>;
 export const ClockOutInputV2Schema = /* @__PURE__ */ (() => z.object({
   notes: z.string().max(500).optional(),
   geo: GeoSchema.optional(),
+  /** Where the state requires breaks, the worker's answer at clock-out (lib/timeCorrections). */
+  breakAttestation: z
+    .object({
+      meal: z.enum(['YES', 'NO', 'WAIVED']),
+      rest: z.enum(['YES', 'NO']).nullable().optional(),
+      note: z.string().max(500).nullable().optional(),
+    })
+    .optional(),
 }))();
 export type ClockOutInputV2 = z.infer<typeof ClockOutInputV2Schema>;
 
@@ -6136,6 +6148,7 @@ export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
   'REQUISITION',
   'ROLE_CHANGE',
   'WORKFLOW_GATE',
+  'LABOR_RULES_LIVE',
 ]))();
 export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
 
@@ -6148,6 +6161,7 @@ export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> =
   REQUISITION: 'Requisition',
   ROLE_CHANGE: 'Access change',
   WORKFLOW_GATE: 'Workflow gate',
+  LABOR_RULES_LIVE: 'Labor rules go live',
 };
 
 export const ApprovalRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']))();

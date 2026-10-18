@@ -229,7 +229,6 @@ export function AssociateTimeOffView() {
       <PullToRefreshIndicator state={pullState} />
       {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
       <ListTemplate
-        className="space-y-6"
         title={t('timeoff.title')}
         subtitle={t('timeoff.subtitle')}
         primaryAction={
@@ -405,7 +404,7 @@ function BalanceHero({
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
       />
-      <CardContent className="relative p-5">
+      <CardContent className="relative">
         <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
           <Wallet className="h-3.5 w-3.5" aria-hidden="true" />
           {t('timeoff.heroTitle')}

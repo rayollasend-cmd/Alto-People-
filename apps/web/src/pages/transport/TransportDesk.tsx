@@ -253,7 +253,7 @@ export function DriversTab({ manage }: { manage: boolean }) {
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {drivers.data!.drivers.map((d) => (
               <Card key={d.userId}>
-                <CardContent className="pt-4">
+                <CardContent>
                   <div className="flex items-start gap-3">
                     <Avatar src={personPhotoUrl({ photoUrl: d.photoUrl, userId: d.userId })} name={d.name} size="md" />
                     <div className="min-w-0 flex-1">
@@ -790,7 +790,7 @@ export function IncidentsSection({ manage }: { manage: boolean }) {
         <div className="space-y-3">
           {q.data!.incidents.map((i) => (
             <Card key={i.id} className={cn(i.injuries && i.status === 'OPEN' && 'border-alert/50')}>
-              <CardContent className="pt-4">
+              <CardContent>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={i.injuries ? 'destructive' : 'pending'} withDot={false}>
                     {INCIDENT_LABEL[i.kind]}
@@ -1045,7 +1045,7 @@ export function TransportExpiringSection({ days }: { days: number }) {
   if (q.isError || !q.data?.items || q.data.items.length === 0) return null;
   return (
     <Card>
-      <CardContent className="pt-5">
+      <CardContent>
         <SectionTitle title={`Vans and drivers · ${q.data.items.length}`} icon={Bus} />
         <ul className="mt-2 divide-y divide-navy-secondary/60">
           {q.data.items.map((i) => (

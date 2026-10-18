@@ -117,6 +117,7 @@ export function DesignSystemPage() {
         <SectionTitle id="ds-tokens" title="Tokens by job" description="Read from this page’s CSS variables right now. Switch the theme in Settings and these change with it." />
         <Card>
           <CardContent className="p-0">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-2xs uppercase tracking-[0.18em] text-ink-muted">
@@ -141,6 +142,7 @@ export function DesignSystemPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </CardContent>
         </Card>
       </section>
@@ -164,7 +166,7 @@ export function DesignSystemPage() {
         <SectionTitle id="ds-components" title="Components and their states" description="Every component renders all of its states; pages never improvise one." />
         <div className="grid gap-4 md:grid-cols-2">
           <Card>
-            <CardContent className="space-y-3 p-5">
+            <CardContent className="space-y-3">
               <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">Button</div>
               <div className="flex flex-wrap gap-2">
                 <Button>Primary</Button>
@@ -182,7 +184,7 @@ export function DesignSystemPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="space-y-3 p-5">
+            <CardContent className="space-y-3">
               <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">Badge</div>
               <div className="flex flex-wrap gap-2">
                 <Badge>Default</Badge>
@@ -207,7 +209,7 @@ export function DesignSystemPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="space-y-3 p-5">
+            <CardContent className="space-y-3">
               <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">Form</div>
               <Field label="Email" hint="Where the invite goes." required>
                 {(p) => <Input {...p} placeholder="ana@acme.com" />}
@@ -223,20 +225,20 @@ export function DesignSystemPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="space-y-3 p-5">
+            <CardContent className="space-y-3">
               <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">Loading</div>
               <Skeleton className="h-8 w-40" />
               <SkeletonRows count={3} />
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="space-y-3 p-5">
+            <CardContent className="space-y-3">
               <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">Nothing here</div>
               <EmptyState icon={CalendarDays} title="No shifts scheduled" description="Create the first shift to start staffing this week." action={<Button size="sm">New shift</Button>} />
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="space-y-3 p-5">
+            <CardContent className="space-y-3">
               <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">Notices</div>
               <ErrorBanner>Could not save the role. Try again.</ErrorBanner>
               <ErrorBanner severity="warning">Two people hold this role; deleting it is refused.</ErrorBanner>

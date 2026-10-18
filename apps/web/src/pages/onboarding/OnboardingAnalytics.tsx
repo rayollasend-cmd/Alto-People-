@@ -79,7 +79,6 @@ export function OnboardingAnalytics() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template;
     // the way back to the applications is the breadcrumb.
     <ListTemplate
-        className="mx-auto"
         breadcrumbs={[{ label: 'Onboarding', to: '/onboarding' }, { label: 'Analytics' }]}
         title="Onboarding analytics"
         subtitle={

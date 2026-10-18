@@ -50,6 +50,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import { CrewSignalsCard } from '@/components/home/CrewSignalsCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
@@ -189,6 +190,7 @@ export function ManagerDashboard() {
         assistant={<HugoSeat />}
       >
         {home && home.suggestions.length > 0 && <Suggestions items={home.suggestions} />}
+        <CrewSignalsCard />
         <TeamSnapshot
           summary={summary}
           activeCount={activeByReport.size}
@@ -330,7 +332,7 @@ function NeedsYou({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {Array.from({ length: 2 }).map((_, i) => (
             <Card key={i}>
-              <CardContent className="pt-5">
+              <CardContent>
                 <Skeleton className="h-3 w-20 mb-3" />
                 <Skeleton className="h-7 w-1/2 mb-2" />
                 <Skeleton className="h-3 w-2/3" />
@@ -467,7 +469,7 @@ function QueryErrorCard({
 }) {
   return (
     <Card className="border-alert/40">
-      <CardContent className="pt-5">
+      <CardContent>
         <div role="alert" className="flex items-start gap-2 text-sm text-alert">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
           <span>{label}</span>
@@ -559,7 +561,7 @@ function TeamSnapshot({
         ) : (
           Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>
-              <CardContent className="pt-5">
+              <CardContent>
                 <Skeleton className="h-3 w-20 mb-3" />
                 <Skeleton className="h-9 w-1/2 mb-2" />
                 <Skeleton className="h-3 w-1/3" />
@@ -808,7 +810,7 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
       <SectionTitle icon={CalendarCheck} title="Today on your team" />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <Card>
-          <CardContent className="pt-5">
+          <CardContent>
             <div className="text-xs2 uppercase tracking-wider text-ink-muted">Shifts today</div>
             {!today ? (
               <Skeleton className="mt-3 h-4 w-2/3" />
@@ -830,7 +832,7 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="pt-5">
+          <CardContent>
             <div className="text-xs2 uppercase tracking-wider text-ink-muted">Out today</div>
             {!today ? (
               <Skeleton className="mt-3 h-4 w-2/3" />
@@ -852,7 +854,7 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="pt-5">
+          <CardContent>
             <div className="text-xs2 uppercase tracking-wider text-ink-muted">Celebrations</div>
             {!today ? (
               <Skeleton className="mt-3 h-4 w-2/3" />
@@ -904,7 +906,7 @@ function DueOnYourTeam({ home }: { home: TeamHome | null }) {
       <SectionTitle icon={Clock} title="Due on your team" />
       {!due ? (
         <Card>
-          <CardContent className="pt-5">
+          <CardContent>
             <Skeleton className="mb-2 h-3 w-1/3" />
             <Skeleton className="h-3 w-2/3" />
           </CardContent>
@@ -924,7 +926,7 @@ function DueOnYourTeam({ home }: { home: TeamHome | null }) {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {groups.map((g) => (
             <Card key={g.key}>
-              <CardContent className="pt-5">
+              <CardContent>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-sm font-medium text-ink">
                     <g.icon className="h-4 w-4 text-ink-muted" aria-hidden="true" />

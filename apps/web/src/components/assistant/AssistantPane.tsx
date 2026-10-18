@@ -5,7 +5,7 @@ import { ArrowUp, Sparkles, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAssistant } from '@/lib/assistantContext';
-import { askHugo, handoffToPerson, type AssistantTurn, type HugoAnswer } from '@/lib/hugoApi';
+import { askHugo, decideAssistantAction, handoffToPerson, type ActionResult, type AssistantActionCard, type AssistantTable, type AssistantTurn, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
 import { cn } from '@/lib/cn';
@@ -28,6 +28,11 @@ interface Turn {
   linkUrl?: string | null;
   handoff?: { summary: string; who: string | null } | null;
   handoffSent?: boolean;
+  /** Actions the assistant set up; each runs only when the person confirms it. */
+  actions?: AssistantActionCard[];
+  /** What happened to each action, by id. */
+  results?: Record<string, ActionResult>;
+  tables?: AssistantTable[];
 }
 
 const KEY = (userId: string) => `alto:assistant:thread:${userId}`;
@@ -75,7 +80,7 @@ export function AssistantPane() {
       setText('');
     },
     onSuccess: (a: HugoAnswer) => {
-      setTurns((t) => [...t, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, linkUrl: a.linkUrl, handoff: a.handoff ?? null }]);
+      setTurns((t) => [...t, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [] }]);
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? err.message : "I couldn't answer that just now. Try again in a moment.";
@@ -87,6 +92,15 @@ export function AssistantPane() {
     mutationFn: (summary: string) => handoffToPerson(summary),
     onSuccess: (r, _summary, _ctx) => {
       setTurns((t) => t.map((x) => (x.handoff && !x.handoffSent ? { ...x, handoffSent: true } : x)).concat({ id: `${Date.now()}-h`, role: 'assistant', text: r.reply, linkUrl: r.linkUrl }));
+    },
+  });
+
+  const decide = useMutation({
+    mutationFn: ({ card, decision }: { turnId: string; card: AssistantActionCard; decision: 'confirm' | 'cancel' }) => decideAssistantAction(card.token, decision),
+    onSuccess: (r, v) => setTurns((t) => t.map((x) => (x.id === v.turnId ? { ...x, results: { ...(x.results ?? {}), [v.card.id]: r } } : x))),
+    onError: (err, v) => {
+      const message = err instanceof ApiError ? err.message : 'That didn’t go through. Try again.';
+      setTurns((t) => t.map((x) => (x.id === v.turnId ? { ...x, results: { ...(x.results ?? {}), [v.card.id]: { status: 'failed', title: v.card.title, message, linkUrl: null } } } : x)));
     },
   });
 
@@ -137,7 +151,7 @@ export function AssistantPane() {
         </span>
         <div className="min-w-0 flex-1 leading-tight">
           <div className="truncate text-sm font-medium">{name}</div>
-          <div className="truncate text-2xs text-ink-muted">AI assistant · answers from your records · can&rsquo;t act for you</div>
+          <div className="truncate text-2xs text-ink-muted">AI assistant · answers from your records · acts only when you confirm</div>
         </div>
         <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label="Close the assistant">
           <X className="h-4 w-4" aria-hidden="true" />
@@ -181,6 +195,19 @@ export function AssistantPane() {
                     </Link>
                   </Button>
                 )}
+                {(t.tables ?? []).map((tb) => (
+                  <AnswerTable key={tb.linkUrl} table={tb} onNavigate={() => window.matchMedia('(max-width: 767px)').matches && setOpen(false)} />
+                ))}
+                {(t.actions ?? []).map((card) => (
+                  <ActionCard
+                    key={card.id}
+                    card={card}
+                    result={t.results?.[card.id] ?? null}
+                    busy={decide.isPending && decide.variables?.card.id === card.id}
+                    onDecide={(decision) => decide.mutate({ turnId: t.id, card, decision })}
+                    onNavigate={() => window.matchMedia('(max-width: 767px)').matches && setOpen(false)}
+                  />
+                ))}
                 {t.handoff && !t.handoffSent && (
                   <div className="mt-2">
                     <Button size="sm" variant="outline" loading={handoff.isPending} onClick={() => handoff.mutate(t.handoff!.summary)}>
@@ -244,5 +271,101 @@ export function AssistantPane() {
         )}
       </form>
     </aside>
+  );
+}
+
+/**
+ * One proposed action: what will happen, to whom, and the person's choice.
+ * Nothing runs until they tap the first button; the result replaces the
+ * buttons in place, calmly.
+ */
+function ActionCard({
+  card,
+  result,
+  busy,
+  onDecide,
+  onNavigate,
+}: {
+  card: AssistantActionCard;
+  result: ActionResult | null;
+  busy: boolean;
+  onDecide: (d: 'confirm' | 'cancel') => void;
+  onNavigate: () => void;
+}) {
+  const expired = !result && new Date(card.expiresAt).getTime() < Date.now();
+  return (
+    <div className="mt-2 rounded-xl border border-line bg-surface p-3" role="group" aria-label={`Proposed: ${card.title}`}>
+      <div className="text-sm font-medium text-ink">{card.title}</div>
+      {card.detail && <div className="mt-0.5 text-xs text-ink-muted">{card.detail}</div>}
+      {result ? (
+        <div className={cn('mt-2 text-sm', result.status === 'failed' ? 'text-alert' : 'text-ink-muted')} role="status">
+          {result.status === 'done' ? '✓ ' : ''}
+          {result.message}
+          {result.linkUrl && (
+            <Button asChild size="sm" variant="link" className="ml-1 h-auto px-0">
+              <Link to={result.linkUrl} onClick={onNavigate}>
+                Open
+              </Link>
+            </Button>
+          )}
+        </div>
+      ) : expired ? (
+        <div className="mt-2 text-xs text-ink-muted">This expired — ask again and I’ll set it up fresh.</div>
+      ) : (
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => onDecide('confirm')} loading={busy}>
+            {card.confirmLabel}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => onDecide('cancel')} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A numbers answer: the first rows, and the report builder one tap away. */
+function AnswerTable({ table, onNavigate }: { table: AssistantTable; onNavigate: () => void }) {
+  const cols = table.columns.slice(0, 5);
+  const rows = table.rows.slice(0, 8);
+  return (
+    <div className="mt-2 rounded-xl border border-line bg-surface p-3">
+      <div className="text-sm font-medium text-ink">{table.title}</div>
+      {rows.length === 0 ? (
+        <div className="mt-1 text-xs text-ink-muted">No rows match.</div>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <caption className="sr-only">{table.title}</caption>
+            <thead>
+              <tr className="text-ink-muted">
+                {cols.map((c) => (
+                  <th key={c} scope="col" className="pb-1 pr-3 font-medium">
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="text-ink">
+              {rows.map((r, i) => (
+                <tr key={i} className="border-t border-line/60">
+                  {cols.map((c) => (
+                    <td key={c} className="py-1 pr-3 tabular-nums">
+                      {String(r[c] ?? '—')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Button asChild size="sm" variant="link" className="mt-1 h-auto px-0">
+        <Link to={table.linkUrl} onClick={onNavigate}>
+          Open in the report builder
+        </Link>
+      </Button>
+    </div>
   );
 }

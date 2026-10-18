@@ -77,7 +77,6 @@ export function MarketplaceHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={t('mk.title')}
         subtitle={t('mk.subtitle')}
         breadcrumbs={[{ label: t('mk.crumbSection') }, { label: t('mk.title') }]}
@@ -219,7 +218,7 @@ function AvailableTab() {
   }
 
   if (rows === null || filtered === null) {
-    return <Card><CardContent className="p-6"><SkeletonRows count={3} /></CardContent></Card>;
+    return <Card><CardContent><SkeletonRows count={3} /></CardContent></Card>;
   }
 
   if (rows.length === 0) {
@@ -283,7 +282,7 @@ function AvailableTab() {
       </div>
       {(showDates || fromDate || toDate) && (
         <Card className="animate-enter">
-          <CardContent className="grid grid-cols-2 gap-3 p-4">
+          <CardContent className="grid grid-cols-2 gap-3">
             <div>
               <Label htmlFor="marketplace-from">{t('mk.from')}</Label>
               <Input
@@ -340,7 +339,7 @@ function AvailableTab() {
                     flashId === s.id ? 'animate-flash-success' : 'animate-enter',
                   )}
                 >
-                  <CardContent className="p-4">
+                  <CardContent>
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <div className="text-lg font-semibold tabular-nums text-white">

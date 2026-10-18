@@ -168,7 +168,6 @@ export function AgreementsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={t('agr.title')}
         subtitle={t('agr.subtitle')}
         breadcrumbs={[{ label: t('agr.crumbSection') }, { label: t('agr.title') }]}

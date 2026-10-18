@@ -397,6 +397,9 @@ export function goldenTx() {
           .map((c) => ({ id: `${c.associateId}:${c.effectiveFrom.toISOString()}`, associateId: c.associateId, amount: c.amount, effectiveFrom: c.effectiveFrom, effectiveTo: c.effectiveTo, createdAt: c.effectiveFrom })),
     },
     tipPoolAllocation: { findMany: async () => [] },
+    // No jurisdiction live and no rounding: today's pay, frozen.
+    laborRuleActivation: { findMany: async () => [] },
+    punchRoundingPolicy: { findMany: async () => [] },
     associate: {
       findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
         GOLDEN_ASSOCIATES.filter((a) => where.id.in.includes(a.id)).map(meta),

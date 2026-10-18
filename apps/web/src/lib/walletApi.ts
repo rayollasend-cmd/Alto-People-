@@ -29,3 +29,32 @@ export function shareMyWallet(days: number): Promise<{ token: string; path: stri
 export function getPublicWallet(token: string): Promise<Wallet & { expiresAt: string | null }> {
   return apiFetch(`/wallet/public/${encodeURIComponent(token)}`);
 }
+
+/* ----- The worker badge (routes/nativeApp.ts) ------------------------------ */
+
+export interface WorkerBadge {
+  workerName: string;
+  workerNumber: string | null;
+  title: string | null;
+  siteName: string | null;
+  employerName: string;
+  /** The value the QR / NFC badge carries — the kiosk accepts it for the number. */
+  badgeToken: string;
+  badgeVersion: number;
+  photoUrl: string | null;
+  apple: { available: boolean; missing: string[] };
+  google: { available: boolean; missing: string[] };
+}
+
+export function getWorkerBadge(): Promise<WorkerBadge> {
+  return apiFetch('/me/wallet/badge');
+}
+
+/** A five-minute link to the Apple Wallet pass (opened in Safari / the system browser). */
+export function getAppleWalletLink(): Promise<{ url: string }> {
+  return apiFetch('/me/wallet/badge/apple-link', { method: 'POST' });
+}
+
+export function getGoogleWalletLink(): Promise<{ url: string }> {
+  return apiFetch('/me/wallet/badge/google');
+}

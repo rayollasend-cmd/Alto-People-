@@ -141,7 +141,7 @@ export function StaffingPlanView() {
         </Card>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <MetricCard label="Peak heads required" value={peak?.required ?? 0} hint={peak?.week ? `Week of ${fmtDayShort(peak.week)}` : undefined} />
             <MetricCard label="In place now" value={d.totals[0]?.placed ?? 0} hint={`Placed across ${d.stores.length} ${d.stores.length === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()}`} />
             <MetricCard label="Short at the peak" value={peak?.gap ?? 0} accent={(peak?.gap ?? 0) > 0} hint={`${short.length} ${short.length === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()} short in some week`} />

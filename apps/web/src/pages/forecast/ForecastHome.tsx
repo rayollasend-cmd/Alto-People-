@@ -82,7 +82,6 @@ export function ForecastHome() {
   return (
     // Design system §4.2: the List template — the summary strip, one filter row, the lists.
     <ListTemplate
-      className="space-y-5"
       title="Demand forecast"
       subtitle="Verified hours per site and week, twenty-six weeks ahead with the band the model has earned. Start a season plan from it in one click."
       primaryAction={

@@ -37,7 +37,6 @@ export function PayrollConfigView() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Payroll tax config"
         subtitle="Reference data driving the federal withholding engine. Read-only."
     >
@@ -147,14 +146,14 @@ function ConfigSkeleton() {
   return (
     <>
       <Card className="mb-4">
-        <CardContent className="pt-5">
+        <CardContent>
           <Skeleton className="h-3 w-1/3 mb-3" />
           <Skeleton className="h-8 w-1/2 mb-2" />
           <Skeleton className="h-3 w-2/3" />
         </CardContent>
       </Card>
       <Card className="mb-4">
-        <CardContent className="pt-5">
+        <CardContent>
           <Skeleton className="h-32" />
         </CardContent>
       </Card>

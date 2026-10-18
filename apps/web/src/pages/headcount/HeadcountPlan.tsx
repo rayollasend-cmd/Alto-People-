@@ -91,7 +91,7 @@ function OfficeSeats() {
           })}
         </Select>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Budgeted" value={d ? fmtMoney(d.totals.budget) : '—'} hint={d ? `${d.totals.positions - d.totals.unbudgeted} of ${d.totals.positions} seats carry a budget` : undefined} />
         <MetricCard label="Projected cost" value={d ? fmtMoney(d.totals.projected) : '—'} hint="Current pay, annualized" />
         <MetricCard label={`Paid ${year} to date`} value={d ? fmtMoney(d.totals.paidYearToDate) : '—'} hint="Gross on finalized runs" />

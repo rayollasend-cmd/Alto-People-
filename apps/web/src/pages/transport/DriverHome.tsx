@@ -363,6 +363,7 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
   const q = useQuery({ queryKey: ['transport', 'driver', 'week', today], queryFn: () => getDriverWeek(today, 7), refetchInterval: 60_000 });
   const [picked, setPicked] = useState(today);
   if (q.isError) return <QueryError what="your week" query={q} />;
+  if (q.isPending) return <Skeleton className="h-28 w-full rounded-lg" />;
   if (!q.data) return null;
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(`${today}T12:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10));
   const runsOn = (d: string) => q.data.runs.filter((r) => r.serviceDate === d);
@@ -379,7 +380,7 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
   const asking = askingOn(picked);
   return (
     <Card className="mt-6">
-      <CardContent className="pt-5">
+      <CardContent>
         <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-silver">
           <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
           {t('drive.week')}
@@ -621,6 +622,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
   // A new seat request: buzz, chime — the ride-share "ding".
   useNewKeys(q.data ? requests.map((r) => `req:${r.id}`) : null, () => rideAlert('request'));
   if (q.isError) return <QueryError what="seat requests" query={q} />;
+  if (q.isPending) return <Skeleton className="h-20 w-full rounded-lg" />;
   if (!q.data) return null;
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
@@ -772,6 +774,7 @@ function DriverClients() {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   if (q.isError) return <QueryError what="your clients" query={q} />;
+  if (q.isPending) return <Skeleton className="h-20 w-full rounded-lg" />;
   if (!q.data) return null;
   // Tolerate a thin answer (an older API, a generic test mock): no clients is a quiet card.
   const d = { ...q.data, clients: q.data.clients ?? [] };

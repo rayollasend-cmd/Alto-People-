@@ -235,7 +235,7 @@ export function WavesSection({ cohorts, canManage, onChanged }: { cohorts: Cohor
             const hot = c.stalled > 0 || (c.daysLeft <= 7 && c.completed < c.targetHeadcount);
             return (
               <Card key={c.id} className={cn('border-l-2', hot ? 'border-l-alert' : 'border-l-gold/40')}>
-                <CardContent className="p-4">
+                <CardContent>
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="truncate text-sm font-semibold text-white">
                       {c.name}

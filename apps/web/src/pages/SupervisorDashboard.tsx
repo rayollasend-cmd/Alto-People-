@@ -36,6 +36,7 @@ import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import { CrewSignalsCard } from '@/components/home/CrewSignalsCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useGreeting, greetingName } from '@/lib/greeting';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -139,7 +140,7 @@ function WatchNeedsYou() {
   if (waiting.length === 0) {
     return (
       <Card>
-        <CardContent className="p-4 text-sm text-ink-muted">{t('floor.watchNothingWaiting')}</CardContent>
+        <CardContent className="text-sm text-ink-muted">{t('floor.watchNothingWaiting')}</CardContent>
       </Card>
     );
   }
@@ -586,6 +587,7 @@ export function SupervisorDashboard() {
 
   return (
     <>
+      {clock.breakPrompt}
       <PullToRefreshIndicator state={pullState} />
       <HomeTemplate
         title={greeting}
@@ -635,7 +637,7 @@ export function SupervisorDashboard() {
                       : 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-gold)/0.14),transparent_50%)]',
                 )}
               />
-              <CardContent className="relative p-5">
+              <CardContent className="relative">
                 <div className="grid gap-5 md:grid-cols-12">
                   <div className="md:col-span-4">
                     <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
@@ -738,6 +740,8 @@ export function SupervisorDashboard() {
         assistant={<HugoSeat />}
         waysIn={waysIn}
       >
+        {/* ---- The crew: call-outs and who might leave ------------------- */}
+        {!watchOnly && <CrewSignalsCard className="animate-enter" />}
         {/* ---- KPI strip: the four numbers the week runs on ----------------- */}
         {watchOnly ? (
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-enter" style={enterStagger(1)}>
@@ -902,7 +906,7 @@ export function SupervisorDashboard() {
             className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-7' : 'xl:col-span-5')}
             style={enterStagger(3)}
           >
-            <CardContent className="p-5">
+            <CardContent>
               <SectionTitle
                 title={t('portal.todayByShift')}
                 trailing={
@@ -974,7 +978,7 @@ export function SupervisorDashboard() {
           {/* ---- The next seven days: fill by day ---------------------------- */}
           {!watchOnly && (
             <Card className="animate-enter xl:col-span-7" style={enterStagger(4)}>
-              <CardContent className="p-5">
+              <CardContent>
                 <SectionTitle
                   icon={CalendarDays}
                   title={

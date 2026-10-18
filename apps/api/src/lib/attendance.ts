@@ -340,6 +340,48 @@ export async function withdrawContradictedNoShows(
  * Called only once a shift has ENDED with no punch anywhere near it — the
  * 15-minute supervisor alert is a separate pass in shiftReminder.ts.
  */
+/**
+ * A call-out (lib/callOuts): a CALL_OUT against the shift. When the policy
+ * excuses it — bereavement, jury duty, sick time the worker has accrued —
+ * the record is kept but excused at once, worth nothing on the score, and
+ * no threshold can fire. Idempotent on (shift, kind) like every signal.
+ */
+export async function recordCallOutAttendance(
+  db: Db,
+  data: {
+    associateId: string;
+    associateName: string;
+    shiftId: string;
+    clientId: string | null;
+    occurredOn: Date;
+    excusedWhy: string | null;
+    note?: string;
+  },
+): Promise<void> {
+  try {
+    if (!data.excusedWhy) {
+      await createEvent(db, { associateId: data.associateId, shiftId: data.shiftId, clientId: data.clientId, kind: 'CALL_OUT', occurredOn: data.occurredOn, note: data.note, associateName: data.associateName });
+      return;
+    }
+    await db.attendanceEvent
+      .create({
+        data: {
+          associateId: data.associateId,
+          shiftId: data.shiftId,
+          clientId: data.clientId,
+          kind: 'CALL_OUT',
+          points: ATTENDANCE_POINTS.CALL_OUT,
+          occurredOn: data.occurredOn,
+          note: [data.note, data.excusedWhy].filter(Boolean).join(' — ').slice(0, 1000),
+          excusedAt: new Date(),
+        },
+      })
+      .catch(() => undefined); // already recorded for this shift
+  } catch (err) {
+    console.warn('[attendance] call-out hook failed:', err instanceof Error ? err.message : err);
+  }
+}
+
 export async function recordNoShowAttendance(
   db: Db,
   shift: Pick<Shift, 'id' | 'clientId' | 'startsAt'> & {

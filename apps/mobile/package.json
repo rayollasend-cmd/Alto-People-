@@ -1,0 +1,36 @@
+{
+  "name": "@alto-people/mobile",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Alto People — native iOS and Android apps (Capacitor shell around the web app).",
+  "type": "module",
+  "scripts": {
+    "sync": "cap sync",
+    "sync:ios": "cap sync ios",
+    "sync:android": "cap sync android",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android",
+    "assets": "capacitor-assets generate --iconBackgroundColor '#0b1b2b' --iconBackgroundColorDark '#0b1b2b' --splashBackgroundColor '#f7f5f0' --splashBackgroundColorDark '#0b1b2b'",
+    "well-known": "node scripts/well-known.mjs",
+    "doctor": "cap doctor"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-biometric-auth": "^10.0.0",
+    "@aparajita/capacitor-secure-storage": "^8.0.1",
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/browser": "^8.0.5",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/push-notifications": "^8.1.3",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4",
+    "@capgo/capacitor-nfc": "^8.3.3"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3"
+  }
+}

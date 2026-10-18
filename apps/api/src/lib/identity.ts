@@ -6,7 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit, recordCriticalAudit } from './audit.js';
 import { decryptString, encryptString } from './crypto.js';
 import { getOidcSettings, type OidcSettings } from './oidc.js';
-import { ALTO_TENANT_ID } from './tenant.js';
+import { ALTO_TENANT_ID, withIdentityScope, runWithTenant } from './tenant.js';
 
 /**
  * Brief 2-3 step 2 — identity per tenant (docs/identity-rbac-audit-investigation.md §4.1, §4.2).
@@ -49,6 +49,13 @@ export function connectionSettings(c: Pick<IdentityConnection, 'issuerUrl' | 'cl
  * here). With the variables unset, the row is ordinary data, managed in the app.
  */
 export async function ensureEnvIdentity(db: Db): Promise<IdentityConnection | null> {
+  // The environment connection is Alto HR's, whoever's request asks: under
+  // TENANCY_MODE=enforce a read for Alto's row from another tenant's
+  // context would throw, so this runs as Alto.
+  return runWithTenant(ALTO_TENANT_ID, 'job', () => syncEnvIdentity(db));
+}
+
+async function syncEnvIdentity(db: Db): Promise<IdentityConnection | null> {
   const s = getOidcSettings();
   const existing = await db.identityConnection.findFirst({ where: { tenantId: ALTO_TENANT_ID, fromEnvironment: true } });
   if (!s) return existing;
@@ -64,6 +71,10 @@ export async function ensureEnvIdentity(db: Db): Promise<IdentityConnection | nu
 
 /** The environment SCIM_TOKEN as Alto HR's first SCIM token row. */
 export async function ensureEnvScimToken(db: Db): Promise<void> {
+  return runWithTenant(ALTO_TENANT_ID, 'job', () => syncEnvScimToken(db));
+}
+
+async function syncEnvScimToken(db: Db): Promise<void> {
   const t = env.SCIM_TOKEN?.trim();
   if (!t) return;
   const hashedSecret = hashToken(t);
@@ -87,6 +98,11 @@ export function domainOf(email: string): string | null {
 
 /** The sign-in a person's email domain leads to. Same empty answer for every reason there is none. */
 export async function discoverByEmail(db: Db, email: string): Promise<PublicConnection[]> {
+  // The login page asks before anyone is known: a lookup by unique domain.
+  return withIdentityScope(() => discoverByEmailResolved(db, email));
+}
+
+async function discoverByEmailResolved(db: Db, email: string): Promise<PublicConnection[]> {
   const domain = domainOf(email);
   if (!domain) return [];
   const d = await db.tenantDomain.findUnique({ where: { domain }, select: { tenantId: true, verifiedAt: true } });
@@ -97,6 +113,10 @@ export async function discoverByEmail(db: Db, email: string): Promise<PublicConn
 
 /** The fallback for shared domains: /login/<slug>. */
 export async function discoverBySlug(db: Db, slug: string): Promise<PublicConnection[]> {
+  return withIdentityScope(() => discoverBySlugResolved(db, slug));
+}
+
+async function discoverBySlugResolved(db: Db, slug: string): Promise<PublicConnection[]> {
   const t = await db.tenant.findUnique({ where: { slug: slug.toLowerCase() }, select: { id: true, status: true } });
   if (!t || t.status !== 'ACTIVE') return [];
   const rows = await db.identityConnection.findMany({ where: { tenantId: t.id, enabled: true }, orderBy: { createdAt: 'asc' }, select: { id: true, buttonLabel: true, displayName: true } });
@@ -220,12 +240,13 @@ const touched = new Map<string, number>();
 
 /** The tenant a presented SCIM bearer belongs to, or null. A hash lookup: nothing about a near miss leaks. */
 export async function scimTenantFor(db: Db, presented: string): Promise<string | null> {
-  const row = await db.scimToken.findUnique({ where: { hashedSecret: hashToken(presented) }, select: { id: true, tenantId: true, revokedAt: true } });
+  // The bearer names the tenant; until it is known, the lookup is by its unique hash.
+  const row = await withIdentityScope(() => db.scimToken.findUnique({ where: { hashedSecret: hashToken(presented) }, select: { id: true, tenantId: true, revokedAt: true } }));
   if (!row || row.revokedAt) return null;
   const now = Date.now();
   if ((touched.get(row.id) ?? 0) < now - 60_000) {
     touched.set(row.id, now);
-    void db.scimToken.update({ where: { id: row.id }, data: { lastUsedAt: new Date(now) } }).catch(() => {});
+    void withIdentityScope(() => db.scimToken.update({ where: { id: row.id }, data: { lastUsedAt: new Date(now) } })).catch(() => {});
   }
   return row.tenantId ?? ALTO_TENANT_ID;
 }

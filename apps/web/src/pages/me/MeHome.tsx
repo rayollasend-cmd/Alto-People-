@@ -229,7 +229,6 @@ export function MeHome() {
       <PullToRefreshIndicator state={pullState} />
       {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
       <ListTemplate
-        className="space-y-5"
         title={t('me.title')}
         subtitle={t('me.subtitle')}
         // No "Workforce" breadcrumb — that's internal HR taxonomy, and it
@@ -424,7 +423,7 @@ function ProfilePanel({
 
   return (
     <Card>
-      <CardContent className="p-6 space-y-5">
+      <CardContent className="space-y-5">
         <EmployeeNumberRow employeeNumber={employeeNumber} />
         <FaceConsentRow />
 

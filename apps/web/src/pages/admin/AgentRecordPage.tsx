@@ -149,7 +149,7 @@ export function AgentRecordPage() {
       }
       summary={
         <div className="space-y-[var(--d-stack)]">
-          <div className="grid gap-[var(--d-stack)] sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-[var(--d-stack)] xl:grid-cols-4">
             <MetricCard label="Tasks · 7 days" value={s ? String(s.tasksCompleted) : '—'} hint={s ? `${s.errors} errors · ${s.exceptionsEscalated} escalated` : 'No activity yet'} />
             <MetricCard
               label="Error rate · 7 days"

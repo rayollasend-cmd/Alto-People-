@@ -110,7 +110,6 @@ export function BenefitsLifecycle() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Benefits lifecycle"
         subtitle="Open enrollment, qualifying life events, COBRA offers, and ACA 1095-C reporting."
         breadcrumbs={[{ label: 'Benefits' }, { label: 'Lifecycle' }]}

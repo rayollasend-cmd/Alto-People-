@@ -8,10 +8,13 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { wotcFilingsDue } from './wotc.js';
+import { acaOffersDue } from './aca.js';
+import { stateTablesAwaitingReview } from './stateTax.js';
 import { logger } from '../lib/logger.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
-import { effectiveClientIdFilter, internalSites, scopeApplications } from '../lib/scope.js';
+import { scopeActiveAssociates, scopeAssociates, scopeAssociatesIncludingFormer, effectiveClientIdFilter, internalSites, scopeApplications } from '../lib/scope.js';
 import { canUseMessenger } from '../lib/messaging.js';
 import { buildFieldglassQueue } from '../lib/fieldglassQueue.js';
 import { countApprovalQueues, deciderOf } from './approvals.js';
@@ -95,6 +98,28 @@ const SOURCES: SourceDef[] = [
     path: '/approvals?tab=proposals',
     visible: (u) => can(u, 'manage:org') || can(u, 'manage:scheduling') || can(u, 'manage:onboarding'),
     count: (u) => countDecidableApprovals(prisma, tenantIdForWrite(), deciderOf(u)),
+  },
+  {
+    key: 'time-corrections',
+    label: 'Punch corrections',
+    description: 'Workers asking to fix a missed or wrong punch, each with their signed attestation.',
+    path: '/time-attendance?tab=corrections',
+    visible: (u) => can(u, 'manage:time'),
+    count: (u) =>
+      prisma.timeCorrectionRequest.count({
+        where: { AND: [{ tenantId: tenantIdForWrite(), status: 'SUBMITTED' }, { associate: scopeAssociates(u) }] },
+      }),
+  },
+  {
+    key: 'break-flags',
+    label: 'Missed breaks reported',
+    description: 'Workers who said at clock-out they didn’t get a meal or rest break, where the labor rules aren’t paid live yet.',
+    path: '/time-attendance?tab=breaks',
+    visible: (u) => can(u, 'manage:time'),
+    count: (u) =>
+      prisma.breakAttestation.count({
+        where: { AND: [{ tenantId: tenantIdForWrite(), flagged: true }, { associate: scopeAssociates(u) }] },
+      }),
   },
   {
     key: 'reimbursements',
@@ -211,6 +236,77 @@ const SOURCES: SourceDef[] = [
         },
       }),
   },
+  // Connected providers (lib/providers): the steps their answers leave for a person.
+  {
+    key: 'everify-mismatches',
+    label: 'E-Verify mismatches to act on',
+    description: 'E-Verify returned a Tentative Nonconfirmation: give the employee the notice and record whether they will take action.',
+    path: '/compliance?tab=everify',
+    module: 'compliance',
+    visible: (u) => can(u, 'manage:compliance'),
+    count: (u) =>
+      prisma.i9Verification.count({
+        where: {
+          tenantId: tenantIdForWrite(),
+          eVerifyStatus: 'TENTATIVE_NONCONFIRMATION',
+          eVerifyTncDecision: null,
+          associate: scopeActiveAssociates(u),
+        },
+      }),
+  },
+  {
+    key: 'screening-decisions',
+    label: 'Background checks to decide',
+    description: 'Reports that came back “consider”, and adverse actions whose waiting period is over.',
+    path: '/compliance?tab=background',
+    module: 'compliance',
+    visible: (u) => can(u, 'manage:compliance'),
+    count: (u) =>
+      prisma.backgroundCheck.count({
+        where: {
+          tenantId: tenantIdForWrite(),
+          associate: scopeActiveAssociates(u),
+          OR: [
+            { result: 'consider', adjudication: null },
+            { adjudication: 'PRE_ADVERSE', adverseWaitUntil: { lte: new Date() } },
+          ],
+        },
+      }),
+  },
+  {
+    key: 'drug-results-review',
+    label: 'Drug test results to review',
+    description: 'Results that are not a verified negative — a positive awaiting the Medical Review Officer, a dilute, or a cancelled test.',
+    path: '/compliance?tab=drug-tests',
+    module: 'compliance',
+    visible: (u) => can(u, 'manage:compliance'),
+    count: (u) =>
+      prisma.drugTest.count({
+        where: { tenantId: tenantIdForWrite(), status: 'NEEDS_REVIEW', resultCode: { not: null }, associate: scopeActiveAssociates(u) },
+      }),
+  },
+  {
+    key: 'efile-rejected',
+    label: 'Tax filings rejected',
+    description: 'The agency rejected an e-filed form. Fix what it named and file again.',
+    path: '/payroll/tax',
+    visible: (u) => can(u, 'process:payroll'),
+    count: () => prisma.taxForm.count({ where: { tenantId: tenantIdForWrite(), efileStatus: 'REJECTED' } }),
+  },
+  {
+    key: 'provider-health',
+    label: 'Connections failing',
+    description: 'A connected provider (E-Verify, screening, drug tests, tax filing or payouts) is answering with errors.',
+    path: '/integrations',
+    visible: (u) => can(u, 'manage:integrations'),
+    count: async () => {
+      const rows = await prisma.providerConnection.findMany({
+        where: { tenantId: tenantIdForWrite(), active: true, lastErrorAt: { not: null } },
+        select: { lastErrorAt: true, lastSuccessAt: true },
+      });
+      return rows.filter((r) => (r.lastErrorAt?.getTime() ?? 0) > (r.lastSuccessAt?.getTime() ?? 0)).length;
+    },
+  },
   {
     key: 'access-certifications',
     label: 'Access to certify',
@@ -262,6 +358,65 @@ const SOURCES: SourceDef[] = [
     path: '/agreements?tab=policies',
     visible: (u) => Boolean(u.associateId),
     count: (u) => prisma.policyCampaignRecipient.count({ where: { associateId: u.associateId!, status: 'PENDING', campaign: { status: 'ACTIVE' } } }),
+  },
+  {
+    key: 'leave-desk',
+    label: 'Leave of absence',
+    description: 'Notices owed, certifications due within 3 days, and returns to work due this week.',
+    path: '/leave',
+    visible: (u) => can(u, 'manage:leave'),
+    count: (u) => {
+      const t = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+      return prisma.leaveCase.count({
+        where: {
+          tenantId: tenantIdForWrite(),
+          associate: scopeActiveAssociates(u, { former: true }),
+          OR: [
+            { status: 'REQUESTED' },
+            { status: 'PENDING_CERTIFICATION', certificationReceivedAt: null, certificationDueAt: { lte: new Date(t.getTime() + 3 * DAY_MS) } },
+            { status: 'PENDING_CERTIFICATION', certificationReceivedAt: { not: null } },
+            { status: 'APPROVED', actualReturnDate: null, expectedReturnDate: { lte: new Date(t.getTime() + 7 * DAY_MS) } },
+          ],
+        },
+      });
+    },
+  },
+  {
+    key: 'ui-claims',
+    label: 'Unemployment claims',
+    description: 'State notices to answer within 3 days, and hearings in the next week.',
+    path: '/claims/unemployment',
+    visible: (u) => can(u, 'manage:claims'),
+    count: (u) => {
+      const now = Date.now();
+      return prisma.unemploymentClaim.count({
+        where: {
+          tenantId: tenantIdForWrite(),
+          associate: { AND: [{ tenantId: tenantIdForWrite() }, scopeAssociatesIncludingFormer(u)] },
+          OR: [
+            { status: 'NEW', responseDueAt: { lte: new Date(now + 3 * DAY_MS) } },
+            { status: 'HEARING_SCHEDULED', hearingAt: { gte: new Date(now - DAY_MS), lte: new Date(now + 7 * DAY_MS) } },
+          ],
+        },
+      });
+    },
+  },
+  {
+    key: 'wc-claims',
+    label: 'Workers’ comp reports due',
+    description: 'First reports of injury not yet sent to the carrier that are due within 2 days.',
+    path: '/claims/workers-comp',
+    visible: (u) => can(u, 'manage:claims'),
+    count: (u) =>
+      prisma.wcClaim.count({
+        where: {
+          tenantId: tenantIdForWrite(),
+          associate: { AND: [{ tenantId: tenantIdForWrite() }, scopeAssociatesIncludingFormer(u)] },
+          froiSubmittedAt: null,
+          status: { notIn: ['CLOSED', 'DENIED'] },
+          froiDueAt: { lte: new Date(Date.now() + 2 * DAY_MS) },
+        },
+      }),
   },
   {
     key: 'verification-letters',
@@ -339,7 +494,8 @@ const SOURCES: SourceDef[] = [
     path: '/fieldglass',
     module: 'payrollSync',
     visible: (u) => can(u, 'process:payroll'),
-    count: async () => (await buildFieldglassQueue(new Date(), { tenantId: tenantIdForWrite() })).length,
+    // Building the queue walks every worker; a badge can be half a minute old.
+    count: () => memoCount(`fieldglass-setup:${tenantIdForWrite()}`, 30_000, async () => (await buildFieldglassQueue(new Date(), { tenantId: tenantIdForWrite() })).length),
   },
   // ---- The floor (field roles, 2026-10) ------------------------------------
   {
@@ -353,6 +509,24 @@ const SOURCES: SourceDef[] = [
       const clamp = clientClamp(u);
       return prisma.floorFlag.count({ where: { tenantId: tenantIdForWrite(), status: 'OPEN', ...(clamp ? { clientId: clamp } : {}) } });
     },
+  },
+  {
+    key: 'call-outs',
+    label: 'Call-outs looking for cover',
+    description: 'Someone called out of a shift in the next day and a half and nobody has taken it yet — the cover flow is already running.',
+    path: '/call-outs',
+    module: 'scheduling',
+    visible: (u) => can(u, 'manage:scheduling'),
+    count: (u) =>
+      prisma.callOut.count({
+        where: {
+          AND: [
+            { tenantId: tenantIdForWrite(), status: 'CONFIRMED' },
+            { shift: { startsAt: { gt: new Date(), lte: new Date(Date.now() + 36 * 3_600_000) }, OR: [{ assignedAssociateId: null }, { status: 'OPEN' }] } },
+            { associate: scopeActiveAssociates(u, { former: true }) },
+          ],
+        },
+      }),
   },
   {
     key: 'floor-watch',
@@ -409,6 +583,23 @@ const SOURCES: SourceDef[] = [
       }),
   },
   {
+    key: 'my-punch-fixes',
+    label: 'Punches to fix',
+    description: 'A shift you didn’t clock out of — tell us when you left.',
+    path: '/time-attendance?fix=1',
+    visible: (u) => u.role === 'ASSOCIATE' && !!u.associateId,
+    count: (u) => prisma.timeCorrectionRequest.count({ where: { associateId: u.associateId!, status: 'PROMPTED' } }),
+  },
+  {
+    key: 'my-ot-offers',
+    label: 'Extra hours offered',
+    description: 'Open shifts offered to you — take them or pass.',
+    path: '/time-attendance?tab=offers',
+    module: 'scheduling',
+    visible: (u) => u.role === 'ASSOCIATE' && !!u.associateId,
+    count: (u) => prisma.overtimeOffer.count({ where: { associateId: u.associateId!, status: 'OFFERED', shift: { startsAt: { gt: new Date() } } } }),
+  },
+  {
     key: 'my-shifts',
     label: 'Shifts to confirm',
     description: 'Upcoming shifts you have not confirmed yet.',
@@ -455,6 +646,30 @@ const SOURCES: SourceDef[] = [
     count: () => prisma.financialChange.count({ where: { status: { in: ['PENDING', 'HELD'] } } }),
   },
   {
+    key: 'wotc-filings',
+    label: 'WOTC filings due',
+    description: 'Hires whose tax credit screening points to a target group and whose 28-day state filing deadline is this week or past.',
+    path: '/payroll/wotc',
+    visible: (u) => can(u, 'process:payroll') || can(u, 'manage:onboarding'),
+    count: (u) => wotcFilingsDue(u),
+  },
+  {
+    key: 'aca-offers-due',
+    label: 'ACA offers due',
+    description: 'Full-time workers (by hours or by hire) with no offer of coverage recorded for the stability period that starts within 30 days.',
+    path: '/benefits/aca',
+    visible: (u) => can(u, 'process:payroll'),
+    count: (u) => acaOffersDue(u),
+  },
+  {
+    key: 'state-tax-review',
+    label: 'State tax tables to review',
+    description: 'States where people work whose withholding was added but not yet reviewed with your tax adviser — payroll can’t finalize with them until it is.',
+    path: '/payroll/state-tax',
+    visible: (u) => can(u, 'process:payroll'),
+    count: (u) => stateTablesAwaitingReview(u),
+  },
+  {
     key: 'messages',
     label: 'Unread messages',
     description: 'Messages in your threads you have not read yet.',
@@ -473,22 +688,44 @@ const SOURCES: SourceDef[] = [
   },
 ];
 
+/**
+ * A short-lived memo for the counts that are expensive to compute (they walk
+ * every worker): concurrent callers share one computation, and the answer is
+ * reused for `ttlMs`. Keyed per tenant by the caller.
+ */
+const countMemo = new Map<string, { at: number; value: Promise<number> }>();
+function memoCount(key: string, ttlMs: number, run: () => Promise<number>): Promise<number> {
+  const hit = countMemo.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value;
+  const value = run().catch((err) => {
+    countMemo.delete(key);
+    throw err;
+  });
+  countMemo.set(key, { at: Date.now(), value });
+  return value;
+}
+
 inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
   try {
     const user = req.user!;
     const profile = await loadTenantProfile();
     const mine = SOURCES.filter((s) => (!s.module || profile.modules[s.module]) && s.visible(user));
+    const timings: string[] = [];
     const sources: InboxSource[] = await Promise.all(
       mine.map(async (s) => {
         let count = 0;
+        const t0 = performance.now();
         try {
           count = Math.min(CAP, Math.max(0, await s.count(user)));
         } catch (err) {
           logger.error({ err, source: s.key, userId: user.id }, 'inbox source failed');
         }
+        timings.push(`${s.key.replace(/[^a-zA-Z0-9_-]/g, '_')};dur=${(performance.now() - t0).toFixed(1)}`);
         return { key: s.key, label: s.label, description: s.description, count, path: s.path };
       }),
     );
+    // Which source is slow, visible in any browser's network panel.
+    res.setHeader('Server-Timing', timings.join(', '));
     const total = sources.reduce((sum, s) => sum + s.count, 0);
     res.json(InboxResponseSchema.parse({ total, sources }));
   } catch (err) {

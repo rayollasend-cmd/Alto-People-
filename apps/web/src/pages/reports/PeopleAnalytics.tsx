@@ -69,7 +69,7 @@ function EarlyTurnoverGrid({ d }: { d: PeopleAnalyticsData }) {
     ]);
   return (
     <Card>
-      <CardContent className="space-y-3 p-4 md:p-5">
+      <CardContent className="space-y-3">
         <SectionTitle
           title="Where early leavers leave"
           description={`People who left in the window, by ${term('label.store').toLowerCase()} and how long they had been there. Darker = a bigger share of that ${term('label.store').toLowerCase()}’s leavers.`}
@@ -172,7 +172,7 @@ export function PeopleAnalytics() {
       }
       filters={<SegmentedControl ariaLabel="Window" options={([6, 12, 24] as const).map((m) => ({ value: m, label: `${m} months` }))} value={months} onChange={(m) => setMonths(m)} />}
       summary={
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <MetricCard label="Annualized turnover" value={d ? pct(d.turnover.annualizedPct) : '—'} accent={Boolean(d && (d.turnover.annualizedPct ?? 0) >= 25)} hint={d ? `${d.turnover.separations} left · average headcount ${d.turnover.averageHeadcount}` : undefined} />
           <MetricCard label="Headcount" value={headcountNow ?? '—'} hint={headcountThen !== null && headcountNow !== null ? `${headcountNow - headcountThen >= 0 ? '+' : ''}${headcountNow - headcountThen} since ${d ? monthLabel(d.headcount[0]!.month) : ''}` : undefined} />
           <MetricCard label="Median time to fill" value={d && d.timeToFill.medianDays !== null ? `${d.timeToFill.medianDays} days` : '—'} hint={d ? `${d.timeToFill.filled} seats filled in the window` : undefined} />

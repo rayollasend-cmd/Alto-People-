@@ -15,6 +15,7 @@ import { AuthContext } from '@/lib/auth';
 
 const SUMMARY = { weeklyOvertimeHours: 40, dailyOvertimeHours: null, doubleTimeHours: null, seventhDayRule: false, minimumWageCents: 1500, mealRequiredAfterHours: null, restPerHours: null, restBetweenShiftsHours: null, predictiveNoticeDays: null, minorBands: 4 };
 
+vi.mock('@/lib/laborLiveApi', () => ({ getLaborActivations: vi.fn(async () => ({ attestation: 'x', jurisdictions: [] })) }));
 vi.mock('@/lib/laborRulesApi', () => ({
   listLaborRuleSets: vi.fn(async () => ({ sets: [{ id: 'o1', jurisdiction: 'TENANT', level: 'TENANT', siteId: null, effectiveFrom: '2026-10-01', version: 1, status: 'DRAFT', shipped: false, params: { restBetweenShifts: { minHours: 11 } }, source: 'Union contract section 7', sourceDate: '2026-10-15', approvedBy: null, approvedAt: null, approvalNote: null }] })),
   createLaborOverride: vi.fn(),
@@ -56,12 +57,12 @@ const AUTH = {
   can: () => true,
 };
 
-function renderPage() {
+function renderPage(route = '/payroll/labor-rules?tab=sites') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <AuthContext.Provider value={AUTH}>
       <QueryClientProvider client={qc}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[route]}>
           <LaborRulesPage />
         </MemoryRouter>
       </QueryClientProvider>
@@ -74,7 +75,6 @@ describe('LaborRulesPage', () => {
     const { container } = renderPage();
     expect((await screen.findAllByText('Destin Store')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('$15.00').length).toBeGreaterThan(0);
-    expect(await screen.findByText(/No differences so far/)).toBeTruthy();
     expect(await screen.findByText('Union contract section 7')).toBeTruthy();
     expect(screen.getByRole('button', { name: /New rule/ })).toBeTruthy();
     const results = await axe(container, { rules: { 'color-contrast': { enabled: false }, region: { enabled: false } } });
@@ -83,6 +83,11 @@ describe('LaborRulesPage', () => {
     fireEvent.click(screen.getAllByText('Destin Store')[0]!);
     expect(await screen.findByText('Fla. Const. Art. X §24')).toBeTruthy();
     expect(screen.getByText('minimumWage.rateCents')).toBeTruthy();
-    expect(screen.getByText(/Not signed yet/)).toBeTruthy();
+    expect(screen.getByText(/Not live here yet/)).toBeTruthy();
+  });
+
+  it('the shadow runs have their own tab', async () => {
+    renderPage('/payroll/labor-rules?tab=shadow');
+    expect(await screen.findByText(/No differences so far/)).toBeTruthy();
   });
 });

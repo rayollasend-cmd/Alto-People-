@@ -52,7 +52,7 @@ function Hero({ data }: { data: PublicStatus }) {
   const open = data.incidents.filter((i) => i.state !== 'RESOLVED').length;
   return (
     <Card className={tone.ring}>
-      <CardContent className="grid gap-6 p-6 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
+      <CardContent className="grid gap-6 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
         <div className={cn('grid h-16 w-16 place-items-center rounded-full', tone.fill, tone.text)} aria-hidden="true">
           <tone.Icon className="h-8 w-8" />
         </div>
@@ -94,7 +94,7 @@ function Incident({ i, componentLabel }: { i: StatusIncidentPublic; componentLab
   const resolved = i.state === 'RESOLVED';
   return (
     <Card>
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
           <div className="min-w-0">
             <h3 className="text-base font-medium text-ink">{i.title}</h3>

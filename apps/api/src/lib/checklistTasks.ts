@@ -28,15 +28,22 @@ export const PROFILE_PHOTO_TASK: Omit<ChecklistTaskCreate, 'order'> = {
   dueOffsetDays: null,
 };
 
+/** WOTC pre-screening — added when the tenant screens (WotcSettings.enabled)
+ *  and the hire is a W-2 employee. Voluntary: declining completes it. */
+export const WOTC_SCREENING_TASK: Omit<ChecklistTaskCreate, 'order'> = {
+  kind: 'WOTC_SCREENING',
+  title: 'Answer a few tax credit questions',
+  description:
+    'Optional questions that help your employer claim a federal tax credit. Your answers don’t affect whether you’re hired.',
+  dueOffsetDays: null,
+};
+
 /** Returns the task list with every mandatory task present (appended at
  *  max order + 1 when missing, so template ordering is untouched). */
-export function withMandatoryTasks(tasks: ChecklistTaskCreate[]): ChecklistTaskCreate[] {
-  if (tasks.some((t) => t.kind === 'PROFILE_PHOTO')) return tasks;
-  return [
-    ...tasks,
-    {
-      ...PROFILE_PHOTO_TASK,
-      order: Math.max(0, ...tasks.map((t) => t.order)) + 1,
-    },
-  ];
+export function withMandatoryTasks(tasks: ChecklistTaskCreate[], opts: { wotc?: boolean } = {}): ChecklistTaskCreate[] {
+  const out = [...tasks];
+  const next = () => Math.max(0, ...out.map((t) => t.order)) + 1;
+  if (!out.some((t) => t.kind === 'PROFILE_PHOTO')) out.push({ ...PROFILE_PHOTO_TASK, order: next() });
+  if (opts.wotc && !out.some((t) => t.kind === 'WOTC_SCREENING')) out.push({ ...WOTC_SCREENING_TASK, order: next() });
+  return out;
 }

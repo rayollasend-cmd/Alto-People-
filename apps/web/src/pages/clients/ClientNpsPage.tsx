@@ -111,7 +111,7 @@ export function ClientNpsPage() {
         <div className="space-y-6">
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
-              <CardContent className="p-4 md:p-5">
+              <CardContent>
                 <SectionTitle title={`By ${term('label.client').toLowerCase()}`} description="Lowest first — the conversations to have this week." as="h3" />
                 {r.byClient.length === 0 ? (
                   <EmptyState title="No answers yet" description="Each client shows here as its store managers answer." className="py-6" />
@@ -142,7 +142,7 @@ export function ClientNpsPage() {
               </CardContent>
             </Card>
             <Card>
-              <CardContent className="p-4 md:p-5">
+              <CardContent>
                 <SectionTitle title="Over time" description="NPS by quarter." as="h3" />
                 {trend.length < 2 ? (
                   <p className="mt-2 text-sm text-ink-muted">The trend draws once two quarters have been asked.</p>
@@ -172,7 +172,7 @@ export function ClientNpsPage() {
                 {r.comments.map((c, i) => (
                   <li key={i}>
                     <Card>
-                      <CardContent className="p-4">
+                      <CardContent>
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-medium text-ink">{c.clientName}</span>
                           <Badge variant={c.score >= 9 ? 'success' : c.score >= 7 ? 'pending' : 'destructive'}>{c.score} / 10</Badge>

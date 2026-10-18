@@ -178,7 +178,6 @@ export function OrgHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Departments & job profiles"
         subtitle={
           hasClients
@@ -201,7 +200,7 @@ export function OrgHome() {
 
       {hasClients && (
       <Card>
-        <CardContent className="p-4 flex items-center gap-3 flex-wrap">
+        <CardContent className="flex items-center gap-3 flex-wrap">
           <span className="text-xs2 uppercase tracking-wider text-ink-muted">
             {term('label.client')}
           </span>
@@ -1984,7 +1983,7 @@ function PersonOrgDrawer({
               </div>
             )}
             {history?.length === 0 && (
-              <div className="text-xs text-silver">No history yet.</div>
+              <EmptyState size="sm" title={"No history yet."} />
             )}
             {history && history.length > 0 && (
               <ol className="space-y-2 text-xs">

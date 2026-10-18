@@ -9,6 +9,7 @@ import {
   upsertRateDefault,
 } from '@/lib/schedulingApi';
 import { listShiftPositions, updateShiftPosition } from '@/lib/orgApi';
+import { getMarketRates } from '@/lib/marketRatesApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -53,6 +54,31 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
     queryFn: () => listShiftPositions(clientId),
     enabled: canManage,
   });
+  // The local market beside each rate, where the role is benchmarked (the
+  // market rates desk). Money, so only for those who may see client rates.
+  const marketQuery = useQuery({
+    queryKey: ['market', 'rates', clientId],
+    queryFn: () => getMarketRates({ clientId }),
+    enabled: canManage && can('view:clients'),
+    staleTime: 5 * 60_000,
+  });
+  const marketByPosition = useMemo(() => {
+    const out = new Map<string, string>();
+    const groups = new Map<string, number[]>();
+    const metros = new Map<string, Set<string>>();
+    for (const r of marketQuery.data?.rows ?? []) {
+      if (r.market?.median == null) continue;
+      groups.set(r.position, [...(groups.get(r.position) ?? []), r.market.median]);
+      metros.set(r.position, (metros.get(r.position) ?? new Set()).add(r.market.areaName.split(',')[0]!));
+    }
+    for (const [position, medians] of groups) {
+      const lo = Math.min(...medians);
+      const hi = Math.max(...medians);
+      const where = [...metros.get(position)!];
+      out.set(position, lo === hi ? `Market median $${lo.toFixed(2)} · ${where.join(', ')}` : `Market medians $${lo.toFixed(2)}–$${hi.toFixed(2)} across ${where.length} metros`);
+    }
+    return out;
+  }, [marketQuery.data]);
   const defaults: ShiftRateDefault[] | null = defaultsQuery.data?.rateDefaults ?? null;
   const positions: string[] = defaultsQuery.data?.positions ?? NO_POSITIONS;
   const catalogRows: ShiftPosition[] = catalogQuery.data?.shiftPositions ?? NO_CATALOG;
@@ -135,6 +161,7 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
                 saved={r.saved}
                 catalogRow={catalogRows.find((c) => c.name === r.position)}
                 canFlagLead={canFlagLead}
+                market={marketByPosition.get(r.position) ?? null}
                 onChanged={refresh}
               />
             ))}
@@ -166,6 +193,7 @@ function RateRow({
   saved,
   catalogRow,
   canFlagLead,
+  market,
   onChanged,
 }: {
   clientId: string;
@@ -175,6 +203,8 @@ function RateRow({
    *  the supervisor/lead flag. */
   catalogRow: ShiftPosition | undefined;
   canFlagLead: boolean;
+  /** The role's local market median(s), from the market rates desk. */
+  market?: string | null;
   onChanged: () => Promise<void>;
 }) {
   const confirm = useConfirm();
@@ -283,8 +313,9 @@ function RateRow({
         void save();
       }}
     >
-      <div className="w-48 truncate text-sm text-white" title={position}>
-        {position}
+      <div className="w-48 min-w-0" title={position}>
+        <div className="truncate text-sm text-ink">{position}</div>
+        {market && <div className="truncate text-2xs text-ink-muted">{market}</div>}
       </div>
       <Input
         type="number"

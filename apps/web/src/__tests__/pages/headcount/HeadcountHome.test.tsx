@@ -86,8 +86,9 @@ describe('HeadcountHome', () => {
 
   it('says when no reconciliation has run, and shows the variances when one has', async () => {
     const { unmount } = renderPage();
-    expect(await screen.findByText(/No reconciliation run yet/)).toBeInTheDocument();
-    expect(screen.getByText('scripts/reconcile-payroll.ts --persist')).toBeInTheDocument();
+    expect(await screen.findByText(/No reconciliation yet/)).toBeInTheDocument();
+    // Plain words for the people reading it — never a script to run.
+    expect(screen.queryByText(/scripts\/reconcile-payroll/)).toBeNull();
     unmount();
 
     vi.mocked(getHeadcountOverview).mockResolvedValue(

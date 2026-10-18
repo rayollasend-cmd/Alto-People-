@@ -100,7 +100,6 @@ export function VaccinationsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Vaccinations & medical"
         subtitle="Proof of vaccination and TB tests, for the sites and contracts that require them."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'Vaccinations' }]}

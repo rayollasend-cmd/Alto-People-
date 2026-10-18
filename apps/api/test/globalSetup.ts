@@ -18,6 +18,13 @@ const SUITE_LOCK_KEY = 727_274_001;
 
 export default async function globalSetup() {
   loadDotenv({ path: ENV_TEST, override: true });
+  // ALTO_TEST_DATABASE_URL: a run on its own database (still schema=alto_test,
+  // still checked below). Advisory locks are per database, so a parallel run
+  // there neither waits on nor truncates under the shared one.
+  if (process.env.ALTO_TEST_DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.ALTO_TEST_DATABASE_URL;
+    process.env.DIRECT_URL = process.env.ALTO_TEST_DATABASE_URL;
+  }
 
   if (process.env.NODE_ENV !== 'test') {
     throw new Error('globalSetup: NODE_ENV is not "test"; check apps/api/.env.test');

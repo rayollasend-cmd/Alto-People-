@@ -123,7 +123,7 @@ function ActionCard({
         highlighted ? 'border-gold/60 ring-1 ring-gold/30' : undefined
       }
     >
-      <CardContent className="space-y-3 pt-5">
+      <CardContent className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div className="text-white font-medium">{t(('record.kind.' + a.kind) as MessageKey)}</div>
           <Badge

@@ -170,7 +170,7 @@ export function PayrollClosePage() {
         {data.steps.map((s, i) => (
           <li key={s.key}>
             <Card className={cn(s.state === 'blocked' && 'border-alert/40', s.state === 'current' && 'border-accent/50')}>
-              <CardContent className="flex items-start gap-3 p-4">
+              <CardContent className="flex items-start gap-3">
                 <StepIcon state={s.state} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">

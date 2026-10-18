@@ -206,7 +206,7 @@ export function PortalCandidates() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto max-w-3xl space-y-4"
+        className="mx-auto max-w-3xl"
         title={t('portal.candTitle')}
         subtitle={t('portal.candHint')}
         breadcrumbs={[{ label: t('portal.title'), to: '/portal' }]}
@@ -234,7 +234,7 @@ export function PortalCandidates() {
         </ErrorBanner>
       ) : query.isLoading ? (
         <Card>
-          <CardContent className="space-y-3 p-5">
+          <CardContent className="space-y-3">
             <Skeleton className="h-20" />
             <Skeleton className="h-20" />
           </CardContent>
@@ -242,7 +242,7 @@ export function PortalCandidates() {
       ) : (
         <>
           <Card className="animate-enter">
-            <CardContent className="p-5">
+            <CardContent>
               <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
                 {t('portal.candWaiting')}
                 {waiting.length > 0 && <Badge variant="pending">{waiting.length}</Badge>}
@@ -256,7 +256,7 @@ export function PortalCandidates() {
           </Card>
           {answered.length > 0 && (
             <Card className="animate-enter">
-              <CardContent className="p-5">
+              <CardContent>
                 <h2 className="mb-3 text-sm font-medium text-white">{t('portal.candAnswered')}</h2>
                 <ul className="divide-y divide-navy-secondary/60">{answered.map(card)}</ul>
               </CardContent>

@@ -1,4 +1,6 @@
 import { lazy, Suspense, useState, type FormEvent } from 'react';
+import { isNative } from '@/lib/native/platform';
+import { openInSystemBrowser } from '@/lib/native/shell';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { Building2, Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
@@ -52,6 +54,10 @@ function ssoErrorMessage(search: string, t: Translate): string | null {
   }
   if (code === 'sso_failed') {
     return t('login.errSsoFailed');
+  }
+  // The native app's system-browser sign-in came back after its two minutes.
+  if (code === 'handoff_expired') {
+    return t('login.errHandoffExpired');
   }
   return null;
 }
@@ -394,7 +400,9 @@ export function Login() {
                       type="button"
                       size="lg"
                       variant="outline"
-                      onClick={() => void handlePasskey()}
+                      // Inside the native app a passkey can't run in the web view:
+                      // the system browser signs in and hands back (/native-handoff).
+                      onClick={() => (isNative() ? void openInSystemBrowser('/login?next=/native-handoff') : void handlePasskey())}
                       disabled={submitting}
                       className="w-full"
                     >
@@ -415,9 +423,12 @@ export function Login() {
                       // through the IdP round trip — without it SSO landed
                       // everyone on the dashboard.
                       onClick={() =>
-                        window.location.assign(
-                          from === '/' ? '/api/auth/oidc/start' : `/api/auth/oidc/start?next=${encodeURIComponent(from)}`,
-                        )
+                        isNative()
+                          ? // The app: SSO runs in the system browser, then hands back.
+                            void openInSystemBrowser('/api/auth/oidc/start?next=/native-handoff')
+                          : window.location.assign(
+                              from === '/' ? '/api/auth/oidc/start' : `/api/auth/oidc/start?next=${encodeURIComponent(from)}`,
+                            )
                       }
                       disabled={submitting}
                       className="w-full"

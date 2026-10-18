@@ -110,7 +110,7 @@ function WaitCard({
 }) {
   return (
     <Card className={cn('h-full', tone === 'attention' && 'border-warning/40')}>
-      <CardContent className="flex h-full flex-col p-4">
+      <CardContent className="flex h-full flex-col">
         <h3 className="flex items-start gap-2 text-sm font-medium text-white">
           <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', tone === 'attention' ? 'text-warning' : 'text-gold')} aria-hidden="true" />
           {title}
@@ -148,7 +148,7 @@ function Today({ home }: { home: RecruiterHome }) {
   const list = home.interviewsToday;
   return (
     <Card>
-      <CardContent className="p-4 md:p-5">
+      <CardContent>
         <SectionTitle
           count={list.length}
           action={<MoreLink to="/recruiting?view=list&stage=INTERVIEW">{t('recruiterHome.interviewing')}</MoreLink>}
@@ -194,7 +194,7 @@ function NewApplicants({ home }: { home: RecruiterHome }) {
   const a = home.newApplicants;
   return (
     <Card>
-      <CardContent className="p-4 md:p-5">
+      <CardContent>
         <SectionTitle action={<MoreLink to="/recruiting?view=list&stage=ALL&sort=newest">{t('recruiterHome.newest')}</MoreLink>}>
           <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
           {t('recruiterHome.newApplicants')}
@@ -259,7 +259,7 @@ function WaitingOnYou({ home, headless = false }: { home: RecruiterHome; headles
       )}
       {total === 0 ? (
         <Card>
-          <CardContent className="p-4 text-sm text-silver">
+          <CardContent className="text-sm text-silver">
             {t('recruiterHome.nothingWaitingOnYou')}
           </CardContent>
         </Card>
@@ -421,7 +421,7 @@ function WaitingOnOthers({ home }: { home: RecruiterHome }) {
       </SectionTitle>
       {total === 0 ? (
         <Card>
-          <CardContent className="p-4 text-sm text-silver">
+          <CardContent className="text-sm text-silver">
             {t('recruiterHome.nothingWithOthers')}
           </CardContent>
         </Card>
@@ -517,7 +517,7 @@ function PipelineAndPostings({ home }: { home: RecruiterHome }) {
   return (
     <div className="grid gap-3 lg:grid-cols-3">
       <Card>
-        <CardContent className="p-4 md:p-5">
+        <CardContent>
           <SectionTitle action={<MoreLink to="/recruiting">{t('recruiterHome.board')}</MoreLink>}>{t('recruiterHome.pipeline')}</SectionTitle>
           <ul className="grid grid-cols-2 gap-2">
             {stages.map((s) => (
@@ -535,7 +535,7 @@ function PipelineAndPostings({ home }: { home: RecruiterHome }) {
         </CardContent>
       </Card>
       <Card className="lg:col-span-2">
-        <CardContent className="p-4 md:p-5">
+        <CardContent>
           <SectionTitle count={home.postings.total} action={<MoreLink to="/recruiting/extras?tab=postings">{t('recruiterHome.postings')}</MoreLink>}>
             {t('recruiterHome.openPostings')}
           </SectionTitle>
@@ -613,11 +613,11 @@ function Requisitions({ reqs }: { reqs: NonNullable<RecruiterHome['requisitions'
       </SectionTitle>
       {reqs.items.length === 0 ? (
         <Card>
-          <CardContent className="p-4 text-sm text-silver">Every position is filled or closed — the pipeline is hiring against nothing right now.</CardContent>
+          <CardContent className="text-sm text-silver">Every position is filled or closed — the pipeline is hiring against nothing right now.</CardContent>
         </Card>
       ) : (
         <Card>
-          <CardContent className="p-4 md:p-5">
+          <CardContent>
             {waiting > 0 && (
               <p className="mb-2 text-xs text-warning">
                 {waiting} requisition{waiting === 1 ? '' : 's'} still waiting on approval — hiring against {waiting === 1 ? 'it' : 'them'} starts when it lands.
@@ -696,7 +696,7 @@ function Activity({ home }: { home: RecruiterHome }) {
         <span id="activity">{t('recruiterHome.activity')}</span>
       </SectionTitle>
       <Card>
-        <CardContent className="p-4 md:p-5">
+        <CardContent>
           {home.activity.length === 0 ? (
             <p className="text-sm text-silver/70">{t('recruiterHome.nothingYet')}</p>
           ) : (

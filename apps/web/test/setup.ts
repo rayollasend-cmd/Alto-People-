@@ -1,6 +1,11 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { LANGS, loadLanguagePack } from '@/lib/i18n';
+
+// Every language but English is a lazy pack in the app; load them all up front
+// so t() answers synchronously in every test, as it did when they were inline.
+await Promise.all(LANGS.map((l) => loadLanguagePack(l)));
 
 // jsdom is reused across tests; explicit cleanup prevents leakage.
 afterEach(() => cleanup());

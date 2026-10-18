@@ -26,6 +26,7 @@ const EARNING_LABEL: Record<string, string> = {
   TIPS: 'Tips',
   REIMBURSEMENT: 'Reimbursement',
   RETRO: 'Retroactive pay',
+  PREMIUM: 'Labor-law premium',
 };
 
 const ITEM_INCLUDE = {

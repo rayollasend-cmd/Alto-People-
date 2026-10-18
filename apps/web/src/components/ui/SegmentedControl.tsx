@@ -46,7 +46,7 @@ export function SegmentedControl<T extends string | number>({
             className={cn(
               // min-h-11 on coarse pointers (phones AND tablets) keeps the
               // pill tappable; precise pointers keep the compact pad.
-              'px-3 py-1 rounded-full border text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
+              'whitespace-nowrap px-3 py-1 rounded-full border text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
               'coarse:min-h-11 inline-flex items-center',
               // Selected = the ONE app-wide selection color (gold tint).
               // This was steel blue — a second selection language that

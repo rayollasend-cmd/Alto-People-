@@ -167,7 +167,9 @@ export type FaceConsentStatus = 'GRANTED' | 'DECLINED';
 
 export const kioskVerifyPin = (payload: {
   deviceToken: string;
-  pin: string;
+  /** The typed clock-in number — or `badgeToken` (NFC badge / Wallet QR) in its place. */
+  pin?: string;
+  badgeToken?: string;
   latitude: number | null;
   longitude: number | null;
   intent?: 'BREAK' | null;
@@ -178,6 +180,10 @@ export const kioskVerifyPin = (payload: {
     predictedAction: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
     /** null = never asked → the kiosk shows the one-time consent screen. */
     faceConsent: FaceConsentStatus | null;
+    /** A shift left open from a past day: the worker is asked to fix it from their phone. */
+    missedClockOut?: { entryId: string; clockInAt: string } | null;
+    /** Before a clock-out where the state requires breaks: what to ask. */
+    breakQuestions?: { meal: boolean; rest: boolean } | null;
   }>('/kiosk/verify-pin', {
     method: 'POST',
     body: payload,
@@ -188,7 +194,8 @@ export const kioskVerifyPin = (payload: {
  *  Requires a valid PIN (it's their decision, asserted at the keypad). */
 export const kioskFaceConsent = (payload: {
   deviceToken: string;
-  pin: string;
+  pin?: string;
+  badgeToken?: string;
   consent: boolean;
 }) =>
   apiFetch<{ ok: true; status: FaceConsentStatus }>('/kiosk/face-consent', {
@@ -447,7 +454,8 @@ export interface KioskPunchResult {
 
 export const kioskPunch = (input: {
   deviceToken: string;
-  pin: string;
+  pin?: string;
+  badgeToken?: string;
   selfie: string | null;
   latitude?: number | null;
   longitude?: number | null;
@@ -455,6 +463,8 @@ export const kioskPunch = (input: {
   idempotencyKey?: string | null;
   clientPunchedAt?: string | null;
   intent?: 'BREAK' | null;
+  /** Where the state requires breaks: the answer given on the tablet before clocking out. */
+  breakAttestation?: { meal: 'YES' | 'NO' | 'WAIVED'; rest?: 'YES' | 'NO' | null } | null;
 }) =>
   apiFetch<KioskPunchResult>('/kiosk/punch', {
     method: 'POST',
@@ -465,3 +475,13 @@ export const kioskPunch = (input: {
     // apiFetch's `credentials: 'include'` default is fine here — the
     // server doesn't read cookies on this route.
   });
+
+/* ----- Badges (NFC tags and Wallet pass QR) ------------------------------- */
+
+/** The value to write onto an NFC badge for this clock-in number (audited). */
+export const getKioskPinBadge = (id: string) =>
+  apiFetch<{ badgeToken: string; badgeVersion: number; workerName: string }>(`/kiosk-pins/${id}/badge`);
+
+/** Reissue: every NFC badge and Wallet pass made before stops working; the number is kept. */
+export const reissueKioskPinBadge = (id: string) =>
+  apiFetch<{ badgeToken: string; badgeVersion: number }>(`/kiosk-pins/${id}/reissue-badge`, { method: 'POST' });

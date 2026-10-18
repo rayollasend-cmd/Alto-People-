@@ -13,7 +13,13 @@
 // re-run after fixing inputs.
 
 import type { BenefitsPlanKind, Prisma, PrismaClient } from '@prisma/client';
+import { findInChunks } from './chunkedIn.js';
 import { computeRetroPay, summarizeRetro, type RetroCandidate } from './retroPay.js';
+import { evaluateLivePay, loadLiveRules } from './laborRules/live.js';
+import { localParts } from './laborRules/evaluate.js';
+import { loadRoundingPolicies, roundPunches } from './punchRounding.js';
+import { unpaidPremiums } from './predictabilityPay.js';
+import { tenantIdForWrite } from './tenant.js';
 import {
   payableMs,
   round2,
@@ -125,7 +131,7 @@ const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
 };
 
 export interface ProjectedEarning {
-  kind: 'REGULAR' | 'OVERTIME' | 'DOUBLE_TIME' | 'RETRO' | AddOnKind;
+  kind: 'REGULAR' | 'OVERTIME' | 'DOUBLE_TIME' | 'RETRO' | 'PREMIUM' | AddOnKind;
   /** Null for flat-amount earnings (salary, bonus, commission…). */
   hours: number | null;
   rate: number | null;
@@ -237,6 +243,8 @@ export interface ProjectedItem {
   reimbursementIds: string[];
   /** Retroactive pay settled on this check (lib/retroPay.ts); persisted by the run. */
   retro: RetroCandidate[];
+  /** Predictability-pay rows this check pays (lib/predictabilityPay); stamped by the run. */
+  premiumIds: string[];
   retroPay: number;
   netPay: number;
   /** Employer-side accruals (informational; not deducted from net). */
@@ -287,10 +295,11 @@ export async function aggregatePayrollProjection(
       // without this include, payableMs sees no breaks and pays the full
       // clock span. That was a real production bug: 8h punched with a 1h
       // docked meal paid 8h while every report HR reconciled against said 7.
-      breaks: { select: { startedAt: true, endedAt: true } },
+      breaks: { select: { type: true, startedAt: true, endedAt: true } },
       // Site zone for premium-rule windows — differentials are wall-clock
-      // at the work site, not UTC.
-      location: { select: { timezone: true } },
+      // at the work site, not UTC. State and city resolve the labor rules
+      // a LIVE jurisdiction pays by (lib/laborRules/live).
+      location: { select: { id: true, state: true, city: true, timezone: true } },
       associate: {
         select: {
           id: true,
@@ -300,6 +309,9 @@ export async function aggregatePayrollProjection(
           employmentType: true,
           payrollSchedule: { select: { frequency: true } },
           localTaxRule: { select: { rate: true, isActive: true, name: true } },
+          stateW4s: {
+            select: { state: true, filingStatus: true, allowances: true, dependents: true, additionalWithholding: true, exempt: true, county: true },
+          },
           w4Submission: {
             select: {
               filingStatus: true,
@@ -319,6 +331,36 @@ export async function aggregatePayrollProjection(
     const arr = byAssociate.get(e.associateId) ?? [];
     arr.push(e);
     byAssociate.set(e.associateId, arr);
+  }
+
+  // Timekeeping and labor rules. Rounding (lib/punchRounding) changes the
+  // punches pay is computed from, never the entry; a jurisdiction a tenant
+  // has taken LIVE pays by its signed rules (lib/laborRules/live), with the
+  // meal a worker attested they waived honoured and one they said they
+  // didn't get paid as the premium.
+  const laborTenantId = tenantIdForWrite();
+  const [liveRules, rounding] = await Promise.all([loadLiveRules(tx, laborTenantId), loadRoundingPolicies(tx, laborTenantId)]);
+  if (rounding.any) {
+    for (const [id, list] of byAssociate) {
+      byAssociate.set(
+        id,
+        list.map((e) => {
+          const r = roundPunches(rounding.forSite(e.locationId), e.clockInAt, e.clockOutAt);
+          return r.rounded ? { ...e, clockInAt: r.clockInAt, clockOutAt: r.clockOutAt } : e;
+        }),
+      );
+    }
+  }
+  const mealAttestation = new Map<string, string>();
+  const premiumsByAssociate = new Map<string, Awaited<ReturnType<typeof unpaidPremiums>>>();
+  if (liveRules.any && entries.length > 0) {
+    const rows = await tx.breakAttestation.findMany({ where: { timeEntryId: { in: entries.map((e) => e.id) } }, select: { timeEntryId: true, meal: true } });
+    for (const r of rows) mealAttestation.set(r.timeEntryId, r.meal);
+    for (const p of await unpaidPremiums(tx, laborTenantId, [...byAssociate.keys()], periodStart, periodEndExclusive)) {
+      const arr = premiumsByAssociate.get(p.associateId) ?? [];
+      arr.push(p);
+      premiumsByAssociate.set(p.associateId, arr);
+    }
   }
 
   // Tier-2 — salaried associates get paid whether or not they punched a
@@ -434,6 +476,9 @@ export async function aggregatePayrollProjection(
     employmentType: true,
     payrollSchedule: { select: { frequency: true } },
     localTaxRule: { select: { rate: true, isActive: true, name: true } },
+    stateW4s: {
+      select: { state: true, filingStatus: true, allowances: true, dependents: true, additionalWithholding: true, exempt: true, county: true },
+    },
     w4Submission: {
       select: {
         filingStatus: true,
@@ -449,10 +494,12 @@ export async function aggregatePayrollProjection(
   for (const [id, group] of byAssociate) metaById.set(id, group[0].associate);
   const missingIds = [...universe].filter((id) => !metaById.has(id));
   if (missingIds.length > 0) {
-    const extra = await tx.associate.findMany({
-      where: { id: { in: missingIds }, deletedAt: null },
-      select: ASSOCIATE_META_SELECT,
-    });
+    const extra = await findInChunks(missingIds, (chunk) =>
+      tx.associate.findMany({
+        where: { id: { in: chunk }, deletedAt: null },
+        select: ASSOCIATE_META_SELECT,
+      }),
+    );
     for (const a of extra) metaById.set(a.id, a);
   }
 
@@ -519,9 +566,9 @@ export async function aggregatePayrollProjection(
     { electedAmountCentsPerPeriod: number; plan: { kind: BenefitsPlanKind } }[]
   >();
   if (universeIds.length > 0) {
-    const enrollRows = await tx.benefitsEnrollment.findMany({
+    const enrollRows = await findInChunks(universeIds, (chunk) => tx.benefitsEnrollment.findMany({
       where: {
-        associateId: { in: universeIds },
+        associateId: { in: chunk },
         effectiveDate: { lt: periodEndExclusive },
         OR: [{ terminationDate: null }, { terminationDate: { gte: periodStart } }],
       },
@@ -530,7 +577,7 @@ export async function aggregatePayrollProjection(
         electedAmountCentsPerPeriod: true,
         plan: { select: { kind: true } },
       },
-    });
+    }));
     for (const e of enrollRows) {
       const arr = enrollmentsByAssociate.get(e.associateId) ?? [];
       arr.push(e);
@@ -541,16 +588,16 @@ export async function aggregatePayrollProjection(
   type GarnishmentRow = Prisma.GarnishmentGetPayload<Record<string, never>>;
   const garnsByAssociate = new Map<string, GarnishmentRow[]>();
   if (universeIds.length > 0) {
-    const garnRows = await tx.garnishment.findMany({
+    const garnRows = await findInChunks(universeIds, (chunk) => tx.garnishment.findMany({
       where: {
-        associateId: { in: universeIds },
+        associateId: { in: chunk },
         status: 'ACTIVE',
         deletedAt: null,
         startDate: { lt: periodEndExclusive },
         OR: [{ endDate: null }, { endDate: { gte: periodStart } }],
       },
       orderBy: [{ associateId: 'asc' }, { priority: 'asc' }],
-    });
+    }));
     for (const g of garnRows) {
       const arr = garnsByAssociate.get(g.associateId) ?? [];
       arr.push(g);
@@ -563,15 +610,15 @@ export async function aggregatePayrollProjection(
     { id: string; totalAmount: Prisma.Decimal }[]
   >();
   if (universeIds.length > 0) {
-    const reimbRows = await tx.reimbursement.findMany({
+    const reimbRows = await findInChunks(universeIds, (chunk) => tx.reimbursement.findMany({
       where: {
-        associateId: { in: universeIds },
+        associateId: { in: chunk },
         status: 'SETTLED',
         payrollItemId: null,
       },
       select: { id: true, totalAmount: true, associateId: true },
       orderBy: { settledAt: 'asc' },
-    });
+    }));
     for (const r of reimbRows) {
       const arr = reimbByAssociate.get(r.associateId) ?? [];
       arr.push({ id: r.id, totalAmount: r.totalAmount });
@@ -611,6 +658,12 @@ export async function aggregatePayrollProjection(
     let otSplit = { regularHours: 0, overtimeHours: 0 };
     let regularPay = 0;
     let overtimePay = 0;
+    // Set only under LIVE labor rules: the engine's multipliers, double time and premiums.
+    let overtimeMultiplier = 1.5;
+    let doubleTimeHours = 0;
+    let doubleMultiplier = 2;
+    let doubleTimePay = 0;
+    const laborPremiums: ProjectedEarning[] = [];
     // Where the rate came from — surfaced on preview items so a silent
     // $15/hr default fallback (no comp record) is visible BEFORE money
     // moves, instead of requiring a row-by-row compare against People.
@@ -627,10 +680,61 @@ export async function aggregatePayrollProjection(
         input.hourlyRateOverride?.get(associateId) ??
         hourlyRateByAssociate.get(associateId) ??
         defaultRate;
-      otSplit = splitWeeklyOvertime(group);
-      regularPay = round2(otSplit.regularHours * hourlyRate);
-      overtimePay = round2(otSplit.overtimeHours * hourlyRate * 1.5);
+      const siteRef = (e: (typeof group)[number]) => (e.location ? { id: e.location.id, state: e.location.state, city: e.location.city } : null);
+      if (liveRules.any && group.some((e) => liveRules.activationFor(siteRef(e)))) {
+        // A LIVE jurisdiction: the engine splits the hours (daily, weekly,
+        // seventh-day, double time) and names the premiums, under the rows
+        // counsel signed; the person's other entries count as paid today.
+        const lp = evaluateLivePay(
+          liveRules,
+          group
+            .filter((e) => e.clockOutAt)
+            .map((e) => ({
+              id: e.id,
+              clockInAt: e.clockInAt,
+              clockOutAt: e.clockOutAt!,
+              breaks: e.breaks,
+              site: e.location ? { id: e.location.id, state: e.location.state, city: e.location.city, timezone: e.location.timezone } : null,
+              mealWaived: mealAttestation.get(e.id) === 'WAIVED',
+            })),
+        );
+        otSplit = { regularHours: lp.regularHours, overtimeHours: lp.overtimeHours };
+        overtimeMultiplier = lp.overtimeMultiplier;
+        doubleTimeHours = lp.doubleTimeHours;
+        doubleMultiplier = lp.doubleMultiplier;
+        regularPay = round2(otSplit.regularHours * hourlyRate);
+        overtimePay = round2(otSplit.overtimeHours * hourlyRate * overtimeMultiplier);
+        doubleTimePay = round2(doubleTimeHours * hourlyRate * doubleMultiplier);
+        const mealDays = new Set(lp.penalties.filter((p) => p.kind === 'MEAL').map((p) => p.entryId ?? p.date));
+        for (const p of lp.penalties) {
+          const amount = round2(p.hours * hourlyRate + (p.cents ?? 0) / 100);
+          if (amount <= 0) continue;
+          laborPremiums.push({ kind: 'PREMIUM', hours: p.hours || null, rate: p.hours ? hourlyRate : null, amount, isTaxable: true, note: p.label });
+        }
+        // The worker said they didn't get their meal break: the premium is owed even where the punches look clean.
+        for (const e of group) {
+          if (mealAttestation.get(e.id) !== 'NO' || mealDays.has(e.id)) continue;
+          const site = siteRef(e);
+          const rules = site ? liveRules.rulesFor(site, localParts(e.clockInAt, e.location?.timezone ?? 'America/New_York').date) : null;
+          const ph = rules?.params.meal?.penaltyHours ?? 0;
+          if (!rules || ph <= 0) continue;
+          const cite = rules.origin['meal.requiredAfterHours'] ?? rules.layers[rules.layers.length - 1];
+          laborPremiums.push({ kind: 'PREMIUM', hours: ph, rate: hourlyRate, amount: round2(ph * hourlyRate), isTaxable: true, note: `Meal premium — no meal break reported (${cite})` });
+        }
+      } else {
+        otSplit = splitWeeklyOvertime(group);
+        regularPay = round2(otSplit.regularHours * hourlyRate);
+        overtimePay = round2(otSplit.overtimeHours * hourlyRate * 1.5);
+      }
     }
+    // Predictability pay owed for late schedule changes in LIVE jurisdictions.
+    const myPremiums = premiumsByAssociate.get(associateId) ?? [];
+    for (const p of myPremiums) {
+      const amount = round2(Number(p.premiumHours) * (hourlyRate || 0) + p.premiumCents / 100);
+      if (amount <= 0) continue;
+      laborPremiums.push({ kind: 'PREMIUM', hours: Number(p.premiumHours) || null, rate: Number(p.premiumHours) ? hourlyRate : null, amount, isTaxable: true, note: `${p.rule} — shift ${p.change} ${p.workDate.toISOString().slice(0, 10)}` });
+    }
+    const laborPremiumPay = round2(laborPremiums.reduce((a, l) => a + l.amount, 0));
 
     // Tier-2 — client premium-pay rules applied to this associate's
     // entries: daily overtime past a threshold, and time-window / day-of-
@@ -729,6 +833,8 @@ export async function aggregatePayrollProjection(
     const grossPay = round2(
       regularPay +
         overtimePay +
+        doubleTimePay +
+        laborPremiumPay +
         premiumPay +
         salaryPay +
         tipsGross +
@@ -787,6 +893,13 @@ export async function aggregatePayrollProjection(
         otherIncome: w4?.otherIncome ? Number(w4.otherIncome) : 0,
         dependentsAmount: w4?.dependentsAmount ? Number(w4.dependentsAmount) : 0,
         sutaOverride,
+        // TAXCOMP — the state's own certificate for the state taxed here.
+        stateW4: (() => {
+          const c = associateState ? meta.stateW4s?.find((x) => x.state === associateState.toUpperCase()) : undefined;
+          return c
+            ? { filingStatus: c.filingStatus, allowances: c.allowances, dependents: c.dependents, additionalWithholding: Number(c.additionalWithholding), exempt: c.exempt, county: c.county }
+            : null;
+        })(),
       };
       // Full-gross pass drives SS / Medicare / SIT / employer taxes.
       const full = computePaycheckTaxes({
@@ -902,11 +1015,22 @@ export async function aggregatePayrollProjection(
       earnings.push({
         kind: 'OVERTIME',
         hours: otSplit.overtimeHours,
-        rate: round2(hourlyRate * 1.5),
+        rate: round2(hourlyRate * overtimeMultiplier),
         amount: overtimePay,
         isTaxable: true,
       });
     }
+    if (doubleTimeHours > 0) {
+      earnings.push({
+        kind: 'DOUBLE_TIME',
+        hours: doubleTimeHours,
+        rate: round2(hourlyRate * doubleMultiplier),
+        amount: doubleTimePay,
+        isTaxable: true,
+        note: 'Double time',
+      });
+    }
+    earnings.push(...laborPremiums);
     earnings.push(...premiumEarnings);
     if (salaryPay > 0) {
       // Flat per-period salary — REGULAR with no hours/rate (the enum
@@ -976,6 +1100,7 @@ export async function aggregatePayrollProjection(
       reimbursementsTotal,
       reimbursementIds,
       retro: retroCands,
+      premiumIds: myPremiums.map((p) => p.id),
       retroPay,
       netPay: finalNetPay,
       employerFica: breakdown.employer.fica,

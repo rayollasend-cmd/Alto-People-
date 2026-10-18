@@ -123,7 +123,6 @@ export function FinancialChangesQueue() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Financial changes"
         subtitle="Every bank, pay card, W-4, name, SSN and address change, the moment it is made. A new pay account is not paid until Finance verifies it by phone."
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Financial changes' }]}

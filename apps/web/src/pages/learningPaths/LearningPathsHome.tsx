@@ -100,7 +100,6 @@ export function LearningPathsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Learning paths"
         subtitle="Sequence courses into ordered tracks. People work through them in order."
         breadcrumbs={[{ label: term('nav.people') }, { label: 'Learning paths' }]}
@@ -503,7 +502,7 @@ function PathDetailDrawer({
                 Steps ({data.steps.length})
               </div>
               {data.steps.length === 0 ? (
-                <div className="text-sm text-silver italic">No steps yet.</div>
+                <EmptyState size="sm" title={"No steps yet."} />
               ) : (
                 <div className="space-y-1">
                   {data.steps.map((s, i) => (

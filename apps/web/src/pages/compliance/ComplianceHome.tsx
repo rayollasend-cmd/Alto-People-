@@ -55,7 +55,6 @@ export function ComplianceHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto"
         title="Compliance"
         subtitle={`Track I-9, background-check${hasJ1 ? ', drug-test and J-1' : ' and drug-test'} obligations across every active ${term('worker').toLowerCase()}.`}
         secondaryActions={

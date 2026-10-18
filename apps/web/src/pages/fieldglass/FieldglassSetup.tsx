@@ -207,7 +207,6 @@ export function FieldglassSetup() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Fieldglass setup"
         subtitle="Register new associates in Fieldglass, move transfers to their new client, close out separations — and keep every Worker ID on file."
         secondaryActions={

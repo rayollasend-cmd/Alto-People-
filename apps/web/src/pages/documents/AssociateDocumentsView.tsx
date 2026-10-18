@@ -317,7 +317,6 @@ export function AssociateDocumentsView() {
       <PullToRefreshIndicator state={pullState} />
       {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
       <ListTemplate
-        className="mx-auto"
         title={t('docs.title')}
         subtitle={t('docs.subtitle')}
         primaryAction={

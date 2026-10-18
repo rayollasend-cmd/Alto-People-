@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
@@ -40,22 +41,18 @@ const STAGE_TONE: Record<string, 'default' | 'pending' | 'success' | 'destructiv
 };
 
 export function PipelineSection() {
-  const [rows, setRows] = useState<Prospect[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const prospects = useQuery({
+    queryKey: ['executive', 'prospects'],
+    queryFn: () => apiFetch<{ prospects: Prospect[] }>('/executive/prospects'),
+  });
+  const rows = prospects.data?.prospects ?? null;
+  const error = prospects.error ? (prospects.error instanceof ApiError ? prospects.error.message : 'Could not load the pipeline.') : null;
   const [name, setName] = useState('');
   const [hours, setHours] = useState('');
   const [rate, setRate] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
-  const load = () => {
-    setError(null);
-    apiFetch<{ prospects: Prospect[] }>('/executive/prospects')
-      .then((r) => setRows(r.prospects))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the pipeline.'),
-      );
-  };
-  useEffect(load, []);
+  const load = () => void prospects.refetch();
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();

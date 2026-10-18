@@ -83,6 +83,7 @@ const KIND_LINK: Record<ApprovalRequestKind, (r: ApprovalRequest) => string> = {
   REQUISITION: () => '/org?tab=positions',
   ROLE_CHANGE: () => '/admin/users',
   WORKFLOW_GATE: () => '/workflows?tab=runs',
+  LABOR_RULES_LIVE: () => '/payroll/labor-rules',
 };
 
 /** The link a decider opens to see the subject. */

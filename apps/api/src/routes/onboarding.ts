@@ -94,6 +94,7 @@ import {
 } from '../lib/financialChanges.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { withMandatoryTasks } from '../lib/checklistTasks.js';
+import { wotcEnabled } from '../lib/wotc.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { CsvParseError, parseCsv } from '../lib/csv.js';
@@ -459,6 +460,8 @@ export async function inviteOneApplicant(
         order: t.order,
         dueOffsetDays: t.dueOffsetDays ?? null,
       })),
+      // WOTC pre-screening, when this tenant screens W-2 hires.
+      { wotc: !isContractor && (await wotcEnabled(tx)) },
     );
 
     const application = await tx.application.create({

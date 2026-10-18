@@ -241,6 +241,8 @@ export function OpsRunner() {
     return <Skeleton className="h-64" />;
   }
   return (
+    <>
+    {clock.breakPrompt}
     <ShiftRunner
       detail={detail}
       refresh={load}
@@ -264,6 +266,7 @@ export function OpsRunner() {
         }
       }}
     />
+    </>
   );
 }
 
@@ -305,7 +308,7 @@ function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
     const pct = helping.sopTotal > 0 ? Math.round((helping.sopDone / helping.sopTotal) * 100) : 0;
     return (
       <Card className="border-gold/40 bg-gold/[0.05]">
-        <CardContent className="space-y-3 p-5">
+        <CardContent className="space-y-3">
           <div>
             <div className="text-2xs uppercase tracking-[0.2em] text-gold">{tr('opsRun.yourShiftSop')}</div>
             <div className="mt-1 text-lg font-medium text-white">
@@ -473,6 +476,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
 
   return (
     <div className="space-y-4">
+      {clock.breakPrompt}
       {clientPicker}
       {/* Hero: the day, framed. */}
       <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">

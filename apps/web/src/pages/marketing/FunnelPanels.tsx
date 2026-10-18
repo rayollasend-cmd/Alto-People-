@@ -81,7 +81,7 @@ export function PostingsPanel({ o }: { o: MarketingOverview }) {
   const rows = o.byPosting.slice(0, 12);
   return (
     <Card>
-      <CardContent className="p-4 md:p-5">
+      <CardContent>
         <SectionTitle title="By posting" description="Views and applicants per job on the careers site." as="h3" />
         {rows.length === 0 ? (
           <EmptyState title="No postings in the range" description="Open a posting and its views and applicants show here." className="py-6" />
@@ -115,7 +115,7 @@ export function WeeklyChart({ o }: { o: MarketingOverview }) {
   const data = o.weekly.map((w) => ({ week: w.weekStart.slice(5), views: w.views, applicants: w.applicants, hires: w.hires }));
   return (
     <Card>
-      <CardContent className="p-4 md:p-5">
+      <CardContent>
         <SectionTitle title="Week by week" description="Views against applicants and hires." as="h3" />
         {data.length === 0 ? (
           <EmptyState title="No activity in the range" description="Views and applications show here week by week." className="py-6" />

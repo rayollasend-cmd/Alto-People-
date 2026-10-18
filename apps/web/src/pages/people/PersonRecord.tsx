@@ -6,6 +6,7 @@ import type { DirectoryEntry, TimeEntry, TimeOffEntitlement, TimeOffRequest } fr
 import { RecordTemplate } from '@/components/templates';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
 import { Avatar, Badge, Button, Card, CardContent, EmptyState, Label, MetricCard, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
+import { StateCertificateCard } from '@/components/payroll/StateCertificateCard';
 import { getCareerPosition } from '@/lib/career126Api';
 import { CareerLadderView } from '@/pages/career/CareerPosition';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -30,6 +31,7 @@ import { CATEGORY_LABELS as CASE_CATEGORY_LABELS, listCaseQueue, type QueueCaseR
 import { StatusBadge, statusLabel, statusTone } from '@/lib/status';
 import { CompensationTab, DocumentsTab, EmploymentTab, PaymentsTab, ProfileTab } from './PeopleDirectory';
 import { PromoteDialog } from './PromoteDialog';
+import { ProtectedLeaveFlag } from '../leave/ProtectedLeaveFlag';
 
 /**
  * One person's record (UX upgrade, 2026-10-16 — Rippling's one-record
@@ -181,6 +183,7 @@ export function PersonRecord() {
               <PaymentsTab associateId={a.id} />
             </div>
           )}
+          {can('process:payroll') && <StateCertificateCard mode="hr" associateId={a.id} />}
         </div>
       ),
     },
@@ -207,6 +210,7 @@ export function PersonRecord() {
         <span className="inline-flex flex-wrap items-center gap-2">
           <StatusBadge status={a.status} size="lg" />
           {a.j1Status && <Badge variant="default">J-1</Badge>}
+          <ProtectedLeaveFlag associateId={associateId} />
           {statusWhy && <span className="text-xs text-ink-muted">{statusWhy}</span>}
         </span>
       }
@@ -270,7 +274,7 @@ export function PersonRecord() {
         </>
       }
       summary={
-        <div className="grid gap-[var(--d-stack)] sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-[var(--d-stack)] xl:grid-cols-5">
           <MetricCard label="Start date" value={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'} hint={`On record since ${fmtDate(a.createdAt)}`} />
           <MetricCard
             label={term('manager')}
@@ -711,7 +715,7 @@ function CasesTab({ query, workerWord }: { query: ReturnType<typeof usePersonCas
   }
   return (
     <div className="space-y-4">
-      <div className="grid gap-[var(--d-stack)] sm:grid-cols-2">
+      <div className="grid grid-cols-2 gap-[var(--d-stack)]">
         <MetricCard label="Open cases" value={String(open)} accent={open > 0} hint={open > 0 ? 'Still being worked' : 'Everything resolved'} />
         <MetricCard label="All cases" value={String(rows.length)} hint="Filed from their account" />
       </div>

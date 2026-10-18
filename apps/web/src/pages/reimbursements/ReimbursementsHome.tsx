@@ -222,7 +222,6 @@ export function ReimbursementsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={t('rmb.title')}
         subtitle={
           // Admins keep the fuller workflow line; associates get their own voice.
@@ -607,7 +606,7 @@ function ReimbursementDrawer({
               </div>
             )}
             <Card>
-              <CardContent className="p-4 space-y-3">
+              <CardContent className="space-y-3">
                 <div className="flex justify-between items-center">
                   <div className="text-sm font-medium text-white">{t('rmb.lineItems')}</div>
                   {editable && (

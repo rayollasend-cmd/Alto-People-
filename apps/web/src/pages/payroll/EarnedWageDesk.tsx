@@ -116,7 +116,7 @@ export function EarnedWageDesk() {
 function Stat({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
     <Card>
-      <CardContent className="pt-4">
+      <CardContent>
         <div className="text-2xs font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</div>
         <div className="mt-2 font-display text-2xl leading-none tabular-nums text-ink">{value}</div>
         <div className="mt-1.5 truncate text-xs text-ink-muted">{hint}</div>

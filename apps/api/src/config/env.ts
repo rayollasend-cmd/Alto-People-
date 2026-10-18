@@ -66,6 +66,33 @@ const EnvSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().optional(),
+  // Native app push (apps/mobile). All optional — absent, native push is a
+  // no-op and web push keeps working. APNs uses token auth (.p8 key);
+  // FCM uses the HTTP v1 API with a service account.
+  APNS_KEY_ID: z.string().optional(),
+  APNS_TEAM_ID: z.string().optional(),
+  /** The .p8 key's PEM text (newlines may be written as \n). */
+  APNS_PRIVATE_KEY: z.string().optional(),
+  APNS_BUNDLE_ID: z.string().default('com.altohr.people'),
+  APNS_ENV: z.enum(['production', 'sandbox']).default('production'),
+  FCM_PROJECT_ID: z.string().optional(),
+  FCM_CLIENT_EMAIL: z.string().optional(),
+  FCM_PRIVATE_KEY: z.string().optional(),
+  // Apple Wallet worker badge (PassKit). Absent → "Add to Apple Wallet"
+  // answers 503 wallet_not_configured with what to set.
+  PASS_TYPE_ID: z.string().optional(),
+  PASS_TEAM_ID: z.string().optional(),
+  PASS_CERT_PEM: z.string().optional(),
+  PASS_KEY_PEM: z.string().optional(),
+  PASS_KEY_PASSPHRASE: z.string().optional(),
+  /** Apple's WWDR intermediate certificate (G4), PEM. */
+  PASS_WWDR_PEM: z.string().optional(),
+  // Google Wallet worker badge (Generic pass, "Save to Google Wallet" JWT).
+  GOOGLE_WALLET_ISSUER_ID: z.string().optional(),
+  GOOGLE_WALLET_CLIENT_EMAIL: z.string().optional(),
+  GOOGLE_WALLET_PRIVATE_KEY: z.string().optional(),
+  /** Signs NFC badges and Wallet pass QR codes; derived from KIOSK_PIN_SECRET when unset. */
+  KIOSK_BADGE_SECRET: z.string().min(32).optional(),
   RESEND_API_KEY: z.string().optional(),
   // Sender shown in real Resend emails. Required only when RESEND_API_KEY is set.
   // Must match Resend's accepted formats:
@@ -222,6 +249,19 @@ const EnvSchema = z.object({
   // the person is on (lib/assistantModel).
   ANTHROPIC_API_KEY: z.string().optional(),
   ASSISTANT_MODEL: z.string().default('claude-opus-5'),
+  // Call-outs by phone and text (lib/callOuts, routes/voice): Twilio's
+  // webhooks are verified with the auth token. Unset: the voice/SMS
+  // webhooks answer 503 and nothing else changes.
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  // The public base URL Twilio calls (e.g. https://api.example.com) — the
+  // signature covers the exact URL. Unset: rebuilt from the request.
+  TWILIO_WEBHOOK_BASE_URL: z.string().url().optional(),
+  // Signs the assistant's proposed actions (lib/assistantActions). Unset:
+  // derived from SESSION_SECRET/JWT secret.
+  ASSISTANT_ACTION_SECRET: z.string().min(16).optional(),
+  // Nightly retention scoring (lib/retention). 0 turns it off.
+  RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Van trail retention sweep (RideRunPing rows >30 days). 0 disables.
   VAN_TRAIL_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Daily compliance-score snapshot (org + per-client). The interval is only
@@ -306,6 +346,13 @@ const EnvSchema = z.object({
   // ramp gap) — drives the executive turnover-cost figure.
   EXEC_COST_PER_SEPARATION: z.coerce.number().min(0).default(400),
   LABOR_OVERHEAD_PER_HOUR: z.coerce.number().min(0).default(0),
+  // Market rates (lib/marketWages): the BLS public API key raises the daily
+  // quota and the series-per-request limit (50 vs 25). Without it the
+  // refresh still works, more slowly; OEWS tables can also be imported.
+  BLS_API_KEY: z.string().optional(),
+  MARKET_WAGE_REFRESH_HOURS: z.coerce.number().min(1).max(24 * 31).default(24 * 7),
+  // The margin a bill rate is priced to when a client has no target set.
+  DEFAULT_TARGET_MARGIN_PCT: z.coerce.number().min(0).max(90).default(25),
   // Schedule gate on kiosk clock-ins (product owner, 2026-08-19): a fresh
   // CLOCK_IN requires an ASSIGNED shift covering the punch (2h early
   // allowance). Blocked punches park as a ClockInRequest for a supervisor
@@ -435,7 +482,9 @@ const EnvSchema = z.object({
   // existing deployment. See apps/api/STORAGE.md.
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   /** Brief 2-1, step two: the tenant wall. observe records, enforce throws, off disables the hook. */
-  TENANCY_MODE: z.enum(['off', 'observe', 'enforce']).default('observe'),
+  // Every tenant table is narrowed to the caller's tenant (lib/tenantGuard). `observe` is the
+  // emergency fallback; the cross-tenant and site-scope suites pass under enforce.
+  TENANCY_MODE: z.enum(['off', 'observe', 'enforce']).default('enforce'),
   // Required when STORAGE_DRIVER=s3 (fail-loud guard below); ignored for
   // local. ENDPOINT only for non-AWS providers. Credentials are optional —
   // when unset, the SDK default provider chain (IAM role / env) applies;

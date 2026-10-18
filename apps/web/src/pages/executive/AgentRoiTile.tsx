@@ -31,7 +31,7 @@ export function AgentRoiTile() {
   return (
     <Link to="/agents" className="block h-full" aria-label="Agents: hours saved and cost, last 30 days">
       <Card className="h-full transition-colors hover:border-accent/40">
-        <CardContent className="p-4">
+        <CardContent>
           <div className="flex items-center gap-1.5 text-xs text-ink-muted">
             <Bot className="h-3.5 w-3.5" aria-hidden="true" />
             Agents · 30 days

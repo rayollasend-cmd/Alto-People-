@@ -17,8 +17,7 @@ import { effectiveClientIdFilter } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { ledWindows } from '../lib/shiftWindows.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
-import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
-import { runShiftFill, broadcastWindowPassed } from '../lib/workforceAgent.js';
+import { runCoverFlow } from '../lib/coverShift.js';
 
 /**
  * The floor — what a store's supervisors need in the moment, from a phone.
@@ -455,11 +454,7 @@ const CoverBody = z.object({
   reason: z.string().trim().max(300).optional(),
 });
 
-export interface CoverStep {
-  key: 'post' | 'bench' | 'agent';
-  status: 'done' | 'waiting' | 'skipped';
-  detail: string;
-}
+export type { CoverStep } from '../lib/coverShift.js';
 
 floorRouter.post('/floor/cover/:shiftId', requireCapability('manage:scheduling'), async (req, res, next) => {
   try {
@@ -477,47 +472,12 @@ floorRouter.post('/floor/cover/:shiftId', requireCapability('manage:scheduling')
     if (shift.status === 'ASSIGNED' && shift.assignedAssociateId && !parsed.data.release) {
       throw new HttpError(409, 'shift_assigned', 'Someone holds this shift. Release them to cover it.', { assignedAssociateId: shift.assignedAssociateId });
     }
-    const now = new Date();
-    const steps: CoverStep[] = [];
-
-    // 1. Post it: open, published — on the Open shifts page for the bench.
-    const released = shift.status === 'ASSIGNED' && !!shift.assignedAssociateId;
-    const updated = await prisma.shift.update({
-      where: { id: shift.id },
-      data: {
-        status: 'OPEN',
-        assignedAssociateId: null,
-        acknowledgedAt: null,
-        publishedAt: shift.publishedAt ?? now,
-        ...(released && parsed.data.reason ? { notes: [shift.notes, `Released ${now.toISOString().slice(0, 10)}: ${parsed.data.reason}`].filter(Boolean).join('\n') } : {}),
-      },
-      select: { id: true, publishedAt: true },
-    });
-    steps.push({ key: 'post', status: 'done', detail: released ? 'Released and posted to Open shifts.' : shift.publishedAt ? 'Already on Open shifts.' : 'Posted to Open shifts.' });
+    // The three moves (lib/coverShift): post it, ask the bench, the agent.
+    const { released, steps } = await runCoverFlow(prisma, shift, { reason: parsed.data.reason ?? null });
     if (released && shift.assignedAssociateId) {
       void trackNotificationWork(
         notifyUser(user.id, { subject: `Released from ${shift.position}`, body: `The ${shift.position} shift was released and is being covered.`, category: 'scheduling', quiet: true }),
       );
-    }
-
-    // 2. The bench: everyone placed here and free, invited once, one-tap pickup.
-    try {
-      const r = await runShiftAutofillSweep(prisma, now, { clientId: shift.clientId ?? undefined });
-      steps.push({ key: 'bench', status: 'done', detail: r.invitesSent > 0 ? `${r.invitesSent} on the bench invited.` : 'The bench was already asked, or nobody is free.' });
-    } catch {
-      steps.push({ key: 'bench', status: 'skipped', detail: 'Could not reach the bench just now.' });
-    }
-
-    // 3. The agent: proposes a fill once the bench has had its window.
-    if (broadcastWindowPassed({ publishedAt: updated.publishedAt, startsAt: shift.startsAt }, now)) {
-      try {
-        const r = await runShiftFill(prisma, now);
-        steps.push({ key: 'agent', status: 'done', detail: r.skipped ? 'The agent is off; your approvals carry it.' : r.proposed > 0 ? `${r.proposed} proposal${r.proposed === 1 ? '' : 's'} in your Approvals.` : 'Nothing to propose yet.' });
-      } catch {
-        steps.push({ key: 'agent', status: 'skipped', detail: 'The agent could not run just now.' });
-      }
-    } else {
-      steps.push({ key: 'agent', status: 'waiting', detail: 'The agent proposes a fill if the bench has not taken it in two hours.' });
     }
 
     enqueueAudit(

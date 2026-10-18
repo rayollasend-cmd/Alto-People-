@@ -708,7 +708,7 @@ function Tile({
 }) {
   const body = (
     <Card className={to ? 'h-full transition-colors hover:border-gold/40' : 'h-full'}>
-      <CardContent className="p-4">
+      <CardContent>
         <div className="text-xs text-silver">{label}</div>
         <div className="mt-1 flex items-baseline gap-2">
           <span className="text-2xl font-semibold tabular-nums text-white">{value}</span>
@@ -872,7 +872,7 @@ export function ExecutiveDashboard() {
   const workersLc = term('workers').toLowerCase();
   const heroCard = summary ? (
     <Card className="overflow-hidden">
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-xs uppercase tracking-wider text-silver/70">
@@ -1081,7 +1081,7 @@ export function ExecutiveDashboard() {
           building it's stuck in. */}
       {batons && (
         <Card>
-          <CardContent className="p-4">
+          <CardContent>
             <SectionTitle
               title={t('execHome.batons')}
               trailing={<span className="text-2xs text-ink-muted">{t('execHome.batonsHint')}</span>}

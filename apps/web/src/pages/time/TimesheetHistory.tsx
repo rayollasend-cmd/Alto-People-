@@ -160,7 +160,6 @@ export function TimesheetHistory() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          className="space-y-4"
           title="Timesheet history" breadcrumbs={[{ label: 'Fieldglass hours', to: '/time-attendance/timesheets' }, { label: 'History' }]}
       >
         <EmptyState
@@ -176,7 +175,6 @@ export function TimesheetHistory() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={a.name}
         subtitle="Timesheet history — every week worked, by the pay period that paid it, and where it stands in Fieldglass."
         breadcrumbs={[{ label: 'Fieldglass hours', to: '/time-attendance/timesheets' }, { label: a.name }]}

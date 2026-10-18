@@ -143,7 +143,6 @@ export function BenefitsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto space-y-6"
         title="Benefits"
         subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
         secondaryActions={lifecycleLink}

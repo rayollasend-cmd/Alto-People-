@@ -14,7 +14,9 @@
 // so we have ONE source of truth for what counts as an exception.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { isStateTaxSupported, supportedStates } from './payrollTax.js';
+import { findInChunks } from './chunkedIn.js';
+import { isStateTaxSupported, primeStateAcknowledgments, stateAwaitingReview, supportedStates } from './payrollTax.js';
+import { mdCountyRate } from './stateWithholding.js';
 import { sumApprovedHours, splitWeeklyOvertime } from './payroll.js';
 import { computeRetroPay, summarizeRetro } from './retroPay.js';
 
@@ -34,7 +36,8 @@ export type ExceptionKind =
   | 'UNSUPPORTED_STATE'
   | 'UNAPPROVED_TIME'
   | 'MISSING_COMP_RECORD'
-  | 'RETRO_PAY';
+  | 'RETRO_PAY'
+  | 'STATE_W4_INCOMPLETE';
 
 export type ExceptionSeverity = 'BLOCKING' | 'WARNING' | 'INFO';
 
@@ -56,6 +59,7 @@ const SEVERITY: Record<ExceptionKind, ExceptionSeverity> = {
   UNAPPROVED_TIME: 'WARNING',
   MISSING_COMP_RECORD: 'WARNING',
   RETRO_PAY: 'INFO',
+  STATE_W4_INCOMPLETE: 'WARNING',
 };
 
 export interface ExceptionsResult {
@@ -106,6 +110,7 @@ export async function computePayrollExceptions(
           employmentType: true,
           deletedAt: true,
           w4Submission: { select: { id: true } },
+          stateW4s: { select: { state: true, county: true } },
           payoutMethods: {
             where: { isPrimary: true },
             select: { id: true, type: true, branchCardId: true, accountNumberEnc: true },
@@ -123,6 +128,8 @@ export async function computePayrollExceptions(
   }
 
   const exceptions: PayrollExceptionRow[] = [];
+  // Which added states this tenant's payroll admin has reviewed.
+  await primeStateAcknowledgments(tx);
 
   for (const [associateId, group] of byAssociate) {
     const a = group[0].associate;
@@ -188,7 +195,17 @@ export async function computePayrollExceptions(
     // 5. UNSUPPORTED_STATE — only for W-2; 1099 has no SIT to compute.
     // BLOCKING: nothing would be withheld, so the run cannot finalize with
     // this person in it until the state is covered (or configured).
-    if (a.employmentType === 'W2_EMPLOYEE' && !isStateTaxSupported(a.state)) {
+    const awaiting = a.employmentType === 'W2_EMPLOYEE' ? stateAwaitingReview(a.state) : null;
+    if (awaiting) {
+      exceptions.push({
+        associateId,
+        associateName,
+        kind: 'UNSUPPORTED_STATE',
+        severity: SEVERITY.UNSUPPORTED_STATE,
+        message: `${awaiting.name} withholding (${awaiting.taxYear} tables) hasn’t been reviewed yet. A payroll admin confirms it was reviewed with your tax adviser in Payroll → State tax coverage, and this run can finalize.`,
+        detail: { state: awaiting.state, taxYear: awaiting.taxYear, reason: 'awaiting_review' },
+      });
+    } else if (a.employmentType === 'W2_EMPLOYEE' && !isStateTaxSupported(a.state)) {
       exceptions.push({
         associateId,
         associateName,
@@ -199,6 +216,21 @@ export async function computePayrollExceptions(
           : `No work state on file — state income tax cannot be computed. Supported: ${supportedStates().join(', ')}.`,
         detail: { state: a.state ?? null, supported: supportedStates() },
       });
+    }
+    // 6. STATE_W4_INCOMPLETE — Maryland withholds county tax by the MW507
+    // county; without one the most common rate stands in.
+    if (a.employmentType === 'W2_EMPLOYEE' && a.state?.toUpperCase() === 'MD') {
+      const mw507 = a.stateW4s.find((c) => c.state === 'MD');
+      if (!mdCountyRate(mw507?.county).known) {
+        exceptions.push({
+          associateId,
+          associateName,
+          kind: 'STATE_W4_INCOMPLETE',
+          severity: SEVERITY.STATE_W4_INCOMPLETE,
+          message: 'No Maryland county on their MW507 — county tax is withheld at 3.20% until one is recorded.',
+          detail: { state: 'MD', field: 'county' },
+        });
+      }
     }
   }
 
@@ -252,10 +284,12 @@ export async function computePayrollExceptions(
   // record silently falls back to the wizard's default hourly rate.
   const inRunIds = [...byAssociate.keys()];
   if (inRunIds.length > 0) {
-    const comps = await tx.compensationRecord.findMany({
-      where: { associateId: { in: inRunIds }, effectiveTo: null },
-      select: { associateId: true },
-    });
+    const comps = await findInChunks(inRunIds, (chunk) =>
+      tx.compensationRecord.findMany({
+        where: { associateId: { in: chunk }, effectiveTo: null },
+        select: { associateId: true },
+      }),
+    );
     const withComp = new Set(comps.map((c) => c.associateId));
     for (const [associateId, group] of byAssociate) {
       if (withComp.has(associateId)) continue;

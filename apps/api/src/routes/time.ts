@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { recordBreakAttestation } from '../lib/timeCorrections.js';
 import { Prisma, type BreakType } from '@prisma/client';
 import {
   ActiveDashboardResponseSchema,
@@ -541,7 +542,7 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { notes, geo } = parsed.data;
+    const { notes, geo, breakAttestation } = parsed.data;
 
     // A supervisor submits their shift's SOP before they clock out — done,
     // or submitted incomplete with a reason (the way out is always there).
@@ -664,6 +665,12 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
       },
       req,
     });
+
+    // "Did you get your meal break?" — kept with the entry; a "no" is paid
+    // where the labor rules are live, else the lead hears (lib/timeCorrections).
+    if (breakAttestation) {
+      await recordBreakAttestation(prisma, { tenantId: tenantIdForWrite(), associateId: updated.associateId, entry: { id: updated.id, clientId: updated.clientId, locationId: updated.locationId, clockInAt: updated.clockInAt } }, breakAttestation);
+    }
 
     res.json(await toEntry(updated));
   } catch (err) {

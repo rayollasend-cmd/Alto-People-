@@ -1,0 +1,9 @@
+# Firebase config (per environment, kept out of git — see README).
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist
+# Build output
+android/app/build/
+android/build/
+android/.gradle/
+ios/App/build/
+ios/DerivedData/

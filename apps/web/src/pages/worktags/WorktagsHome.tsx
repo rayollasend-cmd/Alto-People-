@@ -59,7 +59,6 @@ export function WorktagsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Worktags"
         subtitle="Multi-dimensional categorical tags for spend tracking and reporting (Department, Project, GL Account, Region)."
         breadcrumbs={[{ label: 'Finance' }, { label: 'Worktags' }]}

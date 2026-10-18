@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
-import { hapticConfirm, hapticSuccess } from '@/lib/haptics';
+import { hapticConfirm, hapticError, hapticSuccess } from '@/lib/haptics';
+import { BadgeReader } from './BadgeReader';
 import {
   kioskAttachFace,
   kioskConfig,
@@ -34,6 +35,7 @@ import {
 import { cachedConsent, rememberConsent } from '@/lib/kioskConsentCache';
 import { useKioskAppManifest } from '@/lib/kioskInstall';
 import { KioskInstallButton } from './KioskInstallButton';
+import { fmtDate } from '@/lib/format';
 
 /**
  * Phase 99 — Public kiosk page. No auth, no Layout — full-screen UI a
@@ -67,6 +69,8 @@ type Stage =
   | 'pin'
   | 'consent'
   | 'confirmOut'
+  // Where the state requires breaks: "did you get your meal break?" before clocking out.
+  | 'breakQ'
   | 'selfie'
   | 'submitting'
   | 'result'
@@ -109,6 +113,18 @@ interface KioskStrings {
   cancel: string;
   tryAgain: string;
   wrongPin: string;
+  badgeNotRecognized: string;
+  tapBadge: string;
+  scanBadge: string;
+  badgeHold: string;
+  badgeHoldCamera: string;
+  badgeReading: string;
+  badgeRead: string;
+  nfcOff: string;
+  badgeTimeout: string;
+  notABadge: string;
+  cameraBlocked: string;
+  orTypeNumber: string;
   oneAtATime: string;
   notClockedIn: string;
   notOnScheduleTitle: string;
@@ -123,6 +139,8 @@ interface KioskStrings {
   verifying: string;
   smile: string;
   notYou: string;
+  /** A shift left open from a past day (the worker fixes it from their phone). */
+  missedOut: (date: string) => string;
   centerFace: string;
   privacy: string;
   cameraUnavailable: string;
@@ -130,6 +148,12 @@ interface KioskStrings {
   confirmOutTitle: string;
   confirmOutBreak: string;
   confirmOutLeave: string;
+  breakMeal: string;
+  breakRest: string;
+  breakWhy: string;
+  yes: string;
+  no: string;
+  breakSkipped: string;
   greet: Record<KioskPunchAction, string>;
   resultPrefix: Record<KioskPunchAction, string>;
   resultVerb: Record<KioskPunchAction, string>;
@@ -158,6 +182,18 @@ const STRINGS: Record<Lang, KioskStrings> = {
     cancel: 'Cancel',
     tryAgain: 'Try again',
     wrongPin: 'Wrong clock-in number. Try again.',
+    badgeNotRecognized: 'This badge isn’t recognized here — it may have been replaced. Type your clock-in number instead.',
+    tapBadge: 'Tap badge',
+    scanBadge: 'Scan badge',
+    badgeHold: 'Hold your badge to the top of the tablet',
+    badgeHoldCamera: 'Hold the code on your badge or phone up to the camera',
+    badgeReading: 'Reading your badge…',
+    badgeRead: 'Badge read',
+    nfcOff: 'Badge tap is turned off on this tablet. Type your clock-in number instead.',
+    badgeTimeout: 'We didn’t feel a badge. Try again, or type your number.',
+    notABadge: 'That card isn’t an Alto badge. Type your clock-in number instead.',
+    cameraBlocked: 'The camera isn’t available. Type your clock-in number instead.',
+    orTypeNumber: 'or type your number',
     oneAtATime: 'One at a time — wait a second, then tap Try again.',
     notClockedIn: "You're not clocked in — turn off break to clock in.",
     notOnScheduleTitle: "You're not on today's schedule",
@@ -176,6 +212,7 @@ const STRINGS: Record<Lang, KioskStrings> = {
     verifying: 'Verifying…',
     smile: 'Smile for the camera',
     notYou: 'Not you? Tap Cancel below.',
+    missedOut: (date) => `You didn’t clock out on ${date}. Tell us when you left in the app’s Time tab.`,
     centerFace: 'Center your face in the oval',
     privacy: 'Your photo is used only to verify this time punch.',
     cameraUnavailable: 'Camera unavailable',
@@ -183,6 +220,12 @@ const STRINGS: Record<Lang, KioskStrings> = {
     confirmOutTitle: 'Done for the day,',
     confirmOutBreak: '☕ Just taking a break',
     confirmOutLeave: 'Leaving — clock me out',
+    breakMeal: 'Did you get your meal break today?',
+    breakRest: 'Did you get your rest breaks?',
+    breakWhy: 'The law here requires breaks. If you missed one, say so — it’s put right on your pay.',
+    yes: 'Yes',
+    no: 'No',
+    breakSkipped: 'I chose to skip it',
     greet: {
       CLOCK_IN: 'Clocking you in',
       CLOCK_OUT: 'Clocking you out',
@@ -224,6 +267,18 @@ const STRINGS: Record<Lang, KioskStrings> = {
     cancel: 'Cancelar',
     tryAgain: 'Reintentar',
     wrongPin: 'Número para marcar incorrecto. Intenta de nuevo.',
+    badgeNotRecognized: 'Esta credencial no se reconoce aquí; puede que la hayan reemplazado. Escribe tu número para marcar.',
+    tapBadge: 'Acercar credencial',
+    scanBadge: 'Escanear credencial',
+    badgeHold: 'Acerca tu credencial a la parte de arriba de la tableta',
+    badgeHoldCamera: 'Acerca a la cámara el código de tu credencial o teléfono',
+    badgeReading: 'Leyendo tu credencial…',
+    badgeRead: 'Credencial leída',
+    nfcOff: 'La lectura de credenciales está desactivada en esta tableta. Escribe tu número para marcar.',
+    badgeTimeout: 'No detectamos ninguna credencial. Inténtalo de nuevo o escribe tu número.',
+    notABadge: 'Esa tarjeta no es una credencial de Alto. Escribe tu número para marcar.',
+    cameraBlocked: 'La cámara no está disponible. Escribe tu número para marcar.',
+    orTypeNumber: 'o escribe tu número',
     oneAtATime: 'Uno a la vez — espera un segundo y toca Reintentar.',
     notClockedIn: 'No has marcado entrada — desactiva el descanso para entrar.',
     notOnScheduleTitle: 'No estás en el horario de hoy',
@@ -242,6 +297,7 @@ const STRINGS: Record<Lang, KioskStrings> = {
     verifying: 'Verificando…',
     smile: 'Sonríe para la cámara',
     notYou: '¿No eres tú? Toca Cancelar abajo.',
+    missedOut: (date) => `No marcaste la salida el ${date}. Dinos cuándo saliste en la pestaña Tiempo de la app.`,
     centerFace: 'Centra tu cara en el óvalo',
     privacy: 'Tu foto se usa solo para verificar esta marcación.',
     cameraUnavailable: 'Cámara no disponible',
@@ -249,6 +305,12 @@ const STRINGS: Record<Lang, KioskStrings> = {
     confirmOutTitle: '¿Terminaste por hoy,',
     confirmOutBreak: '☕ Solo voy a descansar',
     confirmOutLeave: 'Me voy — marcar salida',
+    breakMeal: '¿Tuviste tu descanso para comer hoy?',
+    breakRest: '¿Tuviste tus descansos cortos?',
+    breakWhy: 'Aquí la ley exige descansos. Si te faltó uno, dilo — se corrige en tu pago.',
+    yes: 'Sí',
+    no: 'No',
+    breakSkipped: 'Decidí no tomarlo',
     greet: {
       CLOCK_IN: 'Marcando tu entrada',
       CLOCK_OUT: 'Marcando tu salida',
@@ -295,6 +357,10 @@ export function KioskPage() {
   const [stage, setStage] = useState<Stage>('idle');
   const [token, setToken] = useState<string | null>(null);
   const [pin, setPin] = useState('');
+  // A badge credential (NFC tap or Wallet QR) used instead of the number,
+  // for this one punch. A ref: the reader sets it and runs the preflight in
+  // the same tick, before React re-renders.
+  const badgeRef = useRef<string | null>(null);
   const [intent, setIntent] = useState<Intent>(null);
   const [result, setResult] = useState<PunchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -315,7 +381,12 @@ export function KioskPage() {
     firstName: string;
     predictedAction: KioskPunchAction;
     faceConsent: FaceConsentStatus | null;
+    missedClockOutAt?: string | null;
+    breakQuestions?: { meal: boolean; rest: boolean } | null;
   } | null>(null);
+  // The break answer, carried into the clock-out punch (lib/timeCorrections on the API).
+  const breakAnswerRef = useRef<{ meal: 'YES' | 'NO' | 'WAIVED'; rest?: 'YES' | 'NO' | null } | null>(null);
+  const [breakMealAnswer, setBreakMealAnswer] = useState<'YES' | 'NO' | 'WAIVED' | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
   // Punches the server permanently refused during a drain. Anything >0
@@ -562,6 +633,9 @@ export function KioskPage() {
       resetTimerRef.current = null;
     }
     setPin('');
+    badgeRef.current = null;
+    breakAnswerRef.current = null;
+    setBreakMealAnswer(null);
     setIntent(null);
     setResult(null);
     setError(null);
@@ -587,7 +661,7 @@ export function KioskPage() {
   // timers; the selfie screen self-advances in ~1s.
   const ABANDONED_AFTER_MS = 60_000;
   useEffect(() => {
-    if (stage !== 'pin' && stage !== 'consent' && stage !== 'confirmOut') return;
+    if (stage !== 'pin' && stage !== 'consent' && stage !== 'confirmOut' && stage !== 'breakQ') return;
     const t = window.setTimeout(reset, ABANDONED_AFTER_MS);
     return () => window.clearTimeout(t);
     // touches stable setters; pin/intent are deliberate "activity" deps.
@@ -665,6 +739,137 @@ export function KioskPage() {
   // clocked the associate straight back OUT. They walked to the floor
   // believing they were clocked in; their entry showed a sub-second
   // shift.
+  // Preflight the typed number — or the badge that was just tapped or
+  // scanned — before opening the camera (the keypad's onSubmit).
+  const runPreflight = async () => {
+    // Preflight the PIN before opening the camera. A made-up
+    // code stops here instead of showing the user themselves
+    // on a selfie countdown. Network failure falls through so
+    // the regular offline-queue flow still works.
+    if (!token || verifying) return;
+    setVerifying(true);
+    try {
+    const verify = (loc: { lat: number; lng: number } | null) =>
+      kioskVerifyPin({
+        deviceToken: token,
+        // A badge (NFC tap / Wallet QR) stands in for the typed number.
+        ...(badgeRef.current ? { badgeToken: badgeRef.current } : { pin }),
+        latitude: loc?.lat ?? null,
+        longitude: loc?.lng ?? null,
+        intent,
+      });
+    try {
+      // Coords are best-effort. The geofence is advisory
+      // server-side — out-of-fence (or coordinate-less) punches
+      // succeed and get flagged for HR review — so a denied
+      // location permission never blocks a clock-in.
+      const loc = await tryGetLocation();
+      const v = await verify(loc);
+      // Carry who this is + what the punch will do into the
+      // camera screen ("Clocking you in, Maria"). Also the
+      // associate's chance to catch a typo'd PIN that landed on
+      // someone ELSE's valid code — a wrong name on screen is
+      // the only tell.
+      setPreflight({
+        firstName: v.associateFirstName,
+        predictedAction: v.predictedAction,
+        faceConsent: v.faceConsent,
+        missedClockOutAt: v.missedClockOut?.clockInAt ?? null,
+        breakQuestions: v.breakQuestions ?? null,
+      });
+      // Remember this PIN's consent so a later OFFLINE punch can
+      // decide camera-or-not without the server. null clears the
+      // cache entry — an admin RESET must not leave a stale
+      // GRANTED opening the camera.
+      void rememberConsent(badgeRef.current ?? pin, v.faceConsent);
+      // A punch that would clock them OUT gets one question
+      // first: leaving, or just on break? Most mid-shift
+      // clock-outs are a forgotten break toggle, and answering
+      // here keeps the shift in one piece.
+      if (v.predictedAction === 'CLOCK_OUT') {
+        setStage('confirmOut');
+      } else {
+        routeByConsent(v.faceConsent);
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        if (err.code === 'device_token_expired' || err.code === 'invalid_device') {
+          window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+          setToken(null);
+          setError(err.message);
+          setStage('setup');
+          return;
+        }
+        // Wrong PIN: stay on the keypad with an inline message
+        // + shake. The associate retypes without losing place
+        // or having to wait out a full-page error timeout.
+        if (err.code === 'invalid_pin') {
+          setPin('');
+          setPinError(t.wrongPin);
+          return;
+        }
+        // A badge the kiosk doesn't recognise (reissued, another
+        // site's): back to the keypad, the number still works.
+        if (err.code === 'invalid_badge') {
+          badgeRef.current = null;
+          hapticError();
+          setPinError(t.badgeNotRecognized);
+          return;
+        }
+        // Break toggle while not clocked in — caught at the
+        // keypad now (predictPunchAction), not after a selfie.
+        // Keep the PIN; turning the toggle off clears this.
+        if (err.code === 'not_clocked_in') {
+          setPinError(t.notClockedIn);
+          return;
+        }
+        // Throttle collision — e.g. the previous associate's
+        // preflight landed under a second ago, or a queue drain
+        // stamped the bucket. The typed PIN is fine; keep it —
+        // the PinPad shows a "Try again" button for this case.
+        if (err.status === 429) {
+          setPinError(t.oneAtATime);
+          return;
+        }
+        // Schedule gate caught at the keypad — before the selfie.
+        if (err.code === 'not_on_schedule') {
+          setStage('notice');
+          scheduleReset(12_000);
+          return;
+        }
+        // Deactivated/separated badge — localized, no server English.
+        if (err.code === 'inactive_associate') {
+          setError(t.inactiveBadge);
+          setStage('error');
+          scheduleReset(errorDwellMs(t.inactiveBadge));
+          return;
+        }
+        setError(err.message);
+        setStage('error');
+        scheduleReset(errorDwellMs(err.message));
+        return;
+      }
+      // Network failure / kiosk timeout → assume offline; the
+      // punch will land in the offline queue. Consent can't be
+      // asked of the server here, so fall back to the last
+      // consent this PIN answered while online — and if we've
+      // never seen one, DON'T open the camera. Capturing a photo
+      // is the consent-relevant act; the old "everyone gets the
+      // camera offline" default photographed associates who had
+      // never been shown the consent screen at all.
+      const known = await cachedConsent(badgeRef.current ?? pin);
+      if (known === 'GRANTED') {
+        setStage('selfie');
+      } else {
+        setStage('submitting');
+        void submit(null);
+      }
+    }
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const submitInFlightRef = useRef(false);
 
   // `intentOverride` exists for same-tick callers (the confirmOut screen
@@ -691,7 +896,7 @@ export function KioskPage() {
     const loc = await tryGetLocation();
     const payload = {
       deviceToken: token,
-      pin,
+      ...(badgeRef.current ? { badgeToken: badgeRef.current } : { pin }),
       // Deferred to the background attach (see attachSelfieAndFace) so the
       // large selfie upload + CPU-heavy descriptor extraction don't sit in
       // front of the result screen. Kept tiny, the punch returns fast even
@@ -703,6 +908,7 @@ export function KioskPage() {
       idempotencyKey,
       clientPunchedAt: capturedAt,
       intent: effIntent,
+      breakAttestation: effIntent === 'BREAK' ? null : breakAnswerRef.current,
     };
     try {
       const r = await kioskPunch(payload);
@@ -754,6 +960,13 @@ export function KioskPage() {
           setStage('pin');
           return;
         }
+        if (err.code === 'invalid_badge') {
+          badgeRef.current = null;
+          hapticError();
+          setPinError(t.badgeNotRecognized);
+          setStage('pin');
+          return;
+        }
         // Schedule gate: the punch filed a supervisor request — a normal
         // outcome for the associate, shown calm and localized, never as a
         // red failure in server English.
@@ -777,7 +990,8 @@ export function KioskPage() {
       enqueuePunch({
         idempotencyKey,
         deviceToken: token,
-        pin,
+        pin: badgeRef.current ? '' : pin,
+        badgeToken: badgeRef.current,
         selfie: selfieData,
         // Offline punches skip face capture — it's a best-effort fraud
         // signal and the selfie image is still queued for HR review.
@@ -892,124 +1106,20 @@ export function KioskPage() {
           }}
           error={pinError}
           submitting={verifying}
-          onSubmit={async () => {
-            // Preflight the PIN before opening the camera. A made-up
-            // code stops here instead of showing the user themselves
-            // on a selfie countdown. Network failure falls through so
-            // the regular offline-queue flow still works.
-            if (!token || verifying) return;
-            setVerifying(true);
-            try {
-            const verify = (loc: { lat: number; lng: number } | null) =>
-              kioskVerifyPin({
-                deviceToken: token,
-                pin,
-                latitude: loc?.lat ?? null,
-                longitude: loc?.lng ?? null,
-                intent,
-              });
-            try {
-              // Coords are best-effort. The geofence is advisory
-              // server-side — out-of-fence (or coordinate-less) punches
-              // succeed and get flagged for HR review — so a denied
-              // location permission never blocks a clock-in.
-              const loc = await tryGetLocation();
-              const v = await verify(loc);
-              // Carry who this is + what the punch will do into the
-              // camera screen ("Clocking you in, Maria"). Also the
-              // associate's chance to catch a typo'd PIN that landed on
-              // someone ELSE's valid code — a wrong name on screen is
-              // the only tell.
-              setPreflight({
-                firstName: v.associateFirstName,
-                predictedAction: v.predictedAction,
-                faceConsent: v.faceConsent,
-              });
-              // Remember this PIN's consent so a later OFFLINE punch can
-              // decide camera-or-not without the server. null clears the
-              // cache entry — an admin RESET must not leave a stale
-              // GRANTED opening the camera.
-              void rememberConsent(pin, v.faceConsent);
-              // A punch that would clock them OUT gets one question
-              // first: leaving, or just on break? Most mid-shift
-              // clock-outs are a forgotten break toggle, and answering
-              // here keeps the shift in one piece.
-              if (v.predictedAction === 'CLOCK_OUT') {
-                setStage('confirmOut');
-              } else {
-                routeByConsent(v.faceConsent);
-              }
-            } catch (err) {
-              if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
-                if (err.code === 'device_token_expired' || err.code === 'invalid_device') {
-                  window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-                  setToken(null);
-                  setError(err.message);
-                  setStage('setup');
-                  return;
-                }
-                // Wrong PIN: stay on the keypad with an inline message
-                // + shake. The associate retypes without losing place
-                // or having to wait out a full-page error timeout.
-                if (err.code === 'invalid_pin') {
-                  setPin('');
-                  setPinError(t.wrongPin);
-                  return;
-                }
-                // Break toggle while not clocked in — caught at the
-                // keypad now (predictPunchAction), not after a selfie.
-                // Keep the PIN; turning the toggle off clears this.
-                if (err.code === 'not_clocked_in') {
-                  setPinError(t.notClockedIn);
-                  return;
-                }
-                // Throttle collision — e.g. the previous associate's
-                // preflight landed under a second ago, or a queue drain
-                // stamped the bucket. The typed PIN is fine; keep it —
-                // the PinPad shows a "Try again" button for this case.
-                if (err.status === 429) {
-                  setPinError(t.oneAtATime);
-                  return;
-                }
-                // Schedule gate caught at the keypad — before the selfie.
-                if (err.code === 'not_on_schedule') {
-                  setStage('notice');
-                  scheduleReset(12_000);
-                  return;
-                }
-                // Deactivated/separated badge — localized, no server English.
-                if (err.code === 'inactive_associate') {
-                  setError(t.inactiveBadge);
-                  setStage('error');
-                  scheduleReset(errorDwellMs(t.inactiveBadge));
-                  return;
-                }
-                setError(err.message);
-                setStage('error');
-                scheduleReset(errorDwellMs(err.message));
-                return;
-              }
-              // Network failure / kiosk timeout → assume offline; the
-              // punch will land in the offline queue. Consent can't be
-              // asked of the server here, so fall back to the last
-              // consent this PIN answered while online — and if we've
-              // never seen one, DON'T open the camera. Capturing a photo
-              // is the consent-relevant act; the old "everyone gets the
-              // camera offline" default photographed associates who had
-              // never been shown the consent screen at all.
-              const known = await cachedConsent(pin);
-              if (known === 'GRANTED') {
-                setStage('selfie');
-              } else {
-                setStage('submitting');
-                void submit(null);
-              }
-            }
-            } finally {
-              setVerifying(false);
-            }
-          }}
+          onSubmit={runPreflight}
           onCancel={reset}
+        />
+      )}
+      {/* Or a badge: an NFC tap (in the native app) or the badge QR at the camera. */}
+      {stage === 'pin' && (
+        <BadgeReader
+          t={t}
+          disabled={verifying}
+          onBadge={(badge) => {
+            badgeRef.current = badge;
+            setPinError(null);
+            void runPreflight();
+          }}
         />
       )}
       {stage === 'consent' && preflight && (
@@ -1023,14 +1133,14 @@ export function KioskPage() {
             if (token) {
               void kioskFaceConsent({
                 deviceToken: token,
-                pin,
+                ...(badgeRef.current ? { badgeToken: badgeRef.current } : { pin }),
                 consent: agree,
               }).catch(() => {});
             }
             // Mirror the answer into the offline consent cache so a
             // network drop right after this choice still routes the
             // camera correctly.
-            void rememberConsent(pin, agree ? 'GRANTED' : 'DECLINED');
+            void rememberConsent(badgeRef.current ?? pin, agree ? 'GRANTED' : 'DECLINED');
             if (agree) {
               setStage('selfie');
             } else {
@@ -1064,7 +1174,13 @@ export function KioskPage() {
             {t.confirmOutBreak}
           </Button>
           <button
-            onClick={() => routeByConsent(preflight.faceConsent, null)}
+            onClick={() => {
+              if (preflight.breakQuestions && (preflight.breakQuestions.meal || preflight.breakQuestions.rest)) {
+                breakAnswerRef.current = null;
+                setBreakMealAnswer(null);
+                setStage('breakQ');
+              } else routeByConsent(preflight.faceConsent, null);
+            }}
             className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 text-white rounded-xl py-4 text-xl transition-colors"
           >
             {t.confirmOutLeave}
@@ -1073,6 +1189,55 @@ export function KioskPage() {
             onClick={reset}
             className="mt-6 min-h-[44px] px-6 text-silver text-base hover:text-white transition"
           >
+            {t.cancel}
+          </button>
+        </div>
+      )}
+      {stage === 'breakQ' && preflight?.breakQuestions && (
+        <div className="flex flex-col items-center max-w-lg px-6 text-center">
+          {(() => {
+            const q = preflight.breakQuestions!;
+            const askingRest = !q.meal || breakMealAnswer !== null;
+            const finish = (rest: 'YES' | 'NO' | null, meal: 'YES' | 'NO' | 'WAIVED' | null) => {
+              breakAnswerRef.current = { meal: meal ?? 'YES', rest };
+              routeByConsent(preflight.faceConsent, null);
+            };
+            if (!askingRest) {
+              return (
+                <>
+                  <div className="text-3xl mb-3">{t.breakMeal}</div>
+                  <p className="text-base text-silver mb-8">{t.breakWhy}</p>
+                  {([['YES', t.yes], ['NO', t.no], ['WAIVED', t.breakSkipped]] as const).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => {
+                        if (q.rest) setBreakMealAnswer(v);
+                        else finish(null, v);
+                      }}
+                      className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 rounded-xl py-4 text-xl transition-colors"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </>
+              );
+            }
+            return (
+              <>
+                <div className="text-3xl mb-8">{t.breakRest}</div>
+                {([['YES', t.yes], ['NO', t.no]] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    onClick={() => finish(v, breakMealAnswer)}
+                    className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 rounded-xl py-4 text-xl transition-colors"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </>
+            );
+          })()}
+          <button onClick={reset} className="mt-6 min-h-[44px] px-6 text-silver text-base hover:underline transition">
             {t.cancel}
           </button>
         </div>
@@ -1569,7 +1734,7 @@ function SelfieCapture({
   onCancel,
 }: {
   t: KioskStrings;
-  preflight: { firstName: string; predictedAction: KioskPunchAction } | null;
+  preflight: { firstName: string; predictedAction: KioskPunchAction; missedClockOutAt?: string | null } | null;
   onCaptured: (dataUrl: string) => void;
   onSkip: () => void;
   onCancel: () => void;
@@ -1748,6 +1913,11 @@ function SelfieCapture({
             <span className="text-gold-bright">{preflight.firstName}</span>
           </div>
           <div className="text-base text-silver mt-1">{t.notYou}</div>
+          {preflight.missedClockOutAt && (
+            <div role="status" className="mt-3 rounded-lg border border-warning/60 bg-warning/10 px-4 py-2 text-base text-warning">
+              {t.missedOut(fmtDate(preflight.missedClockOutAt))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="text-2xl text-silver mb-4">{t.smile}</div>

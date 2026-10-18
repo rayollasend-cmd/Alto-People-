@@ -116,7 +116,7 @@ function Meter({ pct, label }: { pct: number | null; label: string }) {
 function Section({ title, hint, action, children }: { title: string; hint?: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <Card>
-      <CardContent className="p-4 md:p-5">
+      <CardContent>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <h2 className="text-sm font-medium text-white">{title}</h2>
@@ -344,7 +344,7 @@ export function RecruitingAnalytics() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto max-w-6xl space-y-4"
+        className="mx-auto max-w-6xl"
         title="Recruiting analytics"
         subtitle="How the pipeline converts, how fast roles fill, what each source costs, and who stays."
         breadcrumbs={[{ label: 'Recruiting', to: '/recruiting' }]}

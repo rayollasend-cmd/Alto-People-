@@ -267,10 +267,7 @@ export function AdminDashboard() {
     </>
   );
 }
-
-
 /* ============================== Needs you ================================ */
-
 interface ActionItem {
   count: number;
   label: string;
@@ -281,9 +278,7 @@ interface ActionItem {
   /** Severity drives the accent color. */
   severity: 'info' | 'attention' | 'urgent';
 }
-
 const SEVERITY_RANK: Record<ActionItem['severity'], number> = { urgent: 0, attention: 1, info: 2 };
-
 function NeedsYou({
   title,
   kpis,
@@ -308,7 +303,6 @@ function NeedsYou({
 }) {
   const { t } = useI18n();
   const term = useTerm();
-
   const items: ActionItem[] = useMemo(() => {
     if (!kpis || !canAct) return [];
     const xs: ActionItem[] = [];
@@ -427,7 +421,7 @@ function NeedsYou({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i}>
-              <CardContent className="pt-5">
+              <CardContent>
                 <Skeleton className="h-3 w-20 mb-3" />
                 <Skeleton className="h-7 w-1/2 mb-2" />
                 <Skeleton className="h-3 w-2/3" />
@@ -552,7 +546,7 @@ function KpiSection({
         ) : (
           Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>
-              <CardContent className="pt-5">
+              <CardContent>
                 <Skeleton className="h-3 w-20 mb-3" />
                 <Skeleton className="h-9 w-1/2 mb-2" />
                 <Skeleton className="h-3 w-1/3" />

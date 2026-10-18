@@ -32,7 +32,7 @@ export function AccessibilityPage() {
         />
       </div>
       <Card className="border-accent/30">
-        <CardContent className="p-6">
+        <CardContent>
           <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">Standard</div>
           <p className="mt-1 text-xl font-medium text-ink">WCAG 2.2, level AA</p>
           <p className="mt-2 max-w-prose text-sm text-ink-muted">
@@ -56,7 +56,7 @@ export function AccessibilityPage() {
       <section aria-labelledby="a11y-limits">
         <SectionTitle id="a11y-limits" title="Known limits" />
         <Card>
-          <CardContent className="p-5">
+          <CardContent>
             <p className="max-w-prose text-sm text-ink-muted">
               Documents uploaded by an organization (a scanned form, a policy PDF) are shown as they were uploaded and may not be tagged for a screen reader. Charts carry a table twin with the same numbers. Where a third-party page is linked, its accessibility is its publisher’s.
             </p>

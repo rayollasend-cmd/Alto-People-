@@ -117,7 +117,7 @@ export function SiteSafetyZones() {
       )}
       {canManage && (
         <Card className="mt-5">
-          <CardContent className="space-y-3 pt-5">
+          <CardContent className="space-y-3">
             <SectionTitle title="Add a zone" description="A rectangle on the commissioning map, in its units. Polygons come through the API." />
             <div className="grid gap-3 sm:grid-cols-5">
               <Field label="Name" required className="sm:col-span-1">{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Pool deck" />}</Field>

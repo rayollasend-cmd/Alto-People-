@@ -140,7 +140,6 @@ export function DisciplineHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Disciplinary actions"
         subtitle="Formal warning ladder. Verbal → written → final → suspension → termination."
         breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Disciplinary actions' }]}

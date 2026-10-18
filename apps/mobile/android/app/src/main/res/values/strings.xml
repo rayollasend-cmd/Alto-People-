@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Alto People</string>
+    <string name="title_activity_main">Alto People</string>
+    <string name="package_name">com.altohr.people</string>
+    <string name="custom_url_scheme">com.altohr.people</string>
+</resources>

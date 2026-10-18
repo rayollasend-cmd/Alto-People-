@@ -26,7 +26,7 @@ import {
 } from '../lib/oidc.js';
 import { connectionSettings, discoverByEmail, discoverBySlug, ensureEnvIdentity, matchSsoUser } from '../lib/identity.js';
 import { idpReachable, loadSecurityPolicy } from '../lib/securityPolicy.js';
-import { ALTO_TENANT_ID } from '../lib/tenant.js';
+import { ALTO_TENANT_ID, adoptTenant, withIdentityScope } from '../lib/tenant.js';
 import type { IdentityConnection } from '@prisma/client';
 import { z } from 'zod';
 
@@ -314,7 +314,10 @@ oidcAuthRouter.get('/tenant/:slug', loginIpLimiter, async (req, res) => {
 /** The connection a flow is for: the one named, else (the legacy button) Alto HR's environment connection. */
 async function connectionFor(id: unknown): Promise<IdentityConnection | null> {
   if (typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)) {
-    return prisma.identityConnection.findFirst({ where: { id, enabled: true, kind: 'OIDC' } });
+    // Before any session: find the connection by its id, then run as its tenant.
+    const conn = await withIdentityScope(() => prisma.identityConnection.findFirst({ where: { id, enabled: true, kind: 'OIDC' } }));
+    adoptTenant(conn?.tenantId);
+    return conn;
   }
   const env = await ensureEnvIdentity(prisma);
   return env?.enabled ? env : null;
@@ -333,7 +336,8 @@ oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
   try {
     // Brief 2-3 step 5: the login page has one button per connection; a SAML one continues there.
     if (typeof req.query.connection === 'string' && /^[0-9a-f-]{36}$/i.test(req.query.connection)) {
-      const saml = await prisma.identityConnection.findFirst({ where: { id: req.query.connection, enabled: true, kind: 'SAML' }, select: { id: true } });
+      const connectionId = req.query.connection;
+      const saml = await withIdentityScope(() => prisma.identityConnection.findFirst({ where: { id: connectionId, enabled: true, kind: 'SAML' }, select: { id: true } }));
       if (saml) {
         const next = safeReturnPath(req.query.next);
         res.redirect(302, `/auth/saml/start?connection=${saml.id}${next ? `&next=${encodeURIComponent(next)}` : ''}`);
@@ -398,7 +402,7 @@ oidcAuthRouter.get('/start', loginIpLimiter, async (req, res, next) => {
 oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
   // Brief 2-3: no sign-in configured anywhere → the same 404 as before; otherwise the
   // flow cookie names the connection and only that IdP's tokens are accepted.
-  if (!(await prisma.identityConnection.count({ where: { enabled: true } })) && !(await ensureEnvIdentity(prisma))) {
+  if (!(await withIdentityScope(() => prisma.identityConnection.count({ where: { enabled: true } }))) && !(await ensureEnvIdentity(prisma))) {
     next(new HttpError(404, 'sso_not_configured', 'SSO is not configured'));
     return;
   }
@@ -440,7 +444,8 @@ oidcAuthRouter.get('/callback', loginIpLimiter, async (req, res, next) => {
       await failToLogin(req, res, 'replayed_state');
       return;
     }
-    const conn = await prisma.identityConnection.findFirst({ where: { id: flow.connectionId, enabled: true } });
+    const conn = await withIdentityScope(() => prisma.identityConnection.findFirst({ where: { id: flow.connectionId, enabled: true } }));
+    adoptTenant(conn?.tenantId);
     if (!conn) {
       await failToLogin(req, res, 'connection_unavailable');
       return;

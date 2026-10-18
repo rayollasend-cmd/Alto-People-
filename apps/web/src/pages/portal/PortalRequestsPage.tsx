@@ -45,7 +45,7 @@ export function PortalRequestsPage() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto max-w-3xl space-y-4"
+        className="mx-auto max-w-3xl"
         title={t('portal.reqTitle')}
         subtitle={t('portal.reqDialogHint')}
         breadcrumbs={[{ label: t('portal.title'), to: '/portal' }]}

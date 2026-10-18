@@ -432,7 +432,7 @@ function TemplateDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-5">
         <Card>
-          <CardContent className="p-4 space-y-3">
+          <CardContent className="space-y-3">
             <div className="text-sm font-medium text-white">Editor</div>
             <div>
               <Label>Subject (optional)</Label>
@@ -485,7 +485,7 @@ function TemplateDrawer({
         </Card>
 
         <Card>
-          <CardContent className="p-4 space-y-3">
+          <CardContent className="space-y-3">
             <div className="text-sm font-medium text-white">Versions</div>
             {versionsError ? (
               <ErrorBanner
@@ -553,7 +553,7 @@ function TemplateDrawer({
         </Card>
 
         <Card>
-          <CardContent className="p-4 space-y-3">
+          <CardContent className="space-y-3">
             <div className="text-sm font-medium text-white">Render</div>
             <div>
               <Label>Associate (optional)</Label>

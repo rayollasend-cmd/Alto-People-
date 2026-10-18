@@ -124,7 +124,7 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
       />
-      <CardContent className="relative flex h-full flex-col p-5">
+      <CardContent className="relative flex h-full flex-col">
         <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
           <Banknote className="h-3.5 w-3.5" aria-hidden="true" />
           {t('fin.payday')}
@@ -264,7 +264,7 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
   const max = Math.max(1, ...cash.weeks.map((w) => Math.max(w.inflow, w.outflow)));
   return (
     <Card className="h-full animate-enter" style={enterStagger(5)}>
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="flex items-center gap-1.5 text-sm font-medium text-ink">
             <TrendingUp className="h-4 w-4 text-gold" aria-hidden="true" />
@@ -471,7 +471,7 @@ export function TodayList({ data, headless = false }: { data: FinanceOverview; h
   const tasks = financeTasks(data, t, now, { statements: tenant.moduleOn('clientPortal') && tenant.moduleOn('billRates') });
   return (
     <Card className="h-full animate-enter" style={enterStagger(1)}>
-      <CardContent className="p-5">
+      <CardContent>
         {!headless && (
           <h2 className="flex items-baseline justify-between gap-2 text-sm font-medium text-white">
             {t('fin.today')}
@@ -537,7 +537,7 @@ export function BillingWeekCard({ billing }: { billing: BillingWeek | null | und
   const pct = billing.registered > 0 ? Math.round((billing.entered / billing.registered) * 100) : 0;
   return (
     <Card className={cn('h-full animate-enter', late && 'border-alert/40')} style={enterStagger(3)}>
-      <CardContent className="flex h-full flex-col p-5">
+      <CardContent className="flex h-full flex-col">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-sm font-medium text-white">{t('fin.billTitle', { date: billing.weekEnding })}</h2>
           <Link to={`/time-attendance/timesheets?week=${billing.weekStart}`} className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright">
@@ -622,7 +622,7 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
   const unpriced = weeks.reduce((s, w) => s + w.unpricedHours, 0);
   return (
     <Card className="h-full animate-enter" style={enterStagger(4)}>
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-sm font-medium text-white">{t('fin.marginTitle')}</h2>
           <span className="text-xs text-silver/60">{t('fin.marginSub', { weeks: weeks.length })}</span>
@@ -720,7 +720,7 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
   ];
   return (
     <Card className="h-full animate-enter" style={enterStagger(6)}>
-      <CardContent className="p-5">
+      <CardContent>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
             <Scale className="h-4 w-4 text-gold" aria-hidden="true" />

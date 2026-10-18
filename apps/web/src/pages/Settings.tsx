@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { OutOfOfficeCard } from '@/components/OutOfOfficeCard';
 import { DeliveryCard } from '@/components/settings/DeliveryCard';
 import { DevicesCard } from '@/components/settings/DevicesCard';
+import { PhonesCard } from '@/components/settings/PhonesCard';
 import { WhatsAppCard } from '@/components/WhatsAppCard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
@@ -124,6 +126,8 @@ export function Settings() {
           <PasskeysCard />
           <MfaCard />
           <DevicesCard />
+          {/* Phones with the native app: notifications, the Face ID lock, remove a phone. */}
+          <PhonesCard />
         </div>
       </div>
 
@@ -247,7 +251,7 @@ function PasskeysCard() {
         {passkeys === null ? (
           <Skeleton className="h-10" />
         ) : passkeys.length === 0 ? (
-          <p className="text-sm text-silver">No passkeys on this account yet.</p>
+          <EmptyState size="sm" title={"No passkeys on this account yet."} />
         ) : (
           <ul className="space-y-2">
             {passkeys.map((p) => (
@@ -1664,7 +1668,7 @@ function LoginHistoryCard() {
             <Skeleton className="h-6 w-3/4" />
           </div>
         ) : events.length === 0 ? (
-          <div className="text-sm text-silver">No activity recorded yet.</div>
+          <EmptyState size="sm" title={"No activity recorded yet."} />
         ) : (
           <>
             <DataGrid<(typeof events)[number]>

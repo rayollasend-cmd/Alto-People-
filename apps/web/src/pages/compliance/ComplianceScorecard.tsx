@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -979,7 +980,7 @@ function ExpirationBucketDrawer({
       </div>
       <DrawerBody>
         {filtered.length === 0 ? (
-          <div className="text-xs text-silver py-3 text-center">Nothing matches this filter.</div>
+          <EmptyState size="sm" title={"Nothing matches this filter."} />
         ) : (
           <ul className="space-y-1">
             {filtered.map((it, i) => {

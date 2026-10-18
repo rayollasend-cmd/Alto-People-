@@ -148,7 +148,6 @@ export function DirCommsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Directory & comms"
         subtitle="Search the people directory, send broadcasts, and run pulse / eNPS surveys."
         breadcrumbs={[{ label: 'Communications' }, { label: 'Directory & comms' }]}
@@ -212,7 +211,7 @@ function DirectoryTab() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="p-4 flex items-center gap-3">
+        <CardContent className="flex items-center gap-3">
           <div className="flex-1">
             <SearchInput
               aria-label="Search the directory"

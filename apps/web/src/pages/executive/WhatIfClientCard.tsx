@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/lib/auth';
+import { getMarketRates } from '@/lib/marketRatesApi';
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -56,6 +59,19 @@ export function WhatIfClientCard({
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
+  // The local market, for a hypothetical pay rate: the typical metro median
+  // across the roles you benchmark (the market rates desk).
+  const { can } = useAuth();
+  const market = useQuery({ queryKey: ['market', 'rates', ''], queryFn: () => getMarketRates(), enabled: mode === 'win' && can('view:clients'), staleTime: 5 * 60_000 });
+  const marketLine = useMemo(() => {
+    const medians = (market.data?.rows ?? []).map((r) => r.market?.median).filter((m): m is number => typeof m === 'number').sort((a, b) => a - b);
+    if (medians.length === 0) return null;
+    const mid = medians[Math.floor(medians.length / 2)]!;
+    const p = num(pay, rates.payRate);
+    const diff = p - mid;
+    return `Typical market median across your metros: ${fmtMoney(mid)}/h — ${Math.abs(diff) < 0.25 ? 'this pay sits right at it' : `this pay is ${fmtMoney(Math.abs(diff))} ${diff > 0 ? 'above' : 'below'} it`}.`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market.data, pay]);
   const outcome: WhatIfOutcome | null =
     mode === 'lose'
       ? clientId
@@ -120,6 +136,14 @@ export function WhatIfClientCard({
               Pay rate ($/h)
               <Input size="sm" type="number" min="0" step="0.25" className="mt-1 w-24 tabular-nums" value={pay} onChange={(e) => setPay(e.target.value)} />
             </label>
+            {marketLine && (
+              <p className="w-full text-xs text-ink-muted">
+                {marketLine}{' '}
+                <Link to="/market-rates" className="text-accent hover:underline">
+                  Market rates
+                </Link>
+              </p>
+            )}
           </div>
         )}
         {outcome && (

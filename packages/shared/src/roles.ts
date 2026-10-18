@@ -207,7 +207,15 @@ export type Capability =
   //  - manage:marketing   edit the brand page, run campaigns, propose
   //    referral bonuses (Finance still approves the money)
   | 'view:marketing'
-  | 'manage:marketing';
+  | 'manage:marketing'
+  // Leave of absence and claims (2026-12). Medical facts live here, so
+  // they are HR's alone — not the org-wide admin family:
+  //  - manage:leave   FMLA / state paid leave / USERRA / ADA cases, their
+  //    notices and the medical certifications behind them
+  //  - manage:claims  unemployment claims and workers' comp claims (the
+  //    FROI, injuries, restrictions, the employer's contest evidence)
+  | 'manage:leave'
+  | 'manage:claims';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -318,6 +326,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'export:audit-packet',
     'void:payroll',
     'export:payroll-pii',
+    // Leave and claims carry medical facts: HR only.
+    'manage:leave',
+    'manage:claims',
     // HR owns both halves: the paystub AND the SSN-bearing W-2.
     'view:payroll-documents',
     'submit:reimbursement',

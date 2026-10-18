@@ -114,7 +114,6 @@ function PlansList() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Season planner"
         subtitle="Demand by store, shift and week becomes associates, beds, van seats and recruiting targets. Save scenarios and compare them side by side."
         primaryAction={
@@ -348,7 +347,6 @@ function PlanView({ id }: { id: string }) {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title={plan?.name ?? 'Season plan'}
         subtitle={
           plan
@@ -862,7 +860,6 @@ function CompareView({ a, b }: { a: string; b: string }) {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="Compare scenarios"
         subtitle={q.data ? `${q.data.a.name} vs ${q.data.b.name}` : undefined}
         topbarTitle="Season planner"

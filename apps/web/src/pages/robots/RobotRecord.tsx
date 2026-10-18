@@ -120,7 +120,6 @@ export function RobotRecord() {
 
   return (
     <RecordTemplate
-      className="mx-auto"
       breadcrumbs={[{ label: 'Operations', to: '/control-room' }, { label: 'Robots', to: '/robots' }, { label: r.name }]}
       identity={
         <span className="grid h-10 w-10 place-items-center rounded-full bg-accent/15 text-accent">
@@ -320,7 +319,7 @@ function ProfileTab({ robot, canManage }: { robot: RobotDetail; canManage: boole
   return (
     <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
       <Card>
-        <CardContent className="space-y-4 pt-5">
+        <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Manufacturer" required>{(fp) => <Input {...fp} value={form.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} disabled={!canManage} />}</Field>
             <Field label="Model" required>{(fp) => <Input {...fp} value={form.model} onChange={(e) => set('model', e.target.value)} disabled={!canManage} />}</Field>
@@ -361,7 +360,7 @@ function ProfileTab({ robot, canManage }: { robot: RobotDetail; canManage: boole
         </CardContent>
       </Card>
       <Card>
-        <CardContent className="space-y-3 pt-5">
+        <CardContent className="space-y-3">
           <SectionTitle title="Certifications" />
           {(form.certifications ?? []).length === 0 && <p className="text-sm text-ink-muted">None on file.</p>}
           <ul className="space-y-2">
@@ -462,7 +461,7 @@ function CommissioningTab({ robot, canManage }: { robot: RobotDetail; canManage:
         <div className="grid gap-3 md:grid-cols-2">
           {robot.commissionings.map((c) => (
             <Card key={c.id}>
-              <CardContent className="space-y-2 pt-5">
+              <CardContent className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="font-medium text-ink">{c.locationName}</div>
@@ -496,7 +495,7 @@ function CommissioningTab({ robot, canManage }: { robot: RobotDetail; canManage:
       )}
       {canManage && (
         <Card>
-          <CardContent className="space-y-4 pt-5">
+          <CardContent className="space-y-4">
             <SectionTitle title="Commission at a site" description="Saving again clears the sign-off: a changed map or lead needs a fresh signature." />
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Client">
@@ -588,7 +587,7 @@ function ChecklistsTab({ robot, canFloor, canManage }: { robot: RobotDetail; can
           <EmptyState icon={ClipboardCheck} title="No checklist template" description={canManage ? 'Create one for this site or for every site under Checklists on the Robots page.' : 'Ask an administrator to create a template.'} />
         ) : (
           <Card>
-            <CardContent className="space-y-3 pt-5">
+            <CardContent className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Template">
                   {(fp) => (
@@ -737,7 +736,7 @@ function IncidentsTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boole
       </div>
       {canFloor && (
         <Card>
-          <CardContent className="space-y-3 pt-5">
+          <CardContent className="space-y-3">
             <SectionTitle title="Report an incident or near miss" />
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Kind">
@@ -842,7 +841,7 @@ function MaintenanceTab({ robot, canManage }: { robot: RobotDetail; canManage: b
       </div>
       {canManage && (
         <Card>
-          <CardContent className="space-y-3 pt-5">
+          <CardContent className="space-y-3">
             <SectionTitle title="Log maintenance" />
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Performed on" required>{(fp) => <Input {...fp} type="date" value={performedOn} onChange={(e) => setPerformedOn(e.target.value)} />}</Field>

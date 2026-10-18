@@ -203,7 +203,7 @@ describe('computePayrollExceptions', () => {
   it('flags unsupported state as BLOCKING for W2 only — nothing would be withheld', async () => {
     const c = await seedClient();
     const a = await seedAssociate({
-      state: 'AR', // not bracketed, not flat-rate, not NO_SIT → fallback
+      state: 'PR', // no withholding table at all (every state and DC has one now; AR waits on adviser review)
       withW4: true,
       withPayoutMethod: 'BRANCH_CARD',
     });
@@ -215,7 +215,7 @@ describe('computePayrollExceptions', () => {
     });
     const ust = r.exceptions.find((e) => e.kind === 'UNSUPPORTED_STATE');
     expect(ust?.severity).toBe('BLOCKING');
-    expect(ust?.message).toContain('not supported for AR');
+    expect(ust?.message).toContain('not supported for PR');
     expect(r.counts.blocking).toBeGreaterThanOrEqual(1);
   });
 

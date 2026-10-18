@@ -64,7 +64,7 @@ export function CompPlanningTab({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 p-4">
+        <CardContent className="flex flex-wrap items-center gap-3">
           <label htmlFor="comp-cycle" className="text-xs2 uppercase tracking-wider text-ink-muted">
             Cycle
           </label>
@@ -204,7 +204,7 @@ function CalibrationView({ cycleId }: { cycleId: string }) {
   return (
     <div className="space-y-4">
       {cal.isError && <QueryError what="calibration" query={cal} />}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Budget" value={d ? (d.cycle.budget ? fmtMoney(d.cycle.budget) : 'Not set') : '—'} hint={d ? `${d.totals.people} people in the cycle` : undefined} />
         <MetricCard label="Proposed" value={d ? fmtMoney(d.totals.spent) : '—'} accent={Boolean(d && d.totals.remaining !== null && d.totals.remaining < 0)} hint={d && d.totals.remaining !== null ? `${d.totals.remaining < 0 ? 'Over by ' : 'Remaining '}${fmtMoney(Math.abs(d.totals.remaining))}` : undefined} />
         <MetricCard label="Median increase" value={d && d.totals.medianPct !== null ? fmtPercent(d.totals.medianPct) : '—'} hint={d && d.totals.meanPct !== null ? `Mean ${fmtPercent(d.totals.meanPct)} · middle half ${fmtPercent(d.totals.p25)}–${fmtPercent(d.totals.p75)}` : undefined} />
@@ -212,7 +212,7 @@ function CalibrationView({ cycleId }: { cycleId: string }) {
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardContent className="pt-5">
+          <CardContent>
             <SectionTitle as="h3" title="Distribution of increases" />
             <ul className="mt-3 space-y-2" aria-label="Increase buckets">
               {(d?.distribution ?? []).map((b) => (

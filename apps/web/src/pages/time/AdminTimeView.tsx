@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { BreakFlagsDesk, TimeCorrectionsDesk } from './TimeCorrectionsDesk';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
 import { workweekStart } from '@/lib/workweek';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -500,7 +501,7 @@ function matchesShiftPick(
   return pick === 'none' ? w === null : w?.key === pick;
 }
 
-type Tab = 'live' | 'queue';
+type Tab = 'live' | 'queue' | 'corrections' | 'breaks';
 
 // The live dashboard carries a lightweight ActiveDashboardEntry; widen it to
 // a TimeEntry so the edit / clock-out drawer (shared with the queue) can open
@@ -607,7 +608,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   // retraces the live↔queue switch instead of leaving the page.
   const [tabParams, setTabParams] = useSearchParams();
   const tabParam = tabParams.get('tab');
-  const tab: Tab = !liveOnly && tabParam === 'queue' ? 'queue' : 'live';
+  const tab: Tab = liveOnly ? 'live' : tabParam === 'queue' || ((tabParam === 'corrections' || tabParam === 'breaks') && canManage) ? (tabParam as Tab) : 'live';
   const setTab = (next: Tab) => {
     const params = new URLSearchParams(tabParams);
     if (next === 'live') params.delete('tab');
@@ -1906,7 +1907,6 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         summary={
               <>
           {personal}
-
           {/* KPI strip — mirrors the onboarding analytics pattern. Tiles are
               shortcuts too: the live trio jumps to the live board (Off-site
               also applies the off-site lens), Pending review opens the queue. */}
@@ -1961,7 +1961,6 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               </>
         }
         drawer={
-
           <Drawer
             open={!!drawerTarget}
             onOpenChange={(o) => {
@@ -2036,7 +2035,6 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               />
             )}
           </Drawer>
-
         }
       >
       {!liveOnly && (
@@ -2044,6 +2042,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           <TabsList>
             <TabsTrigger value="live">Live (clocked in)</TabsTrigger>
             <TabsTrigger value="queue">Approval queue</TabsTrigger>
+            {canManage && <TabsTrigger value="corrections">Punch corrections</TabsTrigger>}
+            {canManage && <TabsTrigger value="breaks">Missed breaks</TabsTrigger>}
           </TabsList>
         </Tabs>
       )}
@@ -2066,6 +2066,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         </ErrorBanner>
       )}
 
+      {tab === 'corrections' && <TimeCorrectionsDesk />}
+      {tab === 'breaks' && <BreakFlagsDesk />}
       {tab === 'live' && myWindows.length > 0 && (
         <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} className="mb-3" />
       )}

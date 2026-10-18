@@ -9,6 +9,7 @@ import {
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
+import { withIdentityScope } from '../lib/tenant.js';
 import { signSession, verifyMfaEnroll, verifySession, type SessionPayload } from '../lib/jwt.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { allowedCidrsFor, ipAllowed, loadSecurityPolicy, sessionExpiry } from '../lib/securityPolicy.js';
@@ -163,7 +164,17 @@ async function applySecurityPolicy(
   return true;
 }
 
-export async function attachUser(
+/**
+ * Reads the session cookie and loads its user. This runs before the tenant
+ * is known (it is how the tenant becomes known), so its lookups run in the
+ * identity scope — by the user's unique id — and tenantMiddleware then binds
+ * the rest of the request to that user's tenant.
+ */
+export function attachUser(req: Request, res: Response, next: NextFunction) {
+  return withIdentityScope(() => attachUserResolved(req, res, next));
+}
+
+async function attachUserResolved(
   req: Request,
   res: Response,
   next: NextFunction
@@ -253,6 +264,7 @@ export async function attachUser(
       const linked = await autoLinkAssociateByEmail({
         id: user.id,
         email: user.email,
+        tenantId: user.tenantId,
       });
       if (linked) {
         associateId = linked;

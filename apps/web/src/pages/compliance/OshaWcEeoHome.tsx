@@ -72,13 +72,12 @@ export function OshaWcEeoHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-5"
         title="OSHA · WC · EEO-1"
         subtitle="OSHA injury log, Workers' Comp class codes, and EEO-1 race/gender/category reporting."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'OSHA · WC · EEO' }]}
     >
       <Card>
-        <CardContent className="p-4 flex items-center gap-3">
+        <CardContent className="flex items-center gap-3">
           <span className="text-xs2 uppercase tracking-wider text-silver">Client</span>
           <Select
             size="sm"
@@ -192,7 +191,7 @@ function OshaTab({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="p-4">
+        <CardContent>
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <div className="text-xs uppercase tracking-wider text-silver">Form 300A summary</div>
@@ -854,7 +853,7 @@ function EeoTab({ clientId }: { clientId: string }) {
   if (error) {
     return (
       <Card>
-        <CardContent className="p-6">
+        <CardContent>
           <ErrorBanner
             action={
               <Button
@@ -874,13 +873,13 @@ function EeoTab({ clientId }: { clientId: string }) {
   }
 
   if (data === null) {
-    return <Card><CardContent className="p-6"><SkeletonRows count={5} /></CardContent></Card>;
+    return <Card><CardContent><SkeletonRows count={5} /></CardContent></Card>;
   }
 
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="p-4 flex items-center justify-between gap-4 flex-wrap">
+        <CardContent className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <div className="text-xs uppercase tracking-wider text-silver">
               Active associates with EEO records
@@ -968,7 +967,7 @@ function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
 
   return (
     <Card>
-      <CardContent className="p-4 space-y-3">
+      <CardContent className="space-y-3">
         <div className="text-xs uppercase tracking-wider text-silver">
           Record EEO self-identification
         </div>

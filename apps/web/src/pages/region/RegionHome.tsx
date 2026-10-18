@@ -195,7 +195,7 @@ export function RegionHome() {
                 : 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-gold)/0.14),transparent_50%)]',
           )}
         />
-        <CardContent className="relative p-5">
+        <CardContent className="relative">
           <div className="grid gap-5 md:grid-cols-12">
             <div className="md:col-span-4">
               <span className="text-xs font-medium uppercase tracking-wider text-gold">{t('region.heroEyebrow')}</span>
@@ -257,7 +257,6 @@ export function RegionHome() {
           </div>
         </CardContent>
       </Card>
-
         }
         banners={isRegion ? <PushPrompt /> : undefined}
         assistant={<HugoSeat />}
@@ -272,7 +271,7 @@ export function RegionHome() {
         </div>
         {data.stores.length === 0 ? (
           <Card className="mt-2">
-            <CardContent className="p-6">
+            <CardContent>
               <EmptyState icon={Store} title={t('region.noStores')} description={t('region.noStoresHint')} />
             </CardContent>
           </Card>
@@ -370,7 +369,7 @@ export function RegionHome() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
         {/* ---- Stores side by side (delivered vs contracted, 4 weeks) ------- */}
         <Card className="xl:col-span-7">
-          <CardContent className="p-5">
+          <CardContent>
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="text-sm font-medium text-white">{t('region.storesChart')}</h2>
               <span className="text-xs text-silver/60">{t('region.storesChartSub')}</span>
@@ -391,7 +390,7 @@ export function RegionHome() {
 
         {/* ---- Region trend ---------------------------------------------------- */}
         <Card className="xl:col-span-5">
-          <CardContent className="p-5">
+          <CardContent>
             <h2 className="text-sm font-medium text-white">{t('region.trend')}</h2>
             <div className="mt-3">
               <ReliabilityChart weeks={relWeeks} labels={{ fill: t('portal.chartShowed'), target: t('portal.chartTarget'), heading: (l) => l }} />
@@ -406,7 +405,7 @@ export function RegionHome() {
 
         {/* ---- Open with Alto --------------------------------------------------- */}
         <Card className="xl:col-span-12">
-          <CardContent className="p-5">
+          <CardContent>
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <Inbox className="h-4 w-4 text-gold" aria-hidden="true" />
@@ -445,7 +444,7 @@ export function RegionHome() {
             {t('region.tableDetails')}
           </summary>
           <Card className="mt-2">
-            <CardContent className="p-4 sm:p-5">
+            <CardContent>
               <label className="relative block w-full sm:w-64">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-silver/50" aria-hidden="true" />
                 <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('region.findStore')} className="pl-8" aria-label={t('region.findStore')} />

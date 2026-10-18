@@ -1486,6 +1486,8 @@ function taskDestination(
         }`,
         label: 'Open J-1 program',
       };
+    case 'WOTC_SCREENING':
+      return { to: '/payroll/wotc', label: 'Open WOTC tax credits' };
     default:
       return null;
   }

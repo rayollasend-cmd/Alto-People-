@@ -254,7 +254,7 @@ export function AuditPacketTab() {
       </p>
 
       <Card>
-        <CardContent className="space-y-4 p-5">
+        <CardContent className="space-y-4">
           <div>
             <Label htmlFor="audit-scope">Audit scope</Label>
             <Select

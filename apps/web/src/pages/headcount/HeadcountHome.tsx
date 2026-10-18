@@ -72,7 +72,6 @@ export function HeadcountHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="space-y-6"
         title={term('nav.headcount')} subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: term('nav.headcount') }]}
         secondaryActions={
           <Button asChild variant="outline">
@@ -83,7 +82,7 @@ export function HeadcountHome() {
 
       {overview.isError && <QueryError what="the headcount" query={overview} />}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard
           label={`Active ${term('workers').toLowerCase()}`}
           value={loading || !o ? '—' : n(o.active)}
@@ -167,13 +166,13 @@ function Variance({ value, format }: { value: number | null; format: (v: number)
 function ReconciliationCard({ summary, loaded }: { summary: ReconciliationSummary | null | undefined; loaded: boolean }) {
   return (
     <Card>
-      <CardContent className="space-y-4 pt-5">
+      <CardContent className="space-y-4">
         <SectionTitle as="h2" title="Reconciliation" icon={Scale} description="Platform against the payroll export, last run." />
         {!loaded ? (
           <p className="text-sm text-silver">—</p>
         ) : !summary ? (
           <p className="text-sm text-silver">
-            No reconciliation run yet. Run <code className="rounded bg-navy-secondary/60 px-1 py-0.5 text-xs text-white">scripts/reconcile-payroll.ts --persist</code> against production after the payroll export arrives.
+            No reconciliation yet. Once a payroll export has been checked against the platform, the match rate and any differences appear here.
           </p>
         ) : (
           <>
@@ -239,11 +238,12 @@ function NotActiveCard({ notActive, windowDays }: { notActive: HeadcountOverview
   const total = rows ? rows.reduce((s, r) => s + r.value, 0) : 0;
   return (
     <Card>
-      <CardContent className="space-y-3 pt-5">
+      <CardContent className="space-y-3">
         <SectionTitle as="h2" title="Not active" description={rows ? `${n(total)} on file who do not count.` : 'On file but not counted, by reason.'} />
         {!rows ? (
           <p className="text-sm text-silver">—</p>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <caption className="sr-only">People on file who are not active, by reason</caption>
             <tbody>
@@ -258,6 +258,7 @@ function NotActiveCard({ notActive, windowDays }: { notActive: HeadcountOverview
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -296,7 +297,7 @@ function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | un
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-5">
+      <CardContent className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-base font-medium text-white">Activity window (days)</h2>
           <p className="text-sm text-silver">How many trailing days of work keep a placed {term('worker').toLowerCase()} active. Changing it changes every headcount on the platform.</p>
@@ -420,7 +421,7 @@ function CompactList({ title, rows }: { title: string; rows: { key: string; labe
   const max = rows ? Math.max(1, ...rows.map((r) => r.count)) : 1;
   return (
     <Card>
-      <CardContent className="space-y-3 pt-5">
+      <CardContent className="space-y-3">
         <SectionTitle as="h2" title={title} />
         {!rows ? (
           <p className="text-sm text-silver">—</p>

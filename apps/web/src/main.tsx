@@ -17,9 +17,10 @@ initSentry();
 // lib/historyGuard.
 guardHistory();
 
+import { isNative } from '@/lib/native/platform';
 import { router } from './App';
 import { AuthProvider } from '@/lib/auth';
-import { I18nProvider } from '@/lib/i18n';
+import { I18nProvider, preloadSavedLanguage } from '@/lib/i18n';
 import { LanguageSync } from '@/lib/LanguageSync';
 import { ThemeProvider } from '@/lib/theme';
 import { DensityProvider } from '@/lib/density';
@@ -254,7 +255,10 @@ async function restoreCacheBeforeRender(): Promise<void> {
   ]);
 }
 
-void restoreCacheBeforeRender().finally(() => {
+// The native app's bridge — loaded only inside the app, never on the web.
+const NativeBridge = React.lazy(() => import('@/components/native/NativeBridge').then((m) => ({ default: m.NativeBridge })));
+
+void Promise.all([restoreCacheBeforeRender(), preloadSavedLanguage()]).finally(() => {
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <GlobalErrorBoundary>
@@ -279,6 +283,12 @@ ReactDOM.createRoot(rootEl).render(
                           Without it every navigation blanked to a skeleton
                           even when the next page was 80ms away. */}
                       <LanguageSync />
+                      {/* The native app's chrome, links, push and lock (renders nothing in a browser). */}
+                      {isNative() && (
+                        <React.Suspense fallback={null}>
+                          <NativeBridge navigate={(to) => void (typeof to === 'number' ? router.navigate(to) : router.navigate(to))} />
+                        </React.Suspense>
+                      )}
                       <RouterProvider router={router} />
                       <Toaster />
                     </ConfirmProvider>

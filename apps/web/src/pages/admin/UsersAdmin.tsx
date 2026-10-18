@@ -924,7 +924,7 @@ export function UsersAdmin() {
 
       {view === 'accounts' && (<>
       <Card>
-        <CardContent className="p-4 flex flex-wrap items-end gap-3">
+        <CardContent className="flex flex-wrap items-end gap-3">
           <Field label="Search" className="flex-1 w-full sm:min-w-[200px]">
             {(p) => (
               <SearchInput

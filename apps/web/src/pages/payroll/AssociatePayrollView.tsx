@@ -71,6 +71,7 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   TIPS: 'pay.kind.TIPS',
   REIMBURSEMENT: 'pay.kind.REIMBURSEMENT',
   RETRO: 'pay.kind.RETRO',
+  PREMIUM: 'pay.kind.PREMIUM',
 };
 
 // Labels stay i18n keys (this page is translated); tones come from the
@@ -139,7 +140,6 @@ export function AssociatePayrollView() {
       <PullToRefreshIndicator state={pullState} />
       {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
       <ListTemplate
-        className="mx-auto"
         title={t('pay.title')}
         subtitle={t('pay.subtitle')}
       >

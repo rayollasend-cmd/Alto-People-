@@ -745,7 +745,7 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                 const all = g.rides.every((r) => picked.has(r.id));
                 return (
                   <Card key={g.key}>
-                    <CardContent className="pt-4">
+                    <CardContent>
                       <div className="flex items-center gap-2">
                         {manage && (
                           <PickBox
@@ -896,7 +896,7 @@ function RunPanel({
   const now = Date.now();
   return (
     <Card className={cn(active && (late >= 5 ? 'border-alert/50' : 'border-success/40'))}>
-      <CardContent className="pt-4">
+      <CardContent>
         <div className="flex flex-wrap items-center gap-2">
           <Bus className={cn('h-4 w-4', active ? 'text-success' : 'text-gold')} aria-hidden="true" />
           <span className="font-semibold text-white">{run.van.name}</span>
@@ -1069,7 +1069,7 @@ function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => 
         ) : plan.isError ? (
           <QueryError what="the plan for this day" query={plan} />
         ) : proposals.length === 0 ? (
-          <p className="text-sm text-silver">Nothing to plan — every booking this day has a van.</p>
+          <EmptyState size="sm" title={"Nothing to plan — every booking this day has a van."} />
         ) : (
           <div className="space-y-3">
             {proposals.map((p) => {
@@ -1548,7 +1548,7 @@ function LiveTab() {
         <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
           On the road <span className="text-white">{onRoad.length}</span>
         </h2>
-        {onRoad.length === 0 && <p className="text-sm text-silver">Nothing on the road right now.</p>}
+        {onRoad.length === 0 && <EmptyState size="sm" title={"Nothing on the road right now."} />}
         {onRoad.map((r) => (
           <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} />
         ))}
@@ -1887,7 +1887,7 @@ function IssuesTab({ manage }: { manage: boolean }) {
         <div className="space-y-3">
           {issues.data!.issues.map((i) => (
             <Card key={i.id} className={cn(i.category === 'SAFETY' && i.status !== 'RESOLVED' && 'border-alert/50')}>
-              <CardContent className="pt-4">
+              <CardContent>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={i.category === 'SAFETY' ? 'destructive' : 'accent'} withDot={false}>
                     {ISSUE_LABEL[i.category] ?? i.category}
@@ -2054,7 +2054,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
             const status = !v.isActive ? 'Retired' : v.outOfService ? 'Out of service' : v.now ? 'On the road' : 'Parked';
             return (
               <Card key={v.id} className={cn(!v.isActive && 'opacity-70', v.now && 'border-success/40')}>
-                <CardContent className="pt-4">
+                <CardContent>
                   <div className="flex items-start gap-3">
                     <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full', v.now ? 'bg-success/15 text-success' : 'bg-gold/15 text-gold')}>
                       <Bus className="h-5 w-5" aria-hidden="true" />
@@ -2348,7 +2348,7 @@ function DriverAccessCard({ manage }: { manage: boolean }) {
   }));
   return (
     <Card>
-      <CardContent className="space-y-3 pt-4">
+      <CardContent className="space-y-3">
         <div>
           <h3 className="text-sm font-semibold text-white">Driver access</h3>
           <p className="text-xs text-silver">
@@ -2700,6 +2700,7 @@ function RateHistory({ rates }: { rates: RideRate[] }) {
   return (
     <details className="text-sm">
       <summary className="cursor-pointer text-silver hover:text-white">Rate history ({rates.length})</summary>
+      <div className="overflow-x-auto">
       <table className="mt-2 w-full text-left text-xs">
         <caption className="sr-only">Ride rate history</caption>
         <thead>
@@ -2721,6 +2722,7 @@ function RateHistory({ rates }: { rates: RideRate[] }) {
           ))}
         </tbody>
       </table>
+      </div>
     </details>
   );
 }
@@ -2834,7 +2836,7 @@ function SettingsForm({
           : 'Off — riders can only pick a stop, a saved address, or where they are.';
   return (
     <Card className="max-w-md">
-      <CardContent className="space-y-4 pt-5">
+      <CardContent className="space-y-4">
         <Field label="Fare per ride ($)" hint="Each way. A round trip is two rides.">
           {(p) => <Input {...p} type="number" min={0} step="0.25" value={fare} onChange={(e) => setFare(e.target.value)} disabled={!manage} />}
         </Field>

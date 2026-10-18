@@ -286,7 +286,7 @@ export function PortalToday() {
           )}
           {waves.length === 0 ? (
             <Card>
-              <CardContent className="p-5 text-sm text-silver/60">
+              <CardContent className="text-sm text-silver/60">
                 {mine ? t('focus.nothingToday') : isPast ? t('portal.noShiftsThatDay') : t('portal.noShiftsToday')}
               </CardContent>
             </Card>
@@ -391,7 +391,7 @@ function OffScheduleCard({
   const picked = people.find((e) => e.associateId === selected) ?? null;
   return (
     <Card className="border-success/30">
-      <CardContent className="p-4 sm:p-5">
+      <CardContent>
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h2 className="text-sm font-medium text-white">{t('portal.offSchedule')}</h2>
           <span className="text-sm font-semibold tabular-nums text-white">{people.length}</span>
@@ -704,7 +704,7 @@ function WaveCard({
         focused && 'ring-2 ring-gold/70',
       )}
     >
-      <CardContent className="p-4 sm:p-5">
+      <CardContent>
         {w.phase === 'finished' ? (
           <details className="group" open={missedSome || focused}>
             <summary className="cursor-pointer list-none">

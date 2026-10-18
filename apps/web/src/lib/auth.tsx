@@ -23,6 +23,7 @@ import {
 import { ROLE_LABELS, defaultTenantProfile, termsIn, type TenantModule, type TenantProfile, type TermKey } from '@alto-people/shared';
 import { termVarsFrom, useI18n } from './i18n';
 import { ApiError, NetworkError, TimeoutError, apiFetch } from './api';
+import { isNative } from './native/platform';
 import { onApiAuthFailure, onApiConnectivity } from './sessionEvents';
 import { clearOfflineSession, readOfflineSession, saveOfflineSession } from './offlineSession';
 import { clearPersistedQueries, startQueryPersistence } from './queryPersist';
@@ -402,10 +403,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     try {
+      // Inside the native app apiFetch also names this phone (x-alto-device),
+      // so the server ends its push and its Keychain credential.
       await apiFetch<void>('/auth/logout', { method: 'POST' });
     } catch {
       // Ignore — clear local state regardless so user lands at /login.
     }
+    if (isNative()) await import('./native/session').then((m) => m.forgetThisDevice()).catch(() => {});
     clearUserScopedStorage();
     // clearUserScopedStorage sweeps the `alto` localStorage namespace, which
     // takes the offline session with it; the query cache lives in IndexedDB
