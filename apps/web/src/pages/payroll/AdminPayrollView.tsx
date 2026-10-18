@@ -42,7 +42,6 @@ import type {
 } from '@alto-people/shared';
 import {
   addRunAddOn,
-  approvePayrollRun,
   deletePayrollRun,
   deleteRunAddOn,
   disbursePayrollRun,
@@ -61,6 +60,7 @@ import {
   type RunAddOnKind,
   type WcPremiumReport,
 } from '@/lib/payrollApi';
+import { getPayrollReviewStatus } from '@/lib/payrollReviewApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { useConfirm, usePrompt } from '@/lib/confirm';
@@ -233,7 +233,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // Read once; a failed read just leaves the gate off (server still
   // enforces it with a 409).
   const configQuery = useQuery({ queryKey: ['payroll', 'config'], queryFn: () => getPayrollConfig() });
+  // Now: a signed review report before payout (the pre-payroll review).
   const requireSecondApproval = Boolean(configQuery.data?.requireSecondApproval);
+  // Where the open run's sign-off stands: none, current, or stale (numbers changed since).
+  const reviewStatus = useQuery({
+    queryKey: ['payroll', 'review-status', selected?.id],
+    queryFn: () => getPayrollReviewStatus(selected!.id),
+    enabled: !!selected && (selected.status === 'DRAFT' || selected.status === 'FINALIZED'),
+  });
+  const signoff = reviewStatus.data?.signoff ?? null;
+  const reviewBlocksPayout = !!signoff && signoff.required && !signoff.current;
   // Bulk actions over the runs table.
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -262,22 +271,20 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   }, [filter]);
 
   // Eligibility mirrors the drawer's footer buttons: Finalize on DRAFT,
-  // Approve on FINALIZED (not yet approved), Disburse on FINALIZED. The
-  // second-approval gate is applied at execution time so skipped runs can
-  // be counted honestly in the toast.
+  // Disburse on FINALIZED. Signing off is never a bulk action: each run's
+  // review report is read on its own. Runs with no sign-off are skipped at
+  // execution time so the toast can count them honestly.
   const bulkEligible = useMemo(() => {
     const sel = (runs ?? []).filter((r) => bulkSelected.has(r.id));
     return {
       finalize: sel.filter((r) => r.status === 'DRAFT'),
-      approve: sel.filter((r) => r.status === 'FINALIZED' && !r.approvedAt),
       disburse: sel.filter((r) => r.status === 'FINALIZED'),
     };
   }, [runs, bulkSelected]);
 
-  const runBulk = async (action: 'finalize' | 'approve' | 'disburse') => {
+  const runBulk = async (action: 'finalize' | 'disburse') => {
     if (bulkBusy) return;
-    const label =
-      action === 'finalize' ? 'Finalize' : action === 'approve' ? 'Approve' : 'Disburse';
+    const label = action === 'finalize' ? 'Finalize' : 'Disburse';
     let targets = bulkEligible[action];
     let skippedApproval = 0;
     if (action === 'disburse' && requireSecondApproval) {
@@ -287,7 +294,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     if (targets.length === 0) {
       toast.error(
         skippedApproval > 0
-          ? `All ${skippedApproval} eligible run${skippedApproval === 1 ? '' : 's'} need a second approval before disbursing.`
+          ? `All ${skippedApproval} eligible run${skippedApproval === 1 ? '' : 's'} need a signed review before disbursing.`
           : `No selected runs are eligible to ${action}.`,
       );
       return;
@@ -297,7 +304,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       description:
         `${targets.length} of ${bulkSelected.size} selected run${bulkSelected.size === 1 ? ' is' : 's are'} eligible and will be processed a few at a time.` +
         (skippedApproval > 0
-          ? ` ${skippedApproval} will be skipped — ${skippedApproval === 1 ? 'it needs' : 'they need'} a second approval first.`
+          ? ` ${skippedApproval} will be skipped: ${skippedApproval === 1 ? 'it needs' : 'they need'} a signed review first.`
           : ''),
       confirmLabel: `${label} (${targets.length})`,
       destructive: action === 'disburse',
@@ -309,7 +316,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     // succeeded/failed tallies identical to the old sequential loop.
     const results = await mapWithConcurrency(targets, 4, (r) => {
       if (action === 'finalize') return finalizePayrollRun(r.id);
-      if (action === 'approve') return approvePayrollRun(r.id);
       return disbursePayrollRun(r.id);
     });
     const succeeded = results.filter((r) => r.status === 'fulfilled').length;
@@ -457,21 +463,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       refreshUpcoming();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Delete failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onApprove = async () => {
-    if (!selected || busy) return;
-    setBusy(true);
-    try {
-      const updated = await approvePayrollRun(selected.id);
-      setSelected(updated);
-      toast.success('Run approved — ready to disburse.');
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed.');
     } finally {
       setBusy(false);
     }
@@ -879,15 +870,36 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     </div>
                   )}
 
-                  {/* Four-eyes approval note — visible once a run is approved
-                      so the disburser knows a second person signed off. */}
-                  {selected.approvedAt && (
+                  {/* The pre-payroll review: where the sign-off stands, so
+                      the person paying knows someone read these numbers. */}
+                  {signoff?.current ? (
                     <div className="mb-4 flex items-center gap-2 rounded border border-success/30 bg-success/5 p-2.5 text-xs text-success">
-                      <ShieldCheck className="h-4 w-4" />
+                      <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      Review signed off by {signoff.current.signedByName ?? 'a reviewer'} {fmtDateTime(signoff.current.signedAt)}
+                    </div>
+                  ) : signoff?.stale ? (
+                    <div className="mb-4 flex flex-wrap items-center gap-2 rounded border border-alert/40 bg-alert/5 p-2.5 text-xs text-alert">
+                      <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      The numbers changed after {signoff.stale.signedByName ?? 'the reviewer'} signed off.
+                      <Link className="underline underline-offset-2" to={`/payroll/runs/${selected.id}/review`}>
+                        Review again
+                      </Link>
+                    </div>
+                  ) : signoff?.required ? (
+                    <div className="mb-4 flex flex-wrap items-center gap-2 rounded border border-line bg-surface-raised p-2.5 text-xs text-ink-muted">
+                      <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      Not signed off yet. Someone reads the review report and signs before this run pays.
+                      <Link className="text-accent underline underline-offset-2" to={`/payroll/runs/${selected.id}/review`}>
+                        Open the report
+                      </Link>
+                    </div>
+                  ) : selected.approvedAt ? (
+                    <div className="mb-4 flex items-center gap-2 rounded border border-success/30 bg-success/5 p-2.5 text-xs text-success">
+                      <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
                       Approved {fmtDateTime(selected.approvedAt)}
                       {selected.approverEmail ? ` by ${selected.approverEmail}` : ''}
                     </div>
-                  )}
+                  ) : null}
 
                   {/* Wave 9 — QBO-style status progress bar shown across the top
                       of the drawer. Tracks the run state through the four
@@ -1047,24 +1059,26 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         Finalize
                       </Button>
                     )}
-                    {selected.status === 'FINALIZED' && !selected.approvedAt && (
-                      <Button variant="secondary" onClick={onApprove} loading={busy} disabled={busy}>
-                        <ShieldCheck className="h-4 w-4" />
-                        Approve
+                    {(selected.status === 'FINALIZED' || selected.status === 'DRAFT') && (
+                      <Button asChild variant={selected.status === 'FINALIZED' && reviewBlocksPayout ? 'primary' : 'secondary'}>
+                        <Link to={`/payroll/runs/${selected.id}/review`}>
+                          <ShieldCheck className="h-4 w-4" />
+                          {signoff?.current ? 'Review report' : 'Review and sign off'}
+                        </Link>
                       </Button>
                     )}
                     {selected.status === 'FINALIZED' &&
-                      (requireSecondApproval && !selected.approvedAt ? (
+                      (reviewBlocksPayout ? (
                         // Honesty gate — the server would 409 the disbursement
                         // anyway; don't let the admin walk the whole ceremony
                         // into it. The Approve button renders right beside this.
                         <Button
                           variant="primary"
                           disabled
-                          title="Needs a second approval first"
+                          title="Someone signs off on the review report first"
                         >
                           <Send className="h-4 w-4" />
-                          Needs a second approval first
+                          Needs a signed review
                         </Button>
                       ) : (
                         <Button
@@ -1201,15 +1215,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
             Finalize ({bulkEligible.finalize.length})
-          </Button>
-          <Button
-            size="xs"
-            variant="secondary"
-            onClick={() => runBulk('approve')}
-            disabled={bulkBusy || bulkEligible.approve.length === 0}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Approve ({bulkEligible.approve.length})
           </Button>
           <Button
             size="xs"

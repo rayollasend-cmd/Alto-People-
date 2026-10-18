@@ -73,7 +73,7 @@ export function BrandingHome() {
   const [unverifiedPayoutPolicy, setUnverifiedPayoutPolicy] = useState<UnverifiedPayoutPolicy>('PREVIOUS_VERIFIED');
   const [financeSaving, setFinanceSaving] = useState(false);
   // Approval engine (2026-10): the maker-checker switches.
-  const [approvals, setApprovals] = useState({ payChangeApprovalPct: 10, payChangeAlwaysApprove: false, billRateApproval: true, separationSecondPerson: true, selfServiceApproval: false, roleChangeApproval: true, requisitionApproval: true });
+  const [approvals, setApprovals] = useState({ payChangeApprovalPct: 10, payChangeAlwaysApprove: false, billRateApproval: true, separationSecondPerson: true, selfServiceApproval: false, roleChangeApproval: true, requisitionApproval: true, payrollReviewRequired: true });
   const [approvalsSaving, setApprovalsSaving] = useState(false);
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -108,6 +108,7 @@ export function BrandingHome() {
       selfServiceApproval: b.selfServiceApproval,
       roleChangeApproval: b.roleChangeApproval,
       requisitionApproval: b.requisitionApproval,
+      payrollReviewRequired: b.payrollReviewRequired,
     });
     setLogoBust((n) => n + 1);
   }, [loadQuery.data]);
@@ -153,7 +154,8 @@ export function BrandingHome() {
       branding.separationSecondPerson !== approvals.separationSecondPerson ||
       branding.selfServiceApproval !== approvals.selfServiceApproval ||
       branding.roleChangeApproval !== approvals.roleChangeApproval ||
-      branding.requisitionApproval !== approvals.requisitionApproval);
+      branding.requisitionApproval !== approvals.requisitionApproval ||
+      branding.payrollReviewRequired !== approvals.payrollReviewRequired);
   const onSaveApprovals = async () => {
     setApprovalsSaving(true);
     try {
@@ -602,6 +604,7 @@ export function BrandingHome() {
               <div className="grid gap-2 sm:grid-cols-2">
                 {(
                   [
+                    ['payrollReviewRequired', 'Paying a payroll run', 'Someone reads the review report and signs off before money moves.'],
                     ['billRateApproval', 'Bill-rate changes', 'A dated rate card, approved by Finance.'],
                     ['separationSecondPerson', 'Completing a separation', 'Access ends only when a second person says so.'],
                     ['roleChangeApproval', 'Granting more access', 'A role elevation waits for a second administrator.'],

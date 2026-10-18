@@ -417,6 +417,7 @@ enum PositionStatus {
 // =============================================================================
 
 model User {
+  payrollReviewsSigned PayrollRunReview[] @relation("PayrollReviewSigner")
   /// Brief 2-4: the /v1 API clients this person is accountable for.
   ownedApiClients        ApiClient[]      @relation("ApiClientOwner")
   id                     String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -4015,6 +4016,7 @@ model PayrollRun {
   createdAt                   DateTime                  @default(now()) @db.Timestamptz(6)
   updatedAt                   DateTime                  @updatedAt @db.Timestamptz(6)
   laborShadowRun              LaborShadowRun?
+  reviews                     PayrollRunReview[]
 
   @@index([clientId, periodStart])
   @@index([status, disbursedAt])
@@ -10131,6 +10133,8 @@ model OrgSetting {
   selfServiceApproval    Boolean                @default(false)
   roleChangeApproval     Boolean                @default(true)
   requisitionApproval    Boolean                @default(true)
+  /// Before a run pays out, someone signs off on its review report (a second person where one exists).
+  payrollReviewRequired  Boolean                @default(true)
   /// Overtime offered fewest-overtime-first (lib/overtimeRotation).
   otEqualization         Boolean                @default(false)
   updatedAt              DateTime               @updatedAt @db.Timestamptz(6)
@@ -15690,5 +15694,25 @@ model BillingAdjustment {
 
   @@index([clientId, status])
   @@index([payrollRunId])
+  @@index([tenantId])
+}
+
+/// A sign-off on a payroll run's review report, pinned to the paychecks' amounts by fingerprint.
+model PayrollRunReview {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  payrollRunId String     @db.Uuid
+  fingerprint  String     @db.VarChar(64)
+  signedById   String?    @db.Uuid
+  signedAt     DateTime   @default(now()) @db.Timestamptz(6)
+  note         String?    @db.VarChar(1000)
+  /// No one else who processes payroll existed, so the run's creator signed.
+  soleReviewer Boolean    @default(false)
+  /// What the signer saw: people, gross, net, cash required.
+  totals       Json       @default("{}")
+  payrollRun   PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  signedBy     User?      @relation("PayrollReviewSigner", fields: [signedById], references: [id], onDelete: SetNull)
+
+  @@index([payrollRunId, signedAt])
   @@index([tenantId])
 }

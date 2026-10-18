@@ -10,6 +10,7 @@ import {
   createUser,
   prisma,
   truncateAll,
+  signOffRun,
 } from '../../../test/db.js';
 
 const app = () => createApp();
@@ -91,6 +92,7 @@ async function seedDisbursedRun(): Promise<SeedDisbursedRun> {
   const itemGross = Number(create.body.items[0].grossPay);
 
   await hrAgent.post(`/payroll/runs/${runId}/finalize`);
+  await signOffRun(runId);
   const disb = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
   if (disb.body.status !== 'DISBURSED') {
     throw new Error(`disburse failed: ${JSON.stringify(disb.body)}`);
@@ -204,6 +206,7 @@ describe('POST /payroll/runs/:id/amend — Gap 3', () => {
     // Finalize then disburse — disburse should NOT call the rail for the
     // negative-net item, and SHOULD create a PendingPayrollDeduction.
     await hrAgent.post(`/payroll/runs/${amendId}/finalize`);
+    await signOffRun(amendId);
     const disb = await hrAgent.post(`/payroll/runs/${amendId}/disburse`);
     expect(disb.status).toBe(200);
 
@@ -250,6 +253,7 @@ describe('POST /payroll/runs/:id/amend — Gap 3', () => {
     });
     const amendId = amend.body.id as string;
     await hrAgent.post(`/payroll/runs/${amendId}/finalize`);
+    await signOffRun(amendId);
     await hrAgent.post(`/payroll/runs/${amendId}/disburse`);
 
     const pendingBefore = await prisma.pendingPayrollDeduction.findFirstOrThrow({
@@ -309,6 +313,7 @@ describe('POST /payroll/runs/:id/amend — Gap 3', () => {
     });
     const amendId = amend.body.id as string;
     await hrAgent.post(`/payroll/runs/${amendId}/finalize`);
+    await signOffRun(amendId);
     await hrAgent.post(`/payroll/runs/${amendId}/disburse`);
 
     // Next REGULAR run for the same associate; its item.ytdWages should

@@ -462,3 +462,13 @@ export async function createGlobalPolicy(title = 'Code of Conduct (test)') {
     },
   });
 }
+
+/**
+ * Sign off on a payroll run's review report as it stands, so a test about
+ * paying out can pay out. The sign-off rules themselves (second person,
+ * stale numbers) are covered in payrollReview.test.ts through the API.
+ */
+export async function signOffRun(runId: string, signedById: string | null = null): Promise<void> {
+  const { currentFingerprint } = await import('../src/lib/payrollReview.js');
+  await prisma.payrollRunReview.create({ data: { payrollRunId: runId, fingerprint: await currentFingerprint(prisma, runId), signedById, totals: {} } });
+}

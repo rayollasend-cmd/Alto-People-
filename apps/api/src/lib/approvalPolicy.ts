@@ -21,6 +21,8 @@ export interface ApprovalPolicy {
   selfServiceApproval: boolean;
   roleChangeApproval: boolean;
   requisitionApproval: boolean;
+  /** Before a run pays out, someone signs off on its review report (lib/payrollReview.ts). */
+  payrollReviewRequired: boolean;
 }
 
 export const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
@@ -31,6 +33,7 @@ export const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
   selfServiceApproval: false,
   roleChangeApproval: true,
   requisitionApproval: true,
+  payrollReviewRequired: true,
 };
 
 export async function loadApprovalPolicy(db: Db = defaultPrisma, tenantId: string = tenantIdForWrite()): Promise<ApprovalPolicy> {
@@ -44,6 +47,7 @@ export async function loadApprovalPolicy(db: Db = defaultPrisma, tenantId: strin
       selfServiceApproval: true,
       roleChangeApproval: true,
       requisitionApproval: true,
+      payrollReviewRequired: true,
     },
   });
   return row ?? DEFAULT_APPROVAL_POLICY;

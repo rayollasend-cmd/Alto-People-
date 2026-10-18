@@ -85,6 +85,7 @@ async function loadResponse(tenantId: string): Promise<OrgBranding> {
       selfServiceApproval: false,
       roleChangeApproval: true,
       requisitionApproval: true,
+      payrollReviewRequired: true,
       updatedAt: new Date(0).toISOString(),
     };
   }
@@ -111,6 +112,7 @@ async function loadResponse(tenantId: string): Promise<OrgBranding> {
     selfServiceApproval: row.selfServiceApproval,
     roleChangeApproval: row.roleChangeApproval,
     requisitionApproval: row.requisitionApproval,
+    payrollReviewRequired: row.payrollReviewRequired,
     updatedAt: row.updatedAt.toISOString(),
   };
 }

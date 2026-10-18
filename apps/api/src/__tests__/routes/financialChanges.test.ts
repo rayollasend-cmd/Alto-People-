@@ -14,6 +14,7 @@ import {
   createUser,
   prisma,
   truncateAll,
+  signOffRun,
 } from '../../../test/db.js';
 
 /**
@@ -259,6 +260,7 @@ describe('verify-before-pay', () => {
     _setAdapterForTesting(spy);
 
     const { hrAgent, runId } = await runFor(associate.id, client.id);
+    await signOffRun(runId);
     const res = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('DISBURSED');
@@ -302,6 +304,7 @@ describe('verify-before-pay', () => {
       },
     });
     const { hrAgent, runId } = await runFor(associate.id, client.id);
+    await signOffRun(runId);
     const res = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('FINALIZED');

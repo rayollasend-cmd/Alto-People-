@@ -9,6 +9,7 @@ import {
   createUser,
   prisma,
   truncateAll,
+  signOffRun,
 } from '../../../test/db.js';
 
 const app = () => createApp();
@@ -59,6 +60,7 @@ describe('POST /payroll/runs/:id/disburse — no silent 100-item cap', () => {
       });
     }
 
+    await signOffRun(run.id);
     const res = await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     expect(res.status).toBe(200);
 

@@ -9,6 +9,7 @@ import {
   createUser,
   prisma,
   truncateAll,
+  signOffRun,
 } from '../../../test/db.js';
 import {
   _setAdapterForTesting,
@@ -84,6 +85,7 @@ describe('POST /payroll/runs/:id/disburse — adapter wiring', () => {
   it('writes a SUCCESS PayrollDisbursementAttempt for each item and flips run to DISBURSED', async () => {
     const { hrAgent, runId, items } = await seedRunWithItems();
 
+    await signOffRun(runId);
     const res = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('DISBURSED');
@@ -118,6 +120,7 @@ describe('POST /payroll/runs/:id/disburse — adapter wiring', () => {
     _setAdapterForTesting(failingAdapter);
 
     const { hrAgent, runId, items } = await seedRunWithItems();
+    await signOffRun(runId);
     const res = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('FINALIZED'); // not DISBURSED
@@ -140,9 +143,11 @@ describe('POST /payroll/runs/:id/disburse — adapter wiring', () => {
   it('refuses to disburse a non-FINALIZED run → 409', async () => {
     const { hrAgent, runId } = await seedRunWithItems();
     // First disburse flips to DISBURSED.
+    await signOffRun(runId);
     const first = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
     expect(first.status).toBe(200);
     // Second attempt: run is now DISBURSED, not FINALIZED.
+    await signOffRun(runId);
     const second = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
     expect(second.status).toBe(409);
   });

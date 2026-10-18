@@ -13,6 +13,7 @@ import { acaOffersDue } from './aca.js';
 import { stateTablesAwaitingReview } from './stateTax.js';
 import { localJurisdictionsAwaitingReview } from './taxJurisdictions.js';
 import { payrollTaxesNeedingYou } from '../lib/payrollTaxLedger.js';
+import { runsAwaitingReview } from '../lib/payrollReview.js';
 import { isClientBoundedRole, isInternallyScoped } from '../lib/scope.js';
 import { logger } from '../lib/logger.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -653,6 +654,14 @@ const SOURCES: SourceDef[] = [
     path: '/communications',
     visible: (u) => u.role === 'ASSOCIATE',
     count: (u) => prisma.notification.count({ where: { recipientUserId: u.id, channel: 'IN_APP', readAt: null } }),
+  },
+  {
+    key: 'payroll-review',
+    label: 'Payroll to review and sign',
+    description: 'Payroll runs whose review report no one has signed off on yet, or whose numbers changed after the sign-off. They can’t pay out until someone does.',
+    path: '/payroll/review',
+    visible: (u) => can(u, 'process:payroll') && !internalSites(u),
+    count: async (u) => (await runsAwaitingReview(prisma, u.id, { AND: [{ tenantId: tenantIdForWrite() }, scopePayrollRuns(u)] })).length,
   },
   {
     key: 'financial-changes',

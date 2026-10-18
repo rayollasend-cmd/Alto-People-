@@ -114,6 +114,8 @@ const PayrollReadiness = lazyNamed(
 );
 const PayrollYtd = lazyNamed(() => import('@/pages/payroll/PayrollYtd'), 'PayrollYtd');
 const PayrollClosePage = lazyNamed(() => import('@/pages/payroll/PayrollClosePage'), 'PayrollClosePage');
+const PayrollReviewPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewPage'), 'PayrollReviewPage');
+const PayrollReviewsPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewsPage'), 'PayrollReviewsPage');
 const EarnedWageDesk = lazyNamed(() => import('@/pages/payroll/EarnedWageDesk'), 'EarnedWageDesk');
 const DailyPayDesk = lazyNamed(() => import('@/pages/payroll/DailyPayDesk'), 'DailyPayDesk');
 const ManualChecksPage = lazyNamed(() => import('@/pages/payroll/ManualChecksPage'), 'ManualChecksPage');
@@ -675,6 +677,8 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/runs/:id/close', element: <RequireCapability cap="process:payroll"><PayrollClosePage /></RequireCapability> },
+  { path: 'payroll/runs/:id/review', element: <RequireCapability cap="process:payroll"><PayrollReviewPage /></RequireCapability> },
+  { path: 'payroll/review', element: <RequireCapability cap="process:payroll"><PayrollReviewsPage /></RequireCapability> },
   { path: 'payroll/earned-wage', element: <RequireCapability cap="process:payroll"><EarnedWageDesk /></RequireCapability> },
   { path: 'payroll/daily-pay', element: <RequireCapability cap="process:payroll"><DailyPayDesk /></RequireCapability> },
   { path: 'payroll/manual-checks', element: <RequireCapability cap="process:payroll"><ManualChecksPage /></RequireCapability> },

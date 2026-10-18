@@ -18,9 +18,9 @@ import { statusTone } from '@/lib/status';
 import { RunFundingCard } from '@/pages/payrollBanking/FundingCard';
 
 /**
- * The guided close: one payroll run, six steps, each with what blocks it
- * and where to go. Readiness → exceptions → finalize (and the second
- * approval, where it is on) → disburse → the tax deposit → QuickBooks.
+ * The guided close: one payroll run, step by step, each with what blocks it
+ * and where to go. Readiness → exceptions → workers' own checks → finalize
+ * → the review report signed off → disburse → the tax deposit → QuickBooks.
  * The actions live where they always did; this page is the order and
  * the count of what is in the way.
  */
@@ -57,6 +57,14 @@ export interface PayrollClose {
     qboSyncError: string | null;
   };
   approvalRequired: boolean;
+  review?: {
+    required: boolean;
+    signedByName: string | null;
+    signedAt: string | null;
+    soleReviewer: boolean;
+    staleSignedByName: string | null;
+    staleSignedAt: string | null;
+  };
   items: { pending: number; disbursed: number; held: number; failed: number; voided: number };
   heldItems: Array<{ id: string; name: string; netPay: number; reason: string | null }>;
   paidItems?: Array<{ id: string; name: string; netPay: number }>;
@@ -74,7 +82,8 @@ const STEP_HINT: Record<string, string> = {
   readiness: 'W-4s on file, a verified pay account for everyone, and a state the engine withholds for.',
   exceptions: 'What the run would pay wrong or not at all. Blocking ones stop finalize.',
   payPreview: 'Two days before payday each worker checks their pay. A flag they raise stays open until it’s handled.',
-  approve: 'Lock the figures. With four-eyes on, a second person signs before money moves.',
+  approve: 'Lock the figures so nothing else lands on the run.',
+  review: 'Read the review report: totals, cash, taxes and every paycheck that moved. Sign off on these exact numbers.',
   disburse: 'Send every payment. Held and failed items need a decision before the run completes.',
   deposits: 'The withheld taxes became trust-fund money on a deadline the moment the run paid out.',
   quickbooks: 'Post the journal entry — split by cost center when the client has it on.',
@@ -264,12 +273,21 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
         </ul>
       );
     case 'approve':
-      return (
-        <p className="mt-2 text-xs text-ink-muted">
-          {r.finalizedAt ? `Finalized ${fmtDateTime(r.finalizedAt)}` : 'Not finalized yet'}
-          {data.approvalRequired && (r.approvedAt ? ` · approved by ${r.approvedByEmail ?? 'a second person'} ${fmtDateTime(r.approvedAt)}` : ' · second approval still needed')}
-        </p>
-      );
+      return <p className="mt-2 text-xs text-ink-muted">{r.finalizedAt ? `Finalized ${fmtDateTime(r.finalizedAt)}` : 'Not finalized yet'}</p>;
+    case 'review': {
+      const rv = data.review;
+      if (!rv) return null;
+      if (rv.signedAt) {
+        return (
+          <p className="mt-2 text-xs text-ink-muted">
+            Signed off by {rv.signedByName ?? 'a reviewer'} {fmtDateTime(rv.signedAt)}
+            {rv.soleReviewer && ' · the only person who processes payroll'}
+          </p>
+        );
+      }
+      if (rv.staleSignedAt) return null; // The step's note says it.
+      return rv.required ? <p className="mt-2 text-xs text-ink-muted">No sign-off yet. The run can’t pay out without one.</p> : null;
+    }
     case 'disburse':
       return (
         <div className="mt-2 text-xs text-ink-muted">

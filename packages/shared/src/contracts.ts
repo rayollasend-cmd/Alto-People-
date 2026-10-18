@@ -7098,6 +7098,8 @@ export const OrgBrandingSchema = /* @__PURE__ */ (() => z.object({
   selfServiceApproval: z.boolean(),
   roleChangeApproval: z.boolean(),
   requisitionApproval: z.boolean(),
+  /** Before a payroll run pays out, someone signs off on its review report. */
+  payrollReviewRequired: z.boolean(),
   updatedAt: z.string().datetime(),
 }))();
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
@@ -7138,6 +7140,7 @@ export const UpdateOrgBrandingInputSchema = /* @__PURE__ */ (() => z
     selfServiceApproval: z.boolean().optional(),
     roleChangeApproval: z.boolean().optional(),
     requisitionApproval: z.boolean().optional(),
+    payrollReviewRequired: z.boolean().optional(),
   })
   .strict())();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;

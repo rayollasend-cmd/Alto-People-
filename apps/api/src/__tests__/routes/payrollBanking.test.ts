@@ -7,7 +7,7 @@ import { accountFingerprint } from '../../lib/financialChanges.js';
 import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
 import { validateNachaFile } from '../../lib/banking/nacha.js';
 import { _setAdapterForTesting, resolveAdapter } from '../../lib/disbursement.js';
-import { DEFAULT_TEST_PASSWORD, createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { DEFAULT_TEST_PASSWORD, createAssociate, createUser, prisma, truncateAll, signOffRun } from '../../../test/db.js';
 
 const app = () => createApp();
 
@@ -149,6 +149,7 @@ describe('payroll banking: funding gates disbursement', () => {
     await verifiedFundingAccount(a);
     const { run, items } = await finalizedRun();
 
+    await signOffRun(run.id);
     const blocked = await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     expect(blocked.status).toBe(409);
     expect(blocked.body.error?.code ?? blocked.body.code).toBe('not_funded');
@@ -162,10 +163,12 @@ describe('payroll banking: funding gates disbursement', () => {
     const debitFile = await prisma.achFile.findFirstOrThrow({ where: { purpose: 'FUNDING' } });
     expect(Number(debitFile.totalDebitCents)).toBe(175050);
 
+    await signOffRun(run.id);
     const stillBlocked = await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     expect(stillBlocked.status).toBe(409);
 
     await prisma.payrollFunding.updateMany({ data: { status: 'SETTLED', settledAt: new Date() } });
+    await signOffRun(run.id);
     const paid = await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     expect(paid.status).toBe(200);
     const after = await prisma.payrollItem.findMany({ where: { payrollRunId: run.id } });
@@ -246,12 +249,14 @@ describe('payroll banking: what comes back', () => {
     expect(up.body).toMatchObject({ returned: 1, total: 1 });
     const f = await prisma.payrollFunding.findFirstOrThrow({ where: { payrollRunId: run.id } });
     expect(f).toMatchObject({ status: 'RETURNED', returnCode: 'R01' });
+    await signOffRun(run.id);
     const blocked = await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     expect(blocked.status).toBe(409);
     expect(JSON.stringify(blocked.body)).toContain('R01');
     await a.post(`/payroll-banking/runs/${run.id}/wire`).send({ state: 'WIRE_PENDING', note: 'Wire promised by the controller' });
     const got = await a.post(`/payroll-banking/runs/${run.id}/wire`).send({ state: 'WIRE_RECEIVED', note: 'Fed ref 20261013B1QGC07C000123' });
     expect(got.body.funding.status).toBe('WIRE_RECEIVED');
+    await signOffRun(run.id);
     const paid = await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     expect(paid.status).toBe(200);
   });
@@ -264,6 +269,7 @@ describe('payroll banking: what comes back', () => {
     const { run, jane, ken } = await finalizedRun();
     await a.post(`/payroll-banking/runs/${run.id}/funding`).send({});
     await prisma.payrollFunding.updateMany({ data: { status: 'SETTLED' } });
+    await signOffRun(run.id);
     await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     const janeEntry = await prisma.achEntry.findFirstOrThrow({ where: { kind: 'CREDIT', associateId: jane.id } });
     const kenEntry = await prisma.achEntry.findFirstOrThrow({ where: { kind: 'CREDIT', associateId: ken.id } });
@@ -297,6 +303,7 @@ describe('payroll banking: direct deposit details', () => {
     await bankMethod(jane.id, ROUTING_B, '44440000', { isPrimary: false, splitKind: 'AMOUNT', splitAmountCents: 25_000, splitOrder: 1 });
     await a.post(`/payroll-banking/runs/${run.id}/funding`).send({});
     await prisma.payrollFunding.updateMany({ data: { status: 'SETTLED' } });
+    await signOffRun(run.id);
     const r = await a.post(`/payroll/runs/${run.id}/disburse`).send({});
     expect(r.status).toBe(200);
     const janes = await prisma.achEntry.findMany({ where: { associateId: jane.id, kind: 'CREDIT' }, orderBy: { amountCents: 'asc' } });

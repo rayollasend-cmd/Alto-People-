@@ -205,7 +205,7 @@ describe('the guided close', () => {
     const { agent, runId } = await seedDraft('AR');
     const close = await agent.get(`/payroll/runs/${runId}/close`);
     expect(close.status).toBe(200);
-    expect(close.body.steps.map((s: { key: string }) => s.key)).toEqual(['readiness', 'exceptions', 'payPreview', 'approve', 'disburse', 'deposits', 'quickbooks']);
+    expect(close.body.steps.map((s: { key: string }) => s.key)).toEqual(['readiness', 'exceptions', 'payPreview', 'approve', 'review', 'disburse', 'deposits', 'quickbooks']);
     expect(close.body.steps[0].state).toBe('blocked');
     expect(close.body.readiness.unsupportedState[0]).toContain('AR');
     expect(step(close.body, 'approve')).toBe('blocked');
@@ -221,7 +221,9 @@ describe('the guided close', () => {
     expect(fin.status).toBe(200);
     const close = await agent.get(`/payroll/runs/${runId}/close`);
     expect(step(close.body, 'approve')).toBe('done');
-    expect(step(close.body, 'disburse')).toBe('current');
+    // Finalized, not yet signed: the review is next and the payout waits for it.
+    expect(step(close.body, 'review')).toBe('current');
+    expect(step(close.body, 'disburse')).toBe('blocked');
     expect(step(close.body, 'quickbooks')).toBe('skip');
   });
 });

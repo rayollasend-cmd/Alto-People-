@@ -10,6 +10,7 @@ import {
   createUser,
   prisma,
   truncateAll,
+  signOffRun,
 } from '../../../test/db.js';
 
 const app = () => createApp();
@@ -97,6 +98,7 @@ async function seedDisbursedRun(): Promise<SeedDisbursedRun> {
   const finalize = await hrAgent.post(`/payroll/runs/${runId}/finalize`);
   if (finalize.status !== 200) throw new Error(`finalize failed ${finalize.status}`);
 
+  await signOffRun(runId);
   const disburse = await hrAgent.post(`/payroll/runs/${runId}/disburse`);
   if (disburse.status !== 200) throw new Error(`disburse failed ${disburse.status}`);
   if (disburse.body.status !== 'DISBURSED') {

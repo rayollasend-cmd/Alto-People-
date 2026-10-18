@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { payDateFor } from '../lib/banking/funding.js';
 import { Prisma } from '@prisma/client';
 import { runWithConcurrency } from '../lib/concurrency.js';
@@ -34,6 +34,9 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { assertRunReviewed, buildPayrollReview, currentFingerprint, notifyReviewers, reviewRequired, reviewState, runsAwaitingReview, signPayrollReview } from '../lib/payrollReview.js';
+import { renderPayrollReviewPdf } from '../lib/payrollReviewPdf.js';
+import { renderPayrollReviewXlsx } from '../lib/payrollReviewXlsx.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
@@ -1494,6 +1497,8 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, idempotent, async (req, res, n
     // Pay reaches the bill: retro pay rebilled and premiums billed by each
     // client's contract (lib/payBillLink). Never fails the finalize.
     await onPayrollFinalized(prisma, updated.id, req.user!.id).catch((err) => console.warn('[payroll] pay-bill link failed:', err));
+    // The review report is ready: the people who can sign hear about it.
+    await notifyReviewers(prisma, updated).catch((err) => console.warn('[payroll] review notice failed:', err));
     // Outbound webhooks — run id + period + status only. Deliberately NO
     // totals or per-associate amounts: pay data stays out of third-party
     // payloads; consumers with an API key can pull details themselves.
@@ -1641,21 +1646,9 @@ payrollRouter.post('/runs/:id/approve', PROCESS, async (req, res, next) => {
     if (run.status !== 'FINALIZED') {
       throw new HttpError(409, 'not_finalized', 'Only FINALIZED runs can be approved.');
     }
-    if (run.approvedAt) {
-      throw new HttpError(409, 'already_approved', 'This run is already approved.');
-    }
-    if (run.createdById === req.user!.id) {
-      throw new HttpError(
-        409,
-        'self_approval',
-        'Four-eyes control: the run creator cannot be its approver.',
-      );
-    }
-    const updated = await prisma.payrollRun.update({
-      where: { id: run.id },
-      data: { approvedById: req.user!.id, approvedAt: new Date() },
-      include: RUN_INCLUDE,
-    });
+    // Approving is signing off on the review report as it stands now
+    // (lib/payrollReview.ts): the same second-person rule, the same record.
+    await signPayrollReview(prisma, { runId: run.id, userId: req.user!.id, fingerprint: await currentFingerprint(prisma, run.id), note: null });
     await recordPayrollEvent({
       actorUserId: req.user!.id,
       action: 'payroll.run_approved',
@@ -1663,7 +1656,134 @@ payrollRouter.post('/runs/:id/approve', PROCESS, async (req, res, next) => {
       clientId: run.clientId,
       req,
     });
+    const updated = await prisma.payrollRun.findUniqueOrThrow({ where: { id: run.id }, include: RUN_INCLUDE });
     res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== The pre-payroll review (lib/payrollReview.ts) ===================== */
+
+async function reviewableRun(req: Request) {
+  const run = await prisma.payrollRun.findFirst({ where: { id: z.string().uuid().parse(req.params.id), ...scopePayrollRuns(req.user!) } });
+  if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+  return run;
+}
+
+/** GET /payroll/reviews — runs waiting on this person's sign-off, and the latest sign-offs. */
+payrollRouter.get('/reviews', PROCESS, async (req, res, next) => {
+  try {
+    const where = { AND: [{ tenantId: tenantIdForWrite() }, scopePayrollRuns(req.user!)] };
+    const waiting = await runsAwaitingReview(prisma, req.user!.id, where);
+    const [runs, recent] = await Promise.all([
+      prisma.payrollRun.findMany({
+        where: { id: { in: waiting.map((w) => w.id) } },
+        select: { id: true, status: true, kind: true, periodStart: true, periodEnd: true, totalGross: true, totalNet: true, client: { select: { name: true } }, createdBy: { select: { email: true } }, reviews: { orderBy: { signedAt: 'desc' }, take: 1, select: { signedAt: true } }, _count: { select: { items: { where: { status: { not: 'VOIDED' } } } } } },
+        orderBy: { periodEnd: 'asc' },
+      }),
+      prisma.payrollRunReview.findMany({
+        where: { payrollRun: where },
+        orderBy: { signedAt: 'desc' },
+        take: 10,
+        select: { id: true, signedAt: true, soleReviewer: true, signedBy: { select: { email: true } }, payrollRun: { select: { id: true, periodStart: true, periodEnd: true, client: { select: { name: true } } } } },
+      }),
+    ]);
+    res.json({
+      waiting: runs.map((r) => ({
+        id: r.id,
+        status: r.status,
+        kind: r.kind,
+        clientName: r.client?.name ?? null,
+        periodStart: ymd(r.periodStart),
+        periodEnd: ymd(r.periodEnd),
+        people: r._count.items,
+        totalGross: Number(r.totalGross),
+        totalNet: Number(r.totalNet),
+        createdByName: r.createdBy?.email ?? null,
+        // A sign-off exists but the numbers moved since.
+        changedSinceSignoff: r.reviews.length > 0,
+      })),
+      recent: recent.map((x) => ({
+        id: x.id,
+        runId: x.payrollRun.id,
+        clientName: x.payrollRun.client?.name ?? null,
+        periodStart: ymd(x.payrollRun.periodStart),
+        periodEnd: ymd(x.payrollRun.periodEnd),
+        signedByName: x.signedBy?.email ?? null,
+        signedAt: x.signedAt.toISOString(),
+        soleReviewer: x.soleReviewer,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /payroll/runs/:id/review — the review report and where its sign-off stands. */
+payrollRouter.get('/runs/:id/review', PROCESS, async (req, res, next) => {
+  try {
+    const run = await reviewableRun(req);
+    const report = await buildPayrollReview(prisma, run.id);
+    res.json({ report, signoff: await reviewState(prisma, run, report.fingerprint, req.user!.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /payroll/runs/:id/review/status — just the sign-off state, for the run screen and the close. */
+payrollRouter.get('/runs/:id/review/status', PROCESS, async (req, res, next) => {
+  try {
+    const run = await reviewableRun(req);
+    const fingerprint = await currentFingerprint(prisma, run.id);
+    res.json({ fingerprint, signoff: await reviewState(prisma, run, fingerprint, req.user!.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /payroll/runs/:id/review/sign { fingerprint, note? } — sign off on the numbers the signer read. */
+payrollRouter.post('/runs/:id/review/sign', PROCESS, async (req, res, next) => {
+  try {
+    const run = await reviewableRun(req);
+    const body = z.object({ fingerprint: z.string().regex(/^[0-9a-f]{64}$/), note: z.string().trim().max(1000).optional().nullable() }).parse(req.body ?? {});
+    const signed = await signPayrollReview(prisma, { runId: run.id, userId: req.user!.id, fingerprint: body.fingerprint, note: body.note ?? null });
+    await recordPayrollEvent({ actorUserId: req.user!.id, action: 'payroll.run_approved', payrollRunId: run.id, clientId: run.clientId, req });
+    res.status(201).json({ signoff: signed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function reviewFileName(r: { periodStart: string; periodEnd: string }, ext: string): string {
+  return `payroll-review-${r.periodStart}-to-${r.periodEnd}.${ext}`;
+}
+
+/** GET /payroll/runs/:id/review.pdf — the report to read, print or file. */
+payrollRouter.get('/runs/:id/review.pdf', PROCESS, async (req, res, next) => {
+  try {
+    const run = await reviewableRun(req);
+    const report = await buildPayrollReview(prisma, run.id);
+    const signoff = await reviewState(prisma, run, report.fingerprint, req.user!.id);
+    const pdf = await renderPayrollReviewPdf(report, signoff);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${reviewFileName(report.run, 'pdf')}"`);
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /payroll/runs/:id/review.xlsx — the same report as a workbook to sort, filter and tie out. */
+payrollRouter.get('/runs/:id/review.xlsx', PROCESS, async (req, res, next) => {
+  try {
+    const run = await reviewableRun(req);
+    const report = await buildPayrollReview(prisma, run.id);
+    const signoff = await reviewState(prisma, run, report.fingerprint, req.user!.id);
+    const xlsx = await renderPayrollReviewXlsx(report, signoff);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${reviewFileName(report.run, 'xlsx')}"`);
+    res.send(xlsx);
   } catch (err) {
     next(err);
   }
@@ -1749,15 +1869,9 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
     if (run.status !== 'FINALIZED') {
       throw new HttpError(409, 'not_finalized', 'Run must be FINALIZED before disbursement');
     }
-    // Tier-3 — four-eyes control. When on, no single person can carry a
-    // run from creation to money-out alone.
-    if (env.PAYROLL_REQUIRE_SECOND_APPROVAL && !run.approvedAt) {
-      throw new HttpError(
-        409,
-        'approval_required',
-        'This run needs a second approval (POST /payroll/runs/:id/approve by someone other than its creator) before disbursement.',
-      );
-    }
+    // The pre-payroll review: someone read the report and signed off on
+    // these exact numbers (a second person where one exists).
+    await assertRunReviewed(prisma, run);
     // Payroll banking: on our own ACH, the employer's money must have
     // settled (or arrived by wire) before anyone is paid.
     await assertRunFunded(prisma, run.id);
@@ -2100,7 +2214,15 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
       unsupportedState: items.filter((i) => i.associate.employmentType === 'W2_EMPLOYEE' && !isStateTaxSupported(i.taxState)).map((i) => `${name(i)} (${i.taxState ?? 'no state'})`),
     };
     const blocking = exceptions?.counts.blocking ?? readiness.unsupportedState.length + readiness.missingW4.length;
-    const approvalRequired = env.PAYROLL_REQUIRE_SECOND_APPROVAL;
+    // The pre-payroll review: a sign-off on these exact numbers before payout.
+    const review = await reviewState(prisma, run, await currentFingerprint(prisma, run.id), req.user!.id);
+    const approvalRequired = review.required;
+    const reviewMissing = review.required && !review.current && run.status !== 'DISBURSED' && run.status !== 'CANCELLED';
+    const reviewNote = review.stale
+      ? `The numbers changed after ${review.stale.signedByName ?? 'the reviewer'} signed off. Review the report again.`
+      : reviewMissing
+        ? 'No one has signed off on the review report yet.'
+        : null;
     // "Check my pay before payday": who confirmed, and the open flags (a blocker until handled).
     const payPreview = run.kind === 'REGULAR'
       ? await payPreviewStats(prisma, { associateIds: items.map((i) => i.associateId), periodStart: run.periodStart, periodEnd: run.periodEnd })
@@ -2134,21 +2256,30 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         : []),
       {
         key: 'approve',
-        label: approvalRequired ? 'Finalize & second approval' : 'Finalize',
-        state: run.status === 'DRAFT' ? (blocking > 0 ? 'blocked' : 'current') : approvalRequired && !run.approvedAt && run.status === 'FINALIZED' ? 'current' : 'done',
+        label: 'Finalize',
+        state: run.status === 'DRAFT' ? (blocking > 0 ? 'blocked' : 'current') : 'done',
         blockers: 0,
         warnings: 0,
         to: `/payroll?run=${run.id}`,
       },
       {
+        key: 'review',
+        label: 'Review and sign off',
+        state: !review.required ? 'skip' : run.status === 'DISBURSED' || review.current ? 'done' : review.stale ? 'blocked' : run.status === 'FINALIZED' ? 'current' : 'todo',
+        blockers: review.stale && run.status !== 'DISBURSED' ? 1 : 0,
+        warnings: 0,
+        ...(review.stale && run.status !== 'DISBURSED' ? { note: reviewNote! } : {}),
+        to: `/payroll/runs/${run.id}/review`,
+      },
+      {
         key: 'disburse',
         label: 'Disburse',
-        state: run.status === 'DISBURSED' ? 'done' : run.status === 'FINALIZED' ? (byStatus.held + byStatus.failed > 0 || unfunded ? 'blocked' : 'current') : 'todo',
-        blockers: byStatus.held + byStatus.failed + (unfunded ? 1 : 0),
+        state: run.status === 'DISBURSED' ? 'done' : run.status === 'FINALIZED' ? (byStatus.held + byStatus.failed > 0 || unfunded || reviewMissing ? 'blocked' : 'current') : 'todo',
+        blockers: byStatus.held + byStatus.failed + (unfunded ? 1 : 0) + (run.status === 'FINALIZED' && reviewMissing ? 1 : 0),
         warnings: 0,
         // The same reason the disburse route would give, so the step says why.
-        ...(unfunded ? { note: unfunded } : {}),
-        to: unfunded ? '/payroll/banking' : `/payroll?run=${run.id}`,
+        ...(unfunded ? { note: unfunded } : run.status === 'FINALIZED' && reviewNote ? { note: reviewNote } : {}),
+        to: unfunded ? '/payroll/banking' : run.status === 'FINALIZED' && reviewMissing ? `/payroll/runs/${run.id}/review` : `/payroll?run=${run.id}`,
       },
       {
         key: 'deposits',
@@ -2186,6 +2317,14 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         qboSyncError: run.qboSyncError,
       },
       approvalRequired,
+      review: {
+        required: review.required,
+        signedByName: review.current?.signedByName ?? null,
+        signedAt: review.current?.signedAt ?? null,
+        soleReviewer: review.current?.soleReviewer ?? false,
+        staleSignedByName: review.stale?.signedByName ?? null,
+        staleSignedAt: review.stale?.signedAt ?? null,
+      },
       items: byStatus,
       heldItems: items.filter((i) => i.status === 'HELD' || i.status === 'FAILED').map((i) => ({ id: i.id, name: name(i), netPay: Number(i.netPay), reason: i.failureReason })),
       // Paid and not yet re-sent: what a bank could still send back.
@@ -2776,6 +2915,8 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, idempotent, async (req, 
         'Only FINALIZED or DISBURSED runs can have failures retried'
       );
     }
+    // A run not yet paid out pays only on a sign-off of its current numbers, retry or not.
+    if (run.status === 'FINALIZED') await assertRunReviewed(prisma, run);
     const adapter = await resolveAdapter();
     // Optional subset: retry only the given item ids (per-item / selected
     // retry from the failure queue). Absent → every HELD item, paginated —
@@ -3971,7 +4112,8 @@ payrollRouter.get('/config', PROCESS, async (req, res, next) => {
       fedBracketsHoh: row.fedBracketsHoh as unknown as PayrollConfigDto['fedBracketsHoh'],
       // Governance flag the UI needs to render Disburse honestly — without
       // it the button walks the admin into a guaranteed 409.
-      requireSecondApproval: env.PAYROLL_REQUIRE_SECOND_APPROVAL,
+      // Now: a signed review report before payout (OrgSetting.payrollReviewRequired, or forced by env).
+      requireSecondApproval: await reviewRequired(prisma, { kind: 'REGULAR' }),
       updatedAt: row.updatedAt.toISOString(),
     };
     res.json(dto);

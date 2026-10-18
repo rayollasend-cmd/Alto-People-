@@ -249,6 +249,9 @@ describe('Finalize → disburse lifecycle', () => {
     expect(fin.body.status).toBe('FINALIZED');
     expect(fin.body.finalizedAt).not.toBeNull();
 
+    // The review report is signed before payout; a lone payroll admin signs their own run.
+    const review = await a.get(`/payroll/runs/${create.body.id}/review`);
+    expect((await a.post(`/payroll/runs/${create.body.id}/review/sign`).send({ fingerprint: review.body.report.fingerprint })).status).toBe(201);
     const dis = await a.post(`/payroll/runs/${create.body.id}/disburse`).send({});
     expect(dis.status).toBe(200);
     expect(dis.body.status).toBe('DISBURSED');
