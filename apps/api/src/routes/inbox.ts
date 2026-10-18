@@ -11,10 +11,13 @@ import { requireAuth } from '../middleware/auth.js';
 import { wotcFilingsDue } from './wotc.js';
 import { acaOffersDue } from './aca.js';
 import { stateTablesAwaitingReview } from './stateTax.js';
+import { localJurisdictionsAwaitingReview } from './taxJurisdictions.js';
+import { payrollTaxesNeedingYou } from '../lib/payrollTaxLedger.js';
+import { isClientBoundedRole, isInternallyScoped } from '../lib/scope.js';
 import { logger } from '../lib/logger.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
-import { scopeActiveAssociates, scopeAssociates, scopeAssociatesIncludingFormer, effectiveClientIdFilter, internalSites, scopeApplications } from '../lib/scope.js';
+import { scopeActiveAssociates, scopeAssociates, scopeAssociatesIncludingFormer, effectiveClientIdFilter, internalSites, scopeApplications, scopePayrollRuns } from '../lib/scope.js';
 import { canUseMessenger } from '../lib/messaging.js';
 import { buildFieldglassQueue } from '../lib/fieldglassQueue.js';
 import { countApprovalQueues, deciderOf } from './approvals.js';
@@ -27,6 +30,11 @@ import { transportNeedsYou } from './transportOps.js';
 import { countToCertify } from '../lib/accessCertification.js';
 import { expiringQualificationsWhere } from '../lib/expirationScope.js';
 import { hrCaseReach } from '../lib/hrCaseScope.js';
+import { myPayNoticesToSign, newHireReportsDueCount, unsignedPayNoticesCount } from './payrollCompliance.js';
+import { unbilledGapCached } from '../lib/payBillRecon.js';
+import { certifiedWeeksDue } from '../lib/certifiedPayroll.js';
+import { contractorsNeedingYou } from '../lib/contractors.js';
+import { payrollFundingNeedingYou } from '../lib/banking/funding.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -59,8 +67,9 @@ interface SourceDef {
   module?: TenantModule;
   /** May this person see the queue at all? The list route's own gate. */
   visible: (user: SessionUser) => boolean;
-  /** The queue's "pending" predicate, scoped as the list route scopes it. */
-  count: (user: SessionUser) => Promise<number>;
+  /** The queue's "pending" predicate, scoped as the list route scopes it.
+   *  May answer a description of its own, when the size is best told in money. */
+  count: (user: SessionUser) => Promise<number | { count: number; description: string }>;
 }
 
 /** Same clamp as kioskClientClamp in kiosk99.ts: bounded callers see
@@ -583,6 +592,14 @@ const SOURCES: SourceDef[] = [
       }),
   },
   {
+    key: 'my-pay-notices',
+    label: 'Pay notice to sign',
+    description: 'A written notice of your pay rate and payday that state law asks you to sign.',
+    path: '/me/pay-notices',
+    visible: (u) => u.role === 'ASSOCIATE' && !!u.associateId,
+    count: (u) => myPayNoticesToSign(u.associateId!),
+  },
+  {
     key: 'my-punch-fixes',
     label: 'Punches to fix',
     description: 'A shift you didn’t clock out of — tell us when you left.',
@@ -646,6 +663,36 @@ const SOURCES: SourceDef[] = [
     count: () => prisma.financialChange.count({ where: { status: { in: ['PENDING', 'HELD'] } } }),
   },
   {
+    key: 'unbilled-pay',
+    label: 'Billable pay not billed',
+    description: 'Pay for client work that is on no statement: no statement covers those days, a rebill is waiting for review, or there is no bill rate.',
+    path: '/finance/pay-bill',
+    module: 'clientPortal',
+    // Company-wide money: never for an account narrowed to some stores.
+    visible: (u) => can(u, 'process:payroll') && !internalSites(u),
+    count: async (u) => {
+      const gap = await unbilledGapCached(prisma, `${tenantIdForWrite()}:${u.role}`, { AND: [{ tenantId: tenantIdForWrite() }, scopePayrollRuns(u)] });
+      const dollars = gap.amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      return { count: gap.count, description: gap.count ? `${dollars} of billable pay is not on any statement.` : 'All billable pay is on a statement.' };
+    },
+  },
+  {
+    key: 'pay-notices-unsigned',
+    label: 'Pay notices not signed',
+    description: 'State pay notices (NY, CA, IL, WA) sent more than 7 days ago and still not acknowledged.',
+    path: '/payroll/compliance?tab=notices',
+    visible: (u) => can(u, 'process:payroll'),
+    count: (u) => unsignedPayNoticesCount(u),
+  },
+  {
+    key: 'new-hire-reports',
+    label: 'New-hire reports due',
+    description: 'Hires to report to the state new-hire directory within five days, or already late.',
+    path: '/payroll/compliance?tab=newhire',
+    visible: (u) => can(u, 'process:payroll'),
+    count: (u) => newHireReportsDueCount(u),
+  },
+  {
     key: 'wotc-filings',
     label: 'WOTC filings due',
     description: 'Hires whose tax credit screening points to a target group and whose 28-day state filing deadline is this week or past.',
@@ -668,6 +715,52 @@ const SOURCES: SourceDef[] = [
     path: '/payroll/state-tax',
     visible: (u) => can(u, 'process:payroll'),
     count: (u) => stateTablesAwaitingReview(u),
+  },
+  {
+    key: 'local-tax-review',
+    label: 'Local taxes to review',
+    description: 'Cities, counties and school districts your people live or work in whose rates haven’t been reviewed with your tax adviser — payroll can’t finalize with them until they are.',
+    path: '/payroll/tax-jurisdictions',
+    visible: (u) => can(u, 'process:payroll'),
+    count: (u) => localJurisdictionsAwaitingReview(u),
+  },
+  {
+    key: 'payroll-taxes',
+    label: 'Payroll taxes',
+    description: 'Tax deposits due this week or late, payments that failed, returns due within two weeks and agency notices waiting on a response.',
+    path: '/payroll/taxes',
+    // The desk is whole-company only (routes/payrollTaxes.ts), so the count is too.
+    visible: (u) => can(u, 'process:payroll') && !isClientBoundedRole(u) && !isInternallyScoped(u),
+    count: () => payrollTaxesNeedingYou(prisma),
+  },
+  {
+    key: 'certified-payroll',
+    label: 'Certified payroll',
+    description: 'Prevailing-wage weeks that have ended without a signed WH-347 submitted to the agency.',
+    path: '/payroll/certified',
+    visible: (u) => can(u, 'process:payroll') && !isClientBoundedRole(u),
+    count: (u) => {
+      const sites = internalSites(u);
+      return certifiedWeeksDue(prisma, sites ? { tenantId: tenantIdForWrite(), site: { is: sites } } : { tenantId: tenantIdForWrite() });
+    },
+  },
+  {
+    key: 'payroll-funding',
+    label: 'Payroll funding',
+    description: 'Approved runs whose money hasn’t been pulled, debits the bank returned, and new accounts waiting for their deposit amounts.',
+    path: '/payroll/banking',
+    // Company-wide money (routes/banking.ts), so the count is too.
+    visible: (u) => can(u, 'process:payroll') && !isClientBoundedRole(u) && !isInternallyScoped(u),
+    count: () => payrollFundingNeedingYou(prisma),
+  },
+  {
+    key: 'contractors',
+    label: 'Contractors',
+    description: 'IRS mismatch notices to answer before backup withholding starts, and contractor payment runs waiting for a second approver.',
+    path: '/payroll/contractors',
+    // Company-wide money, like the desk itself (routes/contractors.ts).
+    visible: (u) => can(u, 'process:payroll') && !isClientBoundedRole(u) && !isInternallyScoped(u),
+    count: (u) => contractorsNeedingYou(prisma, u.id),
   },
   {
     key: 'messages',
@@ -714,14 +807,17 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
     const sources: InboxSource[] = await Promise.all(
       mine.map(async (s) => {
         let count = 0;
+        let description = s.description;
         const t0 = performance.now();
         try {
-          count = Math.min(CAP, Math.max(0, await s.count(user)));
+          const got = await s.count(user);
+          if (typeof got !== 'number') description = got.description;
+          count = Math.min(CAP, Math.max(0, typeof got === 'number' ? got : got.count));
         } catch (err) {
           logger.error({ err, source: s.key, userId: user.id }, 'inbox source failed');
         }
         timings.push(`${s.key.replace(/[^a-zA-Z0-9_-]/g, '_')};dur=${(performance.now() - t0).toFixed(1)}`);
-        return { key: s.key, label: s.label, description: s.description, count, path: s.path };
+        return { key: s.key, label: s.label, description, count, path: s.path };
       }),
     );
     // Which source is slow, visible in any browser's network panel.

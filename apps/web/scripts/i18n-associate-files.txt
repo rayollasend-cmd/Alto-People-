@@ -72,3 +72,8 @@ src/components/settings/PhonesCard.tsx
 src/pages/onboarding/tasks/WotcScreeningTask.tsx
 src/pages/time/PunchFixes.tsx
 src/components/time/BreakAttestationPrompt.tsx
+src/pages/me/PayNotices.tsx
+src/pages/me/MyW9.tsx
+src/components/PayPreviewCard.tsx
+src/components/DailyPayCard.tsx
+src/pages/payroll/W4Estimator.tsx

@@ -302,6 +302,8 @@ enum PayrollRunKind {
   REGULAR
   OFF_CYCLE
   AMENDMENT
+  DAILY // PAYEXP: a daily settlement (paid ahead, reconciled on the regular check)
+  MANUAL // PAYEXP: a handwritten / manual check recorded into payroll history
 }
 
 enum PayrollItemStatus {
@@ -321,6 +323,7 @@ enum PayrollFrequency {
   BIWEEKLY
   SEMIMONTHLY
   MONTHLY
+  DAILY // PAYEXP: paid each day; a weekly true-up settles overtime and deductions
 }
 
 // Wave 1.2 — Earning line types on a paystub. Mirrors QuickBooks Online
@@ -346,6 +349,7 @@ enum PayrollEarningKind {
   // A labor-law premium paid under a LIVE rule pack (meal, rest, rest
   // between shifts, predictability pay); the note cites the rule.
   PREMIUM
+  DAILY_SETTLED // PAYEXP: what daily pay already paid this period (negative, on the true-up)
 }
 
 enum NotificationChannel {
@@ -937,6 +941,8 @@ model Client {
   @@index([status])
   @@index([deletedAt])
   @@index([tenantId])
+  billingTerms           ClientBillingTerms[]
+  billingAdjustments     BillingAdjustment[]
 }
 
 // Phase 131 — Site (table "Location", Brief 2-1b step 7 renamed the model, not the table): a physical work site, under a Client for a staffing tenant or under the tenant alone. State and
@@ -1020,6 +1026,7 @@ model Site {
   laborRuleSets           LaborRuleSet[]
   workTasks               WorkTask[]
 
+  prevailingWageProjects PrevailingWageProject[]
   @@index([clientId, isActive])
   @@index([deletedAt])
   @@index([tenantId])
@@ -2135,6 +2142,8 @@ model Associate {
   // *planned* start at invitation time, which can differ if HR changes
   // their mind during review).
   hireDate                DateTime?                @db.Date
+  wagePayNotices          WagePayNotice[]
+  newHireReports          NewHireReport[]
   // Tier-1 — when this hire was reported to the state new-hire directory
   // (federally required within ~20 days of hire). Null = not yet
   // reported; the new-hire report endpoints surface and stamp this.
@@ -2300,6 +2309,8 @@ model Associate {
   acaOffers                AcaOffer[]
   wotcScreenings           WotcScreening[]
   stateW4s                 AssociateStateW4[]
+  taxProfile               AssociateTaxProfile?
+  taxCertificates          AssociateTaxCertificate[]
   // Phase 94 — LMS course enrollments.
   courseEnrollments        CourseEnrollment[]
   // Phase 97 — reimbursement requests.
@@ -2383,6 +2394,9 @@ model Associate {
   callOuts                 CallOut[]
   flightRisk               FlightRisk?
   retentionPlays           RetentionPlay[]
+  prevailingWageWorkers PrevailingWageWorker[]
+  contractorProfile     ContractorProfile?
+  contractorPayments    ContractorPayment[]
   @@index([deletedAt])
   @@index([managerId])
   @@index([departmentId])
@@ -2392,6 +2406,12 @@ model Associate {
   @@index([tenantId])
   leadBench                LeadBenchCandidate[]      @relation("LeadBenchAssociate")
   talentRating             TalentRating?             @relation("TalentRatingAssociate")
+  retirementElections     RetirementElection[]
+  retirementLoans         RetirementLoan[]
+  retirementContributions RetirementContribution[]
+  dailyPayEnrollment DailyPayEnrollment?
+  thirdPartySickPay  ThirdPartySickPay[]
+  payPreviewChecks   PayPreviewCheck[]
 }
 
 model J1Profile {
@@ -3306,6 +3326,15 @@ model PayoutMethod {
   /// Keyed hash of routing + account. Lets the same bank account on two
   /// associates be spotted without decrypting anything.
   accountFingerprint String?    @db.VarChar(64)
+  /// Split deposits: null = the remainder account; AMOUNT or PERCENT take their share first, in splitOrder.
+  splitKind            String?   @db.VarChar(10)
+  splitAmountCents     Int?
+  splitPercent         Decimal?  @db.Decimal(5, 2)
+  splitOrder           Int       @default(0)
+  /// The zero-dollar prenote that tests a new account on our own ACH: SENT | CLEARED | RETURNED.
+  prenoteStatus        String?   @db.VarChar(10)
+  prenoteSentAt        DateTime? @db.Timestamptz(6)
+  prenoteEffectiveDate DateTime? @db.Date
   associate          Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
   createdAt          DateTime   @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
@@ -3375,6 +3404,7 @@ model TimeEntry {
 
   // At most one ACTIVE row per associate at any time. Postgres treats this
   // as a partial unique via the where clause below.
+  prevailingWageTag PrevailingWageTimeTag?
   @@index([associateId, clockInAt])
   @@index([clientId, status, clockInAt])
   @@index([locationId, status])
@@ -3383,6 +3413,7 @@ model TimeEntry {
   @@index([projectId])
   @@index([shiftId])
   @@index([tenantId])
+  dailyPaid DailyPaidTimeEntry?
 }
 
 model Shift {
@@ -3973,6 +4004,7 @@ model PayrollRun {
   pendingDeductionsApplied    PendingPayrollDeduction[] @relation("PendingDeductionAppliedRun")
   // Tier-1 — the FED_941 deposit obligation this run's disbursement accrued.
   taxDeposit                  TaxDeposit?
+  taxLiabilities              TaxLiability[]
   // Tier-1 — per-payee garnishment remittances accrued at disbursement.
   garnishmentRemittances      GarnishmentRemittance[]
   // Tier-2 — manual earning lines (bonus/commission/tips/holiday/PTO
@@ -4039,6 +4071,14 @@ model PayrollItem {
   // pre-tax = preTaxDeductions - preTaxRetirement. CHECK enforces
   // preTaxRetirement <= preTaxDeductions at the DB layer.
   preTaxRetirement            Decimal              @default(0) @db.Decimal(12, 2)
+  /// 2026 W-2 Box 12 TP: cash tips reported to the employer on this check.
+  qualifiedTips        Decimal  @default(0) @db.Decimal(12, 2)
+  /// 2026 W-2 Box 12 TT: the FLSA overtime premium portion (half the regular rate × hours over 40 in a workweek).
+  qualifiedOvertime    Decimal  @default(0) @db.Decimal(12, 2)
+  /// W-2 Box 14b: the tipped occupation code in force on this check.
+  tippedOccupationCode String?  @db.VarChar(4)
+  /// Retirement/HSA/FSA split: { pre401k, pre403b, roth401k, roth403b, catchUp, catchUpRoth, hsa, fsa, dcap, limitStopped }.
+  deferrals            Json?
   // Gap 10 — sum of folded reimbursement amounts on this item. Added to
   // netPay after taxes / deductions; never affects grossPay or any wage
   // base (accountable-plan rule). Per-row breakdown lives on PayrollItem-
@@ -4107,6 +4147,7 @@ model PayrollItem {
   // with paystub PDFs and aggregate reports — earnings is the canonical
   // breakdown going forward.
   earnings PayrollItemEarning[]
+  taxLines PayrollItemTaxLine[]
 
   // Inbound Branch webhook deliveries that referenced this item. Audit trail
   // for "what state did Branch tell us about this payment, and when".
@@ -4134,6 +4175,7 @@ model PayrollItem {
   @@index([status])
   @@index([amendsItemId])
   @@index([tenantId])
+  dailyPaidEntries DailyPaidTimeEntry[]
 }
 
 // Tier-2 — manual earning lines on a DRAFT run. The aggregator folds
@@ -4143,6 +4185,125 @@ model PayrollItem {
 // by the percentage method. An associate with add-ons but no hours
 // still gets an item — which is exactly how an OFF_CYCLE bonus run
 // works: empty period + add-ons.
+/// PAYEXP — daily / next-day pay for an organization. Off until Finance
+/// asks and a second person approves; the approval stands for the nightly
+/// runs it governs (each run is still checked and audited).
+model DailyPayPolicy {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?   @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// OFF | PENDING | ACTIVE
+  status        String    @default("OFF") @db.VarChar(12)
+  /// SAME_DAY | NEXT_DAY
+  timing        String    @default("NEXT_DAY") @db.VarChar(12)
+  /// ENROLLED (opted-in people and DAILY schedules) | EVERYONE
+  eligibility   String    @default("ENROLLED") @db.VarChar(12)
+  feeCents      Int       @default(0)
+  dailyCapCents Int       @default(50000)
+  /// The change waiting on its approval.
+  pending       Json?
+  approvalId    String?   @db.Uuid
+  requestedById String?   @db.Uuid
+  approvedById  String?   @db.Uuid
+  approvedAt    DateTime? @db.Timestamptz(6)
+  lastRunAt     DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+/// PAYEXP — a person opted into daily pay.
+model DailyPayEnrollment {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId  String    @unique @db.Uuid
+  enrolledById String?   @db.Uuid
+  enrolledAt   DateTime  @default(now()) @db.Timestamptz(6)
+  endedAt      DateTime? @db.Timestamptz(6)
+  associate    Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+/// PAYEXP — one time entry paid ahead by daily pay, with its share of the
+/// taxes; the regular check subtracts exactly this, once (reconciledRunId).
+model DailyPaidTimeEntry {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  timeEntryId      String      @unique @db.Uuid
+  payrollItemId    String      @db.Uuid
+  associateId      String      @db.Uuid
+  workDate         DateTime    @db.Date
+  hours            Decimal     @default(0) @db.Decimal(8, 2)
+  gross            Decimal     @default(0) @db.Decimal(12, 2)
+  federal          Decimal     @default(0) @db.Decimal(12, 2)
+  fica             Decimal     @default(0) @db.Decimal(12, 2)
+  medicare         Decimal     @default(0) @db.Decimal(12, 2)
+  state            Decimal     @default(0) @db.Decimal(12, 2)
+  local            Decimal     @default(0) @db.Decimal(12, 2)
+  employerFica     Decimal     @default(0) @db.Decimal(12, 2)
+  employerMedicare Decimal     @default(0) @db.Decimal(12, 2)
+  employerFuta     Decimal     @default(0) @db.Decimal(12, 2)
+  employerSuta     Decimal     @default(0) @db.Decimal(12, 2)
+  net              Decimal     @default(0) @db.Decimal(12, 2)
+  reconciledRunId  String?     @db.Uuid
+  createdAt        DateTime    @default(now()) @db.Timestamptz(6)
+  timeEntry        TimeEntry   @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  payrollItem      PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+
+  @@index([associateId, workDate])
+  @@index([payrollItemId])
+  @@index([tenantId])
+}
+
+/// PAYEXP — sick pay an insurer paid (third-party sick pay), recorded for the W-2.
+model ThirdPartySickPay {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId               String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId            String    @db.Uuid
+  payerName              String    @db.VarChar(200)
+  payDate                DateTime  @db.Date
+  grossAmount            Decimal   @db.Decimal(12, 2)
+  /// The share bought with the employee's after-tax premiums: W-2 Box 12 code J.
+  nontaxableAmount       Decimal   @default(0) @db.Decimal(12, 2)
+  federalWithheld        Decimal   @default(0) @db.Decimal(12, 2)
+  socialSecurityWithheld Decimal   @default(0) @db.Decimal(12, 2)
+  medicareWithheld       Decimal   @default(0) @db.Decimal(12, 2)
+  stateWithheld          Decimal   @default(0) @db.Decimal(12, 2)
+  /// EMPLOYER (the insurer passed liability back) | INSURER — who owes the employer FICA/FUTA.
+  employerTaxesBy        String    @default("EMPLOYER") @db.VarChar(12)
+  /// EMPLOYER | INSURER — who puts it on the W-2.
+  w2ReportedBy           String    @default("EMPLOYER") @db.VarChar(12)
+  notes                  String?   @db.VarChar(500)
+  recordedById           String?   @db.Uuid
+  voidedAt               DateTime? @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @db.Timestamptz(6)
+  associate              Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId, payDate])
+  @@index([tenantId])
+}
+
+/// PAYEXP — "check my pay before payday": what the worker said about a paycheck preview.
+model PayPreviewCheck {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId String    @db.Uuid
+  payDate     DateTime  @db.Date
+  periodStart DateTime  @db.Date
+  periodEnd   DateTime  @db.Date
+  /// CONFIRMED | FLAGGED
+  status      String    @db.VarChar(12)
+  estimateNet Decimal   @default(0) @db.Decimal(12, 2)
+  /// [{ line, kind, note, caseId?, correctionId? }]
+  flags       Json      @default("[]")
+  resolvedAt  DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, payDate])
+  @@index([tenantId, payDate])
+}
+
 model PayrollRunAddOn {
   id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   payrollRunId String             @db.Uuid
@@ -4153,6 +4314,9 @@ model PayrollRunAddOn {
   amount       Decimal            @db.Decimal(12, 2)
   hours        Decimal?           @db.Decimal(8, 2)
   note         String?
+  /// PAYEXP gross-up: the take-home this line was solved for, and the breakdown shown.
+  targetNet    Decimal?           @db.Decimal(12, 2)
+  grossUp      Json?
   createdById  String?            @db.Uuid
   createdAt    DateTime           @default(now()) @db.Timestamptz(6)
 
@@ -4953,6 +5117,8 @@ enum BenefitsPlanKind {
   RETIREMENT_401K
   RETIREMENT_403B
   LIFE_INSURANCE
+  /// Employer contributions to a Trump account (IRC §128) — W-2 Box 12 TA.
+  TRUMP_ACCOUNT
   DISABILITY
 }
 
@@ -4974,6 +5140,12 @@ model BenefitsPlan {
   // override; the actual deduction comes from BenefitsEnrollment.
   employeeContributionDefaultCentsPerPeriod Int              @default(0)
   isActive                                  Boolean          @default(true)
+  /// SECURE 2.0: a higher earner's catch-up is treated as Roth automatically (deemed Roth election).
+  allowsDeemedRoth                          Boolean          @default(true)
+  /// EDI 834 feed: the carrier, the HD03 insurance line (HLT/DEN/VIS/LIF/…), the carrier's plan code.
+  carrierId                                 String?          @db.Uuid
+  insuranceLineCode                         String?          @db.VarChar(3)
+  carrierPlanCode                           String?          @db.VarChar(50)
   createdAt                                 DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt                                 DateTime         @updatedAt @db.Timestamptz(6)
 
@@ -4995,8 +5167,18 @@ model BenefitsEnrollment {
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId                    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   electedAmountCentsPerPeriod Int
+  /// Designated Roth: the deferral is taken after tax (W-2 Box 12 AA/BB).
+  rothElection                Boolean   @default(false)
   effectiveDate               DateTime  @db.Date
   terminationDate             DateTime? @db.Date
+  /// HD05 coverage level: EMP, ESP, ECH, FAM, E1D… (lib/edi834).
+  coverageLevel               String    @default("EMP") @db.VarChar(3)
+  coveredDependentIds         String[]  @default([]) @db.Uuid
+  /// A 401(k) rate: per paycheck = gross × percent (pre-tax, or Roth when rothElection); rothPercent adds a Roth part (lib/retirement).
+  electedPercent              Decimal?  @db.Decimal(5, 2)
+  rothPercent                 Decimal?  @db.Decimal(5, 2)
+  /// The recordkeeper plan (RetirementPlan) this deferral reports to.
+  retirementPlanId            String?   @db.Uuid
   createdAt                   DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt                   DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -5007,6 +5189,7 @@ model BenefitsEnrollment {
   // a termination produces a new row (so the history is preserved).
   @@unique([associateId, planId, effectiveDate])
   @@index([associateId, terminationDate])
+  @@index([retirementPlanId])
   @@index([planId])
   @@index([tenantId])
 }
@@ -5250,6 +5433,8 @@ model JobProfile {
   tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   code        String
   title       String
+  /// W-2 Box 14b: the Treasury Tipped Occupation Code for this job (OBBBA, TY2026+).
+  tippedOccupationCode String? @db.VarChar(4)
   family      String?
   level       String?
   // FLSA exemption flag — exempt salaried employees aren't entitled to
@@ -5422,6 +5607,11 @@ enum ApprovalRequestKind {
   ROLE_CHANGE
   WORKFLOW_GATE
   LABOR_RULES_LIVE
+  PAYROLL_FUNDING_LIMIT
+  TAX_PAYMENT
+  DAILY_PAY_POLICY
+  BILLING_ADJUSTMENT
+  GARNISHMENT_PAYEE_BANK
 }
 
 enum ApprovalRequestStatus {
@@ -7297,6 +7487,34 @@ model Garnishment {
   status         GarnishmentStatus @default(ACTIVE)
   priority       Int               @default(100)
   notes          String?
+  /// e-IWO / state detail (lib/garnishmentEngine): issuing state, FIPS, the order's ids and amounts.
+  state                  String?           @db.VarChar(2)
+  fipsCode               String?           @db.VarChar(7)
+  orderIdentifier        String?           @db.VarChar(40)
+  remittanceIdentifier   String?           @db.VarChar(40)
+  /// The frequency the order's amounts are stated in (WEEKLY/BIWEEKLY/SEMIMONTHLY/MONTHLY).
+  orderFrequency         String?           @db.VarChar(12)
+  currentSupport         Decimal?          @db.Decimal(10, 2)
+  pastDueSupport         Decimal?          @db.Decimal(10, 2)
+  medicalSupport         Decimal?          @db.Decimal(10, 2)
+  arrearsOver12Weeks     Boolean           @default(false)
+  supportsSecondFamily   Boolean           @default(false)
+  adminFee               Decimal?          @db.Decimal(8, 2)
+  levyFilingStatus       String?           @db.VarChar(24)
+  levyExemptions         Int?
+  levyAdditionalStandard Int               @default(0)
+  levyTaxYear            Int?
+  /// MANUAL | EIWO
+  source                 String            @default("MANUAL") @db.VarChar(10)
+  receivedAt             DateTime?         @db.Timestamptz(6)
+  /// SDU | IRS | CREDITOR | COURT | TRUSTEE | OTHER
+  payeeKind              String?           @db.VarChar(12)
+  /// CHECK | ACH | EFT_SDU | PORTAL
+  remitMethod            String            @default("CHECK") @db.VarChar(12)
+  payeeRoutingEnc        String?
+  payeeAccountEnc        String?
+  payeeAccountLast4      String?           @db.VarChar(4)
+  lumpSumReporting       Boolean           @default(false)
   createdById    String?           @db.Uuid
   createdAt      DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
@@ -7316,6 +7534,8 @@ model GarnishmentDeduction {
   garnishmentId String   @db.Uuid
   payrollRunId  String?  @db.Uuid
   amount        Decimal  @db.Decimal(10, 2)
+  /// The employer's processing fee the state allows (kept, not remitted).
+  adminFee      Decimal  @default(0) @db.Decimal(8, 2)
   deductedOn    DateTime @default(now()) @db.Timestamptz(6)
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
   // Tier-1 — the remittance batch this deduction was rolled into. Null
@@ -7361,6 +7581,10 @@ model GarnishmentRemittance {
   sentById     String?                     @db.Uuid
   // Check number / agency portal confirmation keyed in at mark-sent.
   reference    String?
+  /// CHECK | ACH | EFT_SDU | PORTAL
+  method       String                      @default("CHECK") @db.VarChar(12)
+  fileId       String?                     @db.Uuid
+  advice       String?
   createdAt    DateTime                    @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime                    @updatedAt @db.Timestamptz(6)
 
@@ -7741,6 +7965,91 @@ model StateTaxAcknowledgment {
   note             String?  @db.VarChar(500)
 
   @@unique([tenantId, state, taxYear])
+}
+
+/// "Reviewed with our tax adviser" for one local jurisdiction and tax year
+/// (lib/taxEngine): until it exists, a paycheck that owes that local tax is held.
+model LocalTaxAcknowledgment {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  jurisdictionCode String   @db.VarChar(40)
+  taxYear          Int
+  acknowledgedById String?  @db.Uuid
+  acknowledgedAt   DateTime @default(now()) @db.Timestamptz(6)
+  note             String?  @db.VarChar(500)
+
+  @@unique([tenantId, jurisdictionCode, taxYear])
+}
+
+/// Where a worker lives, as local taxes need it when the address can't decide.
+model AssociateTaxProfile {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId               String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId            String    @unique @db.Uuid
+  /// Pennsylvania political subdivision (PSD) code of residence.
+  residentPsdCode        String?   @db.VarChar(6)
+  /// Ohio municipality of residence (when it isn't the mailing city).
+  residentMunicipality   String?   @db.VarChar(80)
+  /// Ohio school district number of residence.
+  residentSchoolDistrict String?   @db.VarChar(8)
+  /// Indiana county of residence on January 1.
+  residentCountyJan1     String?   @db.VarChar(40)
+  /// A local jurisdiction code (lib/taxEngine) set by hand, overriding the address.
+  residentLocalCode      String?   @db.VarChar(40)
+  notes                  String?   @db.VarChar(500)
+  updatedById            String?   @db.Uuid
+  createdAt              DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+/// A tax certificate on file: nonresidency/reciprocity, PA residency certification, LST exemption …
+model AssociateTaxCertificate {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId      String    @db.Uuid
+  /// NONRESIDENCY | PA_RESIDENCY | LST_EXEMPTION | OH_RESIDENCY | NYC_RESIDENCY | OTHER
+  kind             String    @db.VarChar(40)
+  state            String?   @db.VarChar(2)
+  jurisdictionCode String?   @db.VarChar(40)
+  formName         String?   @db.VarChar(40)
+  signedOn         DateTime? @db.Date
+  effectiveFrom    DateTime? @db.Date
+  data             Json      @default("{}")
+  recordedById     String?   @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  revokedAt        DateTime? @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId])
+  @@index([tenantId])
+}
+
+/// Every tax a paycheck carries, jurisdiction by jurisdiction (state, local, school, transit, employer-paid).
+model PayrollItemTaxLine {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  payrollItemId String   @db.Uuid
+  code          String   @db.VarChar(40)
+  /// STATE | LOCAL | SCHOOL | TRANSIT | OLT | EMPLOYER | SUI
+  kind          String   @db.VarChar(16)
+  label         String   @db.VarChar(160)
+  resident      Boolean  @default(false)
+  workState     String?  @db.VarChar(2)
+  wages         Decimal  @default(0) @db.Decimal(12, 2)
+  amount        Decimal  @default(0) @db.Decimal(12, 2)
+  employer      Boolean  @default(false)
+  note          String?  @db.VarChar(300)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  payrollItem PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+
+  @@index([payrollItemId])
+  @@index([tenantId, code])
 }
 
 /// A state's own withholding certificate (AL A-4, MD MW507, OR-W-4 …) —
@@ -9761,6 +10070,8 @@ model OrgSetting {
   orgName                String                 @default("Alto HR") @db.VarChar(120)
   /// What this tenant's team calls Hugo, the assistant (product taxonomy 2026-10-13).
   assistantName          String                 @default("Hugo") @db.VarChar(60)
+  /// A multistate employer reports every new hire to this one state (42 USC 653a(b)(1)(B)); null = each hire's work state.
+  newHireMultistateState String? @db.VarChar(2)
   /// Brief 1A-2: the one definition of active counts work in this many trailing days.
   activeWindowDays       Int                    @default(14)
   /// Brief 1A-2: the company workweek — the day it starts (0 = Sunday … 6 = Saturday) in the company time zone. Sites keep their own zone on Location.timezone.
@@ -12258,6 +12569,13 @@ model EmployerOrganization {
   city                 String?      @db.VarChar(120)
   state                String?      @db.VarChar(2)
   zip                  String?      @db.VarChar(10)
+  /// Employer telephone — NY Labor Law §195(1),(3) wage statement and pay notice.
+  phone                String?      @db.VarChar(32)
+  /// Workers' comp carrier — CA Labor Code §2810.5 notice.
+  wcCarrierName        String?      @db.VarChar(255)
+  wcCarrierAddress     String?      @db.VarChar(500)
+  wcCarrierPhone       String?      @db.VarChar(32)
+  wcPolicyNumber       String?      @db.VarChar(64)
   sutaRateOverride     Decimal?     @db.Decimal(6, 5)
   sutaWageBaseOverride Decimal?     @db.Decimal(12, 2)
   /// When kind = CLIENT: the Client whose facts this row carries.
@@ -12269,6 +12587,7 @@ model EmployerOrganization {
 
   client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
   employments Employment[]
+  taxAccounts TaxAgencyAccount[]
 
   @@index([tenantId, isDefault])
 }
@@ -13305,6 +13624,9 @@ enum ProviderKind {
   DRUG_TEST
   TAX_FILING
   PAYOUT
+  TAX_ENGINE
+  EMBEDDED_PAYROLL
+  ORIGINATION
 }
 
 model ProviderConnection {
@@ -13331,6 +13653,175 @@ model ProviderConnection {
   events           ProviderEvent[]
 
   @@index([tenantId, kind])
+}
+
+/// How pay moves for a tenant (employerOrgId null) or one employer of record:
+/// which rail pays bank accounts, our ACH settings, KYB, and funding limits.
+model PayrollBankingProfile {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                 String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  employerOrgId            String?   @db.Uuid
+  /// PLATFORM | ACH | BRANCH | WISE | CHECK — the rail for bank-account pay.
+  bankRail                 String    @default("PLATFORM") @db.VarChar(12)
+  /// SAME_DAY | NEXT_DAY | TWO_DAY
+  achSpeed                 String    @default("NEXT_DAY") @db.VarChar(12)
+  submitCutoffEt           String    @default("16:00") @db.VarChar(5)
+  companyName              String?   @db.VarChar(16)
+  companyId                String?   @db.VarChar(10)
+  companyEntryDescription  String    @default("PAYROLL") @db.VarChar(10)
+  immediateDestination     String?   @db.VarChar(10)
+  immediateDestinationName String?   @db.VarChar(23)
+  immediateOrigin          String?   @db.VarChar(10)
+  immediateOriginName      String?   @db.VarChar(23)
+  originatingDfi           String?   @db.VarChar(8)
+  /// NOT_STARTED | PENDING | APPROVED | REJECTED
+  kybStatus                String    @default("NOT_STARTED") @db.VarChar(12)
+  kybCheckedAt             DateTime? @db.Timestamptz(6)
+  kybNote                  String?   @db.VarChar(500)
+  perRunLimitCents         BigInt?
+  perDayLimitCents         BigInt?
+  requirePrenote           Boolean   @default(true)
+  /// Include the run's taxes / garnishment remittances in the funding debit (we pay them on).
+  collectTaxes             Boolean   @default(false)
+  collectGarnishments      Boolean   @default(false)
+  fundingAccountId         String?   @db.Uuid
+  createdAt                DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, employerOrgId])
+  @@index([tenantId])
+}
+
+/// The employer's operating account the funding debit pulls from.
+model EmployerBankAccount {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  employerOrgId        String?   @db.Uuid
+  label                String    @db.VarChar(80)
+  bankName             String?   @db.VarChar(120)
+  routingNumber        String    @db.VarChar(9)
+  accountNumberEnc     Bytes
+  accountLast4         String    @db.VarChar(4)
+  accountType          String    @default("CHECKING") @db.VarChar(10)
+  /// UNVERIFIED | MICRODEPOSITS_SENT | VERIFIED | FAILED | DISABLED
+  status               String    @default("UNVERIFIED") @db.VarChar(20)
+  microDepositHash     String?   @db.VarChar(128)
+  microDepositSentAt   DateTime? @db.Timestamptz(6)
+  microDepositAttempts Int       @default(0)
+  verifiedAt           DateTime? @db.Timestamptz(6)
+  verifiedById         String?   @db.Uuid
+  createdById          String?   @db.Uuid
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId])
+}
+
+/// One NACHA file: what it carried (encrypted), where it went, what came back.
+model AchFile {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// FUNDING | DIRECT_DEPOSIT | PRENOTE | MICRODEPOSIT
+  purpose          String     @db.VarChar(16)
+  /// IN_HOUSE | MODERN_TREASURY | INCREASE
+  provider         String     @db.VarChar(20)
+  connectionId     String?    @db.Uuid
+  payrollRunId     String?    @db.Uuid
+  fileIdModifier   String     @db.VarChar(1)
+  effectiveDate    DateTime   @db.Date
+  sameDay          Boolean    @default(false)
+  entryCount       Int
+  totalDebitCents  BigInt     @default(0)
+  totalCreditCents BigInt     @default(0)
+  contentEnc       Bytes
+  sha256           String     @db.VarChar(64)
+  /// CREATED | SUBMITTED | ACCEPTED | REJECTED
+  status           String     @default("CREATED") @db.VarChar(12)
+  externalRef      String?    @db.VarChar(120)
+  error            String?    @db.VarChar(500)
+  submittedAt      DateTime?  @db.Timestamptz(6)
+  createdById      String?    @db.Uuid
+  createdAt        DateTime   @default(now()) @db.Timestamptz(6)
+  entries          AchEntry[]
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([payrollRunId])
+}
+
+/// One entry: a credit to a person, the employer's debit, a prenote or a micro-deposit.
+model AchEntry {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  achFileId       String    @db.Uuid
+  traceNumber     String    @db.VarChar(15)
+  /// CREDIT | DEBIT | PRENOTE | MICRODEPOSIT
+  kind            String    @db.VarChar(16)
+  transactionCode String    @db.VarChar(2)
+  amountCents     BigInt
+  payrollItemId   String?   @db.Uuid
+  payoutMethodId  String?   @db.Uuid
+  bankAccountId   String?   @db.Uuid
+  associateId     String?   @db.Uuid
+  individualName  String    @db.VarChar(22)
+  accountLast4    String    @db.VarChar(4)
+  /// SENT | SETTLED | RETURNED | CORRECTED
+  status          String    @default("SENT") @db.VarChar(12)
+  returnCode      String?   @db.VarChar(3)
+  returnedAt      DateTime? @db.Timestamptz(6)
+  nocCode         String?   @db.VarChar(3)
+  nocData         String?   @db.VarChar(29)
+  nocAppliedAt    DateTime? @db.Timestamptz(6)
+  externalRef     String?   @db.VarChar(120)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  file            AchFile   @relation(fields: [achFileId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, traceNumber])
+  @@index([payrollItemId])
+  @@index([payoutMethodId])
+  @@index([externalRef])
+}
+
+/// The money behind one run, pulled from the employer before anyone is paid.
+model PayrollFunding {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  payrollRunId       String    @unique @db.Uuid
+  employerOrgId      String?   @db.Uuid
+  bankAccountId      String?   @db.Uuid
+  amountCents        BigInt
+  breakdown          Json      @default("{}")
+  payDate            DateTime  @db.Date
+  debitEffectiveDate DateTime  @db.Date
+  fundingDeadline    DateTime  @db.Timestamptz(6)
+  achSpeed           String    @db.VarChar(12)
+  /// DRAFT | AWAITING_APPROVAL | SUBMITTED | SETTLED | RETURNED | WIRE_PENDING | WIRE_RECEIVED | CANCELLED
+  status             String    @default("DRAFT") @db.VarChar(20)
+  achEntryId         String?   @db.Uuid
+  approvalRequestId  String?   @db.Uuid
+  returnCode         String?   @db.VarChar(3)
+  returnReason       String?   @db.VarChar(300)
+  submittedAt        DateTime? @db.Timestamptz(6)
+  settledAt          DateTime? @db.Timestamptz(6)
+  returnedAt         DateTime? @db.Timestamptz(6)
+  note               String?   @db.VarChar(500)
+  createdById        String?   @db.Uuid
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([tenantId, status])
+}
+
+/// A day the tenant's bank is closed beyond the Federal Reserve's holidays (closed=false: open on one).
+model BankHolidayOverride {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  date        DateTime @db.Date
+  name        String   @db.VarChar(120)
+  closed      Boolean  @default(true)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenantId, date])
 }
 
 /// One inbound webhook delivery or outbound call, deduplicated on the
@@ -14286,5 +14777,918 @@ model WcModifiedDutyOffer {
   wcClaim     WcClaim           @relation(fields: [wcClaimId], references: [id], onDelete: Cascade)
 
   @@index([wcClaimId])
+  @@index([tenantId])
+}
+
+/* ===== Full-service payroll tax (2027-01) =====================================
+ * We pay and file for the customer: every finalized run posts its liabilities
+ * per agency (lib/payrollTaxLedger), payments settle them (through a connected
+ * embedded payroll provider, or in-house with a confirmation), returns are
+ * generated per agency and period, and agency notices are worked to resolution.
+ */
+
+enum TaxAgencyKind {
+  FEDERAL_WITHHOLDING
+  FEDERAL_UNEMPLOYMENT
+  STATE_WITHHOLDING
+  STATE_UNEMPLOYMENT
+  LOCAL
+}
+
+enum TaxLiabilityStatus {
+  OPEN
+  SCHEDULED
+  PAID
+  VOID
+}
+
+enum TaxPaymentStatus {
+  SCHEDULED
+  SUBMITTED
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum TaxReturnStatus {
+  DRAFT
+  SUBMITTED
+  FILED
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+enum AgencyNoticeStatus {
+  NEW
+  IN_REVIEW
+  RESPONDED
+  RESOLVED
+}
+
+/// One agency account an employer of record holds: the IRS (941/940), a state's
+/// withholding and unemployment accounts, a local tax collector.
+model TaxAgencyAccount {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?       @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  employerOrgId    String?       @db.Uuid
+  kind             TaxAgencyKind
+  /// "US" for federal, a state code ("CA"), or "PA:<local name>" / "OH:<city>" for a local.
+  jurisdiction     String        @db.VarChar(80)
+  agencyName       String        @db.VarChar(160)
+  accountNumber    String?       @db.VarChar(60)
+  /// NEXT_DAY | SEMIWEEKLY | MONTHLY | QUARTERLY | ANNUAL
+  depositFrequency String        @default("MONTHLY") @db.VarChar(16)
+  /// MONTHLY deposits: the day of the following month they are due.
+  dueDayOfMonth    Int           @default(15)
+  /// Unemployment: this year's assigned rate and wage base.
+  rate             Decimal?      @db.Decimal(7, 5)
+  rateYear         Int?
+  wageBase         Decimal?      @db.Decimal(12, 2)
+  /// ACTIVE | PENDING_REGISTRATION | CLOSED
+  status           String        @default("ACTIVE") @db.VarChar(24)
+  effectiveFrom    DateTime?     @db.Date
+  effectiveTo      DateTime?     @db.Date
+  notes            String?       @db.VarChar(500)
+  createdAt        DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @db.Timestamptz(6)
+
+  employerOrg EmployerOrganization? @relation(fields: [employerOrgId], references: [id], onDelete: SetNull)
+  liabilities TaxLiability[]
+  payments    TaxPayment[]
+  returns     TaxReturn[]
+  notices     AgencyNotice[]
+
+  @@index([tenantId, kind, jurisdiction])
+}
+
+/// What one run owes one agency, and by when.
+model TaxLiability {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  payrollRunId  String?            @db.Uuid
+  employerOrgId String?            @db.Uuid
+  accountId     String?            @db.Uuid
+  kind          TaxAgencyKind
+  jurisdiction  String             @db.VarChar(80)
+  /// The quarter the liability falls in: "2026-Q4".
+  periodLabel   String             @db.VarChar(16)
+  liabilityDate DateTime           @db.Date
+  dueDate       DateTime           @db.Date
+  amount        Decimal            @db.Decimal(12, 2)
+  breakdown     Json               @default("{}")
+  status        TaxLiabilityStatus @default(OPEN)
+  paymentId     String?            @db.Uuid
+  createdAt     DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime           @updatedAt @db.Timestamptz(6)
+
+  payrollRun PayrollRun?       @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  account    TaxAgencyAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  payment    TaxPayment?       @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@unique([payrollRunId, kind, jurisdiction])
+  @@index([tenantId, status, dueDate])
+  @@index([tenantId, periodLabel])
+}
+
+/// Money sent to an agency — through the embedded provider, or by the
+/// customer (EFTPS / the state's site) and recorded with its confirmation.
+model TaxPayment {
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  accountId            String?          @db.Uuid
+  kind                 TaxAgencyKind
+  jurisdiction         String           @db.VarChar(80)
+  periodLabel          String           @db.VarChar(16)
+  amount               Decimal          @db.Decimal(12, 2)
+  dueDate              DateTime         @db.Date
+  /// PROVIDER | EFTPS | STATE_PORTAL | LOCAL_PORTAL
+  method               String           @db.VarChar(20)
+  status               TaxPaymentStatus @default(SCHEDULED)
+  providerConnectionId String?          @db.Uuid
+  providerRef          String?          @db.VarChar(120)
+  confirmationNumber   String?          @db.VarChar(80)
+  submittedAt          DateTime?        @db.Timestamptz(6)
+  paidAt               DateTime?        @db.Timestamptz(6)
+  paidById             String?          @db.Uuid
+  failureReason        String?          @db.VarChar(500)
+  createdById          String?          @db.Uuid
+  createdAt            DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime         @updatedAt @db.Timestamptz(6)
+
+  account     TaxAgencyAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  liabilities TaxLiability[]
+
+  @@index([tenantId, status, dueDate])
+}
+
+/// A return for one agency and period: 941, 940, a state withholding return
+/// or annual reconciliation, a state unemployment wage report, a local return,
+/// or an amendment of one of those.
+model TaxReturn {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  accountId          String?         @db.Uuid
+  /// F941 | F940 | STATE_WH_QUARTERLY | STATE_WH_ANNUAL | SUI_WAGE_REPORT | LOCAL_QUARTERLY | F941X | STATE_AMENDED
+  kind               String          @db.VarChar(30)
+  jurisdiction       String          @db.VarChar(80)
+  /// "2026-Q4", or "2026" for an annual return.
+  periodLabel        String          @db.VarChar(16)
+  periodStart        DateTime        @db.Date
+  periodEnd          DateTime        @db.Date
+  dueDate            DateTime        @db.Date
+  /// The figures and (for wage reports) the per-employee rows, as generated.
+  data               Json
+  status             TaxReturnStatus @default(DRAFT)
+  /// PROVIDER | MANUAL
+  method             String?         @db.VarChar(20)
+  providerRef        String?         @db.VarChar(120)
+  confirmationNumber String?         @db.VarChar(80)
+  filedAt            DateTime?       @db.Timestamptz(6)
+  filedById          String?         @db.Uuid
+  rejectionReason    String?         @db.VarChar(500)
+  amendsId           String?         @db.Uuid
+  createdById        String?         @db.Uuid
+  createdAt          DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime        @updatedAt @db.Timestamptz(6)
+
+  account    TaxAgencyAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  amends     TaxReturn?        @relation("TaxReturnAmends", fields: [amendsId], references: [id], onDelete: SetNull)
+  amendments TaxReturn[]       @relation("TaxReturnAmends")
+
+  @@index([tenantId, kind, periodLabel])
+}
+
+/// A letter from an agency (a balance due, a penalty, a rate notice, a
+/// mismatch) worked from intake to resolution.
+model AgencyNotice {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  accountId     String?            @db.Uuid
+  agencyName    String             @db.VarChar(160)
+  jurisdiction  String?            @db.VarChar(80)
+  noticeType    String             @db.VarChar(80)
+  noticeNumber  String?            @db.VarChar(60)
+  noticeDate    DateTime           @db.Date
+  periodLabel   String?            @db.VarChar(16)
+  amountDue     Decimal?           @db.Decimal(12, 2)
+  responseDueAt DateTime?          @db.Date
+  status        AgencyNoticeStatus @default(NEW)
+  assignedToId  String?            @db.Uuid
+  fileKey       String?            @db.VarChar(300)
+  fileName      String?            @db.VarChar(200)
+  contentType   String?            @db.VarChar(100)
+  summary       String?            @db.VarChar(2000)
+  response      String?            @db.VarChar(4000)
+  respondedAt   DateTime?          @db.Timestamptz(6)
+  resolution    String?            @db.VarChar(2000)
+  resolvedAt    DateTime?          @db.Timestamptz(6)
+  penaltyAmount Decimal?           @db.Decimal(12, 2)
+  abatedAmount  Decimal?           @db.Decimal(12, 2)
+  /// The timeline: [{ at, by, what }].
+  events        Json               @default("[]")
+  createdById   String?            @db.Uuid
+  createdAt     DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime           @updatedAt @db.Timestamptz(6)
+
+  account TaxAgencyAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status, responseDueAt])
+}
+
+/// Certified payroll — a prevailing-wage (public works) project: the contract,
+/// its wage determination, and the weekly WH-347 / California eCPR reports.
+model PrevailingWageProject {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name                    String    @db.VarChar(200)
+  contractNumber          String?   @db.VarChar(80)
+  agency                  String?   @db.VarChar(200)
+  awardingBody            String?   @db.VarChar(200)
+  wageDeterminationNumber String?   @db.VarChar(80)
+  /// California DIR project id (eCPR); null elsewhere.
+  dirProjectId            String?   @db.VarChar(40)
+  siteId                  String?   @db.Uuid
+  clientId                String?   @db.Uuid
+  addressLine1            String?   @db.VarChar(200)
+  city                    String?   @db.VarChar(80)
+  county                  String?   @db.VarChar(80)
+  state                   String?   @db.VarChar(2)
+  zip                     String?   @db.VarChar(10)
+  startDate               DateTime  @db.Date
+  endDate                 DateTime? @db.Date
+  /// 0 = Sunday … 6 = Saturday: the last day of the reporting week.
+  weekEndsOn              Int       @default(6)
+  /// CASH (fringe paid in wages) | PLAN (paid to approved plans) | MIXED.
+  fringeMode              String    @default("CASH") @db.VarChar(10)
+  payrollOfficerName      String?   @db.VarChar(120)
+  payrollOfficerTitle     String?   @db.VarChar(120)
+  status                  String    @default("ACTIVE") @db.VarChar(10)
+  createdById             String?   @db.Uuid
+  createdAt               DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  site    Site?                    @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  rates   PrevailingWageRate[]
+  workers PrevailingWageWorker[]
+  tags    PrevailingWageTimeTag[]
+  reports CertifiedPayrollReport[]
+
+  @@index([tenantId, status])
+  @@index([siteId])
+}
+
+model PrevailingWageRate {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                 String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  projectId                String    @db.Uuid
+  classification           String    @db.VarChar(120)
+  baseRate                 Decimal   @db.Decimal(8, 2)
+  fringeRate               Decimal   @default(0) @db.Decimal(8, 2)
+  /// The most apprentices allowed per journeyworker in this classification (null = no limit set).
+  apprenticesPerJourneyman Decimal?  @db.Decimal(5, 2)
+  effectiveFrom            DateTime  @db.Date
+  effectiveTo              DateTime? @db.Date
+  createdAt                DateTime  @default(now()) @db.Timestamptz(6)
+
+  project PrevailingWageProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, classification])
+  @@index([tenantId])
+}
+
+model PrevailingWageWorker {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId               String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  projectId              String    @db.Uuid
+  associateId            String    @db.Uuid
+  classification         String    @db.VarChar(120)
+  isApprentice           Boolean   @default(false)
+  apprenticeRegistration String?   @db.VarChar(80)
+  /// An apprentice's share of the journeyworker rate, per their registered program.
+  apprenticeLevelPercent Decimal?  @db.Decimal(5, 2)
+  startedOn              DateTime  @db.Date
+  endedOn                DateTime? @db.Date
+  createdAt              DateTime  @default(now()) @db.Timestamptz(6)
+
+  project   PrevailingWageProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  associate Associate             @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([associateId])
+  @@index([tenantId])
+}
+
+/// An explicit project tag on a time entry (otherwise time at the project's site is the project's).
+model PrevailingWageTimeTag {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  timeEntryId    String   @unique @db.Uuid
+  projectId      String   @db.Uuid
+  classification String?  @db.VarChar(120)
+  createdById    String?  @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  timeEntry TimeEntry             @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  project   PrevailingWageProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([tenantId])
+}
+
+/// One week's certified payroll (WH-347 + Statement of Compliance) for a project.
+model CertifiedPayrollReport {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  projectId       String    @db.Uuid
+  weekEnding      DateTime  @db.Date
+  payrollNumber   Int
+  isFinal         Boolean   @default(false)
+  /// DRAFT | SIGNED | SUBMITTED
+  status          String    @default("DRAFT") @db.VarChar(10)
+  snapshot        Json?
+  /// PLANS | CASH | MIXED — box 4(a)/(b) of the Statement of Compliance.
+  fringeStatement String?   @db.VarChar(10)
+  exceptionsText  String?   @db.VarChar(2000)
+  signatureName   String?   @db.VarChar(120)
+  signerTitle     String?   @db.VarChar(120)
+  signedById      String?   @db.Uuid
+  signedAt        DateTime? @db.Timestamptz(6)
+  signedIp        String?   @db.VarChar(64)
+  pdfHash         String?   @db.VarChar(64)
+  submittedAt     DateTime? @db.Timestamptz(6)
+  submittedTo     String?   @db.VarChar(200)
+  confirmation    String?   @db.VarChar(120)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  project PrevailingWageProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, weekEnding])
+  @@index([tenantId, status])
+}
+
+/// A contractor's W-9, TIN-matching and backup-withholding record.
+model ContractorProfile {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                 String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId              String    @unique @db.Uuid
+  legalName                String?   @db.VarChar(200)
+  businessName             String?   @db.VarChar(200)
+  /// INDIVIDUAL | C_CORP | S_CORP | PARTNERSHIP | TRUST | LLC | OTHER (W-9 line 3a)
+  taxClassification        String?   @db.VarChar(30)
+  /// LLC tax classification: C, S or P.
+  llcTaxClass              String?   @db.VarChar(1)
+  exemptPayeeCode          String?   @db.VarChar(4)
+  fatcaCode                String?   @db.VarChar(4)
+  addressLine1             String?   @db.VarChar(200)
+  city                     String?   @db.VarChar(80)
+  state                    String?   @db.VarChar(2)
+  zip                      String?   @db.VarChar(10)
+  /// SSN | EIN — the TIN itself is Associate.tinEncrypted.
+  tinType                  String?   @db.VarChar(3)
+  tinLast4                 String?   @db.VarChar(4)
+  /// NONE | REQUESTED | SIGNED
+  w9Status                 String    @default("NONE") @db.VarChar(10)
+  w9RequestedAt            DateTime? @db.Timestamptz(6)
+  w9SignedAt               DateTime? @db.Timestamptz(6)
+  w9SignatureName          String?   @db.VarChar(120)
+  w9SignedIp               String?   @db.VarChar(64)
+  w9Hash                   String?   @db.VarChar(64)
+  /// The payee crossed out W-9 item 2 (the IRS told them they're subject to backup withholding).
+  subjectToBackupCertified Boolean   @default(false)
+  /// NOT_CHECKED | PENDING | MATCHED | MISMATCH | INVALID
+  tinMatchStatus           String    @default("NOT_CHECKED") @db.VarChar(12)
+  tinMatchCode             Int?
+  tinMatchCheckedAt        DateTime? @db.Timestamptz(6)
+  backupWithholding        Boolean   @default(false)
+  /// NO_TIN | NOT_CERTIFIED | B_NOTICE | IRS_NOTIFIED
+  backupReason             String?   @db.VarChar(30)
+  backupStartedAt          DateTime? @db.Timestamptz(6)
+  backupStoppedAt          DateTime? @db.Timestamptz(6)
+  createdAt                DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  associate  Associate        @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  tinResults TinMatchResult[]
+  bNotices   BNotice[]
+
+  @@index([tenantId])
+}
+
+model TinMatchBatch {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// BULK (Pub 2108A file) | INTERACTIVE (a provider, one TIN at a time)
+  kind            String    @default("BULK") @db.VarChar(12)
+  /// GENERATED | RESULTS_LOADED
+  status          String    @default("GENERATED") @db.VarChar(16)
+  requestedCount  Int       @default(0)
+  summary         Json?
+  createdById     String?   @db.Uuid
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  resultsLoadedAt DateTime? @db.Timestamptz(6)
+
+  results TinMatchResult[]
+
+  @@index([tenantId, createdAt])
+}
+
+model TinMatchResult {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  batchId       String   @db.Uuid
+  profileId     String   @db.Uuid
+  /// Our row reference in the request file (never the TIN).
+  accountNumber String   @db.VarChar(20)
+  /// 1 = EIN, 2 = SSN, 3 = unknown (Pub 2108A)
+  tinType       Int
+  resultCode    Int?
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  batch   TinMatchBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  profile ContractorProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, accountNumber])
+  @@index([profileId])
+  @@index([tenantId])
+}
+
+/// An IRS CP2100/972CG mismatch for one payee and the B-notice it requires.
+model BNotice {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  profileId           String    @db.Uuid
+  /// FIRST | SECOND (a second mismatch within three calendar years)
+  kind                String    @db.VarChar(6)
+  irsNoticeKind       String    @default("CP2100") @db.VarChar(10)
+  irsNoticeReceivedOn DateTime  @db.Date
+  nameOnNotice        String?   @db.VarChar(200)
+  tinLast4OnNotice    String?   @db.VarChar(4)
+  /// 15 business days after the IRS notice arrived.
+  sendBy              DateTime  @db.Date
+  sentAt              DateTime? @db.Timestamptz(6)
+  /// 30 business days after the IRS notice arrived: backup withholding starts if not resolved.
+  backupBy            DateTime  @db.Date
+  respondedAt         DateTime? @db.Timestamptz(6)
+  /// W9_RECEIVED | SSA_VALIDATION | IRS_147C | BACKUP_STARTED
+  resolution          String?   @db.VarChar(20)
+  letterHash          String?   @db.VarChar(64)
+  createdById         String?   @db.Uuid
+  createdAt           DateTime  @default(now()) @db.Timestamptz(6)
+
+  profile ContractorProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+  @@index([tenantId])
+}
+
+/// A batch of contractor payments (invoices, project fees) paid outside the hourly payroll run.
+model ContractorPaymentRun {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name         String    @db.VarChar(120)
+  payDate      DateTime  @db.Date
+  /// DRAFT | APPROVED | PAID | CANCELLED
+  status       String    @default("DRAFT") @db.VarChar(10)
+  createdById  String?   @db.Uuid
+  approvedById String?   @db.Uuid
+  approvedAt   DateTime? @db.Timestamptz(6)
+  paidAt       DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  payments ContractorPayment[]
+
+  @@index([tenantId, status])
+}
+
+model ContractorPayment {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  runId          String   @db.Uuid
+  associateId    String   @db.Uuid
+  description    String   @db.VarChar(300)
+  invoiceNumber  String?  @db.VarChar(60)
+  /// NEC | MISC
+  form           String   @default("NEC") @db.VarChar(10)
+  /// 1099-MISC box (1 rents, 2 royalties, 3 other income, 6 medical, 10 attorney) when form = MISC.
+  miscBox        Int?
+  amount         Decimal  @db.Decimal(12, 2)
+  backupWithheld Decimal  @default(0) @db.Decimal(12, 2)
+  netAmount      Decimal  @db.Decimal(12, 2)
+  workState      String?  @db.VarChar(2)
+  stateWithheld  Decimal  @default(0) @db.Decimal(12, 2)
+  paymentMethod  String?  @db.VarChar(20)
+  reference      String?  @db.VarChar(120)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  run       ContractorPaymentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  associate Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([associateId])
+  @@index([tenantId])
+}
+
+/// How a tenant files 1099s with each state: through the IRS Combined
+/// Federal/State program, directly with the state, or both.
+model State1099Filing {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  state        String   @db.VarChar(2)
+  cfsf         Boolean  @default(false)
+  directFiling Boolean  @default(false)
+  payerStateId String?  @db.VarChar(40)
+  notes        String?  @db.VarChar(500)
+  updatedById  String?  @db.Uuid
+  updatedAt    DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, state])
+}
+
+
+/// The electronic Income Withholding Order as received, and what we answered (lib/eiwo).
+model EiwoDocument {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  receivedAt           DateTime  @default(now()) @db.Timestamptz(6)
+  documentActionCode   String    @db.VarChar(4)
+  caseIdentifier       String?   @db.VarChar(40)
+  orderIdentifier      String?   @db.VarChar(40)
+  remittanceIdentifier String?   @db.VarChar(40)
+  issuingState         String?   @db.VarChar(2)
+  employeeName         String?   @db.VarChar(120)
+  employeeSsnLast4     String?   @db.VarChar(4)
+  rawContent           String
+  parsed               Json
+  /// RECEIVED | ACCEPTED | REJECTED
+  status               String    @default("RECEIVED") @db.VarChar(12)
+  rejectReasonCode     String?   @db.VarChar(4)
+  rejectReason         String?   @db.VarChar(500)
+  associateId          String?   @db.Uuid
+  garnishmentId        String?   @db.Uuid
+  ackContent           String?
+  ackGeneratedAt       DateTime? @db.Timestamptz(6)
+  decidedById          String?   @db.Uuid
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, status])
+  @@index([garnishmentId])
+}
+
+/// Employer → state notices for an order: TERMINATION or LUMP_SUM.
+model EiwoNotice {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  garnishmentId String    @db.Uuid
+  kind          String    @db.VarChar(16)
+  content       String
+  payload       Json
+  createdById   String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  sentAt        DateTime? @db.Timestamptz(6)
+  reference     String?   @db.VarChar(80)
+
+  @@index([garnishmentId])
+  @@index([tenantId])
+}
+
+/// A state's rule for several support orders and the fee an employer may keep.
+model GarnishmentStateRule {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  state              String   @db.VarChar(2)
+  /// PRO_RATA | FIRST_IN_TIME
+  allocationMethod   String   @default("PRO_RATA") @db.VarChar(16)
+  supportMaxPercent  Decimal? @db.Decimal(5, 4)
+  creditorMaxPercent Decimal? @db.Decimal(5, 4)
+  adminFeeMax        Decimal? @db.Decimal(8, 2)
+  /// PER_PAYMENT | MONTHLY | ONE_TIME
+  adminFeeFrequency  String?  @db.VarChar(12)
+  notes              String?  @db.VarChar(500)
+  updatedById        String?  @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, state])
+}
+
+/// IRS Publication 1494 inputs for one tax year and filing status (entered from the publication).
+model LevyExemptParameter {
+  id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                    String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  taxYear                     Int
+  filingStatus                String   @db.VarChar(24)
+  standardDeduction           Decimal  @db.Decimal(10, 2)
+  additionalStandardDeduction Decimal  @default(0) @db.Decimal(10, 2)
+  exemptionAmount             Decimal  @db.Decimal(10, 2)
+  source                      String?  @db.VarChar(200)
+  updatedById                 String?  @db.Uuid
+  createdAt                   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt                   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, taxYear, filingStatus])
+}
+
+/// A 401(k) plan and its recordkeeper (lib/retirement, lib/recordkeepers).
+model RetirementPlan {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId               String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  employerId             String?   @db.Uuid
+  name                   String    @db.VarChar(120)
+  /// The 401(k) benefits plan whose enrollments are the deferral elections.
+  benefitsPlanId         String?   @db.Uuid
+  planNumber             String?   @db.VarChar(40)
+  /// GUIDELINE | VESTWELL | EMPOWER_SFTP | GENERIC_SFTP
+  recordkeeper           String    @db.VarChar(20)
+  connectionEnc          String?
+  status                 String    @default("ACTIVE") @db.VarChar(12)
+  establishedOn          DateTime? @db.Date
+  eligibilityMinAge      Int       @default(21)
+  eligibilityServiceDays Int       @default(0)
+  /// IMMEDIATE | MONTHLY | QUARTERLY
+  entryTiming            String    @default("IMMEDIATE") @db.VarChar(12)
+  autoEnroll             Boolean   @default(false)
+  autoEnrollPercent      Decimal   @default(0) @db.Decimal(5, 2)
+  autoEscalatePercent    Decimal   @default(0) @db.Decimal(5, 2)
+  autoEscalateMax        Decimal   @default(0) @db.Decimal(5, 2)
+  optOutDays             Int       @default(90)
+  /// [{ upToPercent, matchPercent }] tiers of the deferral rate.
+  matchFormula           Json      @default("[]")
+  /// NONE | BASIC | ENHANCED | NONELECTIVE_3
+  safeHarbor             String    @default("NONE") @db.VarChar(16)
+  rothEnabled            Boolean   @default(true)
+  catchUpEnabled         Boolean   @default(true)
+  createdById            String?   @db.Uuid
+  createdAt              DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  elections     RetirementElection[]
+  loans         RetirementLoan[]
+  contributions RetirementContribution[]
+  files         RetirementFile[]
+
+  @@index([tenantId])
+}
+
+model RetirementElection {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  planId           String    @db.Uuid
+  associateId      String    @db.Uuid
+  /// NOT_ELIGIBLE | ELIGIBLE | ENROLLED | AUTO_ENROLLED | OPTED_OUT
+  status           String    @db.VarChar(16)
+  eligibleOn       DateTime? @db.Date
+  enrolledOn       DateTime? @db.Date
+  optOutDeadline   DateTime? @db.Date
+  nextEscalationOn DateTime? @db.Date
+  /// EMPLOYEE | AUTO | RECORDKEEPER | HR
+  source           String    @default("EMPLOYEE") @db.VarChar(16)
+  updatedAt        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+
+  plan      RetirementPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  associate Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, associateId])
+  @@index([tenantId])
+}
+
+model RetirementLoan {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  planId       String    @db.Uuid
+  associateId  String    @db.Uuid
+  loanNumber   String    @db.VarChar(40)
+  perPayAmount Decimal   @db.Decimal(10, 2)
+  startDate    DateTime  @db.Date
+  endDate      DateTime? @db.Date
+  balance      Decimal?  @db.Decimal(12, 2)
+  status       String    @default("ACTIVE") @db.VarChar(12)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  plan      RetirementPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  associate Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, loanNumber])
+  @@index([tenantId])
+}
+
+/// What one paycheck sent to the plan, by source.
+model RetirementContribution {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  planId         String   @db.Uuid
+  associateId    String   @db.Uuid
+  payrollRunId   String   @db.Uuid
+  payrollItemId  String?  @db.Uuid
+  payDate        DateTime @db.Date
+  eligibleComp   Decimal  @default(0) @db.Decimal(12, 2)
+  preTax         Decimal  @default(0) @db.Decimal(10, 2)
+  roth           Decimal  @default(0) @db.Decimal(10, 2)
+  catchUpPreTax  Decimal  @default(0) @db.Decimal(10, 2)
+  catchUpRoth    Decimal  @default(0) @db.Decimal(10, 2)
+  employerMatch  Decimal  @default(0) @db.Decimal(10, 2)
+  safeHarbor     Decimal  @default(0) @db.Decimal(10, 2)
+  /// [{ loanNumber, amount }]
+  loanRepayments Json     @default("[]")
+  fileId         String?  @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  plan      RetirementPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  associate Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([payrollRunId, planId, associateId])
+  @@index([associateId, payDate])
+  @@index([tenantId])
+}
+
+/// A file sent to (or prepared for) the recordkeeper: CONTRIBUTION, CENSUS, TRUE_UP.
+model RetirementFile {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  planId       String    @db.Uuid
+  kind         String    @db.VarChar(16)
+  payrollRunId String?   @db.Uuid
+  payDate      DateTime? @db.Date
+  format       String    @db.VarChar(24)
+  content      String
+  rowCount     Int       @default(0)
+  totals       Json      @default("{}")
+  /// GENERATED | SENT | FAILED
+  status       String    @default("GENERATED") @db.VarChar(12)
+  error        String?   @db.VarChar(1000)
+  sentAt       DateTime? @db.Timestamptz(6)
+  createdById  String?   @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+
+  plan RetirementPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, createdAt])
+  @@index([tenantId])
+}
+
+/// A benefits carrier that takes an EDI 834 feed (lib/edi834).
+model BenefitCarrier {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name              String   @db.VarChar(120)
+  receiverId        String   @db.VarChar(15)
+  receiverQualifier String   @default("ZZ") @db.VarChar(2)
+  senderId          String   @db.VarChar(15)
+  senderQualifier   String   @default("ZZ") @db.VarChar(2)
+  sponsorTaxId      String?  @db.VarChar(9)
+  policyNumber      String?  @db.VarChar(50)
+  /// ISA15: T (test) or P (production)
+  usageIndicator    String   @default("T") @db.VarChar(1)
+  /// DOWNLOAD | SFTP
+  transport         String   @default("DOWNLOAD") @db.VarChar(12)
+  connectionEnc     String?
+  lastControlNumber Int      @default(0)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  files Edi834File[]
+
+  @@index([tenantId])
+}
+
+model Edi834File {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  carrierId     String    @db.Uuid
+  /// FULL | CHANGE
+  mode          String    @db.VarChar(8)
+  controlNumber Int
+  content       String
+  memberCount   Int       @default(0)
+  /// GENERATED | SENT | FAILED
+  status        String    @default("GENERATED") @db.VarChar(12)
+  error         String?   @db.VarChar(1000)
+  sentAt        DateTime? @db.Timestamptz(6)
+  createdById   String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  carrier BenefitCarrier @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+
+  @@index([carrierId, createdAt])
+  @@index([tenantId])
+}
+
+/// A state pay notice owed to a worker — NY Labor Law §195 (LS 54/LS 59), CA
+/// Labor Code §2810.5 and the like — at hire or a rate change, and its signed
+/// acknowledgment (lib/payNotices).
+model WagePayNotice {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId        String    @db.Uuid
+  state              String    @db.VarChar(2)
+  /// NY_LS54 | NY_LS59 | CA_2810_5 | IL_WPCA | WA_PAY …
+  form               String    @db.VarChar(24)
+  /// HIRE | RATE_CHANGE
+  trigger            String    @db.VarChar(16)
+  language           String    @default("en") @db.VarChar(8)
+  /// The facts the notice states (rates, pay day, employer, allowances), frozen at issue.
+  facts              Json
+  /// SENT | ACKNOWLEDGED
+  status             String    @default("SENT") @db.VarChar(16)
+  sentAt             DateTime  @default(now()) @db.Timestamptz(6)
+  acknowledgedAt     DateTime? @db.Timestamptz(6)
+  signedName         String?   @db.VarChar(200)
+  signatureIp        String?   @db.VarChar(64)
+  signatureUserAgent String?   @db.VarChar(300)
+  documentHash       String?   @db.VarChar(64)
+  createdById        String?   @db.Uuid
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([associateId])
+}
+
+/// One new-hire report owed per hire and reporting state (42 USC 653a), with its deadline.
+model NewHireReport {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId   String    @db.Uuid
+  state         String    @db.VarChar(2)
+  hireDate      DateTime  @db.Date
+  dueDate       DateTime  @db.Date
+  /// DUE | SUBMITTED
+  status        String    @default("DUE") @db.VarChar(16)
+  /// FILE | PROVIDER | PORTAL
+  method        String?   @db.VarChar(16)
+  confirmation  String?   @db.VarChar(120)
+  submittedAt   DateTime? @db.Timestamptz(6)
+  submittedById String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, state, hireDate])
+  @@index([tenantId, status, dueDate])
+}
+
+/// Per-client contract terms, effective-dated (BEYOND — the pay ↔ bill link).
+/// retroRebill: AUTO | REVIEW | NEVER. overtimeBilling: MULTIPLIED | STRAIGHT.
+/// premiumRules: { DOUBLE_TIME | MEAL_REST | PREDICTABILITY | HOLIDAY |
+/// SHIFT_DIFFERENTIAL: { mode: NOT_BILLABLE | AT_COST | BILL_MARKUP, markupPct? } }.
+model ClientBillingTerms {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  clientId         String   @db.Uuid
+  effectiveFrom    DateTime @db.Date
+  retroRebill      String   @default("REVIEW") @db.VarChar(12)
+  overtimeBilling  String   @default("MULTIPLIED") @db.VarChar(12)
+  premiumRules     Json     @default("{}")
+  defaultMarkupPct Decimal? @db.Decimal(6, 2)
+  notes            String?  @db.VarChar(500)
+  updatedById      String?  @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, effectiveFrom])
+  @@index([tenantId])
+}
+
+/// A line payroll owes a client's bill (BEYOND): retro pay rebilled, or a
+/// premium billed by contract. kind: RETRO | PREMIUM | REVERSAL. status:
+/// PENDING_REVIEW | READY | BILLED | VOID. It rides on the client's next
+/// statement and is claimed by the statement that finalizes it.
+model BillingAdjustment {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  clientId             String    @db.Uuid
+  kind                 String    @db.VarChar(12)
+  status               String    @default("READY") @db.VarChar(16)
+  ruleKey              String?   @db.VarChar(24)
+  label                String    @db.VarChar(300)
+  basis                String?   @db.VarChar(300)
+  hours                Decimal   @default(0) @db.Decimal(10, 2)
+  payAmount            Decimal   @default(0) @db.Decimal(12, 2)
+  amount               Decimal   @db.Decimal(12, 2)
+  workFrom             DateTime? @db.Date
+  workTo               DateTime? @db.Date
+  associateId          String?   @db.Uuid
+  payrollRunId         String?   @db.Uuid
+  payrollItemId        String?   @db.Uuid
+  sourceKey            String    @unique @db.VarChar(160)
+  originalStatementIds String[]  @default([]) @db.Uuid
+  billedStatementId    String?   @db.Uuid
+  billedAt             DateTime? @db.Timestamptz(6)
+  approvalId           String?   @db.Uuid
+  reason               String?   @db.VarChar(500)
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, status])
+  @@index([payrollRunId])
   @@index([tenantId])
 }

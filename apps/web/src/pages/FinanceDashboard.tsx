@@ -35,6 +35,7 @@ import { ClockStrip } from '@/components/ClockStrip';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { NextFundingCard } from '@/pages/payrollBanking/FundingCard';
 
 /**
  * The Finance cockpit, v2 — an operations console in the admin-dashboard
@@ -173,6 +174,9 @@ export function FinanceDashboard() {
       decisions={{ title: t('fin.today'), count: tasksToday, content: <TodayList data={data} headless /> }}
       assistant={<HugoSeat />}
     >
+      {/* ---- Payroll funding: the next run's money, when payroll runs on our own ACH ---- */}
+      <NextFundingCard />
+
       {/* ---- The four numbers that matter (two across until xl: the
           template's main column is two thirds wide beside Hugo) ---------- */}
       <div className={cn('grid grid-cols-2 gap-3', receivablesOn ? 'xl:grid-cols-4' : 'xl:grid-cols-3')}>

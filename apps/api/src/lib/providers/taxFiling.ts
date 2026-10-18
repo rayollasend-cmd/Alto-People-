@@ -130,6 +130,9 @@ async function tb(ctx: ProviderContext, method: string, path: string, body?: unk
   return r.json;
 }
 
+/** An authenticated TaxBandits call for other TaxBandits services (TIN matching). */
+export const taxBanditsRequest = tb;
+
 const num = (v: unknown): number => {
   const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : 0;
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
@@ -161,6 +164,13 @@ function returnData(input: FilingInput): Record<string, unknown> {
         Box4: num(a.box4SsTax),
         Box5: num(a.box5MedicareWages),
         Box6: num(a.box6MedicareTax),
+        // Boxes 7, 10, 12 (codes incl. 2026 TA/TP/TT) and 14b (Treasury Tipped
+        // Occupation Codes). CONFIRM WITH TAXBANDITS: the W-2 field names for
+        // Box 12 entries and Box 14b were not verifiable while this was written.
+        Box7: num(a.box7SsTips),
+        Box10: num(a.box10DependentCare),
+        Box12: Array.isArray(a.box12) ? (a.box12 as Array<Record<string, unknown>>).map((e) => ({ Code: e.code, Amount: num(e.amount) })) : [],
+        Box14b: Array.isArray(a.box14bTippedOccupationCodes) ? a.box14bTippedOccupationCodes : [],
         States: Array.isArray(a.stateLines)
           ? (a.stateLines as Array<Record<string, unknown>>).map((l) => ({ StateCd: l.state, StateWages: num(l.stateWages), StateIncomeTax: num(l.stateIncomeTax) }))
           : [],

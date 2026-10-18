@@ -11,6 +11,22 @@ export const prisma = new PrismaClient();
 // is faster than discovering them at runtime and won't accidentally truncate
 // _prisma_migrations.
 const TABLES = [
+  // DEDUCT: e-IWO, garnishment tables, 401(k) plans and benefit carriers — no foreign keys in (children cascade from the plan / carrier).
+  'EiwoNotice',
+  'EiwoDocument',
+  'GarnishmentStateRule',
+  'LevyExemptParameter',
+  'RetirementPlan',
+  'BenefitCarrier',
+  // MONEY: payroll banking — tenant-keyed, no foreign keys (AchEntry cascades from AchFile).
+  'PayrollFunding',
+  'AchEntry',
+  'AchFile',
+  'EmployerBankAccount',
+  'PayrollBankingProfile',
+  'BankHolidayOverride',
+  // PAYEXP: one row per organization, no foreign key.
+  'DailyPayPolicy',
   'AuditLog',
   'ComplianceEvidenceSignoff',
   'ComplianceEvidence',
@@ -32,6 +48,7 @@ const TABLES = [
   'WotcSettings',
   'WotcDesignatedZip',
   'StateTaxAcknowledgment',
+  'LocalTaxAcknowledgment',
   'AcaSettings',
   // Assistant proposals carry a user id but no foreign key.
   'AssistantAction',
@@ -42,6 +59,11 @@ const TABLES = [
   'CredentialIssuerKey',
   // Floor leads' flags: tied to a client but not by a cascading key.
   'FloorFlag',
+  // Certified payroll + contractors: no cascading parent.
+  'PrevailingWageProject',
+  'TinMatchBatch',
+  'ContractorPaymentRun',
+  'State1099Filing',
   // Labor rules going live, and rounding: tenant rows with no cascading key.
   'LaborRuleActivation',
   'PunchRoundingPolicy',
@@ -99,6 +121,12 @@ const TABLES = [
   'RobotIncident',
   // Brief 1D-3: the global agent switch has no foreign key, so no CASCADE reaches it.
   'AgentControl',
+  // Full-service payroll tax.
+  'TaxLiability',
+  'TaxPayment',
+  'TaxReturn',
+  'AgencyNotice',
+  'TaxAgencyAccount',
   // Agent families step 0: nor does the tenant's switch. (AgentCapability and
   // AgentProposal cascade from AgentProfile through Worker.)
   'AgentTenantControl',

@@ -51,7 +51,8 @@ describe('the MCP catalog, read-only preview', () => {
 
   it('a module off takes its capabilities out of the catalog, never a refusal', () => {
     const tools = mcpCatalogFor({ scheduling: true, time: true, hrCases: false, compliance: false } as Parameters<typeof mcpCatalogFor>[0]);
-    expect(tools.map((t) => t.family)).toEqual(['workforce', 'workforce', 'workforce', 'workforce']);
+    // Payroll is core: payroll.prep stays whatever modules are off.
+    expect(tools.map((t) => t.family)).toEqual(['workforce', 'workforce', 'workforce', 'workforce', 'payroll']);
     expect(mcpCatalogFor(null)).toEqual([]);
   });
 });

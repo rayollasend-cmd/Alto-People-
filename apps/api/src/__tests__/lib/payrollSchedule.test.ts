@@ -54,7 +54,10 @@ describe('getCurrentPeriod — BIWEEKLY', () => {
     const w = getCurrentPeriod(schedule, day('2026-01-10'));
     expect(w.periodStart).toBe('2026-01-05');
     expect(w.periodEnd).toBe('2026-01-18');
-    expect(w.payDate).toBe('2026-01-25');
+    // Jan 25 is a Sunday: people are paid the Friday before.
+    expect(w.nominalPayDate).toBe('2026-01-25');
+    expect(w.payDate).toBe('2026-01-23');
+    expect(w.payDateShiftReason).toBe('Sunday');
   });
 
   it('advances to cycle 2 on day 15', () => {
@@ -162,7 +165,9 @@ describe('payDateOffsetDays', () => {
       },
       day('2026-01-07')
     );
-    expect(w.payDate).toBe(w.periodEnd);
+    // The period ends Sunday Jan 11; a zero offset pays that day, moved to Friday.
+    expect(w.nominalPayDate).toBe(w.periodEnd);
+    expect(w.payDate).toBe('2026-01-09');
   });
 
   it('crosses month boundaries cleanly', () => {

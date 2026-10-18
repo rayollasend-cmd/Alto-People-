@@ -84,6 +84,11 @@ const KIND_LINK: Record<ApprovalRequestKind, (r: ApprovalRequest) => string> = {
   ROLE_CHANGE: () => '/admin/users',
   WORKFLOW_GATE: () => '/workflows?tab=runs',
   LABOR_RULES_LIVE: () => '/payroll/labor-rules',
+  TAX_PAYMENT: () => '/payroll/taxes?tab=deposits',
+  DAILY_PAY_POLICY: () => '/payroll/daily-pay',
+  BILLING_ADJUSTMENT: () => '/finance/pay-bill?tab=adjustments',
+  GARNISHMENT_PAYEE_BANK: () => '/payroll/garnishments?tab=orders',
+  PAYROLL_FUNDING_LIMIT: (r) => (r.subjectType === 'PayrollRun' ? `/payroll/banking?run=${r.subjectId}` : '/payroll/banking?tab=setup'),
 };
 
 /** The link a decider opens to see the subject. */

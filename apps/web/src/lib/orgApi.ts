@@ -475,6 +475,9 @@ export interface EmployerRow {
   legalName: string;
   ein: string | null;
   address: { line1: string | null; line2: string | null; city: string | null; state: string | null; zip: string | null };
+  phone?: string | null;
+  /** CA Labor Code §2810.5: the carrier named on California pay notices. */
+  workersComp?: { carrier: string | null; address: string | null; phone: string | null; policyNumber: string | null };
   sutaRateOverride: number | null;
   sutaWageBaseOverride: number | null;
   clientId: string | null;
@@ -492,8 +495,13 @@ export interface EmployerFactsInput {
   city?: string | null;
   state?: string | null;
   zip?: string | null;
+  phone?: string | null;
   sutaRateOverride?: number | null;
   sutaWageBaseOverride?: number | null;
+  wcCarrierName?: string | null;
+  wcCarrierAddress?: string | null;
+  wcCarrierPhone?: string | null;
+  wcPolicyNumber?: string | null;
 }
 
 export const listEmployers = () => apiFetch<{ employers: EmployerRow[] }>('/admin/employers');

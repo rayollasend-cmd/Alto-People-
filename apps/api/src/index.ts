@@ -42,6 +42,7 @@ import { startExecutiveAlertsCron } from './lib/executiveAlerts.js';
 import { startRelayEscalationCron } from './lib/relayEscalation.js';
 import { startNoShowRiskCron } from './lib/noShowRisk.js';
 import { startComplianceAgentCron } from './lib/complianceAgent.js';
+import { startPayrollAgentCron } from './lib/payrollAgent.js';
 import { startShiftAutofillCron } from './lib/shiftAutofill.js';
 import { startExecutiveDigestCron } from './lib/executiveDigest.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
@@ -56,15 +57,19 @@ import { startReliabilityDigestCron } from './lib/reliabilityDigest.js';
 import { startEvidenceCron } from './lib/evidence.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
 import { startLaborShadowCron } from './lib/laborRules/shadow.js';
+import { startBankingCron } from './lib/banking/cron.js';
 import { ensureEnvIdentity, ensureEnvScimToken } from './lib/identity.js';
 import { startBillingCron } from './lib/billing.js';
 import { startStatementDunningCron } from './lib/statementDunning.js';
+import { startDailyPayCron } from './lib/dailyPay.js';
 import { startTimeOffPolicyCron } from './lib/timeOffPolicy.js';
 import { startSecurityAlertsCron } from './lib/securityAlerts.js';
 import { startAuditSinkCron } from './lib/auditSink.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
+import { syncAllPlans } from './lib/retirement.js';
+import { applyDueBackupWithholding } from './lib/contractors.js';
 import { installEventSync, runScheduledSyncs } from './lib/integrations/sync.js';
 import { sampleRobots } from './lib/robots.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
@@ -151,6 +156,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startKioskMaintenanceCron();
   startDocumentMaintenanceCron();
   startStatementDunningCron();
+  startDailyPayCron();
   startTimeOffPolicyCron();
   startCaseSlaCron();
   startPolicyCampaignCron();
@@ -166,6 +172,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startNoShowRiskCron();
   // Agent families step 4: the Compliance agent (document.chase, i9.section2), hourly per tenant.
   startComplianceAgentCron();
+  startPayrollAgentCron();
   startAutoClockOutCron();
   startWeekAheadCron();
   startOfferLetterCron();
@@ -188,6 +195,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startMarketWageCron();
   // Brief 2-2 step 3: the labor rules engine beside every finalized run (reads only; pays nothing).
   startLaborShadowCron(prisma);
+  // Payroll banking: funding and entries settle, prenotes clear and go out, hourly per tenant.
+  startBankingCron();
   // Brief 2-3 step 2: the environment IdP and SCIM_TOKEN become Alto HR's first rows.
   // Brief 2-6 step 4: daily usage snapshots, and the month's invoices on its first days.
   startBillingCron(prisma);
@@ -211,6 +220,16 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
       .catch((err) => logger.warn({ err }, 'agent sweep failed'));
   void sweepAgents();
   setInterval(sweepAgents, 15 * 60_000).unref();
+  // DEDUCT: 401(k) eligibility, auto-enroll after the opt-out window, and yearly escalation (idempotent).
+  const sweepRetirement = () =>
+    runForEachTenant('retirement-elections', () => syncAllPlans(prisma)).catch((err) => logger.warn({ err }, 'retirement election sweep failed'));
+  setTimeout(() => void sweepRetirement(), 10 * 60_000).unref();
+  setInterval(sweepRetirement, 6 * 60 * 60_000).unref();
+  // Contractors: backup withholding starts on payees whose B-notice deadline passed unanswered (IRS Pub 1281).
+  const sweepBackupWithholding = () =>
+    runForEachTenant('backup-withholding', () => applyDueBackupWithholding(prisma)).catch((err) => logger.warn({ err }, 'backup withholding sweep failed'));
+  void sweepBackupWithholding();
+  setInterval(sweepBackupWithholding, 60 * 60_000).unref();
   startAgentDriftCron();
   // Brief 3-5: the HR and VMS connections sync on their schedule (every five
   // minutes the clock is checked per tenant) and on the domain events the

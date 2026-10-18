@@ -93,7 +93,25 @@ export async function computeYtdWagesBatch(
       _sum: { grossPay: true },
     }),
   );
-  return new Map(groups.map((g) => [g.associateId, Number(g._sum.grossPay ?? 0)]));
+  const ytd = new Map(groups.map((g) => [g.associateId, Number(g._sum.grossPay ?? 0)]));
+  // Third-party sick pay's taxable part counts toward the year's Social
+  // Security wage base too (it's FICA wages on the W-2), so a high earner
+  // isn't withheld past the limit. Skipped where the table isn't there (the
+  // labor golden's fake transaction).
+  const sick = (tx as unknown as { thirdPartySickPay?: { findMany: (a: unknown) => Promise<Array<{ associateId: string; grossAmount: unknown; nontaxableAmount: unknown }>> } }).thirdPartySickPay;
+  if (sick?.findMany) {
+    const rows = await findInChunks(associateIds, (chunk) =>
+      sick.findMany({
+        where: { associateId: { in: chunk }, voidedAt: null, payDate: { gte: yearStart, lt: beforeDate } },
+        select: { associateId: true, grossAmount: true, nontaxableAmount: true },
+      }),
+    );
+    for (const r of rows) {
+      const taxable = Math.max(0, Number(r.grossAmount) - Number(r.nontaxableAmount));
+      if (taxable > 0) ytd.set(r.associateId, (ytd.get(r.associateId) ?? 0) + taxable);
+    }
+  }
+  return ytd;
 }
 
 /**

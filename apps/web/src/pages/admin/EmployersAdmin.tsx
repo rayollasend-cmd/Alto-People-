@@ -108,6 +108,11 @@ function EmployerDialog({ employer, onClose }: { employer: EmployerRow | null; o
   const [city, setCity] = useState(employer?.address.city ?? '');
   const [state, setState] = useState(employer?.address.state ?? '');
   const [zip, setZip] = useState(employer?.address.zip ?? '');
+  const [phone, setPhone] = useState(employer?.phone ?? '');
+  const [wcCarrier, setWcCarrier] = useState(employer?.workersComp?.carrier ?? '');
+  const [wcAddress, setWcAddress] = useState(employer?.workersComp?.address ?? '');
+  const [wcPhone, setWcPhone] = useState(employer?.workersComp?.phone ?? '');
+  const [wcPolicy, setWcPolicy] = useState(employer?.workersComp?.policyNumber ?? '');
   const dirty = () =>
     legalName !== (employer?.legalName ?? '') || ein !== (employer?.ein ?? '') || line1 !== (employer?.address.line1 ?? '') || city !== (employer?.address.city ?? '');
   const body = (): EmployerFactsInput & { legalName: string } => ({
@@ -118,6 +123,11 @@ function EmployerDialog({ employer, onClose }: { employer: EmployerRow | null; o
     city: city.trim() || null,
     state: state.trim().toUpperCase() || null,
     zip: zip.trim() || null,
+    phone: phone.trim() || null,
+    wcCarrierName: wcCarrier.trim() || null,
+    wcCarrierAddress: wcAddress.trim() || null,
+    wcCarrierPhone: wcPhone.trim() || null,
+    wcPolicyNumber: wcPolicy.trim() || null,
   });
   const save = useMutation({
     mutationFn: () => (employer ? updateEmployer(employer.id, body()) : createEmployer(body())),
@@ -150,6 +160,19 @@ function EmployerDialog({ employer, onClose }: { employer: EmployerRow | null; o
             <Field label="State">{(p) => <Input {...p} value={state} onChange={(e) => setState(e.target.value)} maxLength={2} />}</Field>
             <Field label="ZIP">{(p) => <Input {...p} value={zip} onChange={(e) => setZip(e.target.value)} inputMode="numeric" />}</Field>
           </div>
+          <Field label="Phone" hint="New York prints it on every paystub and pay notice.">
+            {(p) => <Input {...p} value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" autoComplete="tel" maxLength={32} />}
+          </Field>
+          <fieldset className="space-y-3 rounded-lg border border-line p-3">
+            <legend className="px-1 text-sm font-medium text-ink">Workers&rsquo; comp insurance</legend>
+            <p className="text-xs text-ink-muted">California names the carrier on every new hire&rsquo;s pay notice.</p>
+            <Field label="Carrier">{(p) => <Input {...p} value={wcCarrier} onChange={(e) => setWcCarrier(e.target.value)} maxLength={255} />}</Field>
+            <Field label="Carrier address">{(p) => <Input {...p} value={wcAddress} onChange={(e) => setWcAddress(e.target.value)} maxLength={500} />}</Field>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Carrier phone">{(p) => <Input {...p} value={wcPhone} onChange={(e) => setWcPhone(e.target.value)} type="tel" inputMode="tel" maxLength={32} />}</Field>
+              <Field label="Policy number">{(p) => <Input {...p} value={wcPolicy} onChange={(e) => setWcPolicy(e.target.value)} maxLength={64} />}</Field>
+            </div>
+          </fieldset>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={save.isPending}>

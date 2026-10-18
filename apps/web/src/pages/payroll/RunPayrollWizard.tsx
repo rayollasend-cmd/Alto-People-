@@ -713,6 +713,13 @@ const EXCEPTION_COPY: Record<PayrollException['kind'], { label: string }> = {
   MISSING_COMP_RECORD: { label: 'No comp record' },
   RETRO_PAY: { label: 'Retroactive pay' },
   STATE_W4_INCOMPLETE: { label: 'State certificate incomplete' },
+  LOCAL_TAX_REVIEW: { label: 'Local tax not reviewed' },
+  LOCAL_TAX_UNRESOLVED: { label: 'Home jurisdiction unknown' },
+  BELOW_PREVAILING_WAGE: { label: 'Below prevailing wage' },
+  APPRENTICE_RATIO: { label: 'Apprentice ratio' },
+  WAGE_STATEMENT_INCOMPLETE: { label: 'Paystub missing a state item' },
+  ROTH_CATCH_UP: { label: 'Catch-up must be Roth' },
+  DEFERRAL_LIMIT: { label: 'Annual limit reached' },
 };
 
 /**
@@ -723,7 +730,13 @@ const EXCEPTION_COPY: Record<PayrollException['kind'], { label: string }> = {
 const fixHref = (ex: PayrollException) =>
   ex.kind === 'UNAPPROVED_TIME'
     ? `/time-attendance?associate=${ex.associateId}`
-    : `/people?associateId=${ex.associateId}`;
+    : ex.kind === 'WAGE_STATEMENT_INCOMPLETE'
+      ? '/payroll/compliance?tab=paystubs'
+      : ex.kind === 'ROTH_CATCH_UP' || ex.kind === 'DEFERRAL_LIMIT'
+        ? '/payroll/compliance?tab=roth'
+        : ex.kind === 'LOCAL_TAX_REVIEW'
+          ? '/payroll/tax-jurisdictions'
+          : `/people?associateId=${ex.associateId}`;
 
 function ExceptionStrip({
   exceptions,

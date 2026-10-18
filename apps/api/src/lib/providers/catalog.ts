@@ -13,7 +13,7 @@
  *               could not confirm, marked "confirm with vendor" in code
  */
 
-export type ProviderKindName = 'EVERIFY' | 'BACKGROUND_CHECK' | 'DRUG_TEST' | 'TAX_FILING' | 'PAYOUT';
+export type ProviderKindName = 'EVERIFY' | 'BACKGROUND_CHECK' | 'DRUG_TEST' | 'TAX_FILING' | 'PAYOUT' | 'EMBEDDED_PAYROLL' | 'TAX_ENGINE' | 'ORIGINATION';
 
 export type ProviderId =
   | 'DHS_EVERIFY'
@@ -23,7 +23,13 @@ export type ProviderId =
   | 'ESCREEN'
   | 'QUEST_ESP'
   | 'TAXBANDITS'
-  | 'WISE';
+  | 'WISE'
+  | 'CHECK_HQ'
+  | 'ZEAL'
+  | 'SYMMETRY_STE'
+  | 'VERTEX_PAYROLL'
+  | 'MODERN_TREASURY'
+  | 'INCREASE';
 
 export interface ProviderField {
   key: string;
@@ -56,6 +62,9 @@ export const PROVIDER_KIND_LABEL: Record<ProviderKindName, string> = {
   DRUG_TEST: 'Drug tests',
   TAX_FILING: 'Tax filing',
   PAYOUT: 'Payouts',
+  EMBEDDED_PAYROLL: 'Payroll taxes, paid and filed for you',
+  TAX_ENGINE: 'Tax engine',
+  ORIGINATION: 'Bank (ACH)',
 };
 
 export const PROVIDERS: readonly ProviderInfo[] = [
@@ -218,8 +227,123 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     confidence: 'documented',
     baseUrls: { SANDBOX: 'https://api.sandbox.transferwise.tech', PRODUCTION: 'https://api.wise.com' },
   },
+  {
+    id: 'CHECK_HQ',
+    kind: 'EMBEDDED_PAYROLL',
+    label: 'Check',
+    what: 'Check pays every payroll tax and files every return for you; Alto keeps the pay rules, approvals and the record.',
+    credentialFields: [{ key: 'apiKey', label: 'API key', secret: true, hint: 'Check dashboard → Developers → API keys.' }],
+    settingFields: [
+      { key: 'companyId', label: 'Check company ID', secret: false, hint: 'Created when your company is onboarded with Check.', optional: true },
+      { key: 'penaltyGuarantee', label: 'Your Check contract includes penalty coverage (true / false)', secret: false, hint: 'Only say true if your agreement says Check pays penalties caused by its own errors.', optional: true },
+    ],
+    webhook: { supported: true, how: 'Check signs each event; the signature is checked with the secret shown below.' },
+    steps: [
+      'Sign Check’s embedded payroll agreement and complete company onboarding (EIN and state accounts).',
+      'Enter the API key and your Check company ID.',
+      'Confirm whether your contract includes penalty coverage, then test in the sandbox and switch to production.',
+    ],
+    confidence: 'partner',
+    baseUrls: { SANDBOX: 'https://sandbox.checkhq.com', PRODUCTION: 'https://api.checkhq.com' },
+  },
+  {
+    id: 'ZEAL',
+    kind: 'EMBEDDED_PAYROLL',
+    label: 'Zeal',
+    what: 'Zeal pays every payroll tax and files every return for you; Alto keeps the pay rules, approvals and the record.',
+    credentialFields: [{ key: 'apiKey', label: 'API key', secret: true, hint: 'Zeal dashboard → API keys.' }],
+    settingFields: [
+      { key: 'companyId', label: 'Zeal company ID', secret: false, optional: true },
+      { key: 'penaltyGuarantee', label: 'Your Zeal contract includes penalty coverage (true / false)', secret: false, hint: 'Only say true if your agreement says Zeal pays penalties caused by its own errors.', optional: true },
+    ],
+    webhook: { supported: true, how: 'Zeal signs each event; the signature is checked with the secret shown below.' },
+    steps: [
+      'Sign Zeal’s agreement and onboard your company (EIN and state accounts).',
+      'Enter the API key and your Zeal company ID.',
+      'Confirm whether your contract includes penalty coverage, then test in the sandbox and switch to production.',
+    ],
+    confidence: 'partner',
+    baseUrls: { SANDBOX: 'https://api.zeal.com', PRODUCTION: 'https://api.zeal.com' },
+  },
+];
+
+/** Banks that send our ACH entries (the in-house NACHA file needs no connection). */
+export const ORIGINATION_PROVIDERS: readonly ProviderInfo[] = [
+  {
+    id: 'MODERN_TREASURY',
+    kind: 'ORIGINATION',
+    label: 'Modern Treasury',
+    what: 'Sends payroll deposits and the funding debit as ACH payment orders from your account at your bank, and tells us when each settles or comes back.',
+    credentialFields: [
+      { key: 'organizationId', label: 'Organization ID', secret: false, hint: 'Modern Treasury → Developers → API keys.' },
+      { key: 'apiKey', label: 'API key', secret: true },
+    ],
+    settingFields: [{ key: 'originatingAccountId', label: 'Internal account ID', secret: false, hint: 'The internal account payroll is sent from.' }],
+    webhook: { supported: true, how: 'Modern Treasury signs each event with your webhook key (HMAC-SHA256 of the body in X-Signature).' },
+    steps: [
+      'Create an API key in Modern Treasury (sandbox first).',
+      'Enter the organization ID, API key and the internal account payroll leaves from.',
+      'Add the webhook address below for payment order events, and paste its signing key here.',
+    ],
+    confidence: 'documented',
+    baseUrls: { SANDBOX: 'https://app.moderntreasury.com', PRODUCTION: 'https://app.moderntreasury.com' },
+  },
+  {
+    id: 'INCREASE',
+    kind: 'ORIGINATION',
+    label: 'Increase',
+    what: 'Sends payroll deposits and the funding debit as ACH transfers from your Increase account, and reports settlements, returns and corrections.',
+    credentialFields: [{ key: 'apiKey', label: 'API key', secret: true, hint: 'Increase dashboard → Developers → API keys.' }],
+    settingFields: [{ key: 'accountId', label: 'Account ID', secret: false, hint: 'The Increase account payroll is sent from.' }],
+    webhook: { supported: true, how: 'Increase signs each event (Increase-Webhook-Signature: a timestamp and an HMAC-SHA256 of the timestamp and body).' },
+    steps: [
+      'Create an API key in Increase (sandbox first).',
+      'Enter the key and the account payroll leaves from.',
+      'Add the webhook address below for ACH transfer events, and paste its signing secret here.',
+    ],
+    confidence: 'documented',
+    baseUrls: { SANDBOX: 'https://sandbox.increase.com', PRODUCTION: 'https://api.increase.com' },
+  },
+  {
+    id: 'SYMMETRY_STE',
+    kind: 'TAX_ENGINE',
+    label: 'Symmetry Tax Engine',
+    what: 'Calculates state and local withholding from Symmetry’s licensed tables — every Pennsylvania PSD, Ohio city and school district, and the rest — instead of Alto’s own.',
+    credentialFields: [
+      { key: 'apiKey', label: 'API key', secret: true, hint: 'Issued with your Symmetry Tax Engine license.' },
+      { key: 'baseUrl', label: 'Hosted engine address', secret: false, hint: 'The https address Symmetry gives your account.', optional: true },
+    ],
+    settingFields: [],
+    webhook: { supported: false, how: 'The engine answers each calculation directly; nothing calls back.' },
+    steps: [
+      'License the Symmetry Tax Engine (hosted) and receive an API key.',
+      'Enter the key, and the hosted address if Symmetry gave you one.',
+      'Test the connection; payroll then calculates state and local tax with Symmetry, falling back to Alto’s engine if it doesn’t answer.',
+    ],
+    confidence: 'partner',
+    baseUrls: { SANDBOX: 'https://ste-sandbox.symmetry.com/api', PRODUCTION: 'https://ste.symmetry.com/api' },
+  },
+  {
+    id: 'VERTEX_PAYROLL',
+    kind: 'TAX_ENGINE',
+    label: 'Vertex Payroll Tax',
+    what: 'Calculates state and local withholding from Vertex’s licensed tables instead of Alto’s own.',
+    credentialFields: [
+      { key: 'accessToken', label: 'Access token', secret: true, hint: 'From your Vertex cloud tenant (client-credentials token).' },
+      { key: 'baseUrl', label: 'Vertex API address', secret: false, hint: 'The https address of your Vertex payroll tax tenant.', optional: true },
+    ],
+    settingFields: [],
+    webhook: { supported: false, how: 'The engine answers each calculation directly; nothing calls back.' },
+    steps: [
+      'License Vertex Payroll Tax (cloud) and create API credentials.',
+      'Enter the access token and your tenant address.',
+      'Test the connection; payroll then calculates state and local tax with Vertex, falling back to Alto’s engine if it doesn’t answer.',
+    ],
+    confidence: 'partner',
+    baseUrls: { SANDBOX: 'https://sandbox.vertexpayroll.com/api', PRODUCTION: 'https://api.vertexpayroll.com/api' },
+  },
 ];
 
 export function providerInfo(id: string): ProviderInfo | undefined {
-  return PROVIDERS.find((p) => p.id === id);
+  return PROVIDERS.find((p) => p.id === id) ?? ORIGINATION_PROVIDERS.find((p) => p.id === id);
 }

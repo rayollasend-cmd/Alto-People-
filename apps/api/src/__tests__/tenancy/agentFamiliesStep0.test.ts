@@ -210,8 +210,9 @@ describe('capabilities follow the tenant’s modules (test 6)', () => {
     const hotel = { ...defaultTenantProfile('DIRECT_EMPLOYER') };
     const modules = { ...hotel.modules, scheduling: true, time: true, compliance: false };
     const offered = capabilitiesFor(modules);
-    expect(new Set(offered.map((c) => c.family))).toEqual(new Set(['workforce']));
-    expect(offered.map((c) => c.key).sort()).toEqual(['attendance.confirm', 'coverage.forecast', 'schedule.repair', 'shift.fill']);
+    // Payroll is core (no module): its agent capability is offered to every tenant.
+    expect(new Set(offered.map((c) => c.family))).toEqual(new Set(['workforce', 'payroll']));
+    expect(offered.map((c) => c.key).sort()).toEqual(['attendance.confirm', 'coverage.forecast', 'payroll.prep', 'schedule.repair', 'shift.fill']);
     const FORBIDDEN = /\b(clients?|bill rates?|housing|vans?|stores?|associates?|alto)\b/i;
     for (const c of offered) expect(c.label, c.key).not.toMatch(FORBIDDEN);
     expect(capabilitiesFor(null)).toEqual([]);

@@ -1259,11 +1259,13 @@ function JobProfileDrawer({
   const [level, setLevel] = useState(initial?.level ?? '');
   const [isExempt, setIsExempt] = useState(initial?.isExempt ?? false);
   const [description, setDescription] = useState(initial?.description ?? '');
+  const [tippedCode, setTippedCode] = useState(initial?.tippedOccupationCode ?? '');
+  const tippedCodeError = tippedCode.trim() && !/^\d{3}$/.test(tippedCode.trim()) ? 'Use the three-digit code from the Treasury list.' : null;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (!code.trim() || !title.trim()) return;
+    if (!code.trim() || !title.trim() || tippedCodeError) return;
     setError(null);
     setSubmitting(true);
     try {
@@ -1276,6 +1278,7 @@ function JobProfileDrawer({
           level: level.trim() || null,
           isExempt,
           description: description.trim() || null,
+          tippedOccupationCode: tippedCode.trim() || null,
         });
         toast.success('Job profile created.');
       } else {
@@ -1286,6 +1289,7 @@ function JobProfileDrawer({
           level: level.trim() || null,
           isExempt,
           description: description.trim() || null,
+          tippedOccupationCode: tippedCode.trim() || null,
         });
         toast.success('Job profile updated.');
       }
@@ -1381,6 +1385,23 @@ function JobProfileDrawer({
             />
             FLSA exempt (salaried, no overtime)
           </label>
+          <Field
+            label="Tipped occupation code"
+            hint="For jobs that customarily get tips. Printed in box 14b of the W-2 from 2026 with the tips in box 12 TP."
+            error={tippedCodeError}
+          >
+            {(p) => (
+              <Input
+                value={tippedCode}
+                onChange={(e) => setTippedCode(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                inputMode="numeric"
+                maxLength={3}
+                placeholder="e.g. 101"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
           <Field label="Description">
             {(p) => (
               <Input

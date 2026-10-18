@@ -29,7 +29,7 @@ import { createWiseTransfer, isWiseConfigured, type WiseConfig } from './wise.js
  * `pickAdapter().disburse(...)` and never need to know which provider ran.
  */
 
-export type DisbursementProvider = 'STUB' | 'WISE' | 'BRANCH' | 'CHECK';
+export type DisbursementProvider = 'STUB' | 'WISE' | 'BRANCH' | 'CHECK' | 'ACH';
 
 export interface DisbursementInput {
   amount: number;
@@ -57,6 +57,12 @@ export interface DisbursementInput {
   idempotencyKey: string;
   /** Human-readable memo surfaced on the recipient's transaction history. */
   memo?: string;
+  /**
+   * Daily pay asks for the fastest rail: a Branch card load is instant; a
+   * bank account goes same-day ACH where the provider offers it. Adapters
+   * without a faster rail ignore it.
+   */
+  speed?: 'INSTANT' | 'STANDARD';
 }
 
 export interface DisbursementResult {
@@ -69,6 +75,11 @@ export interface DisbursementResult {
 export interface DisbursementAdapter {
   readonly provider: DisbursementProvider;
   disburse(input: DisbursementInput): Promise<DisbursementResult>;
+  /**
+   * Rails that batch (our own ACH) answer PENDING per item and send one
+   * file here; the disburse route calls it after the last item.
+   */
+  finalize?(): Promise<unknown>;
 }
 
 class StubAdapter implements DisbursementAdapter {
@@ -293,17 +304,52 @@ export function pickAdapter(): DisbursementAdapter {
  * platform's env-configured rail. Callers use this, not pickAdapter(), so
  * a tenant that connects Wise pays from its own balance.
  */
-export async function resolveAdapter(): Promise<DisbursementAdapter> {
+export async function resolveAdapter(opts: { batch?: boolean; actorUserId?: string | null } = {}): Promise<DisbursementAdapter> {
   if (cached && cachedFor === '__test__') return cached;
   const { activeConnection, contextFor } = await import('./providers/connections.js');
   const conn = await activeConnection('PAYOUT');
-  if (conn && conn.provider === 'WISE') {
-    const ctx = contextFor(conn);
-    if (ctx.credentials.apiKey && ctx.credentials.profileId) {
-      return new WiseAdapter({ apiKey: ctx.credentials.apiKey, profileId: ctx.credentials.profileId, baseUrl: ctx.baseUrl });
+  const wise = (): DisbursementAdapter | null => {
+    if (conn && conn.provider === 'WISE') {
+      const ctx = contextFor(conn);
+      if (ctx.credentials.apiKey && ctx.credentials.profileId) {
+        return new WiseAdapter({ apiKey: ctx.credentials.apiKey, profileId: ctx.credentials.profileId, baseUrl: ctx.baseUrl });
+      }
     }
+    return null;
+  };
+  // Payroll banking (lib/banking): a tenant that chose a rail per pay
+  // method gets it — cards on Branch, bank accounts on the chosen rail
+  // (our own ACH, Branch, Wise or check), no account at all by check.
+  const { bankingProfile } = await import('./banking/ach.js');
+  const profile = await bankingProfile(prisma).catch(() => null);
+  if (profile && profile.bankRail !== 'PLATFORM') {
+    const card: DisbursementAdapter = isBranchConfigured() ? new BranchAdapter() : pickAdapter();
+    let bank: DisbursementAdapter;
+    if (profile.bankRail === 'ACH') {
+      const { AchRailAdapter } = await import('./banking/directDeposit.js');
+      bank = new AchRailAdapter(prisma, !!opts.batch, opts.actorUserId ?? null);
+    } else if (profile.bankRail === 'BRANCH') bank = isBranchConfigured() ? new BranchAdapter() : pickAdapter();
+    else if (profile.bankRail === 'WISE') bank = wise() ?? (isWiseConfigured() ? new WiseAdapter() : pickAdapter());
+    else bank = checkAdapter;
+    return new RoutingAdapter(bank, card);
   }
-  return pickAdapter();
+  return wise() ?? pickAdapter();
+}
+
+/** One rail per pay method: card, bank account, or neither (a check). */
+class RoutingAdapter implements DisbursementAdapter {
+  readonly provider: DisbursementProvider;
+  constructor(private readonly bank: DisbursementAdapter, private readonly card: DisbursementAdapter) {
+    this.provider = bank.provider;
+  }
+  async disburse(input: DisbursementInput): Promise<DisbursementResult> {
+    if (input.recipient.branchCardId) return this.card.disburse(input);
+    if (input.recipient.routingNumber && input.recipient.accountNumber) return this.bank.disburse(input);
+    return checkAdapter.disburse(input);
+  }
+  async finalize(): Promise<unknown> {
+    return this.bank.finalize?.();
+  }
 }
 
 // Test-only: lets unit tests force a specific adapter instance without

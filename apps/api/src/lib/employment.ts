@@ -31,10 +31,17 @@ export interface EmployerFacts {
   city: string | null;
   state: string | null;
   zip: string | null;
+  /** NY Labor Law §195 prints it on wage statements and pay notices. */
+  phone: string | null;
+  /** CA Labor Code §2810.5 names the workers' comp carrier on the pay notice. */
+  wcCarrierName: string | null;
+  wcCarrierAddress: string | null;
+  wcCarrierPhone: string | null;
+  wcPolicyNumber: string | null;
   clientId: string | null;
 }
 
-const FACTS = { id: true, kind: true, legalName: true, ein: true, addressLine1: true, addressLine2: true, city: true, state: true, zip: true, clientId: true } as const;
+const FACTS = { id: true, kind: true, legalName: true, ein: true, addressLine1: true, addressLine2: true, city: true, state: true, zip: true, phone: true, wcCarrierName: true, wcCarrierAddress: true, wcCarrierPhone: true, wcPolicyNumber: true, clientId: true } as const;
 
 /** The tenant's own employer row; created from the organization name when the table is empty (a fresh database). */
 export async function defaultEmployerOrg(db: Db = defaultPrisma, tenantId: string = tenantIdForWrite()): Promise<EmployerFacts> {

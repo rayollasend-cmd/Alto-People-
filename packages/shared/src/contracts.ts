@@ -1033,6 +1033,7 @@ export const BenefitsPlanKindSchema = /* @__PURE__ */ (() => z.enum([
   'RETIREMENT_403B',
   'LIFE_INSURANCE',
   'DISABILITY',
+  'TRUMP_ACCOUNT',       // IRC §128 employer contribution — W-2 box 12 TA (2026+)
 ]))();
 export type BenefitsPlanKind = z.infer<typeof BenefitsPlanKindSchema>;
 
@@ -1045,6 +1046,8 @@ export const BenefitsPlanSchema = /* @__PURE__ */ (() => z.object({
   employerContributionCentsPerPeriod: z.number().int().nonnegative(),
   employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative(),
   isActive: z.boolean(),
+  /** 401(k)/403(b): a higher earner's catch-up is made Roth automatically (SECURE 2.0 §603). */
+  allowsDeemedRoth: z.boolean().optional(),
 }))();
 export type BenefitsPlan = z.infer<typeof BenefitsPlanSchema>;
 
@@ -1060,6 +1063,7 @@ export const BenefitsPlanCreateInputSchema = /* @__PURE__ */ (() => z.object({
   description: z.string().trim().max(2000).optional(),
   employerContributionCentsPerPeriod: z.number().int().nonnegative().default(0),
   employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative().default(0),
+  allowsDeemedRoth: z.boolean().optional(),
 }))();
 export type BenefitsPlanCreateInput = z.infer<typeof BenefitsPlanCreateInputSchema>;
 
@@ -1069,6 +1073,7 @@ export const BenefitsPlanUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   employerContributionCentsPerPeriod: z.number().int().nonnegative().optional(),
   employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative().optional(),
   isActive: z.boolean().optional(),
+  allowsDeemedRoth: z.boolean().optional(),
 }))();
 export type BenefitsPlanUpdateInput = z.infer<typeof BenefitsPlanUpdateInputSchema>;
 
@@ -1082,6 +1087,8 @@ export const BenefitsEnrollmentSchema = /* @__PURE__ */ (() => z.object({
   // Joined plan summary so the UI can render without a second fetch.
   planKind: BenefitsPlanKindSchema,
   planName: z.string(),
+  /** 401(k)/403(b): deferrals taken as designated Roth (after tax). */
+  rothElection: z.boolean().optional(),
 }))();
 export type BenefitsEnrollment = z.infer<typeof BenefitsEnrollmentSchema>;
 
@@ -1094,6 +1101,7 @@ export const BenefitsEnrollInputSchema = /* @__PURE__ */ (() => z.object({
   planId: UuidSchema,
   electedAmountCentsPerPeriod: z.number().int().nonnegative(),
   effectiveDate: z.string().date(),
+  rothElection: z.boolean().optional(),
 }))();
 export type BenefitsEnrollInput = z.infer<typeof BenefitsEnrollInputSchema>;
 
@@ -2888,7 +2896,7 @@ export type PayrollItemStatus = z.infer<typeof PayrollItemStatusSchema>;
 
 // Gap 3 — distinguishes regular periodic runs from off-cycle bonus/terminal-pay
 // runs and from amendment runs that correct a prior disbursed run.
-export const PayrollRunKindSchema = /* @__PURE__ */ (() => z.enum(['REGULAR', 'OFF_CYCLE', 'AMENDMENT']))();
+export const PayrollRunKindSchema = /* @__PURE__ */ (() => z.enum(['REGULAR', 'OFF_CYCLE', 'AMENDMENT', 'DAILY', 'MANUAL']))();
 export type PayrollRunKind = z.infer<typeof PayrollRunKindSchema>;
 
 // Wave 1.2 — earning kinds. Mirrors PayrollEarningKind in schema.prisma.
@@ -2905,6 +2913,8 @@ export const PayrollEarningKindSchema = /* @__PURE__ */ (() => z.enum([
   'COMMISSION',
   'TIPS',
   'REIMBURSEMENT',
+  // PAYEXP: what daily pay already paid this period, shown (negative) on the true-up.
+  'DAILY_SETTLED',
 ]))();
 export type PayrollEarningKind = z.infer<typeof PayrollEarningKindSchema>;
 
@@ -3103,7 +3113,7 @@ export const PayrollRunPreviewItemSchema = /* @__PURE__ */ (() => z.object({
   medicare: z.number().nonnegative(),
   stateIncomeTax: z.number().nonnegative(),
   taxState: z.string().nullable(),
-  payFrequency: z.enum(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY']),
+  payFrequency: z.enum(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY', 'DAILY']),
   disposableEarnings: z.number().nonnegative(),
   postTaxDeductions: z.number().nonnegative(),
   netPay: z.number(),
@@ -3185,6 +3195,8 @@ export const PayrollFrequencySchema = /* @__PURE__ */ (() => z.enum([
   'BIWEEKLY',
   'SEMIMONTHLY',
   'MONTHLY',
+  // PAYEXP: paid each day; a weekly true-up settles overtime and deductions.
+  'DAILY',
 ]))();
 export type PayrollFrequency = z.infer<typeof PayrollFrequencySchema>;
 
@@ -3281,6 +3293,13 @@ export const PayrollExceptionKindSchema = /* @__PURE__ */ (() => z.enum([
   'MISSING_COMP_RECORD', // WARNING  — no comp record; the default rate would apply
   'RETRO_PAY',           // INFO     — a back-dated rate change adds retroactive pay to this run
   'STATE_W4_INCOMPLETE', // WARNING  — the state certificate is missing a field the state needs (MD county)
+  'LOCAL_TAX_REVIEW',    // BLOCKING — a local jurisdiction this check owes hasn't been reviewed with the tax adviser
+  'LOCAL_TAX_UNRESOLVED',// BLOCKING — the address can't decide a local tax (PA resident with no PSD code …)
+  'BELOW_PREVAILING_WAGE', // BLOCKING — a public-works worker paid under the project's prevailing rate
+  'APPRENTICE_RATIO',    // WARNING  — more apprentices on a project than the ratio allows
+  'WAGE_STATEMENT_INCOMPLETE', // WARNING — the work state's paystub rule needs data not on file (employer address/phone, sick balance)
+  'ROTH_CATCH_UP',       // WARNING  — a higher earner's catch-up stops: the plan has no deemed Roth (SECURE 2.0 §603)
+  'DEFERRAL_LIMIT',      // INFO     — an annual limit (402(g), catch-up, HSA, FSA) stops part of an election this check
 ]))();
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
@@ -5849,6 +5868,8 @@ export const JobProfileSchema = /* @__PURE__ */ (() => z.object({
   level: z.string().nullable(),
   isExempt: z.boolean(),
   description: z.string().nullable(),
+  /** Treasury Tipped Occupation Code (W-2 box 14b from 2026). */
+  tippedOccupationCode: z.string().nullable().optional(),
   associateCount: z.number().int().nonnegative(),
 }))();
 export type JobProfile = z.infer<typeof JobProfileSchema>;
@@ -5866,6 +5887,8 @@ export const JobProfileInputSchema = /* @__PURE__ */ (() => z.object({
   level: z.string().max(40).optional().nullable(),
   isExempt: z.boolean().optional(),
   description: z.string().max(500).optional().nullable(),
+  /** Three-digit Treasury Tipped Occupation Code (Treas. Reg. §1.224-1 list); null clears it. */
+  tippedOccupationCode: z.string().regex(/^\d{3}$/, 'Tipped occupation codes are three digits').optional().nullable(),
 }))();
 export type JobProfileInput = z.infer<typeof JobProfileInputSchema>;
 
@@ -6149,6 +6172,11 @@ export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
   'ROLE_CHANGE',
   'WORKFLOW_GATE',
   'LABOR_RULES_LIVE',
+  'PAYROLL_FUNDING_LIMIT',
+  'TAX_PAYMENT',
+  'DAILY_PAY_POLICY',
+  'BILLING_ADJUSTMENT',
+  'GARNISHMENT_PAYEE_BANK',
 ]))();
 export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
 
@@ -6162,6 +6190,11 @@ export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> =
   ROLE_CHANGE: 'Access change',
   WORKFLOW_GATE: 'Workflow gate',
   LABOR_RULES_LIVE: 'Labor rules go live',
+  PAYROLL_FUNDING_LIMIT: 'Payroll funding limit',
+  TAX_PAYMENT: 'Tax payment',
+  DAILY_PAY_POLICY: 'Daily pay policy',
+  BILLING_ADJUSTMENT: 'Billing adjustment',
+  GARNISHMENT_PAYEE_BANK: 'Garnishment payee bank',
 };
 
 export const ApprovalRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']))();
@@ -8691,6 +8724,8 @@ export const AGENT_SCOPES = [
   // Agent-only: HR case routes gate on role, not on a capability, so a
   // case-opening agent holds this and nothing that reads every case.
   { code: 'open:hr-case', label: 'Open HR cases (through an approval)' },
+  // BEYOND: the Payroll agent reads the pre-payroll exceptions; it changes nothing itself.
+  { code: 'view:payroll', label: 'Read payroll readiness' },
 ] as const;
 export type AgentScope = (typeof AGENT_SCOPES)[number]['code'];
 const agentScopeCodes = AGENT_SCOPES.map((s) => s.code) as [AgentScope, ...AgentScope[]];

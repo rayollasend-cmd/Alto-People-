@@ -56,6 +56,8 @@ export interface Earnings {
   lastWeekEarned: number;
   days: EarningsDay[];
   openShifts: { count: number; estAmount: number };
+  /** Earned so far after taxes, deductions and early pay drawn (the tax engine). */
+  takeHome?: null | { gross: number; taxes: number; deductions: number; advances: number; net: number; basis: 'W4' | 'NO_W4' | 'NO_WITHHOLDING' };
   todayShift: {
     startsAt: string;
     endsAt: string;
@@ -176,7 +178,7 @@ export function EarningsCard() {
           ) : (
             data.todayShift &&
             data.todayShift.estAmount > 0 && (
-              <span className="text-xs text-white">
+              <span className="text-xs text-ink">
                 {t(data.todayShift.inProgress ? 'earn.finishToday' : 'earn.readyToday', {
                   amount: fmtMoney(data.todayShift.estAmount),
                 })}
@@ -189,7 +191,7 @@ export function EarningsCard() {
             hero size needs WEIGHT (the light-stroked Cormorant read as
             heritage-bank delicate up here, exactly wrong for a scoreboard). */}
         <div
-          className="mt-2.5 text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white"
+          className="mt-2.5 text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-ink"
           aria-live="off"
           aria-label={fmtMoney(onClock ? liveEarned : data.earnedSoFar)}
         >
@@ -206,6 +208,12 @@ export function EarningsCard() {
             </span>
           )}
         </div>
+
+        {data.takeHome && data.takeHome.net > 0 && (
+          <p className="mt-1 text-sm font-medium tabular-nums text-ink">
+            {t('earn.takeHome', { amount: fmtMoney(data.takeHome.net) })}
+          </p>
+        )}
 
         <p className="mt-1.5 text-sm text-silver">
           {moreComing ? (
@@ -355,6 +363,15 @@ export function EarningsCard() {
                     rate: fmtMoney(data.hourlyRate),
                   })}
                 </p>
+                {data.takeHome && data.takeHome.net > 0 && (
+                  <p className="tabular-nums">
+                    {t('earn.takeHomeLine', {
+                      taxes: fmtMoney(data.takeHome.taxes),
+                      deductions: fmtMoney(data.takeHome.deductions),
+                      advances: fmtMoney(data.takeHome.advances),
+                    })}
+                  </p>
+                )}
                 {data.lastWeekEarned > 0 && (
                   <p className="tabular-nums">
                     {t('earn.lastWeekPlain', { amount: fmtMoney(data.lastWeekEarned) })}

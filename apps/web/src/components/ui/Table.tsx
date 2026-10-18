@@ -268,6 +268,8 @@ export function SortableTableHead<K extends string>({
 }: SortableTableHeadProps<K>) {
   const active = state.key === sortKey;
   const direction = active ? state.direction : undefined;
+  // A right-aligned column (numbers) keeps its label over the figures: the arrow leads, the text ends flush right.
+  const right = /(^|\s)text-right(\s|$)/.test(className ?? '');
   return (
     <TableHead
       aria-sort={active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}
@@ -278,7 +280,8 @@ export function SortableTableHead<K extends string>({
         type="button"
         onClick={() => onSort(sortKey)}
         className={cn(
-          'flex h-10 w-full items-center gap-1 px-3 text-left text-2xs font-semibold uppercase tracking-widest transition-colors',
+          'flex h-10 w-full items-center gap-1 px-3 text-2xs font-semibold uppercase tracking-widest transition-colors',
+          right ? 'flex-row-reverse text-right' : 'text-left',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
           active ? 'text-gold' : 'text-silver hover:text-white',
         )}

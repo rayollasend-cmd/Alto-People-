@@ -86,7 +86,10 @@ async function visibleText(page: Page): Promise<string> {
     // The "New this week" card is a release note: a row an admin wrote into
     // this tenant (the seed's migration wrote Alto HR's), not product copy.
     // A hotel tenant carries its own notes, so the card's text is data here.
-    const notes = Array.from(document.querySelectorAll('[role="status"][aria-label="New this week"]')) as HTMLElement[];
+    // A message's subject and body ([data-message-content]) are rows someone
+    // sent this person, data too: the seeded associate's inbox holds Alto HR's
+    // past van notices and its seeded "Sign Associate Employment Agreement" task.
+    const notes = Array.from(document.querySelectorAll('[role="status"][aria-label="New this week"], [data-message-content]')) as HTMLElement[];
     const hidden = notes.map((el) => [el, el.style.display] as const);
     for (const [el] of hidden) el.style.display = 'none';
     const parts: string[] = [document.body.innerText];
@@ -135,13 +138,21 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
   const stamp = Date.now().toString(36);
   // The seed's demo sites are stores; a hotel's are properties. Their type is
   // data, and it is handed back at the end with the rest.
-  const seedStores: string[] = [];
+  const seedStores: Array<{ id: string; clientId: string | null }> = [];
+  // A site's type is set in Sites, a client's store included (its name and address edit through the client).
+  const siteRoute = (s: { id: string }) => `/admin/sites/${s.id}`;
 
   // The rule's boundaries, proven before the walk: a word inside another is not a hit.
   expect(forbiddenHits('x', 'admin@altohr.com relevant advance restore')).toEqual([]);
   expect(forbiddenHits('x', 'Our clients and the van').length).toBe(2);
 
   try {
+    // Seed stores become properties before the hotel profile takes over.
+    const existing = await call<{ sites: Array<{ id: string; type: string; clientId: string | null }> }>(api, 'GET', '/admin/sites');
+    for (const s of existing.sites.filter((s) => s.type === 'STORE')) {
+      await call(api, 'PATCH', siteRoute(s), { type: 'PROPERTY' });
+      seedStores.push({ id: s.id, clientId: s.clientId });
+    }
     await call(api, 'PUT', '/admin/tenant/profile', { businessModel: 'DIRECT_EMPLOYER', resetToDefaults: true });
     await call(api, 'PATCH', '/admin/org/settings', { orgName: 'The Grand Hotel' });
 
@@ -153,11 +164,6 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
       orgUnitId: region.unit.id,
     });
 
-    const existing = await call<{ sites: Array<{ id: string; type: string }> }>(api, 'GET', '/admin/sites');
-    for (const s of existing.sites.filter((s) => s.type === 'STORE')) {
-      await call(api, 'PATCH', `/admin/sites/${s.id}`, { type: 'PROPERTY' });
-      seedStores.push(s.id);
-    }
 
     // An org-wide onboarding template, found or made.
     const list = await call<{ templates: Array<{ id: string; clientId: string | null }> }>(api, 'GET', '/onboarding/templates');
@@ -247,8 +253,8 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
     expect(seen.get('/admin/sites'), 'the property is listed as a property').toMatch(/The Grand Hotel[\s\S]*Property/i);
   } finally {
     // Alto HR gets its profile, its name and its stores back for the specs that follow.
-    for (const id of seedStores) await api.fetch(`/api/admin/sites/${id}`, { method: 'PATCH', data: { type: 'STORE' }, timeout: 30_000 });
     await api.fetch('/api/admin/tenant/profile', { method: 'PUT', data: { businessModel: 'WORKFORCE_PROVIDER', resetToDefaults: true }, timeout: 30_000 });
+    for (const s of seedStores) await api.fetch(`/api${siteRoute(s)}`, { method: 'PATCH', data: { type: 'STORE' }, timeout: 30_000 });
     await api.fetch('/api/admin/org/settings', { method: 'PATCH', data: { orgName: 'Alto HR' }, timeout: 30_000 });
   }
 

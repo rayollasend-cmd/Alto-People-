@@ -527,6 +527,9 @@ export interface RunAddOn {
   amount: number;
   hours: number | null;
   note: string | null;
+  /** Gross-up: the take-home this line was solved for, and the breakdown on the check. */
+  targetNet?: number | null;
+  grossUp?: { gross: number; net: number; federal: number; socialSecurity: number; medicare: number; state: number; local: number; preTax: number } | null;
 }
 
 export function listRunAddOns(runId: string): Promise<{ addOns: RunAddOn[] }> {
@@ -535,7 +538,7 @@ export function listRunAddOns(runId: string): Promise<{ addOns: RunAddOn[] }> {
 
 export function addRunAddOn(
   runId: string,
-  body: { associateId: string; kind: RunAddOnKind; amount: number; hours?: number | null; note?: string | null }
+  body: { associateId: string; kind: RunAddOnKind; amount?: number; targetNet?: number; includePreTax?: boolean; hours?: number | null; note?: string | null }
 ): Promise<{ ok: boolean; addOnId: string }> {
   return apiFetch<{ ok: boolean; addOnId: string }>(`/payroll/runs/${runId}/add-ons`, {
     method: 'POST',

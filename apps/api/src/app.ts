@@ -34,7 +34,10 @@ import { earnedWageRouter } from './routes/earnedWage.js';
 import { schedulingRouter } from './routes/scheduling.js';
 import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
+import { bankingRouter } from './routes/banking.js';
+import { payBillRouter } from './routes/payBill.js';
 import { financialChangesRouter } from './routes/financialChanges.js';
+import { payrollTaxesRouter } from './routes/payrollTaxes.js';
 import { w4RecollectionRouter } from './routes/w4Recollection.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
@@ -118,7 +121,14 @@ import { clientNpsRouter } from './routes/clientNps.js';
 import { marketRatesRouter } from './routes/marketRates.js';
 import { credentialsRouter } from './routes/credentials.js';
 import { payrollTax91Router } from './routes/payrollTax91.js';
+import { payExpRouter } from './routes/payExp.js';
+import { garnishmentDeskRouter } from './routes/garnishmentDesk.js';
+import { retirementRouter } from './routes/retirement.js';
+import { benefitCarriersRouter } from './routes/benefitCarriers.js';
+import { certifiedPayrollRouter } from './routes/certifiedPayroll.js';
+import { contractorSelfRouter, contractorsRouter } from './routes/contractors.js';
 import { stateTaxRouter } from './routes/stateTax.js';
+import { taxJurisdictionsRouter } from './routes/taxJurisdictions.js';
 import { wotcRouter } from './routes/wotc.js';
 import { acaRouter } from './routes/aca.js';
 import { benefitsLifecycle92Router } from './routes/benefitsLifecycle92.js';
@@ -175,6 +185,7 @@ import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { nativeAppRouter } from './routes/nativeApp.js';
 import { usersRouter } from './routes/users.js';
 import { employersRouter } from './routes/employers.js';
+import { payrollComplianceRouter } from './routes/payrollCompliance.js';
 import { orgUnitsRouter } from './routes/orgUnits.js';
 import { structureRouter } from './routes/structure.js';
 import { complianceEvidenceRouter } from './routes/complianceEvidence.js';
@@ -514,6 +525,12 @@ export function createApp() {
   // The Finance queue — mounted before /payroll so its stricter gate
   // (process:payroll) is the one that answers for this path.
   app.use('/payroll/financial-changes', requireCapability('process:payroll'), financialChangesRouter);
+  // The payroll-tax desk: liabilities, deposits, returns, notices, agency accounts.
+  app.use('/payroll-taxes', requireCapability('process:payroll'), payrollTaxesRouter);
+  // The pay ↔ bill desk: reconciliation, margin per paycheck, billing terms, running cost.
+  app.use('/pay-bill', requireAuth, payBillRouter);
+  // Payroll banking: funding, employer accounts, NACHA files, returns, the payroll calendar.
+  app.use('/payroll-banking', requireCapability('view:payroll'), bankingRouter);
   app.use('/payroll', requireCapability('view:payroll'), payrollRouter);
   // W-4 SSN re-collection campaign (2026-06-11 key-rotation remediation).
   // Same capability as the SSN reveal endpoint — this surface names who
@@ -523,6 +540,11 @@ export function createApp() {
     requireCapability('process:payroll'),
     w4RecollectionRouter
   );
+  // Certified payroll (prevailing wage) and the contractors (1099) desk.
+  app.use('/certified-payroll', requireCapability('process:payroll'), certifiedPayrollRouter);
+  app.use('/contractors', requireCapability('process:payroll'), contractorsRouter);
+  // A contractor's own W-9.
+  app.use('/me/w9', requireAuth, contractorSelfRouter);
   app.use(
     '/documents',
     requireCapability('view:documents'),
@@ -685,8 +707,18 @@ export function createApp() {
   // Phase 91 — garnishments + tax forms (941, 940, W-2, 1099-NEC).
   // Self-gates per-handler with view:payroll / process:payroll.
   app.use('/', payrollTax91Router);
+  // PAYEXP — daily pay, manual checks, third-party sick pay, pay check before payday, W-4 estimator (self-gates).
+  app.use('/', payExpRouter);
+  // DEDUCT — the garnishment desk: e-IWO, state rules, levy tables, electronic remittance (self-gates process:payroll).
+  app.use('/', garnishmentDeskRouter);
+  // DEDUCT — 401(k) plans, elections, loans and recordkeeper files (self-gates process:payroll).
+  app.use('/', retirementRouter);
+  // DEDUCT — benefit carrier connections and EDI 834 enrollment files (self-gates process:payroll).
+  app.use('/', benefitCarriersRouter);
   // TAXCOMP — state withholding coverage, acknowledgments and certificates.
   app.use('/', stateTaxRouter);
+  // Local and multi-state taxes: jurisdictions, review, a person's tax setup (lib/taxEngine).
+  app.use('/', taxJurisdictionsRouter);
   // TAXCOMP — WOTC screening, filing tracker and credit.
   app.use('/', wotcRouter);
   // TAXCOMP — ACA look-back measurement and the 1095-C feed.
@@ -796,6 +828,8 @@ export function createApp() {
   // Self-gates per route on view:hr-admin.
   app.use('/', usersRouter);
   app.use('/', employersRouter);
+  // Pay compliance: limits + Roth catch-up, state pay notices, new-hire reporting. Self-gated per route.
+  app.use('/', payrollComplianceRouter);
   app.use('/', orgUnitsRouter);
   app.use('/', structureRouter);
   app.use('/', complianceEvidenceRouter);

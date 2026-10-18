@@ -236,7 +236,7 @@ describe('aggregateF1099NecPayments — Gap 11', () => {
 });
 
 describe('listF1099NecEligibleAssociates — Gap 11', () => {
-  it('skips contractors paid below the $600 threshold (Box 1 floor)', async () => {
+  it('skips contractors paid below the $600 threshold for 2025 (Box 1 floor)', async () => {
     const client = await createClient();
     const aHigh = await makeContractor();
     const aLow = await makeContractor();
@@ -244,18 +244,27 @@ describe('listF1099NecEligibleAssociates — Gap 11', () => {
     await seedDisbursedItem({
       associateId: aHigh.id,
       clientId: client.id,
-      disbursedAt: new Date('2026-04-15T12:00:00Z'),
+      disbursedAt: new Date('2025-04-15T12:00:00Z'),
       grossPay: F1099_NEC_REPORTING_THRESHOLD,
     });
     await seedDisbursedItem({
       associateId: aLow.id,
       clientId: client.id,
-      disbursedAt: new Date('2026-04-15T12:00:00Z'),
+      disbursedAt: new Date('2025-04-15T12:00:00Z'),
       grossPay: 599.99, // one cent below threshold
     });
 
-    const eligible = await listF1099NecEligibleAssociates(prisma, 2026, client.id);
+    const eligible = await listF1099NecEligibleAssociates(prisma, 2025, client.id);
     expect(eligible).toEqual([aHigh.id]);
+  });
+
+  it('from tax year 2026 the floor is $2,000 (payments made after 2025)', async () => {
+    const client = await createClient();
+    const atFloor = await makeContractor();
+    const below = await makeContractor();
+    await seedDisbursedItem({ associateId: atFloor.id, clientId: client.id, disbursedAt: new Date('2026-04-15T12:00:00Z'), grossPay: 2000 });
+    await seedDisbursedItem({ associateId: below.id, clientId: client.id, disbursedAt: new Date('2026-04-15T12:00:00Z'), grossPay: 1999.99 });
+    expect(await listF1099NecEligibleAssociates(prisma, 2026, client.id)).toEqual([atFloor.id]);
   });
 
   it('still includes a sub-threshold contractor if backup withholding occurred', async () => {

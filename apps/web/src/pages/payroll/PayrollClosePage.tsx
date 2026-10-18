@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { statusTone } from '@/lib/status';
+import { RunFundingCard } from '@/pages/payrollBanking/FundingCard';
 
 /**
  * The guided close: one payroll run, six steps, each with what blocks it
@@ -32,6 +33,8 @@ interface CloseStep {
   state: StepState;
   blockers: number;
   warnings: number;
+  /** Why the step is blocked, in the server's words (e.g. the run isn't funded yet). */
+  note?: string;
   to: string;
 }
 
@@ -63,12 +66,14 @@ export interface PayrollClose {
   deposit: { id: string; status: 'PENDING' | 'PAID'; dueDate: string; amount: number; confirmationNumber: string | null } | null;
   remittances: Array<{ id: string; status: string; payeeName: string; amount: number }>;
   quickbooks: { connected: boolean; glByCostCenter: boolean };
+  payPreview?: { people: number; confirmed: number; flagged: number; openFlags: number; unanswered: number; confirmationRate: number } | null;
   steps: CloseStep[];
 }
 
 const STEP_HINT: Record<string, string> = {
   readiness: 'W-4s on file, a verified pay account for everyone, and a state the engine withholds for.',
   exceptions: 'What the run would pay wrong or not at all. Blocking ones stop finalize.',
+  payPreview: 'Two days before payday each worker checks their pay. A flag they raise stays open until it’s handled.',
   approve: 'Lock the figures. With four-eyes on, a second person signs before money moves.',
   disburse: 'Send every payment. Held and failed items need a decision before the run completes.',
   deposits: 'The withheld taxes became trust-fund money on a deadline the moment the run paid out.',
@@ -166,6 +171,9 @@ export function PayrollClosePage() {
         </div>
       }
     >
+      <div className="mb-3">
+        <RunFundingCard runId={r.id} runFinalized={r.status === 'FINALIZED'} />
+      </div>
       <ol className="space-y-3" aria-label="Close steps">
         {data.steps.map((s, i) => (
           <li key={s.key}>
@@ -184,6 +192,7 @@ export function PayrollClosePage() {
                     </span>
                   </div>
                   <p className="mt-0.5 text-xs text-ink-muted">{STEP_HINT[s.key]}</p>
+                  {s.note && <p className="mt-1 text-xs text-alert">{s.note}</p>}
                   <StepDetail step={s} data={data} />
                   {s.state !== 'skip' && (
                     <Link to={s.to} className="mt-2 inline-flex items-center gap-1 text-xs text-accent underline underline-offset-2">
@@ -289,6 +298,12 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
           {data.remittances.length > 0 && ` · ${data.remittances.filter((x) => x.status !== 'SENT').length} of ${data.remittances.length} garnishment remittances to send`}
         </p>
       );
+    case 'payPreview':
+      return data.payPreview ? (
+        <p className="mt-2 text-xs text-ink-muted tabular-nums">
+          {data.payPreview.confirmed} of {data.payPreview.people} confirmed · {data.payPreview.openFlags} open flag{data.payPreview.openFlags === 1 ? '' : 's'} · {data.payPreview.unanswered} no answer yet
+        </p>
+      ) : null;
     case 'quickbooks':
       if (!data.quickbooks.connected) return <p className="mt-2 text-xs text-ink-muted">{r.clientName ? 'This client has no QuickBooks connection.' : 'A cross-client run posts to no single QuickBooks company.'}</p>;
       return (

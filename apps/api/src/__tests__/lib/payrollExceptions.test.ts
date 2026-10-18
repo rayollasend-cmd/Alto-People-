@@ -14,6 +14,11 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateAll();
+  // A complete employer block, so the state paystub check (CA §226) stays
+  // quiet in the tests about other kinds; it has its own tests.
+  await prisma.employerOrganization.create({
+    data: { kind: 'TENANT', legalName: 'Acme Staffing LLC', addressLine1: '1 Main St', city: 'Oakland', state: 'CA', zip: '94601', phone: '555-0100', isDefault: true },
+  });
 });
 
 async function seedClient() {
@@ -73,6 +78,8 @@ async function seedAssociate(opts: {
       },
     });
   }
+  // A paid sick leave balance (CA §246(i) prints it on the paystub).
+  await prisma.timeOffBalance.create({ data: { associateId: a.id, category: 'SICK', balanceMinutes: 0 } });
   if (opts.withComp !== false) {
     await prisma.compensationRecord.create({
       data: {

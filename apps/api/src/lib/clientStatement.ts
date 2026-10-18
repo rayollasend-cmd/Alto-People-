@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { currentRateCards } from './rateCards.js';
 import { env } from '../config/env.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
+import { readyAdjustments, termsFor, type SnapshotAdjustment } from './payBillLink.js';
 
 type Db = Prisma.TransactionClient | PrismaClient;
 
@@ -34,7 +35,22 @@ export interface StatementSnapshot {
   generatedAt?: string;
   lines: StatementLine[];
   stores: Array<{ locationName: string; hours: number; amount: number }>;
-  totals: { hours: number; regularHours: number; otHours: number; amount: number };
+  /** Lines payroll owes this bill (lib/payBillLink): retro pay rebilled, premiums billed by contract. */
+  adjustments?: SnapshotAdjustment[];
+  /** How the contract bills overtime: at 1.5× the bill rate, or straight time. */
+  overtimeBilling?: 'MULTIPLIED' | 'STRAIGHT';
+  /** A standalone statement billing only adjustments (its hours' period already closed). */
+  adjustmentsOnly?: boolean;
+  totals: {
+    hours: number;
+    regularHours: number;
+    otHours: number;
+    /** Hours + adjustments. */
+    amount: number;
+    /** The hours alone, and the adjustments alone (absent on older snapshots). */
+    hoursAmount?: number;
+    adjustmentsAmount?: number;
+  };
   sla: {
     publishedShifts: number;
     assignedShifts: number;
@@ -100,6 +116,11 @@ export async function computeStatementSnapshot(
       select: { id: true, name: true },
     }),
   ]);
+
+  // The contract in force at the period's end: overtime at the multiplier or straight time.
+  const terms = await termsFor(db, clientId, new Date(periodEndExclusive.getTime() - 1));
+  const otMult = terms.overtimeBilling === 'STRAIGHT' ? 1 : 1.5;
+  const otLabel = otMult === 1 ? 'overtime (straight time per contract)' : 'overtime (1.5×)';
 
   const billDefault = new Map(
     rateDefaults
@@ -193,7 +214,7 @@ export async function computeStatementSnapshot(
       const posLabel = position ?? 'Unscheduled work';
       for (const [suffix, minutes, mult] of [
         ['regular', entryReg, 1],
-        ['overtime (1.5×)', entryOt, 1.5],
+        [otLabel, entryOt, otMult],
       ] as const) {
         if (minutes <= 0) continue;
         const hours = minutes / 60;
@@ -214,7 +235,7 @@ export async function computeStatementSnapshot(
       const s = storeAgg.get(store) ?? { hours: 0, amount: 0 };
       s.hours += min / 60;
       const entryRate = rate;
-      s.amount += (entryReg / 60) * entryRate + (entryOt / 60) * entryRate * 1.5;
+      s.amount += (entryReg / 60) * entryRate + (entryOt / 60) * entryRate * otMult;
       storeAgg.set(store, s);
     }
   }
@@ -269,6 +290,9 @@ export async function computeStatementSnapshot(
       e.shift && e.clockInAt.getTime() <= e.shift.startsAt.getTime() + PUNCTUAL_GRACE_MS,
   ).length;
 
+  const adjustments = await readyAdjustments(db, clientId);
+  const adjustmentsAmount = round2(adjustments.reduce((t, a) => t + a.amount, 0));
+
   return {
     clientName: client.name,
     periodStart: ymd(periodStart),
@@ -289,11 +313,15 @@ export async function computeStatementSnapshot(
         hours: round2(v.hours),
         amount: round2(v.amount),
       })),
+    ...(adjustments.length ? { adjustments } : {}),
+    overtimeBilling: terms.overtimeBilling,
     totals: {
       hours: round2((regularMin + otMin) / 60),
       regularHours: round2(regularMin / 60),
       otHours: round2(otMin / 60),
-      amount: round2(totalAmount),
+      amount: round2(totalAmount + adjustmentsAmount),
+      hoursAmount: round2(totalAmount),
+      adjustmentsAmount,
     },
     sla: {
       publishedShifts: published,

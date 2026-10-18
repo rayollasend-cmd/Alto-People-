@@ -115,11 +115,17 @@ const PayrollReadiness = lazyNamed(
 const PayrollYtd = lazyNamed(() => import('@/pages/payroll/PayrollYtd'), 'PayrollYtd');
 const PayrollClosePage = lazyNamed(() => import('@/pages/payroll/PayrollClosePage'), 'PayrollClosePage');
 const EarnedWageDesk = lazyNamed(() => import('@/pages/payroll/EarnedWageDesk'), 'EarnedWageDesk');
+const DailyPayDesk = lazyNamed(() => import('@/pages/payroll/DailyPayDesk'), 'DailyPayDesk');
+const ManualChecksPage = lazyNamed(() => import('@/pages/payroll/ManualChecksPage'), 'ManualChecksPage');
+const PayChecksPage = lazyNamed(() => import('@/pages/payroll/PayChecksPage'), 'PayChecksPage');
+const W4Estimator = lazyNamed(() => import('@/pages/payroll/W4Estimator'), 'W4Estimator');
 const StateTaxCoverage = lazyNamed(() => import('@/pages/payroll/StateTaxCoverage'), 'StateTaxCoverage');
+const TaxJurisdictions = lazyNamed(() => import('@/pages/payroll/TaxJurisdictions'), 'TaxJurisdictions');
 const WotcDesk = lazyNamed(() => import('@/pages/payroll/WotcDesk'), 'WotcDesk');
 const AcaHours = lazyNamed(() => import('@/pages/benefits/AcaHours'), 'AcaHours');
 const WotcScreeningTask = lazyNamed(() => import('@/pages/onboarding/tasks/WotcScreeningTask'), 'WotcScreeningTask');
 const CashForecastPage = lazyNamed(() => import('@/pages/finance/CashForecastPage'), 'CashForecastPage');
+const PayBillPage = lazyNamed(() => import('@/pages/finance/PayBillPage'), 'PayBillPage');
 const MarketRatesHome = lazyNamed(() => import('@/pages/market/MarketRatesHome'), 'MarketRatesHome');
 const LaborRulesPage = lazyNamed(() => import('@/pages/payroll/LaborRulesPage'), 'LaborRulesPage');
 const PayrollYearEndClose = lazyNamed(
@@ -131,6 +137,15 @@ const W4SsnRecollection = lazyNamed(
   'W4SsnRecollection',
 );
 const PayrollTaxHome = lazyNamed(() => import('@/pages/payrollTax/PayrollTaxHome'), 'PayrollTaxHome');
+const PayrollTaxesDesk = lazyNamed(() => import('@/pages/payrollTaxes/PayrollTaxesDesk'), 'PayrollTaxesDesk');
+const CertifiedPayrollDesk = lazyNamed(() => import('@/pages/certifiedPayroll/CertifiedPayrollDesk'), 'CertifiedPayrollDesk');
+const GarnishmentDesk = lazyNamed(() => import('@/pages/deductions/GarnishmentDesk'), 'GarnishmentDesk');
+const RetirementPlans = lazyNamed(() => import('@/pages/deductions/RetirementPlans'), 'RetirementPlans');
+const CarrierFeeds = lazyNamed(() => import('@/pages/deductions/CarrierFeeds'), 'CarrierFeeds');
+const CertifiedProject = lazyNamed(() => import('@/pages/certifiedPayroll/CertifiedProject'), 'CertifiedProject');
+const CertifiedWeek = lazyNamed(() => import('@/pages/certifiedPayroll/CertifiedWeek'), 'CertifiedWeek');
+const ContractorsDesk = lazyNamed(() => import('@/pages/contractors/ContractorsDesk'), 'ContractorsDesk');
+const PayrollBankingPage = lazyNamed(() => import('@/pages/payrollBanking/PayrollBankingPage'), 'PayrollBankingPage');
 const PayrollCompliance = lazyNamed(
   () => import('@/pages/payroll/PayrollCompliance'),
   'PayrollCompliance',
@@ -254,7 +269,9 @@ const RobotsHome = lazyNamed(() => import('@/pages/robots/RobotsHome'), 'RobotsH
 const RobotRecord = lazyNamed(() => import('@/pages/robots/RobotRecord'), 'RobotRecord');
 const SiteSafetyZones = lazyNamed(() => import('@/pages/robots/SiteSafetyZones'), 'SiteSafetyZones');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
+const PayNotices = lazyNamed(() => import('@/pages/me/PayNotices'), 'PayNotices');
 const MyWallet = lazyNamed(() => import('@/pages/me/MyWallet'), 'MyWallet');
+const MyW9 = lazyNamed(() => import('@/pages/me/MyW9'), 'MyW9');
 const WalletVerifyPage = lazyNamed(() => import('@/pages/public/WalletVerifyPage'), 'WalletVerifyPage');
 const VerifyCredentialPage = lazyNamed(() => import('@/pages/public/VerifyCredentialPage'), 'VerifyCredentialPage');
 const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
@@ -623,10 +640,13 @@ const LAYOUT_ROUTES = [
   { path: 'team', element: <TeamHome /> },
   { path: 'workflows', element: <WorkflowsHome /> },
   { path: 'me', element: <MeHome /> },
+  { path: 'me/pay-notices', element: <PayNotices /> },
+  { path: 'me/pay-notices/:id', element: <PayNotices /> },
   // The associate's own disciplinary record — the page the "please
   // acknowledge" notification links to. Both bare and :id forms resolve.
   // What they've earned, carried with them — and the link that shows it.
   { path: 'me/wallet', element: <MyWallet /> },
+  { path: 'me/w9', element: <MyW9 /> },
   { path: 'me/discipline', element: <MyDiscipline /> },
   { path: 'me/discipline/:actionId', element: <MyDiscipline /> },
   { path: 'compensation', element: <CompensationHome /> },
@@ -640,6 +660,15 @@ const LAYOUT_ROUTES = [
   { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
   { path: 'recruiting/analytics', element: <RequireCapability cap="view:recruiting"><RecruitingAnalytics /></RequireCapability> },
   { path: 'payroll/tax', element: <RequireCapability cap="process:payroll"><PayrollTaxHome /></RequireCapability> },
+  { path: 'payroll/taxes', element: <RequireCapability cap="process:payroll"><PayrollTaxesDesk /></RequireCapability> },
+  { path: 'payroll/certified', element: <RequireCapability cap="process:payroll"><CertifiedPayrollDesk /></RequireCapability> },
+  { path: 'payroll/garnishments', element: <RequireCapability cap="process:payroll"><GarnishmentDesk /></RequireCapability> },
+  { path: 'payroll/retirement', element: <RequireCapability cap="process:payroll"><RetirementPlans /></RequireCapability> },
+  { path: 'benefits/carriers', element: <RequireCapability cap="process:payroll"><CarrierFeeds /></RequireCapability> },
+  { path: 'payroll/certified/:id', element: <RequireCapability cap="process:payroll"><CertifiedProject /></RequireCapability> },
+  { path: 'payroll/certified/:id/weeks/:weekEnding', element: <RequireCapability cap="process:payroll"><CertifiedWeek /></RequireCapability> },
+  { path: 'payroll/contractors', element: <RequireCapability cap="process:payroll"><ContractorsDesk /></RequireCapability> },
+  { path: 'payroll/banking', element: <RequireCapability cap="process:payroll"><PayrollBankingPage /></RequireCapability> },
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
   { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
@@ -647,10 +676,16 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/runs/:id/close', element: <RequireCapability cap="process:payroll"><PayrollClosePage /></RequireCapability> },
   { path: 'payroll/earned-wage', element: <RequireCapability cap="process:payroll"><EarnedWageDesk /></RequireCapability> },
+  { path: 'payroll/daily-pay', element: <RequireCapability cap="process:payroll"><DailyPayDesk /></RequireCapability> },
+  { path: 'payroll/manual-checks', element: <RequireCapability cap="process:payroll"><ManualChecksPage /></RequireCapability> },
+  { path: 'payroll/pay-checks', element: <RequireCapability cap="process:payroll"><PayChecksPage /></RequireCapability> },
+  { path: 'payroll/w4-estimator', element: <W4Estimator /> },
   { path: 'payroll/state-tax', element: <RequireCapability cap="process:payroll"><StateTaxCoverage /></RequireCapability> },
+  { path: 'payroll/tax-jurisdictions', element: <RequireCapability cap="process:payroll"><TaxJurisdictions /></RequireCapability> },
   { path: 'payroll/wotc', element: <RequireCapability cap="process:payroll" anyOf={['manage:onboarding']}><WotcDesk /></RequireCapability> },
   { path: 'benefits/aca', element: <RequireCapability cap="process:payroll"><AcaHours /></RequireCapability> },
   { path: 'finance/cash-forecast', element: <RequireCapability cap="process:payroll"><CashForecastPage /></RequireCapability> },
+  { path: 'finance/pay-bill', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><PayBillPage /></RequireCapability> },
   { path: 'market-rates', element: <RequireCapability cap="view:clients"><MarketRatesHome /></RequireCapability> },
   { path: 'payroll/labor-rules', element: <RequireCapability cap="process:payroll" anyOf={['manage:org', 'view:executive']}><LaborRulesPage /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },

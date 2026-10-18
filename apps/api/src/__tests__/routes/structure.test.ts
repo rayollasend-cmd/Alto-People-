@@ -152,6 +152,10 @@ describe('sites', () => {
     const refused = await a.patch(`/admin/sites/${store.id}`).send({ name: 'Renamed here' });
     expect(refused.status).toBe(409);
     expect(refused.body.error.code).toBe('client_store');
+    // Its kind of site is ours to classify; the client's page has no field for it.
+    const retyped = await a.patch(`/admin/sites/${store.id}`).send({ type: 'PROPERTY' });
+    expect(retyped.status).toBe(200);
+    expect((await prisma.site.findUniqueOrThrow({ where: { id: store.id } })).type).toBe('PROPERTY');
 
     const own = await a.post('/admin/sites').send({ name: 'Warehouse 2' });
     expect(own.status).toBe(201);

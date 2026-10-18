@@ -22,6 +22,7 @@ import { env } from '../config/env.js';
 import { notifyAssociate } from './notify.js';
 import { listEligibleOpenShiftSlots } from '../routes/qualifications.js';
 import { endOfWeekUTC, netWorkedMinutes, startOfWeekUTC } from './timeAnomalies.js';
+import { estimateTakeHome, type TakeHomeEstimate } from './takeHome.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -95,6 +96,8 @@ export interface AssociateEarnings {
    *  projection (so they show 1.5× when they'd land in overtime). */
   openShifts: { count: number; estAmount: number };
   /** The next assigned shift within 24h (or the one in progress). */
+  /** BEYOND — earnedSoFar after taxes, deductions and advances drawn (lib/takeHome). */
+  takeHome: TakeHomeEstimate | null;
   todayShift: {
     startsAt: string;
     endsAt: string;
@@ -304,6 +307,8 @@ export async function computeAssociateEarnings(
       estAmount: round2(openAmount),
     },
     todayShift,
+    // Never fails the card: no estimate is better than no earnings.
+    takeHome: await estimateTakeHome(prisma, associateId, round2(earnedSoFar), now).catch(() => null),
   };
 }
 
@@ -366,14 +371,18 @@ export async function notifyClockOutEarnings(
   // Awaited: the kiosk call site fire-and-forgets THIS helper, so
   // awaiting the insert here costs the punch nothing — and callers that
   // do await (tests) see the row.
+  // BEYOND — the week so far as take-home, through the tax engine.
+  const weekEarned = round2(payForBlock(0, cumBefore + mins, rate));
+  const takeHome = await estimateTakeHome(prisma, entry.associateId, weekEarned, entry.clockOutAt).catch(() => null);
   await notifyAssociate(entry.associateId, {
     subject: `You just added ~$${amount.toFixed(2)} to your week`,
     body:
       `${hours}h worked today at ~$${rate.toFixed(2)}/hr.` +
+      (takeHome && takeHome.net > 0 ? ` About $${takeHome.net.toFixed(2)} take-home so far this week.` : '') +
       (otMinutes > 0
         ? ` Includes ${(otMinutes / 60).toFixed(2)}h of overtime at 1.5×.`
         : '') +
-      ' Estimated and before taxes — your paycheck is the official number. Great shift!',
+      ' Estimated — the added amount is before taxes, and your paycheck is the official number. Great shift!',
     category: 'earnings',
     linkUrl: '/',
   });

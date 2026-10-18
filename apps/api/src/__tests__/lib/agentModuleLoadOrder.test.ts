@@ -21,6 +21,7 @@ const ENTRIES: Record<string, () => Promise<unknown>> = {
   complianceAgent: () => import('../../lib/complianceAgent.js'),
   incidentLoop: () => import('../../lib/incidentLoop.js'),
   credentialCoverage: () => import('../../lib/credentialCoverage.js'),
+  payrollAgent: () => import('../../lib/payrollAgent.js'),
   agentCapabilities: () => import('../../lib/agentCapabilities.js'),
   agentControls: () => import('../../lib/agentControls.js'),
   agents: () => import('../../lib/agents.js'),

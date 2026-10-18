@@ -23,7 +23,7 @@ import {
 } from '../lib/w2Pdf.js';
 import { hashW2cPdf, renderW2cPdf, type W2cPdfData } from '../lib/w2cPdf.js';
 import { hasW2cDelta, type W2cAmounts } from '../lib/w2cAggregator.js';
-import { buildEfw2File, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
+import { buildEfw2File, Efw2UnsupportedError, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
 import { buildEfw2cFile, type Efw2cEmployee, type Efw2cFile } from '../lib/efw2c.js';
 import {
   aggregateF1099NecPayments,
@@ -866,6 +866,7 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
   let createdCount = 0;
   let skippedCount = 0;
   const created: { id: string; associateId: string }[] = [];
+  const warnings: { associateId: string; code: string; message: string }[] = [];
 
   for (const associateId of associateIds) {
     // Tier-2 � one W-2 per employer EIN. A worker paid by two clients in
@@ -899,6 +900,11 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
         employer.kind === 'CLIENT' ? employer.clientId : { kind: employer.kind },
       );
       if (boxes.sourceItemCount === 0) continue;
+      // TY2026+: tips reported in Box 12 TP need a Treasury Tipped Occupation
+      // Code in Box 14b (IRS 2026 W-2 instructions). Generate, but say so.
+      if (input.taxYear >= 2026 && (boxes.box12 ?? []).some((c) => c.code === 'TP') && (boxes.box14bTippedOccupationCodes ?? []).length === 0) {
+        warnings.push({ associateId, code: 'tips_without_occupation_code', message: 'Tips are reported in Box 12 TP but no job carried a tipped occupation code for Box 14b. Set the code on the job profile and regenerate.' });
+      }
 
       const row = await prisma.taxForm.create({
         data: {
@@ -920,6 +926,7 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
     createdCount,
     skippedCount,
     created,
+    warnings,
   });
 });
 
@@ -2238,7 +2245,15 @@ payrollTax91Router.get('/tax-forms/w2/efw2.txt', EXPORT_PII, async (req, res, ne
       employees,
     };
 
-    const fileBody = buildEfw2File(efw2Input);
+    let fileBody: string;
+    try {
+      fileBody = buildEfw2File(efw2Input);
+    } catch (err) {
+      if (err instanceof Efw2UnsupportedError) {
+        throw new HttpError(422, 'efw2_unsupported_boxes', err.message, { gaps: err.gaps });
+      }
+      throw err;
+    }
 
     res.setHeader('Content-Type', 'text/plain; charset=us-ascii');
     res.setHeader(

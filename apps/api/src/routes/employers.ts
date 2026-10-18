@@ -28,6 +28,11 @@ const FactsInput = z.object({
   city: z.string().trim().max(120).nullable().optional(),
   state: z.string().trim().length(2).toUpperCase().nullable().optional(),
   zip: z.string().trim().max(10).nullable().optional(),
+  phone: z.string().trim().max(32).regex(/^[0-9+().\-\s]*$/, 'Use digits, spaces and + ( ) - only').nullable().optional(),
+  wcCarrierName: z.string().trim().max(255).nullable().optional(),
+  wcCarrierAddress: z.string().trim().max(500).nullable().optional(),
+  wcCarrierPhone: z.string().trim().max(32).regex(/^[0-9+().\-\s]*$/, 'Use digits, spaces and + ( ) - only').nullable().optional(),
+  wcPolicyNumber: z.string().trim().max(64).nullable().optional(),
   sutaRateOverride: z.number().min(0).max(1).nullable().optional(),
   sutaWageBaseOverride: z.number().min(0).nullable().optional(),
 });
@@ -42,6 +47,11 @@ const view = (e: {
   city: string | null;
   state: string | null;
   zip: string | null;
+  phone?: string | null;
+  wcCarrierName?: string | null;
+  wcCarrierAddress?: string | null;
+  wcCarrierPhone?: string | null;
+  wcPolicyNumber?: string | null;
   sutaRateOverride: unknown;
   sutaWageBaseOverride: unknown;
   clientId: string | null;
@@ -54,6 +64,8 @@ const view = (e: {
   legalName: e.legalName,
   ein: e.ein,
   address: { line1: e.addressLine1, line2: e.addressLine2, city: e.city, state: e.state, zip: e.zip },
+  phone: e.phone ?? null,
+  workersComp: { carrier: e.wcCarrierName ?? null, address: e.wcCarrierAddress ?? null, phone: e.wcCarrierPhone ?? null, policyNumber: e.wcPolicyNumber ?? null },
   sutaRateOverride: e.sutaRateOverride == null ? null : Number(e.sutaRateOverride),
   sutaWageBaseOverride: e.sutaWageBaseOverride == null ? null : Number(e.sutaWageBaseOverride),
   clientId: e.clientId,

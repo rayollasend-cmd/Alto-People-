@@ -1,7 +1,7 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1537,
+    "brand-text": 1533,
     "raw-heading": 143,
     "pill": 37,
     "hex": 58,
@@ -524,7 +524,7 @@
       "brand-text": 1
     },
     "src/pages/payroll/PayrollCompliance.tsx": {
-      "brand-text": 7
+      "brand-text": 5
     },
     "src/pages/payroll/PayrollConfigView.tsx": {
       "brand-text": 2
@@ -900,7 +900,7 @@
       "brand-text": 2
     },
     "src/components/EarningsCard.tsx": {
-      "brand-text": 3
+      "brand-text": 1
     },
     "src/components/EmergencyBanner.tsx": {
       "brand-text": 5,

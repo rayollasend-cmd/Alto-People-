@@ -398,6 +398,7 @@ orgRouter.get('/job-profiles', VIEW, async (req: Request, res: Response) => {
     level: r.level,
     isExempt: r.isExempt,
     description: r.description,
+    tippedOccupationCode: r.tippedOccupationCode,
     associateCount: countByJp.get(r.id) ?? 0,
   }));
   const body = JobProfileListResponseSchema.parse({ jobProfiles });
@@ -421,6 +422,7 @@ orgRouter.post('/job-profiles', MANAGE, async (req: Request, res: Response) => {
       level: input.level ?? null,
       isExempt: input.isExempt ?? false,
       description: input.description ?? null,
+      tippedOccupationCode: input.tippedOccupationCode ?? null,
     },
   });
   await audit(req, 'job_profile.create', 'JobProfile', created.id, {});
@@ -433,6 +435,7 @@ orgRouter.post('/job-profiles', MANAGE, async (req: Request, res: Response) => {
     level: created.level,
     isExempt: created.isExempt,
     description: created.description,
+    tippedOccupationCode: created.tippedOccupationCode,
     associateCount: 0,
   });
 });
@@ -453,6 +456,7 @@ orgRouter.put('/job-profiles/:id', MANAGE, async (req: Request, res: Response) =
       level: input.level === undefined ? undefined : input.level,
       isExempt: input.isExempt ?? undefined,
       description: input.description === undefined ? undefined : input.description,
+      tippedOccupationCode: input.tippedOccupationCode === undefined ? undefined : input.tippedOccupationCode,
     },
   });
   await audit(req, 'job_profile.update', 'JobProfile', id, {});
@@ -465,6 +469,7 @@ orgRouter.put('/job-profiles/:id', MANAGE, async (req: Request, res: Response) =
     level: updated.level,
     isExempt: updated.isExempt,
     description: updated.description,
+    tippedOccupationCode: updated.tippedOccupationCode,
     associateCount: 0,
   });
 });

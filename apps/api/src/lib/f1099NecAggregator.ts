@@ -20,6 +20,7 @@
 // the form filed, so listF1099NecEligibleAssociates filters those out.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { contractorPaymentPayees, contractorPaymentTotals } from './contractors.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -51,8 +52,15 @@ export interface Form1099StateLine {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** IRS 1099-NEC reporting threshold (Box 1 dollars). */
+/**
+ * IRS 1099-NEC reporting threshold (Box 1 dollars), by the year paid: $600
+ * through 2025; $2,000 for payments made after December 31, 2025 (One Big
+ * Beautiful Bill Act §70433). The constant stays for callers with no year.
+ */
 export const F1099_NEC_REPORTING_THRESHOLD = 600;
+export function f1099NecThreshold(taxYear: number): number {
+  return taxYear >= 2026 ? 2000 : 600;
+}
 
 /**
  * Aggregates 1099-NEC boxes for one contractor / one tax year. Returns
@@ -105,6 +113,17 @@ export async function aggregateF1099NecPayments(
     }
   }
 
+  // Contractor payment runs (invoices, project fees) paid outside the hourly run.
+  const paid = await contractorPaymentTotals(tx, associateId, taxYear, 'NEC');
+  box1 += paid.amount;
+  box4 += paid.backupWithheld;
+  for (const [state, v] of paid.states) {
+    const b = stateBuckets.get(state) ?? { tax: 0, income: 0 };
+    b.tax += v.tax;
+    b.income += v.income;
+    stateBuckets.set(state, b);
+  }
+
   const stateLines: Form1099StateLine[] = [...stateBuckets.entries()]
     .map(([state, b]) => ({
       state,
@@ -119,7 +138,7 @@ export async function aggregateF1099NecPayments(
     box2DirectSales: false,
     box4FitWithheld: round2(box4),
     stateLines,
-    sourceItemCount: items.length,
+    sourceItemCount: items.length + paid.count,
   };
 }
 
@@ -159,11 +178,15 @@ export async function listF1099NecEligibleAssociates(
     distinct: ['associateId'],
   });
 
+  // Contractor payment runs carry no client; they join the org-wide list.
+  const ids = new Set(candidates.map((c) => c.associateId));
+  if (!clientId) for (const id of await contractorPaymentPayees(tx, taxYear, 'NEC')) ids.add(id);
+
   const eligible: string[] = [];
-  for (const c of candidates) {
+  for (const c of [...ids].map((associateId) => ({ associateId }))) {
     const boxes = await aggregateF1099NecPayments(tx, c.associateId, taxYear);
     if (
-      boxes.box1NonemployeeCompensation >= F1099_NEC_REPORTING_THRESHOLD ||
+      boxes.box1NonemployeeCompensation >= f1099NecThreshold(taxYear) ||
       boxes.box4FitWithheld > 0
     ) {
       eligible.push(c.associateId);

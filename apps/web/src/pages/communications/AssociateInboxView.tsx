@@ -293,7 +293,7 @@ export function AssociateInboxView() {
                                   <Megaphone className="h-3 w-3" /> {t('inbox.broadcast')}
                                 </Badge>
                               )}
-                              <span className="truncate">
+                              <span className="truncate" data-message-content>
                                 {n.subject ?? (
                                   <span className="text-silver italic">{t('inbox.noSubject')}</span>
                                 )}
@@ -306,7 +306,7 @@ export function AssociateInboxView() {
                               {fmtTimeOnly(n.createdAt)}
                             </span>
                           </div>
-                          <div className="text-sm text-silver whitespace-pre-line">
+                          <div className="text-sm text-silver whitespace-pre-line" data-message-content>
                             {n.body}
                           </div>
                           {n.senderEmail && (

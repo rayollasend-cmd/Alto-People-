@@ -290,24 +290,34 @@ function drawWageBoxes(doc: PDFKit.PDFDocument, boxes: W2Boxes): void {
   cell(doc, left, top + 2 * rowH, w, rowH, '5  Medicare wages and tips',         usd(boxes.box5MedicareWages));
   cell(doc, mid,  top + 2 * rowH, w, rowH, '6  Medicare tax withheld',           usd(boxes.box6MedicareTax));
 
-  // Box 7 (SS tips), 8 (allocated tips), 9 (verification code), 10
-  // (dependent care), 11 (nonqualified plans), 12a-d (codes), 13
-  // (checkboxes), 14 (other) — these are all out of scope for Phase 1-3.
-  // Render empty placeholders so a finance reviewer can see the form's
-  // shape and we don't surprise them when the additional boxes land.
-  const skipTop = top + 3 * rowH + 8;
-  cell(doc, left, skipTop, w, rowH, '7  Social security tips', '');
-  cell(doc, mid,  skipTop, w, rowH, '8  Allocated tips', '');
-  cell(doc, left, skipTop + rowH, w, rowH, '10  Dependent care benefits', '');
-  cell(doc, mid,  skipTop + rowH, w, rowH, '11  Nonqualified plans', '');
-  cell(doc, left, skipTop + 2 * rowH, w, rowH, '12a  See instructions for box 12', '');
-  cell(doc, mid,  skipTop + 2 * rowH, w, rowH, '14  Other', '');
+  // Boxes 7–14 in rows of 24pt. Box 8 (allocated tips), 9 and 11 are not
+  // produced by this payroll and stay blank. Box 12 carries up to four codes
+  // (a–d) — a fifth or more goes on an additional W-2 per the IRS
+  // instructions, so the extra codes are listed in 14a for the reviewer.
+  // Box 14 is split into 14a (other) and 14b (Treasury Tipped Occupation
+  // Code) from tax year 2026 (OBBBA §70201; IRS 2026 W-2 instructions).
+  const r = 24;
+  const y0 = top + 3 * rowH + 8;
+  const codes = boxes.box12 ?? [];
+  const code = (i: number) => (codes[i] ? `${codes[i]!.code}  ${usd(codes[i]!.amount)}` : '');
+  const overflow = codes.slice(4).map((c) => `${c.code} ${usd(c.amount)}`).join(' · ');
+  cell(doc, left, y0, w, r, '7  Social security tips', boxes.box7SsTips ? usd(boxes.box7SsTips) : '');
+  cell(doc, mid,  y0, w, r, '8  Allocated tips', '');
+  cell(doc, left, y0 + r, w, r, '10  Dependent care benefits', boxes.box10DependentCare ? usd(boxes.box10DependentCare) : '');
+  cell(doc, mid,  y0 + r, w, r, '11  Nonqualified plans', '');
+  cell(doc, left, y0 + 2 * r, w, r, '12a  See instructions for box 12', code(0));
+  cell(doc, mid,  y0 + 2 * r, w, r, '12b', code(1));
+  cell(doc, left, y0 + 3 * r, w, r, '12c', code(2));
+  cell(doc, mid,  y0 + 3 * r, w, r, '12d', code(3));
+  const box13 = boxes.box13ThirdPartySickPay ? '13: Third-party sick pay [X]' : '';
+  cell(doc, left, y0 + 4 * r, w, r, '14a  Other', [overflow ? `Box 12 cont.: ${overflow}` : '', box13].filter(Boolean).join(' · '));
+  cell(doc, mid,  y0 + 4 * r, w, r, '14b  Treasury tipped occupation code', (boxes.box14bTippedOccupationCodes ?? []).join('   '));
 }
 
 function drawStateLines(doc: PDFKit.PDFDocument, lines: W2StateLine[]): void {
   // Box 15-17 — one row per state. Single-state is the common case;
   // multi-state employees get one row each (up to 2 fit cleanly here).
-  const top = 510;
+  const top = 544;
   const rowH = 28;
 
   // Header strip

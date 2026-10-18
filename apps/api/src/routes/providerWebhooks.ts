@@ -10,6 +10,8 @@ import { screeningAdapter } from '../lib/providers/screening.js';
 import { drugTestAdapter } from '../lib/providers/drugTesting.js';
 import { taxFilingAdapter } from '../lib/providers/taxFiling.js';
 import { parseWiseWebhook } from '../lib/providers/payouts.js';
+import { originationProviderFor } from '../lib/banking/origination.js';
+import { applyOriginationEvents } from '../lib/banking/events.js';
 import { ProviderError } from '../lib/providers/http.js';
 import { applyDrugStatus, applyEVerifyState, applyFiling, applyPayoutState, applyScreeningReport } from '../lib/providers/apply.js';
 import { notifyCompliance } from '../lib/providers/notices.js';
@@ -110,6 +112,19 @@ async function handle(conn: ProviderConnection, ctx: ProviderContext, body: Buff
           if (rec) await applyFiling(f.id, { status: rec.status, rejectionReason: rec.reason, recordId: rec.recordId || null }, null);
         }
         return { status: 'PROCESSED', subjectType: 'TaxForm', subjectId: forms[0]!.id };
+      },
+    };
+  }
+  if (kind === 'ORIGINATION') {
+    const events = originationProviderFor(ctx).parseWebhook(body, headers);
+    if (!events.length) throw new ProviderError('Nothing in this event applies.', 400, 'no_events');
+    return {
+      eventId: events.map((x) => x.eventId).join(',').slice(0, 190),
+      eventType: `ach.${events[0]!.kind.toLowerCase()}`,
+      payload: { events: events.map((x) => ({ kind: x.kind, ref: x.externalRef, code: 'code' in x ? x.code : undefined })) },
+      apply: async () => {
+        const r = await applyOriginationEvents(prisma, events);
+        return r.applied ? { status: 'PROCESSED', subjectType: 'AchEntry', subjectId: r.subjectId } : { status: 'IGNORED', note: 'unknown_entry' };
       },
     };
   }

@@ -216,6 +216,24 @@ const SCHEDULE_REPAIR_FIXTURE: CapabilityScenarioFixture = {
   expected: { output: { proposedRef: 'tess' }, allowedActions: ['propose'] },
 };
 
+const PAYROLL_PREP_FIXTURE: CapabilityScenarioFixture = {
+  name: 'Eight exceptions, five fixes: a W-4 nudge, a rate from the rate card, an approver nudge, a pay card, one state review; no pay moves on its own',
+  world: {},
+  input: {
+    exceptions: [
+      { ref: 'ana', kind: 'MISSING_W4' },
+      { ref: 'ben', kind: 'MISSING_COMP_RECORD', cardRate: 18.5 },
+      { ref: 'cy', kind: 'MISSING_COMP_RECORD', cardRate: null },
+      { ref: 'dee', kind: 'UNAPPROVED_TIME' },
+      { ref: 'eli', kind: 'MISSING_BANK_ACCOUNT' },
+      { ref: 'fay', kind: 'UNSUPPORTED_STATE', state: 'AR' },
+      { ref: 'gus', kind: 'UNSUPPORTED_STATE', state: 'AR' },
+      { ref: 'hal', kind: 'OT_SPIKE' },
+    ],
+  },
+  expected: { output: { proposals: 5, rateFor: 'ben', stateReviews: 1, payChanged: 0 }, allowedActions: ['propose'] },
+};
+
 /**
  * Each capability's certification fixtures, apart from the catalog itself:
  * server-only data the web never reads, so the bundler leaves it out of
@@ -230,6 +248,7 @@ export const CAPABILITY_SCENARIOS: Readonly<Record<string, readonly CapabilitySc
   'i9.section2': [I9_SECTION2_FIXTURE],
   'incident.loop': [INCIDENT_LOOP_FIXTURE],
   'coverage.credentials': [COVERAGE_CREDENTIALS_FIXTURE],
+  'payroll.prep': [PAYROLL_PREP_FIXTURE],
 };
 
 /** A capability's catalog fixtures (certification scenarios for a built-in holding it). */
@@ -309,6 +328,18 @@ export const AGENT_CAPABILITIES = [
     gate: 'CASE_OPEN',
     notifies: true,
     metrics: ['openIncidents', 'medianAgeDays', 'closedAfterChase'],
+  },
+  // Payroll
+  {
+    key: 'payroll.prep',
+    family: 'payroll',
+    label: 'Get payroll ready before it runs',
+    requiresModule: [],
+    scopes: ['view:payroll', 'view:time', 'view:org', 'manage:communications'],
+    // Every fix waits on a person; a rate is set only on a person's approval, in their name.
+    gate: 'PAY_CHANGE',
+    notifies: false,
+    metrics: ['exceptionsSeen', 'proposalsMade', 'proposalsApproved', 'blockingCleared'],
   },
   {
     key: 'coverage.credentials',

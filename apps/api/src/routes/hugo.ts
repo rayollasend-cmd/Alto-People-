@@ -10,6 +10,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { inProcessAgent, logBuiltInAgentAction } from '../lib/agents.js';
 import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from '../lib/agentCapabilities.js';
 import { answerWithModel, modelAvailable, type AssistantPage, type AssistantTool } from '../lib/assistantModel.js';
+import { payTools } from '../lib/payAssistantTools.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { computeCoverageForecast } from '../lib/coverageForecast.js';
 import { answerRenewals } from '../lib/complianceAgent.js';
@@ -288,7 +289,8 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
         text,
         history: history ?? [],
         page: (page ?? null) as AssistantPage | null,
-        tools: [...tools, ...actTools],
+        // A worker's own paystub and withholding (lib/payAssistantTools) — their records only.
+        tools: [...tools, ...actTools, ...payTools(prisma, user)],
         identity: {
           name,
           product: getBrandingSync().orgName || 'Alto People',

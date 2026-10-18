@@ -109,7 +109,8 @@ orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
   const existing = await prisma.site.findFirst({ where: { id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true, name: true, orgUnitId: true, clientId: true } });
   if (!existing) throw new HttpError(404, 'site_not_found', 'That site does not exist.');
   // A client's store is the client's record: its name, address, hours and status change there.
-  const identity = Object.keys(input).filter((k) => k !== 'orgUnitId');
+  // Where it sits (orgUnitId) and what kind of site it is (type) are ours to set, and the client's page has no field for either.
+  const identity = Object.keys(input).filter((k) => k !== 'orgUnitId' && k !== 'type');
   if (existing.clientId && identity.length > 0) {
     throw new HttpError(409, 'client_store', 'This store belongs to a client — edit it from the client’s page.');
   }

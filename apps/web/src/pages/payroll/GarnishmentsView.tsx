@@ -397,7 +397,7 @@ function perPeriodOf(g: Garnishment): string {
       : '—';
 }
 
-function CreateGarnishmentDialog({
+export function CreateGarnishmentDialog({
   open,
   onOpenChange,
   onCreated,

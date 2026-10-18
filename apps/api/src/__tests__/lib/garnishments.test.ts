@@ -170,12 +170,9 @@ describe('lifetime totalCap', () => {
 });
 
 describe('priority ordering', () => {
-  it('processes lower-priority numbers first (input order does not matter)', () => {
-    // Each creditor's CCPA cap is per-rule (25% of original disposable),
-    // so two creditors CAN sum past 25% under the current algorithm.
-    // What we pin here is *order*: id 'first' (priority 1) appears before
-    // id 'second' (priority 2) in the deductions list, regardless of input
-    // order.
+  it('two creditors share one 25% limit, first in time first (15 U.S.C. §1673(a))', () => {
+    // The CCPA limit is on the AGGREGATE garnished, not per order: the first
+    // creditor (priority 1) takes the whole $250 and the second waits.
     const r = computeGarnishmentDeductions({
       disposableEarnings: 1000,
       rules: [
@@ -184,12 +181,14 @@ describe('priority ordering', () => {
       ],
     });
     expect(r.deductions[0]?.garnishmentId).toBe('first');
-    expect(r.deductions[1]?.garnishmentId).toBe('second');
+    expect(close(r.deductions[0]!.amount, 250)).toBe(true);
+    expect(r.deductions.find((d) => d.garnishmentId === 'second')?.amount ?? 0).toBe(0);
+    expect(close(r.total, 250)).toBe(true);
   });
 
-  it('child support (priority 1) drains first; creditor (priority 2) gets the leftover', () => {
-    // CS asks $400 (under its 60% cap of 600). After that, $600 remaining.
-    // Creditor asks $200 (under its 25% cap of 250).
+  it('support withheld counts against the creditor 25%: $400 of support leaves a creditor nothing', () => {
+    // 29 CFR 870.11(b)(2): a creditor garnishment is allowed only to the
+    // extent support has not already taken 25% of disposable earnings.
     const r = computeGarnishmentDeductions({
       disposableEarnings: 1000,
       rules: [
@@ -198,8 +197,8 @@ describe('priority ordering', () => {
       ],
     });
     expect(close(r.deductions.find((d) => d.garnishmentId === 'cs')!.amount, 400)).toBe(true);
-    expect(close(r.deductions.find((d) => d.garnishmentId === 'c')!.amount, 200)).toBe(true);
-    expect(close(r.total, 600)).toBe(true);
+    expect(r.deductions.find((d) => d.garnishmentId === 'c')?.amount ?? 0).toBe(0);
+    expect(close(r.total, 400)).toBe(true);
   });
 
   it('partial fill on disposable exhaustion', () => {

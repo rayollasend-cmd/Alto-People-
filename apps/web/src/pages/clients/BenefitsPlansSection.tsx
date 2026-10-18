@@ -46,6 +46,7 @@ const KIND_LABEL: Record<BenefitsPlanKind, string> = {
   RETIREMENT_403B: '403(b)',
   LIFE_INSURANCE: 'Life insurance',
   DISABILITY: 'Disability',
+  TRUMP_ACCOUNT: 'Trump account (employer)',
 };
 
 const KIND_OPTIONS: BenefitsPlanKind[] = Object.keys(KIND_LABEL) as BenefitsPlanKind[];
@@ -220,7 +221,9 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
       : ''
   );
   const [isActive, setIsActive] = useState(existing?.isActive ?? true);
+  const [deemedRoth, setDeemedRoth] = useState(existing?.allowsDeemedRoth ?? true);
   const [submitting, setSubmitting] = useState(false);
+  const isRetirement = kind === 'RETIREMENT_401K' || kind === 'RETIREMENT_403B';
 
   // Re-seed the form when the dialog opens or the target plan changes.
   useEffect(() => {
@@ -239,6 +242,7 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
         : ''
     );
     setIsActive(existing?.isActive ?? true);
+    setDeemedRoth(existing?.allowsDeemedRoth ?? true);
   }, [open, existing]);
 
   const submit = async () => {
@@ -267,6 +271,7 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
           employeeContributionDefaultCentsPerPeriod: empDefault,
           employerContributionCentsPerPeriod: employerCents,
           isActive,
+          ...(isRetirement ? { allowsDeemedRoth: deemedRoth } : {}),
         });
         toast.success('Plan updated.');
       } else {
@@ -277,6 +282,7 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
           description: description.trim() || undefined,
           employeeContributionDefaultCentsPerPeriod: empDefault,
           employerContributionCentsPerPeriod: employerCents,
+          ...(isRetirement ? { allowsDeemedRoth: deemedRoth } : {}),
         });
         toast.success('Plan created.');
       }
@@ -375,6 +381,22 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
               )}
             </Field>
           </div>
+          {isRetirement && (
+            <label className="text-sm text-silver flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={deemedRoth}
+                onChange={(e) => setDeemedRoth(e.target.checked)}
+                className="mt-0.5 rounded border-navy-secondary"
+              />
+              <span>
+                Make catch-up Roth automatically for higher earners
+                <span className="block text-xs">
+                  Required from 2026 for anyone 50+ whose Social Security wages last year were over $150,000. Without it, their catch-up stops.
+                </span>
+              </span>
+            </label>
+          )}
           {existing && (
             <label className="text-sm text-silver inline-flex items-center gap-2 cursor-pointer">
               <input

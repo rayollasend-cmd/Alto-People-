@@ -28,6 +28,8 @@ export const MINUTES_SAVED_BY_CAPABILITY: Record<string, number> = {
   'i9.section2': 12,
   'incident.loop': 15,
   'coverage.credentials': 10,
+  // A chased W-4, a rate set, an approver nudged: the payroll admin's chase before close.
+  'payroll.prep': 12,
 };
 const DEFAULT_MINUTES = 10;
 /** A model-backed answer, in cents — tokens at list price, rounded up. */

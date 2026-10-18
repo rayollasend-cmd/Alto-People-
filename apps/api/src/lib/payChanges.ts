@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { enqueueAudit } from './audit.js';
 import { notifyAssociate, notifyManager } from './notify.js';
 import { setRateCard, type RateCard } from './rateCards.js';
+import { issuePayNoticeInBackground } from './payNotices.js';
 
 /**
  * Every pay change on one path, with its own audit row. Finance reads
@@ -81,6 +82,8 @@ export async function applyPayRateChange(db: Db, change: PayRateChange): Promise
     },
     'payChanges.rate',
   );
+  // A state pay notice of the new rate where the work state requires one (NY §195(2), CA §2810.5(b), IL).
+  issuePayNoticeInBackground({ associateId: change.associateId, trigger: 'RATE_CHANGE', effectiveDate: change.effectiveFrom, actorUserId: change.actorUserId });
   const associate = await db.associate.findUnique({ where: { id: change.associateId }, select: { firstName: true, lastName: true } });
   void notifyAssociate(change.associateId, {
     subject: 'Your pay rate was updated',

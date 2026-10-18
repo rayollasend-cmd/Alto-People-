@@ -1,4 +1,6 @@
 import { Router, type Request } from 'express';
+import { issuePayNoticeInBackground } from '../lib/payNotices.js';
+import { ensureNewHireReport } from '../lib/newHireReporting.js';
 import { openEmployment } from '../lib/employment.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { z } from 'zod';
@@ -1250,6 +1252,9 @@ async function approveOneApplication(
   const hireContext = { associateId: app.associateId, application: { id: app.id, clientId: app.clientId }, hireDate: hireDateValue ? hireDateValue.toISOString().slice(0, 10) : null, actorUserId: req.user!.id };
   void emitWorkflow({ trigger: 'ONBOARDING_COMPLETED', entityType: 'Application', entityId: app.id, clientId: app.clientId, context: hireContext }).catch((err) => console.warn('[onboarding] workflow emit failed:', err));
   void emitWorkflow({ trigger: 'ASSOCIATE_HIRED', entityType: 'Associate', entityId: app.associateId, clientId: app.clientId, context: hireContext }).catch((err) => console.warn('[onboarding] workflow emit failed:', err));
+  // The hire's state pay notice (NY §195(1), CA §2810.5 …) and its new-hire report row.
+  issuePayNoticeInBackground({ associateId: app.associateId, trigger: 'HIRE', effectiveDate: hireDateValue, actorUserId: req.user!.id });
+  void ensureNewHireReport(prisma, app.associateId).catch((err) => console.warn('[onboarding] new-hire report row failed:', err));
   void emitWebhookEvent(
     'associate.hired',
     {

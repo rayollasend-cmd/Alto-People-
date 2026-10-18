@@ -31,6 +31,12 @@ export function hasW2cDelta(a: W2Boxes, b: W2Boxes): boolean {
   if (a.box4SsTax !== b.box4SsTax) return true;
   if (a.box5MedicareWages !== b.box5MedicareWages) return true;
   if (a.box6MedicareTax !== b.box6MedicareTax) return true;
+  // Boxes 7, 10, 12 and 14b (forms stored before these existed read as empty).
+  if ((a.box7SsTips ?? 0) !== (b.box7SsTips ?? 0)) return true;
+  if ((a.box10DependentCare ?? 0) !== (b.box10DependentCare ?? 0)) return true;
+  const codes = (x: W2Boxes) => (x.box12 ?? []).map((e) => `${e.code}:${e.amount}`).join('|');
+  if (codes(a) !== codes(b)) return true;
+  if ((a.box14bTippedOccupationCodes ?? []).join('|') !== (b.box14bTippedOccupationCodes ?? []).join('|')) return true;
 
   // States: a different set of state codes counts as a delta even if
   // the per-state numbers happen to match.

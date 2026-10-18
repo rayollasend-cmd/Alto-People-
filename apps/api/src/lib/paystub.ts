@@ -41,6 +41,7 @@ export interface PaystubData {
     state?: string | null;
     zip?: string | null;
     ein?: string | null;
+    phone?: string | null;
   };
   associate: {
     firstName: string;
@@ -76,6 +77,18 @@ export interface PaystubData {
   amendment?: { reason: string; sourceRunId: string };
   /** VOIDED items — diagonal watermark + audit footer. */
   voided?: { voidedAt: string; reason: string | null };
+  /** Total hours worked this period (CA Labor Code §226(a)(2)). */
+  hoursTotal?: number | null;
+  /**
+   * Amounts shown for the record and not deducted — the 2026 W-2 Box 12
+   * figures (TP tips, TT qualified overtime premium, TA employer Trump
+   * account contribution).
+   */
+  informational?: PaystubLine[];
+  /** Paid sick leave available (CA Labor Code §246(i) and similar state rules). */
+  sickLeave?: { availableHours: number };
+  /** Plain notes about this check (an annual limit reached, a Roth catch-up). */
+  notes?: string[];
 }
 
 // ----- Palette + geometry -------------------------------------------------
@@ -126,6 +139,7 @@ export async function renderPaystubPdf(data: PaystubData): Promise<Buffer> {
     y = renderTaxes(doc, data, y);
     y = renderDeductions(doc, data, y);
     y = renderReimbursements(doc, data, y);
+    y = renderInformational(doc, data, y);
     y = renderSummary(doc, data, y);
     y = renderDistribution(doc, data, y);
     renderEmployerAndFooter(doc, data, y);
@@ -165,13 +179,13 @@ function renderHeader(doc: PDFKit.PDFDocument, data: PaystubData): number {
     .filter(Boolean)
     .join(', ');
   const companyLine = [data.company.addressLine1, companyLoc].filter(Boolean).join(' · ');
-  if (companyLine || data.company.ein) {
+  if (companyLine || data.company.ein || data.company.phone) {
     doc
       .font('Helvetica')
       .fontSize(8)
       .fillColor('#c7d2e0')
       .text(
-        [companyLine, data.company.ein ? `EIN ${data.company.ein}` : null]
+        [companyLine, data.company.phone ? `Tel ${data.company.phone}` : null, data.company.ein ? `EIN ${data.company.ein}` : null]
           .filter(Boolean)
           .join('   ·   '),
         textX,
@@ -354,6 +368,10 @@ function renderEarnings(doc: PDFKit.PDFDocument, data: PaystubData, top: number)
       zebra: i % 2 === 1,
     });
   });
+  if (data.hoursTotal != null && data.hoursTotal > 0) {
+    y = ensureRoom(doc, y, 20);
+    y = moneyRow(doc, y, 'Total hours worked', { hours: data.hoursTotal, bold: true });
+  }
   y = totalRule(doc, y + 1);
   y = moneyRow(doc, y, 'Gross pay', {
     current: data.gross.current,
@@ -419,6 +437,27 @@ function renderReimbursements(doc: PDFKit.PDFDocument, data: PaystubData, top: n
       { width: CONTENT_W },
     );
   return y + 16;
+}
+
+function renderInformational(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
+  const info = data.informational ?? [];
+  const notes = data.notes ?? [];
+  if (info.length === 0 && !data.sickLeave && notes.length === 0) return top;
+  let y = tableHeader(doc, ensureRoom(doc, top, 70), 'FOR YOUR RECORDS (NOT DEDUCTED)');
+  info.forEach((l, i) => {
+    y = ensureRoom(doc, y, 20);
+    y = moneyRow(doc, y, l.label, { current: l.current, ytd: l.ytd, zebra: i % 2 === 1 });
+  });
+  if (data.sickLeave) {
+    y = ensureRoom(doc, y, 20);
+    y = moneyRow(doc, y, 'Paid sick leave available (hours)', { hours: data.sickLeave.availableHours, zebra: info.length % 2 === 1 });
+  }
+  for (const n of notes) {
+    y = ensureRoom(doc, y, 20);
+    doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text(n, COL.label, y + 1, { width: CONTENT_W });
+    y = doc.y + 3;
+  }
+  return y + 10;
 }
 
 function renderSummary(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {

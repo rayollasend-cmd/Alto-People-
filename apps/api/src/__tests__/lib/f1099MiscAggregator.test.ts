@@ -199,7 +199,7 @@ describe('aggregateF1099MiscPayments — Gap 11 Phase 8', () => {
     ).toBe(true);
   });
 
-  it('listEligible: skips contractors paid below the $600 Box 3 threshold', async () => {
+  it('listEligible: skips contractors paid below the $600 Box 3 threshold for 2025', async () => {
     const client = await createClient();
     const eligible = await makeContractor();
     const subThreshold = await makeContractor();
@@ -207,19 +207,30 @@ describe('aggregateF1099MiscPayments — Gap 11 Phase 8', () => {
     await seedDisbursedItem({
       associateId: eligible.id,
       clientId: client.id,
-      disbursedAt: new Date('2026-06-15T12:00:00Z'),
+      disbursedAt: new Date('2025-06-15T12:00:00Z'),
       grossPay: 1500,
     });
     await seedDisbursedItem({
       associateId: subThreshold.id,
       clientId: client.id,
-      disbursedAt: new Date('2026-06-15T12:00:00Z'),
+      disbursedAt: new Date('2025-06-15T12:00:00Z'),
       grossPay: 400,
     });
 
-    const ids = await listF1099MiscEligibleAssociates(prisma, 2026, client.id);
+    const ids = await listF1099MiscEligibleAssociates(prisma, 2025, client.id);
     expect(ids).toContain(eligible.id);
     expect(ids).not.toContain(subThreshold.id);
+  });
+
+  it('listEligible: from tax year 2026 Box 3 needs $2,000', async () => {
+    const client = await createClient();
+    const over = await makeContractor();
+    const under = await makeContractor();
+    await seedDisbursedItem({ associateId: over.id, clientId: client.id, disbursedAt: new Date('2026-06-15T12:00:00Z'), grossPay: 2500 });
+    await seedDisbursedItem({ associateId: under.id, clientId: client.id, disbursedAt: new Date('2026-06-15T12:00:00Z'), grossPay: 1500 });
+    const ids = await listF1099MiscEligibleAssociates(prisma, 2026, client.id);
+    expect(ids).toContain(over.id);
+    expect(ids).not.toContain(under.id);
   });
 
   it('listEligible: still includes a sub-threshold contractor with backup withholding', async () => {

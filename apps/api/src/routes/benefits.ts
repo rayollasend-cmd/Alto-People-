@@ -72,6 +72,7 @@ benefitsRouter.post('/plans', MANAGE_PAYROLL, async (req, res, next) => {
         description: input.description ?? null,
         employerContributionCentsPerPeriod: input.employerContributionCentsPerPeriod,
         employeeContributionDefaultCentsPerPeriod: input.employeeContributionDefaultCentsPerPeriod,
+        ...(input.allowsDeemedRoth !== undefined ? { allowsDeemedRoth: input.allowsDeemedRoth } : {}),
       },
     });
     res.status(201).json(toPlan(created));
@@ -104,6 +105,7 @@ benefitsRouter.patch('/plans/:id', MANAGE_PAYROLL, async (req, res, next) => {
             }
           : {}),
         ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+        ...(parsed.data.allowsDeemedRoth !== undefined ? { allowsDeemedRoth: parsed.data.allowsDeemedRoth } : {}),
       },
     });
     res.json(toPlan(updated));
@@ -195,7 +197,7 @@ benefitsRouter.post(
 
 async function enrollAssociate(
   associateId: string,
-  input: { planId: string; electedAmountCentsPerPeriod: number; effectiveDate: string },
+  input: { planId: string; electedAmountCentsPerPeriod: number; effectiveDate: string; rothElection?: boolean },
   selfService: boolean
 ): Promise<BenefitsEnrollment> {
   const plan = await prisma.benefitsPlan.findUnique({ where: { id: input.planId } });
@@ -228,6 +230,8 @@ async function enrollAssociate(
       planId: input.planId,
       electedAmountCentsPerPeriod: input.electedAmountCentsPerPeriod,
       effectiveDate: new Date(input.effectiveDate),
+      // Roth applies to 401(k)/403(b) deferrals only.
+      rothElection: input.rothElection === true && (plan.kind === 'RETIREMENT_401K' || plan.kind === 'RETIREMENT_403B'),
     },
     include: { plan: { select: { kind: true, name: true } } },
   });
@@ -243,6 +247,7 @@ function toPlan(p: {
   employerContributionCentsPerPeriod: number;
   employeeContributionDefaultCentsPerPeriod: number;
   isActive: boolean;
+  allowsDeemedRoth?: boolean;
 }): BenefitsPlan {
   return {
     id: p.id,
@@ -253,6 +258,7 @@ function toPlan(p: {
     employerContributionCentsPerPeriod: p.employerContributionCentsPerPeriod,
     employeeContributionDefaultCentsPerPeriod: p.employeeContributionDefaultCentsPerPeriod,
     isActive: p.isActive,
+    allowsDeemedRoth: p.allowsDeemedRoth ?? true,
   };
 }
 
@@ -263,6 +269,7 @@ function toEnrollment(e: {
   electedAmountCentsPerPeriod: number;
   effectiveDate: Date;
   terminationDate: Date | null;
+  rothElection?: boolean;
   plan: { kind: string; name: string };
 }): BenefitsEnrollment {
   return {
@@ -274,5 +281,6 @@ function toEnrollment(e: {
     terminationDate: toDateOnly(e.terminationDate),
     planKind: e.plan.kind as BenefitsEnrollment['planKind'],
     planName: e.plan.name,
+    rothElection: e.rothElection ?? false,
   };
 }

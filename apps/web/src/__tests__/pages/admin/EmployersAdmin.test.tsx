@@ -79,6 +79,11 @@ describe('Employers of record', () => {
       city: null,
       state: 'FL',
       zip: null,
+      phone: null,
+      wcCarrierName: null,
+      wcCarrierAddress: null,
+      wcCarrierPhone: null,
+      wcPolicyNumber: null,
     });
   });
 

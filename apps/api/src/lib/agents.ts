@@ -225,6 +225,21 @@ export const BUILT_IN_AGENTS = [
     grants: ['document.chase', 'i9.section2', 'incident.loop', 'coverage.credentials'],
     status: 'ONBOARDING',
   },
+  {
+    key: 'payroll-agent',
+    name: 'Payroll agent',
+    family: 'payroll',
+    capability: 'Before each payroll: a proposed fix for every exception, with the evidence; pay moves only on a person’s yes',
+    purpose: 'Reads the pre-payroll exceptions of every draft run and proposes a fix for each, with its evidence: nudge the worker for a missing W-4, the rate from the rate card for a missing pay record, nudge the approver for unapproved time, a pay card for a missing bank account, the state review for an unsupported state. Every proposal waits on a person; a rate is set only on their approval, in their name (BEYOND).',
+    vendor: 'Alto People',
+    model: 'Alto rules engine · payroll',
+    modelVersion: '1',
+    environment: 'PRODUCTION',
+    scopes: ['view:payroll', 'view:time', 'view:org', 'manage:communications'] as AgentScope[],
+    capabilities: ['payroll.prep'],
+    grants: ['payroll.prep'],
+    status: 'ONBOARDING',
+  },
 ] as const satisfies readonly {
   key: string;
   name: string;

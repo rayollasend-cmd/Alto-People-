@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Banknote, Check, Copy, FlaskConical, Landmark, ShieldCheck, UserSearch, type LucideIcon } from 'lucide-react';
+import { Banknote, Calculator, CalendarCheck2, Check, Copy, FlaskConical, Landmark, ShieldCheck, UserSearch, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ProviderConnection, ProviderHealth, ProviderKind } from '@/lib/providersApi';
 import { fmtDateTime, fmtRelativeDate } from '@/lib/format';
@@ -14,6 +14,8 @@ export const KIND_ICON: Record<ProviderKind, LucideIcon> = {
   DRUG_TEST: FlaskConical,
   TAX_FILING: Landmark,
   PAYOUT: Banknote,
+  TAX_ENGINE: Calculator,
+  EMBEDDED_PAYROLL: CalendarCheck2,
 };
 
 /** What each kind does when nothing is connected, and what connecting changes — plain words. */
@@ -42,6 +44,16 @@ export const KIND_COPY: Record<ProviderKind, { title: string; manual: string; co
     title: 'Payouts',
     manual: 'Paychecks go out on the platform’s payment rail.',
     connected: 'Paychecks go out from your own Wise balance and returns are re-sent.',
+  },
+  TAX_ENGINE: {
+    title: 'Tax engine',
+    manual: 'State and local taxes are worked out by the built-in engine, each local rate reviewed with your tax adviser.',
+    connected: 'State and local taxes come from your licensed engine; if it doesn’t answer, the built-in engine steps in and the run says so.',
+  },
+  EMBEDDED_PAYROLL: {
+    title: 'Payroll tax filing and payment',
+    manual: 'You pay each tax deposit and file each return yourself, then record the confirmation on the Payroll taxes desk.',
+    connected: 'Your provider pays deposits and files returns from what payroll posts, under its penalty guarantee if your agreement has one.',
   },
 };
 

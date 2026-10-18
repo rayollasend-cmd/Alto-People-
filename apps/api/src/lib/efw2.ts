@@ -100,11 +100,63 @@ export interface Efw2File {
 }
 
 /**
+ * What this file layout cannot carry yet. Rather than write a W-2 that
+ * silently drops an amount, the build refuses and names what is missing.
+ *
+ *   - Tax year 2026 adds Box 12 TA / TP / TT and Box 14b (Treasury Tipped
+ *     Occupation Code) — OBBBA §§70201, 70202, 70204. SSA's EFW2 for TY2026
+ *     defines new RW fields for them; their positions could NOT be confirmed
+ *     against the published SSA EFW2 specification while this was written
+ *     (ssa.gov blocked automated retrieval), so they are not guessed at.
+ *   - The RW layout here carries Boxes 1–6 only; Box 7 tips, Box 10
+ *     dependent care and the Box 12 deferral codes (D, E, W, AA, BB) are
+ *     zero-filled placeholders, so a W-2 with any of them is refused too.
+ *
+ * File those W-2s through the e-file provider (Pay → Tax filing), which
+ * submits every box.
+ */
+export interface Efw2Gap {
+  ssnLast4: string;
+  name: string;
+  missing: string[];
+}
+
+export class Efw2UnsupportedError extends Error {
+  constructor(public readonly gaps: Efw2Gap[]) {
+    super(
+      `This SSA file can't carry ${gaps.length === 1 ? 'one W-2' : `${gaps.length} W-2s`} in full ` +
+        `(${[...new Set(gaps.flatMap((g) => g.missing))].join(', ')}). File them through the e-file provider instead.`,
+    );
+    this.name = 'Efw2UnsupportedError';
+  }
+}
+
+export function efw2Unsupported(input: Efw2File): Efw2Gap[] {
+  const gaps: Efw2Gap[] = [];
+  const ty = input.employer.taxYear;
+  for (const e of input.employees) {
+    const b = e.boxes;
+    const missing: string[] = [];
+    for (const c of b.box12 ?? []) {
+      if (c.amount === 0) continue;
+      missing.push(ty >= 2026 && (c.code === 'TA' || c.code === 'TP' || c.code === 'TT') ? `Box 12 ${c.code} (TY${ty} position not confirmed)` : `Box 12 ${c.code}`);
+    }
+    if ((b.box14bTippedOccupationCodes ?? []).length > 0) missing.push(`Box 14b (TY${ty} position not confirmed)`);
+    if ((b.box7SsTips ?? 0) > 0) missing.push('Box 7');
+    if ((b.box10DependentCare ?? 0) > 0) missing.push('Box 10');
+    if (missing.length > 0) gaps.push({ ssnLast4: e.ssn.slice(-4), name: `${e.firstName} ${e.lastName}`, missing });
+  }
+  return gaps;
+}
+
+/**
  * Builds the full EFW2 file as a string (CRLF-joined records, no
  * trailing newline). Caller writes it to disk or streams it as the
  * download body — encoding must be ASCII / Windows-1252.
  */
 export function buildEfw2File(input: Efw2File): string {
+  const unsupported = efw2Unsupported(input);
+  if (unsupported.length > 0) throw new Efw2UnsupportedError(unsupported);
   const records: string[] = [];
 
   records.push(buildRA(input.submitter));
@@ -251,7 +303,7 @@ function buildRW(emp: Efw2Employee): string {
     // Box 13 checkboxes
     fixed('0', 354, 354), // Statutory employee
     fixed('0', 355, 355), // Retirement plan
-    fixed('0', 356, 356), // Third-party sick pay
+    fixed(emp.boxes.box13ThirdPartySickPay ? '1' : '0', 356, 356), // Third-party sick pay (lib/w2Aggregator)
     blank(357, 462),
     // Boxes 14 (Other) — blank
     blank(463, 485),

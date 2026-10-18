@@ -57,11 +57,22 @@ export type ModuleKey =
   | 'approvals'
   | 'payroll'
   | 'payroll-tax'
+  | 'payroll-taxes'
+  | 'certified-payroll'
+  | 'garnishments'
+  | 'retirement'
+  | 'carrier-feeds'
+  | 'contractors'
+  | 'payroll-banking'
   | 'payroll-compliance'
   | 'cash-forecast'
+  | 'pay-bill'
   | 'market-rates'
   | 'earned-wage'
+  | 'daily-pay'
+  | 'manual-checks'
   | 'state-tax'
+  | 'tax-jurisdictions'
   | 'wotc'
   | 'aca'
   | 'documents'
@@ -275,11 +286,22 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'relay',
   'payroll',
   'payroll-tax',
+  'payroll-taxes',
+  'certified-payroll',
+  'garnishments',
+  'retirement',
+  'carrier-feeds',
+  'contractors',
+  'payroll-banking',
   'payroll-compliance',
   'cash-forecast',
+  'pay-bill',
   'market-rates',
   'earned-wage',
+  'daily-pay',
+  'manual-checks',
   'state-tax',
+  'tax-jurisdictions',
   'wotc',
   'aca',
   'payrules',
@@ -484,6 +506,7 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   'season-planner': 'programs',
   forecast: 'scheduling',
   statements: 'billRates',
+  'pay-bill': 'clientPortal',
   portal: 'clientPortal',
   'client-nps': 'clientPortal',
   'market-rates': 'clientPortal',
@@ -1377,6 +1400,16 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'pay-bill',
+    path: '/finance/pay-bill',
+    label: 'Pay and bill',
+    description:
+      'Every paycheck against the bill it should reach: margin per check, billable pay that is on no statement and why, premiums and retro pay rebilled by each client’s contract, and this week’s running payroll cost per store.',
+    requires: 'process:payroll',
+    requiresAny: ['process:payroll', 'view:executive'],
+    group: 'payroll-finance',
+  },
+  {
     key: 'market-rates',
     path: '/market-rates',
     label: 'Market rates',
@@ -1395,11 +1428,38 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'daily-pay',
+    path: '/payroll/daily-pay',
+    label: 'Daily pay',
+    description:
+      'Pay people each night for the day’s approved time, to their card or bank, with the regular check truing up overtime and deductions. Who is paid daily, the cap, the fee.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'manual-checks',
+    path: '/payroll/manual-checks',
+    label: 'Manual checks',
+    description:
+      'Handwritten checks and insurer-paid sick pay, recorded into payroll history, year-to-date, the tax ledger and the W-2. Void or replace a check.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
     key: 'state-tax',
     path: '/payroll/state-tax',
     label: 'State tax coverage',
     description:
       'Where payroll can withhold state income tax, the states waiting on a review with your tax adviser, and a calculator to check them.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'tax-jurisdictions',
+    path: '/payroll/tax-jurisdictions',
+    label: 'Tax jurisdictions',
+    description:
+      'The city, county, school and transit taxes payroll withholds where people live and work, each one’s review with your tax adviser, and a paycheck calculator.',
     requires: 'process:payroll',
     group: 'payroll-finance',
   },
@@ -1418,6 +1478,74 @@ export const MODULES: ModuleNav[] = [
     label: 'ACA hours',
     description:
       'Variable-hour work measured against 130 hours a month: who is full-time, who is close, offers of coverage owed and the 1095-C months.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'payroll-taxes',
+    path: '/payroll/taxes',
+    label: 'Payroll taxes',
+    description:
+      'What payroll owes each tax agency and when, deposits, quarterly and annual returns, agency notices and the accounts behind them.',
+    // Company-wide tax liabilities and SSN-bearing wage reports.
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'payroll-banking',
+    path: '/payroll/banking',
+    label: 'Payroll banking',
+    description:
+      'The money behind each run: what to fund and by when, the operating account it comes from, NACHA files, returns, prenotes and the payroll calendar.',
+    // The company's bank account and every employee's deposit file.
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'certified-payroll',
+    path: '/payroll/certified',
+    label: 'Certified payroll',
+    description:
+      'Public-works projects paid at prevailing wage: rates from the wage determination, the weekly WH-347 with its signed Statement of Compliance, and the California eCPR file.',
+    // Company payroll records with wages, deductions and the last four of each SSN.
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'garnishments',
+    path: '/payroll/garnishments',
+    label: 'Garnishments',
+    description:
+      'Income withholding orders from e-IWO, state allocation rules and IRS levy tables, each order’s balance and next remittance, and electronic payment to State Disbursement Units.',
+    // Court and agency orders with SSNs and payee bank details: company-wide payroll PII.
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'retirement',
+    path: '/payroll/retirement',
+    label: 'Retirement plans',
+    description:
+      '401(k) plans per employer: eligibility and auto-enrollment, match and safe harbor, loans, and the contribution, census and true-up files for the recordkeeper.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'carrier-feeds',
+    path: '/benefits/carriers',
+    label: 'Carrier feeds',
+    description:
+      'Each insurance carrier’s connection and the EDI 834 enrollment files sent to it — full and change files from enrollments, dependents and life events.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'contractors',
+    path: '/payroll/contractors',
+    label: 'Contractors',
+    description:
+      'W-9s, IRS name and TIN checks, B-notices and 24% backup withholding, contractor payment runs, state 1099 filing and the year-end summary.',
+    // TINs, backup withholding and company-wide contractor payments.
     requires: 'process:payroll',
     group: 'payroll-finance',
   },
@@ -1882,7 +2010,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   pay: {
     key: 'pay',
     label: 'Pay & finance',
-    children: ['payroll', 'cash-forecast', 'market-rates', 'payroll-tax', 'state-tax', 'wotc', 'earned-wage', 'payrules', 'compensation', 'benefits', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
+    children: ['payroll', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'tax-jurisdictions', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
   },
   compliance: {
     key: 'compliance',

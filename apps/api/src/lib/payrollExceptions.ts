@@ -19,6 +19,9 @@ import { isStateTaxSupported, primeStateAcknowledgments, stateAwaitingReview, su
 import { mdCountyRate } from './stateWithholding.js';
 import { sumApprovedHours, splitWeeklyOvertime } from './payroll.js';
 import { computeRetroPay, summarizeRetro } from './retroPay.js';
+import { prevailingWageRunExceptions } from './certifiedPayroll.js';
+import { complianceRunExceptions } from './payrollComplianceChecks.js';
+import { calculateInHouse, localAwaitingReview, primeLocalAcknowledgments, unresolvedText } from './taxEngine/index.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -37,7 +40,14 @@ export type ExceptionKind =
   | 'UNAPPROVED_TIME'
   | 'MISSING_COMP_RECORD'
   | 'RETRO_PAY'
-  | 'STATE_W4_INCOMPLETE';
+  | 'STATE_W4_INCOMPLETE'
+  | 'LOCAL_TAX_REVIEW'
+  | 'LOCAL_TAX_UNRESOLVED'
+  | 'BELOW_PREVAILING_WAGE'
+  | 'APPRENTICE_RATIO'
+  | 'WAGE_STATEMENT_INCOMPLETE'
+  | 'ROTH_CATCH_UP'
+  | 'DEFERRAL_LIMIT';
 
 export type ExceptionSeverity = 'BLOCKING' | 'WARNING' | 'INFO';
 
@@ -60,6 +70,13 @@ const SEVERITY: Record<ExceptionKind, ExceptionSeverity> = {
   MISSING_COMP_RECORD: 'WARNING',
   RETRO_PAY: 'INFO',
   STATE_W4_INCOMPLETE: 'WARNING',
+  LOCAL_TAX_REVIEW: 'BLOCKING',
+  LOCAL_TAX_UNRESOLVED: 'BLOCKING',
+  BELOW_PREVAILING_WAGE: 'BLOCKING',
+  APPRENTICE_RATIO: 'WARNING',
+  WAGE_STATEMENT_INCOMPLETE: 'WARNING',
+  ROTH_CATCH_UP: 'WARNING',
+  DEFERRAL_LIMIT: 'INFO',
 };
 
 export interface ExceptionsResult {
@@ -101,12 +118,19 @@ export async function computePayrollExceptions(
       // Same net-of-breaks basis as the aggregator — exception hour totals
       // must match what the run will actually pay.
       breaks: { select: { startedAt: true, endedAt: true } },
+      // The work site decides the work-state and local taxes (lib/taxEngine).
+      location: { select: { state: true, city: true, zip: true, timezone: true } },
       associate: {
         select: {
           id: true,
           firstName: true,
           lastName: true,
           state: true,
+          city: true,
+          zip: true,
+          localTaxRule: { select: { isActive: true } },
+          taxProfile: { select: { residentPsdCode: true, residentMunicipality: true, residentSchoolDistrict: true, residentCountyJan1: true, residentLocalCode: true } },
+          taxCertificates: { where: { revokedAt: null }, select: { kind: true, state: true, jurisdictionCode: true } },
           employmentType: true,
           deletedAt: true,
           w4Submission: { select: { id: true } },
@@ -130,6 +154,8 @@ export async function computePayrollExceptions(
   const exceptions: PayrollExceptionRow[] = [];
   // Which added states this tenant's payroll admin has reviewed.
   await primeStateAcknowledgments(tx);
+  // …and which local jurisdictions.
+  await primeLocalAcknowledgments(tx);
 
   for (const [associateId, group] of byAssociate) {
     const a = group[0].associate;
@@ -217,6 +243,74 @@ export async function computePayrollExceptions(
         detail: { state: a.state ?? null, supported: supportedStates() },
       });
     }
+    // 5b. Work states other than home: each must be covered too.
+    if (a.employmentType === 'W2_EMPLOYEE') {
+      const workStates = new Set(group.map((e) => e.location?.state?.toUpperCase()).filter((st): st is string => !!st && st !== a.state?.toUpperCase()));
+      for (const st of workStates) {
+        const w = stateAwaitingReview(st);
+        if (w) {
+          exceptions.push({
+            associateId,
+            associateName,
+            kind: 'UNSUPPORTED_STATE',
+            severity: SEVERITY.UNSUPPORTED_STATE,
+            message: `Worked in ${w.name}, whose withholding (${w.taxYear} tables) hasn’t been reviewed yet. A payroll admin confirms it in Payroll → State tax coverage.`,
+            detail: { state: w.state, taxYear: w.taxYear, reason: 'awaiting_review', workState: true },
+          });
+        }
+      }
+    }
+
+    // 5c. LOCAL_TAX_REVIEW / LOCAL_TAX_UNRESOLVED — the local taxes this
+    // check owes (lib/taxEngine). A jurisdiction no payroll admin has
+    // reviewed with their tax adviser, or a question the address can't
+    // answer (a Pennsylvania resident with no PSD code), blocks the run.
+    // A local rule set by hand on the person replaces the engine's locals.
+    if (a.employmentType === 'W2_EMPLOYEE' && !a.localTaxRule?.isActive) {
+      const probe = calculateInHouse({
+        wages: Math.max(1, hoursWorked) * 20,
+        payFrequency: 'BIWEEKLY',
+        residence: {
+          state: a.state,
+          city: a.city,
+          zip: a.zip,
+          psdCode: a.taxProfile?.residentPsdCode,
+          municipality: a.taxProfile?.residentMunicipality,
+          schoolDistrict: a.taxProfile?.residentSchoolDistrict,
+          countyJan1: a.taxProfile?.residentCountyJan1,
+          localCode: a.taxProfile?.residentLocalCode,
+        },
+        work: group.map((e) => ({ state: e.location?.state ?? a.state, city: e.location?.city ?? null, zip: e.location?.zip ?? null, hours: sumApprovedHours([e]) })),
+        certificates: a.taxCertificates,
+        federalFilingStatus: null,
+        federalCycleWithholding: 0,
+        stateW4s: {},
+      });
+      for (const code of probe.jurisdictionsUsed) {
+        const w = localAwaitingReview(code);
+        if (w) {
+          exceptions.push({
+            associateId,
+            associateName,
+            kind: 'LOCAL_TAX_REVIEW',
+            severity: SEVERITY.LOCAL_TAX_REVIEW,
+            message: `${w.name} (${w.taxYear} rates) hasn’t been reviewed yet. A payroll admin confirms it was reviewed with your tax adviser in Pay & finance → Tax jurisdictions.`,
+            detail: { jurisdiction: code, taxYear: w.taxYear },
+          });
+        }
+      }
+      for (const code of probe.unresolved) {
+        exceptions.push({
+          associateId,
+          associateName,
+          kind: 'LOCAL_TAX_UNRESOLVED',
+          severity: SEVERITY.LOCAL_TAX_UNRESOLVED,
+          message: `${unresolvedText(code)} Set it on their record under Taxes we withhold.`,
+          detail: { question: code },
+        });
+      }
+    }
+
     // 6. STATE_W4_INCOMPLETE — Maryland withholds county tax by the MW507
     // county; without one the most common rate stands in.
     if (a.employmentType === 'W2_EMPLOYEE' && a.state?.toUpperCase() === 'MD') {
@@ -303,6 +397,30 @@ export async function computePayrollExceptions(
           'No compensation record on file — this run would pay the default hourly rate. Set their rate in People → Compensation.',
       });
     }
+  }
+
+  // 8. Prevailing wage — a public-works worker paid under the project's rate
+  // (blocking) or apprentices over the ratio (a warning), for the weeks in
+  // this period. Only people already in the run.
+  for (const p of await prevailingWageRunExceptions(tx, periodStart, periodEndExclusive)) {
+    if (!byAssociate.has(p.associateId)) continue;
+    exceptions.push({ ...p, severity: SEVERITY[p.kind] });
+  }
+
+  // 9. Wage-statement elements the work state requires, the Roth catch-up
+  // rule and the annual deferral limits (lib/payrollComplianceChecks).
+  const runPeople = [...byAssociate].map(([associateId, group]) => {
+    const a = group[0].associate;
+    const states = new Map<string, number>();
+    for (const e of group) {
+      const st = e.location?.state ?? null;
+      if (st) states.set(st, (states.get(st) ?? 0) + 1);
+    }
+    const workState = [...states].sort((x, y) => y[1] - x[1])[0]?.[0] ?? a.state ?? null;
+    return { associateId, associateName: `${a.firstName} ${a.lastName}`.trim(), workState };
+  });
+  for (const c of await complianceRunExceptions(tx, runPeople, periodStart, periodEndExclusive)) {
+    exceptions.push({ ...c, severity: SEVERITY[c.kind] });
   }
 
   // Stable sort: blocking → warning → info, then by name.

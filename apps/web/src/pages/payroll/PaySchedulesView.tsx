@@ -102,6 +102,7 @@ const FREQ_LABEL: Record<PayrollFrequency, string> = {
   BIWEEKLY: 'Biweekly',
   SEMIMONTHLY: 'Semi-monthly',
   MONTHLY: 'Monthly',
+  DAILY: 'Daily (weekly true-up)',
 };
 
 const FREQ_HINT: Record<PayrollFrequency, string> = {
@@ -109,6 +110,7 @@ const FREQ_HINT: Record<PayrollFrequency, string> = {
   BIWEEKLY: '26 pay periods/year',
   SEMIMONTHLY: '24 pay periods/year (1st & 16th)',
   MONTHLY: '12 pay periods/year',
+  DAILY: 'Paid each night for the day’s approved time; a weekly check settles overtime and deductions',
 };
 
 interface Props {
@@ -429,7 +431,7 @@ function ScheduleFormDialog({
                   onChange={(e) => setFrequency(e.target.value as PayrollFrequency)}
                   {...p}
                 >
-                  {(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY'] as PayrollFrequency[]).map((f) => (
+                  {(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY', 'DAILY'] as PayrollFrequency[]).map((f) => (
                     <option key={f} value={f}>{FREQ_LABEL[f]}</option>
                   ))}
                 </Select>

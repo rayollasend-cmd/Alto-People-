@@ -9,7 +9,10 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { encryptString } from '../lib/crypto.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
-import { PROVIDERS, PROVIDER_KIND_LABEL, providerInfo, type ProviderKindName } from '../lib/providers/catalog.js';
+import { ORIGINATION_PROVIDERS, PROVIDERS, PROVIDER_KIND_LABEL, providerInfo, type ProviderKindName } from '../lib/providers/catalog.js';
+import { originationProviderFor } from '../lib/banking/origination.js';
+import { testEmbeddedConnection } from '../lib/embeddedPayroll/index.js';
+import { testTaxEngine } from '../lib/taxEngine/external.js';
 import { contextFor, encryptCredentials, recordFailure, recordOutboundEvent, recordSuccess } from '../lib/providers/connections.js';
 import { everifyAdapter } from '../lib/providers/everify.js';
 import { screeningAdapter } from '../lib/providers/screening.js';
@@ -37,7 +40,7 @@ export const providerConnectionsRouter = Router();
 const canView = requireCapability('view:integrations');
 const canManage = requireCapability('manage:integrations');
 
-const KINDS = ['EVERIFY', 'BACKGROUND_CHECK', 'DRUG_TEST', 'TAX_FILING', 'PAYOUT'] as const;
+const KINDS = ['EVERIFY', 'BACKGROUND_CHECK', 'DRUG_TEST', 'TAX_FILING', 'PAYOUT', 'EMBEDDED_PAYROLL', 'TAX_ENGINE', 'ORIGINATION'] as const;
 /** Providers whose webhooks are signed with a secret Alto mints and the admin pastes into the provider. */
 const SHARED_SECRET = new Set(['EVERIFY_AGENT', 'GENERIC_SCREENING', 'ESCREEN', 'QUEST_ESP']);
 
@@ -86,7 +89,7 @@ function view(c: ProviderConnection) {
 }
 
 providerConnectionsRouter.get('/catalog', canView, (_req, res) => {
-  res.json({ kinds: KINDS.map((k) => ({ kind: k, label: PROVIDER_KIND_LABEL[k] })), providers: PROVIDERS });
+  res.json({ kinds: KINDS.map((k) => ({ kind: k, label: PROVIDER_KIND_LABEL[k] })), providers: [...PROVIDERS, ...ORIGINATION_PROVIDERS] });
 });
 
 providerConnectionsRouter.get('/', canView, async (_req, res) => {
@@ -201,6 +204,12 @@ async function runTest(row: ProviderConnection): Promise<void> {
       return taxFilingAdapter(row.provider).test(ctx);
     case 'PAYOUT':
       return testWiseConnection(ctx);
+    case 'EMBEDDED_PAYROLL':
+      return testEmbeddedConnection(ctx);
+    case 'TAX_ENGINE':
+      return testTaxEngine(ctx);
+    case 'ORIGINATION':
+      return originationProviderFor(ctx).test();
   }
 }
 

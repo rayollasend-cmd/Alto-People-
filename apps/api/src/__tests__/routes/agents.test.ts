@@ -62,7 +62,7 @@ describe('the registry', () => {
     const w = await world();
     const sweep = await ensureBuiltInAgents(prisma);
     // Agent families add one agent per family: Workforce (step 1), Compliance (step 4).
-    expect(sweep.created.sort()).toEqual(['boardroom', 'claude-code-deploy', 'compliance-agent', 'whatsapp-assistant', 'workforce-agent']);
+    expect(sweep.created.sort()).toEqual(['boardroom', 'claude-code-deploy', 'compliance-agent', 'payroll-agent', 'whatsapp-assistant', 'workforce-agent']);
     expect(sweep.missing).toEqual([]);
 
     // An agent made through Workers (1D-1) shows up too, once profiled.
@@ -73,7 +73,7 @@ describe('the registry', () => {
 
     const list = await w.admin.get('/agents');
     expect(list.status).toBe(200);
-    expect(list.body.agents).toHaveLength(6);
+    expect(list.body.agents).toHaveLength(7);
     for (const a of list.body.agents) {
       expect(a.type).toBe('AGENT');
       expect(a.owner).toMatchObject({ id: w.hr.id });

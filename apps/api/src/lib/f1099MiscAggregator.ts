@@ -23,6 +23,7 @@
 // listF1099MiscEligibleAssociates filters by these.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { contractorPaymentPayees, contractorPaymentTotals } from './contractors.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -95,6 +96,18 @@ export const F1099_MISC_REPORTING_THRESHOLDS = {
   box14NonqualifiedDeferred: 600,
 } as const;
 
+/**
+ * The thresholds for a tax year: the $600 boxes become $2,000 for payments
+ * made after December 31, 2025 (One Big Beautiful Bill Act §70433); the $10
+ * royalty and substitute-payment boxes are unchanged.
+ */
+export function f1099MiscThresholds(taxYear?: number): Record<keyof typeof F1099_MISC_REPORTING_THRESHOLDS, number> {
+  if (!taxYear || taxYear < 2026) return F1099_MISC_REPORTING_THRESHOLDS;
+  return Object.fromEntries(
+    Object.entries(F1099_MISC_REPORTING_THRESHOLDS).map(([k, v]) => [k, v === 600 ? 2000 : v]),
+  ) as Record<keyof typeof F1099_MISC_REPORTING_THRESHOLDS, number>;
+}
+
 /** Empty zero-filled boxes for fresh accumulation. */
 function emptyBoxes(): Form1099MiscBoxes {
   return {
@@ -164,6 +177,26 @@ export async function aggregateF1099MiscPayments(
     }
   }
 
+  // Contractor payment runs: each payment names its 1099-MISC box.
+  const paid = await contractorPaymentTotals(tx, associateId, taxYear, 'MISC');
+  for (const [box, amount] of paid.byBox) {
+    if (box === 1) boxes.box1Rents += amount;
+    else if (box === 2) boxes.box2Royalties += amount;
+    else if (box === 6) boxes.box6MedicalHealthcarePayments += amount;
+    else if (box === 10) boxes.box10GrossProceedsAttorney += amount;
+    else boxes.box3OtherIncome += amount;
+  }
+  boxes.box4FitWithheld += paid.backupWithheld;
+  for (const [state, v] of paid.states) {
+    const b = stateBuckets.get(state) ?? { tax: 0, income: 0 };
+    b.tax += v.tax;
+    b.income += v.income;
+    stateBuckets.set(state, b);
+  }
+  boxes.box1Rents = round2(boxes.box1Rents);
+  boxes.box2Royalties = round2(boxes.box2Royalties);
+  boxes.box6MedicalHealthcarePayments = round2(boxes.box6MedicalHealthcarePayments);
+  boxes.box10GrossProceedsAttorney = round2(boxes.box10GrossProceedsAttorney);
   boxes.box3OtherIncome = round2(boxes.box3OtherIncome);
   boxes.box4FitWithheld = round2(boxes.box4FitWithheld);
   boxes.stateLines = [...stateBuckets.entries()]
@@ -174,7 +207,7 @@ export async function aggregateF1099MiscPayments(
     }))
     .filter((l) => l.stateTaxWithheld !== 0 || l.stateIncome !== 0)
     .sort((a, b) => a.state.localeCompare(b.state));
-  boxes.sourceItemCount = items.length;
+  boxes.sourceItemCount = items.length + paid.count;
 
   return boxes;
 }
@@ -184,9 +217,9 @@ export async function aggregateF1099MiscPayments(
  * Any Box 4 backup withholding triggers regardless; otherwise the per-
  * box thresholds apply.
  */
-export function meetsF1099MiscThreshold(boxes: Form1099MiscBoxes): boolean {
+export function meetsF1099MiscThreshold(boxes: Form1099MiscBoxes, taxYear?: number): boolean {
   if (boxes.box4FitWithheld > 0) return true;
-  const t = F1099_MISC_REPORTING_THRESHOLDS;
+  const t = f1099MiscThresholds(taxYear);
   return (
     boxes.box1Rents >= t.box1Rents ||
     boxes.box2Royalties >= t.box2Royalties ||
@@ -233,10 +266,13 @@ export async function listF1099MiscEligibleAssociates(
     distinct: ['associateId'],
   });
 
+  const ids = new Set(candidates.map((c) => c.associateId));
+  if (!clientId) for (const id of await contractorPaymentPayees(tx, taxYear, 'MISC')) ids.add(id);
+
   const eligible: string[] = [];
-  for (const c of candidates) {
+  for (const c of [...ids].map((associateId) => ({ associateId }))) {
     const boxes = await aggregateF1099MiscPayments(tx, c.associateId, taxYear);
-    if (meetsF1099MiscThreshold(boxes)) {
+    if (meetsF1099MiscThreshold(boxes, taxYear)) {
       eligible.push(c.associateId);
     }
   }

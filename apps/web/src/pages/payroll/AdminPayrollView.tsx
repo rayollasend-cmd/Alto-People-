@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { quoteGrossUp } from '@/lib/payExpApi';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -92,6 +93,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui/Drawer';
+import { RunTaxBreakdown } from '@/components/payroll/RunTaxBreakdown';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -953,6 +955,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                       hint="FICA + Medicare match + FUTA + SUTA"
                     />
                   </div>
+
+                  {/* State and local taxes by jurisdiction (lib/taxEngine). */}
+                  <RunTaxBreakdown runId={selected.id} />
 
                   {selected.items.length === 0 && (
                     <EmptyState
@@ -1849,7 +1854,14 @@ function RunStatusStepper({
  *  prior run. REGULAR is the default and gets no chrome.
  * -------------------------------------------------------------------------- */
 
-function RunKindBadge({ kind }: { kind: 'OFF_CYCLE' | 'AMENDMENT' }) {
+function RunKindBadge({ kind }: { kind: 'OFF_CYCLE' | 'AMENDMENT' | 'DAILY' | 'MANUAL' }) {
+  if (kind === 'DAILY' || kind === 'MANUAL') {
+    return (
+      <Badge variant="default" className="border-steel/40 bg-steel/10 text-steel">
+        {kind === 'DAILY' ? 'Daily pay' : 'Manual check'}
+      </Badge>
+    );
+  }
   if (kind === 'AMENDMENT') {
     return (
       <Badge variant="default" className="border-warning/40 bg-warning/10 text-warning">
@@ -1935,6 +1947,16 @@ function DraftAddOnsSection({
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  // Gross-up: type the take-home; the gross is solved per person on the server.
+  const [takeHome, setTakeHome] = useState(false);
+  const [includePreTax, setIncludePreTax] = useState(false);
+  const quoteFor = !everyone && assocs.length === 1 && takeHome && Number(amount) > 0 ? assocs[0]!.id : null;
+  const quote = useQuery({
+    queryKey: ['payroll', 'grossUpQuote', runId, quoteFor, amount, includePreTax],
+    queryFn: () => quoteGrossUp({ associateId: quoteFor!, targetNet: Number(amount), includePreTax, runId }),
+    enabled: !!quoteFor,
+    staleTime: 30_000,
+  });
 
   // Unique associates in this run (a run has one item per associate, but
   // dedupe defensively for amendment edge cases).
@@ -1975,7 +1997,7 @@ function DraftAddOnsSection({
         await addRunAddOn(runId, {
           associateId: a.id,
           kind,
-          amount: amt,
+          ...(takeHome ? { targetNet: amt, includePreTax } : { amount: amt }),
           note: note.trim() || null,
         });
         added += 1;
@@ -2050,6 +2072,13 @@ function DraftAddOnsSection({
                 {a.associateName} ·{' '}
                 {ADD_ON_KINDS.find((k) => k.value === a.kind)?.label ?? a.kind}
                 {a.note ? ` — ${a.note}` : ''}
+                {a.grossUp && (
+                  <span className="block text-xs text-silver/70 tabular-nums">
+                    Take-home {fmtMoney(a.grossUp.net)} · federal {fmtMoney(a.grossUp.federal)} · Social Security {fmtMoney(a.grossUp.socialSecurity)} · Medicare {fmtMoney(a.grossUp.medicare)}
+                    {a.grossUp.state ? ` · state ${fmtMoney(a.grossUp.state)}` : ''}
+                    {a.grossUp.preTax ? ` · 401(k) ${fmtMoney(a.grossUp.preTax)}` : ''}
+                  </span>
+                )}
               </span>
               <span className="flex items-center gap-2">
                 <span className="tabular-nums text-white">{fmtMoney(a.amount)}</span>
@@ -2143,15 +2172,36 @@ function DraftAddOnsSection({
               min="0"
               step="0.01"
               inputMode="decimal"
-              placeholder="Amount"
+              placeholder={takeHome ? 'Take-home' : 'Amount'}
+              aria-label={takeHome ? 'Take-home amount' : 'Amount'}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="w-32"
             />
           </div>
+          <label className="flex items-center gap-2 text-sm text-silver cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-gold" checked={takeHome} onChange={(e) => setTakeHome(e.target.checked)} disabled={busy} />
+            Enter the take-home instead (gross it up)
+          </label>
+          {takeHome && (
+            <label className="flex items-center gap-2 text-sm text-silver cursor-pointer">
+              <input type="checkbox" className="h-4 w-4 cursor-pointer accent-gold" checked={includePreTax} onChange={(e) => setIncludePreTax(e.target.checked)} disabled={busy} />
+              Gross up the 401(k) deferral too
+            </label>
+          )}
+          {quoteFor && quote.data && (
+            <div className="rounded-md border border-navy-secondary p-2 text-xs text-silver tabular-nums" aria-live="polite">
+              Gross {fmtMoney(quote.data.breakdown.gross)} · federal {fmtMoney(quote.data.breakdown.federal)}
+              {quote.data.breakdown.federalMethod === 'SUPPLEMENTAL_22' ? ' (22%)' : ' (37% over $1M)'} · Social Security {fmtMoney(quote.data.breakdown.socialSecurity)} · Medicare{' '}
+              {fmtMoney(quote.data.breakdown.medicare)}
+              {quote.data.breakdown.state ? ` · state ${fmtMoney(quote.data.breakdown.state)}` : ''}
+              {quote.data.breakdown.preTax ? ` · 401(k) ${fmtMoney(quote.data.breakdown.preTax)}` : ''} → take-home {fmtMoney(quote.data.breakdown.net)}
+            </div>
+          )}
           <p className="text-xs text-silver/70">
             Bonuses and commissions are supplemental wages — federal income tax
-            withholds at the flat 22% supplemental rate.
+            withholds at the flat 22% supplemental rate (37% past $1M in the year).
+            {takeHome ? ' The line is checked against the real paycheck so the take-home lands to the cent.' : ''}
           </p>
           <Input
             placeholder="Note (optional) — e.g. Q3 performance bonus"

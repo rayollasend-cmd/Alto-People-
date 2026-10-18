@@ -1,22 +1,19 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Download, FileText, Landmark, Scale, UserPlus } from 'lucide-react';
+import { CheckCircle2, Download, FileSignature, FileText, Landmark, PiggyBank, Scale, ScrollText, UserPlus } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { NewHireReportsTab, PayNoticesTab, PaystubRulesTab, RothCatchUpTab } from './PayComplianceTabs';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
-import { useConfirm, usePrompt } from '@/lib/confirm';
+import { usePrompt } from '@/lib/confirm';
 import {
-  downloadNewHireReportCsv,
   downloadRemittanceAdvice,
   downloadTaxDepositWorksheet,
-  getNewHireReport,
   listGarnishmentRemittances,
   listTaxDeposits,
-  markNewHiresReported,
   markRemittanceSent,
   markTaxDepositPaid,
   type GarnishmentRemittance,
-  type NewHireRow,
   type TaxDeposit,
 } from '@/lib/payrollApi';
 import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
@@ -43,15 +40,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 
 const money = fmtMoney;
 
-type Tab = 'deposits' | 'remittances' | 'newhire';
+type Tab = 'deposits' | 'remittances' | 'newhire' | 'notices' | 'roth' | 'paystubs';
+const TABS: Tab[] = ['deposits', 'remittances', 'newhire', 'notices', 'roth', 'paystubs'];
 
 export function PayrollCompliance() {
-  const [tab, setTab] = useState<Tab>('deposits');
+  // ?tab= deep links from the Inbox (pay notices, new-hire reports).
+  const [params, setParams] = useSearchParams();
+  const fromUrl = params.get('tab') as Tab | null;
+  const tab: Tab = fromUrl && TABS.includes(fromUrl) ? fromUrl : 'deposits';
+  const setTab = (t: Tab) => setParams((p) => {
+    const next = new URLSearchParams(p);
+    next.set('tab', t);
+    return next;
+  }, { replace: true });
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Payroll compliance"
-        subtitle="Federal tax deposits, garnishment remittances, and state new-hire reporting — every deadline in one place."
+        subtitle="Tax deposits, garnishment remittances, new-hire reports, state pay notices and the 2026 retirement rules, in one place."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Compliance' }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -65,6 +71,15 @@ export function PayrollCompliance() {
           <TabsTrigger value="newhire">
             <UserPlus className="mr-2 h-4 w-4" /> New-hire reporting
           </TabsTrigger>
+          <TabsTrigger value="notices">
+            <FileSignature className="mr-2 h-4 w-4" /> Pay notices
+          </TabsTrigger>
+          <TabsTrigger value="roth">
+            <PiggyBank className="mr-2 h-4 w-4" /> Roth catch-up
+          </TabsTrigger>
+          <TabsTrigger value="paystubs">
+            <ScrollText className="mr-2 h-4 w-4" /> Paystub rules
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="deposits">
           <TaxDepositsTab />
@@ -73,7 +88,16 @@ export function PayrollCompliance() {
           <RemittancesTab />
         </TabsContent>
         <TabsContent value="newhire">
-          <NewHireTab />
+          <NewHireReportsTab />
+        </TabsContent>
+        <TabsContent value="notices">
+          <PayNoticesTab />
+        </TabsContent>
+        <TabsContent value="roth">
+          <RothCatchUpTab />
+        </TabsContent>
+        <TabsContent value="paystubs">
+          <PaystubRulesTab />
         </TabsContent>
       </Tabs>
     </ListTemplate>
@@ -608,150 +632,3 @@ function RemittancesTab() {
 }
 
 /* ===== New-hire reporting ================================================ */
-
-function NewHireTab() {
-  const confirm = useConfirm();
-  // The CSV carries SSNs, so it moved to export:payroll-pii (HR + Finance)
-  // while the tab itself stays on process:payroll (six roles). The other
-  // four can still SEE who is unreported — names and hire dates, no PII —
-  // which is the half of this tab that tells an ops manager to go chase
-  // someone. They just cannot pull the file.
-  const canExport = useAuth().can('export:payroll-pii');
-  const reportQuery = useQuery({ queryKey: ['payroll', 'new-hire-report'], queryFn: () => getNewHireReport() });
-  const rows: NewHireRow[] | null = reportQuery.data?.unreported ?? null;
-  const error = reportQuery.error ? (reportQuery.error instanceof ApiError ? reportQuery.error.message : 'Failed to load new-hire report.') : null;
-  const [busy, setBusy] = useState(false);
-
-  const refresh = useCallback(() => {
-    void reportQuery.refetch();
-  }, [reportQuery]);
-
-  const reportable = (rows ?? []).filter((r) => r.reportable);
-  const overdue = (rows ?? []).filter((r) => r.overdue);
-
-  const onExportAndMark = async () => {
-    if (reportable.length === 0) return;
-    const ok = await confirm({
-      title: `Export ${reportable.length} hire${reportable.length === 1 ? '' : 's'} and mark reported?`,
-      description:
-        'Downloads the multistate CSV (it contains SSNs — upload it to the state portal, then delete the local copy). Confirming marks these associates as reported.',
-    });
-    if (!ok) return;
-    setBusy(true);
-    try {
-      await downloadNewHireReportCsv();
-      await markNewHiresReported(reportable.map((r) => r.associateId));
-      toast.success(`${reportable.length} new hire${reportable.length === 1 ? '' : 's'} marked reported.`);
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Export failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardContent>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm text-silver">
-            {rows && (
-              <>
-                <span className="font-medium text-white">{rows.length}</span> unreported hire
-                {rows.length === 1 ? '' : 's'}
-                {overdue.length > 0 && (
-                  <Badge variant="destructive" className="ml-2">
-                    <AlertTriangle className="mr-1 h-3 w-3" />
-                    {overdue.length} past the 20-day deadline
-                  </Badge>
-                )}
-              </>
-            )}
-          </div>
-          {canExport ? (
-            <Button
-              size="sm"
-              onClick={onExportAndMark}
-              loading={busy}
-              disabled={busy || reportable.length === 0}
-            >
-              <Download className="h-4 w-4" />
-              Export CSV & mark reported
-            </Button>
-          ) : (
-            // Not a disabled button: nothing they can do here makes it
-            // clickable, so say who to ask instead of leaving them
-            // hovering over a dead control.
-            <span className="text-xs text-silver">
-              Filing the CSV is restricted to HR and Finance.
-            </span>
-          )}
-        </div>
-        {error && (
-          <ErrorBanner
-            className="mb-3"
-            action={
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
-            }
-          >
-            {error}
-          </ErrorBanner>
-        )}
-        {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
-        {rows && rows.length === 0 && (
-          <EmptyState
-            icon={UserPlus}
-            title="All caught up"
-            description="Every hire with a hire date has been reported to the state directory."
-          />
-        )}
-        {rows && rows.length > 0 && (
-          <div className="p-3">
-            <DataGrid<NewHireRow>
-              id="new-hire-reporting"
-              caption="Unreported new hires"
-              rows={rows}
-              rowKey={(r) => r.associateId}
-              search={{ placeholder: 'Name, state…' }}
-              urlState={false}
-              exportCsv={{ filename: 'unreported-new-hires' }}
-              columns={[
-                { key: 'name', header: 'Associate', accessor: (r) => r.name, sortable: true, primary: true, className: 'font-medium text-white' },
-                {
-                  key: 'hireDate',
-                  header: 'Hire date',
-                  accessor: (r) => r.hireDate,
-                  sortable: true,
-                  searchable: false,
-                  cardMeta: true,
-                  className: 'text-silver whitespace-nowrap',
-                  cell: (r) => (r.hireDate ? fmtDate(parseYmd(r.hireDate)) : '—'),
-                },
-                { key: 'state', header: 'State', accessor: (r) => r.state, sortable: true, cardMeta: true, className: 'text-silver', cell: (r) => r.state ?? '—' },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  accessor: (r) => (r.overdue ? 'overdue' : !r.reportable ? 'missing data' : 'ready'),
-                  sortable: true,
-                  cell: (r) => (
-                    <div className="flex flex-wrap gap-1">
-                      {r.overdue && <Badge variant="destructive">Overdue</Badge>}
-                      {!r.reportable && (
-                        <Badge variant="pending" title="Needs SSN, address, and state on file before the state can match the report">
-                          Missing data
-                        </Badge>
-                      )}
-                      {r.reportable && !r.overdue && <Badge variant="default">Ready</Badge>}
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}

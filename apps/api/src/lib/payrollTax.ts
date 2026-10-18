@@ -38,7 +38,8 @@ import { currentTenantId } from './tenant.js';
  *    we never under-withhold.
  */
 
-export type PayFrequency = 'WEEKLY' | 'BIWEEKLY' | 'SEMIMONTHLY' | 'MONTHLY';
+/** DAILY (PAYEXP): daily pay settlements, annualized over 260 working days (Pub 15-T's daily/miscellaneous period). */
+export type PayFrequency = 'WEEKLY' | 'BIWEEKLY' | 'SEMIMONTHLY' | 'MONTHLY' | 'DAILY';
 
 // ---------- Federal income tax (IRS Pub 15-T, percentage method) -----------
 
@@ -153,6 +154,7 @@ const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
   BIWEEKLY: 26,
   SEMIMONTHLY: 24,
   MONTHLY: 12,
+  DAILY: 260,
 };
 
 function pickBracket(table: Bracket[], annualGross: number): Bracket {
@@ -555,6 +557,12 @@ const SUTA_2024: Record<string, { wageBase: number; rate: number }> = {
   WY: { wageBase: 30_900, rate: 0.0072 },
   DC: { wageBase: 9_000,  rate: 0.027 },
 };
+
+/** A state's default unemployment wage base and new-employer rate (the employer's own assigned rate overrides it). */
+export function sutaDefaults(state: string | null | undefined): { wageBase: number; rate: number } | null {
+  const key = (state ?? '').toUpperCase().trim();
+  return SUTA_2024[key] ?? null;
+}
 
 export interface EmployerInput {
   grossPay: number;

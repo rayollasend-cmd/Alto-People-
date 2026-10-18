@@ -48,6 +48,8 @@ import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
 import { EarnedWageCard } from '@/components/EarnedWageCard';
+import { PayPreviewCard } from '@/components/PayPreviewCard';
+import { DailyPayCard } from '@/components/DailyPayCard';
 import {
   CalendarCheck,
   ChevronDown,
@@ -72,6 +74,7 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   REIMBURSEMENT: 'pay.kind.REIMBURSEMENT',
   RETRO: 'pay.kind.RETRO',
   PREMIUM: 'pay.kind.PREMIUM',
+  DAILY_SETTLED: 'pay.kind.DAILY_SETTLED',
 };
 
 // Labels stay i18n keys (this page is translated); tones come from the
@@ -146,7 +149,11 @@ export function AssociatePayrollView() {
 
       <NextPaydayCard />
 
+      <PayPreviewCard />
+
       <EarnedWageCard />
+
+      <DailyPayCard />
 
       <TaxAndPaySettings />
 
@@ -434,6 +441,11 @@ function W4Card() {
           <Row label={t('pay.w4Deductions')} value={fmtMoney(w4.deductions)} />
           <Row label={t('pay.w4ExtraPerCheck')} value={fmtMoney(w4.extraWithholding)} />
         </dl>
+      )}
+      {!editing && (
+        <Link to="/payroll/w4-estimator" className="mt-2 inline-flex items-center coarse:min-h-11 text-xs text-gold hover:text-gold-bright underline underline-offset-2">
+          {t('w4est.open')}
+        </Link>
       )}
       {editing && form && (
         <div className="space-y-2">

@@ -68,7 +68,7 @@ export function SitesAdmin() {
       cell: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-ink">{r.name}</span>
-          {r.clientId && (
+          {r.clientId && moduleOn('clientPortal') && (
             <Badge variant="outline" size="sm" withDot={false}>
               {clientNoun}’s
             </Badge>

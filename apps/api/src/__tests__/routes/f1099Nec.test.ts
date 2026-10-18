@@ -131,13 +131,13 @@ describe('1099-NEC generation — Gap 11', () => {
       associateId: eligible.id,
       clientId: client.id,
       disbursedAt: new Date('2026-04-15T12:00:00Z'),
-      grossPay: 800,
+      grossPay: 2800,
     });
     await seedDisbursedItem({
       associateId: subThreshold.id,
       clientId: client.id,
       disbursedAt: new Date('2026-04-15T12:00:00Z'),
-      grossPay: 500, // below the $600 threshold
+      grossPay: 1500, // below the $2,000 threshold for 2026
     });
 
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
@@ -158,7 +158,7 @@ describe('1099-NEC generation — Gap 11', () => {
     expect(form.taxYear).toBe(2026);
     expect(form.associateId).toBe(eligible.id);
     const amounts = form.amounts as Record<string, unknown>;
-    expect(amounts.box1NonemployeeCompensation).toBe(800);
+    expect(amounts.box1NonemployeeCompensation).toBe(2800);
     expect(amounts.box4FitWithheld).toBe(0);
     expect(amounts.sourceItemCount).toBe(1);
   });
@@ -175,7 +175,7 @@ describe('1099-NEC generation — Gap 11', () => {
       associateId: a.id,
       clientId: client.id,
       disbursedAt: new Date('2026-06-15T12:00:00Z'),
-      grossPay: 1200,
+      grossPay: 2400,
       federalWithholding: 24, // backup withholding
       stateWithholding: 30,
       taxState: 'CA',
@@ -211,7 +211,7 @@ describe('1099-NEC generation — Gap 11', () => {
       associateId: a.id,
       clientId: client.id,
       disbursedAt: new Date('2026-06-15T12:00:00Z'),
-      grossPay: 1500,
+      grossPay: 2500,
     });
 
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
@@ -237,7 +237,7 @@ describe('1099-NEC generation — Gap 11', () => {
       associateId: a.id,
       clientId: client.id,
       disbursedAt: new Date('2026-04-15T12:00:00Z'),
-      grossPay: 1000,
+      grossPay: 3000,
     });
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const hrAgent = await loginAs(hr.email);
@@ -267,13 +267,13 @@ describe('1099-NEC generation — Gap 11', () => {
       associateId: me.id,
       clientId: client.id,
       disbursedAt: new Date('2026-04-15T12:00:00Z'),
-      grossPay: 700,
+      grossPay: 2700,
     });
     await seedDisbursedItem({
       associateId: them.id,
       clientId: client.id,
       disbursedAt: new Date('2026-04-15T12:00:00Z'),
-      grossPay: 800,
+      grossPay: 2800,
     });
 
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });

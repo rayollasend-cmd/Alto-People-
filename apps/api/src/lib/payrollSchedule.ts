@@ -7,6 +7,7 @@
 // to avoid DST jumps shifting a window by ±1 hr around the boundary.
 
 import type { PayrollFrequency } from '@prisma/client';
+import { adjustPayDate } from './banking/holidays.js';
 
 export interface ScheduleInput {
   frequency: PayrollFrequency;
@@ -19,8 +20,12 @@ export interface PeriodWindow {
   periodStart: string;
   /** YYYY-MM-DD inclusive. */
   periodEnd: string;
-  /** YYYY-MM-DD; periodEnd + payDateOffsetDays. */
+  /** YYYY-MM-DD; periodEnd + payDateOffsetDays, moved to the banking day before a weekend or holiday. */
   payDate: string;
+  /** The date the schedule names, before the move (set only when the pay date moved). */
+  nominalPayDate?: string;
+  /** Why the pay date moved ("Christmas Day", "Saturday"), when it did. */
+  payDateShiftReason?: string | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -60,6 +65,9 @@ export function getCurrentPeriod(schedule: ScheduleInput, today: Date = new Date
   const now = toUtcDate(today);
 
   switch (schedule.frequency) {
+    // DAILY (PAYEXP): each day is paid by a daily settlement; the period here
+    // is the weekly true-up that settles overtime and deductions.
+    case 'DAILY':
     case 'WEEKLY': {
       // Period = anchor's day-of-week .. +6, sliding to contain `now`.
       const cycleLen = 7;
@@ -132,10 +140,16 @@ export function getPeriodAfter(schedule: ScheduleInput, w: PeriodWindow): Period
 }
 
 function buildWindow(start: Date, end: Date, payOffset: number): PeriodWindow {
+  // People are paid early, never late: a pay date on a weekend or a Federal
+  // Reserve holiday moves to the banking day before it (lib/banking/holidays).
+  const nominal = fmt(addDays(end, payOffset));
+  const adjusted = adjustPayDate(nominal);
   return {
     periodStart: fmt(start),
     periodEnd: fmt(end),
-    payDate: fmt(addDays(end, payOffset)),
+    payDate: adjusted.payDate,
+    // Only a moved pay date carries where it came from and why.
+    ...(adjusted.shifted ? { nominalPayDate: nominal, payDateShiftReason: adjusted.reason } : {}),
   };
 }
 
@@ -146,6 +160,8 @@ function buildWindow(start: Date, end: Date, payOffset: number): PeriodWindow {
 export function payPeriodsPerYear(frequency: PayrollFrequency): number {
   switch (frequency) {
     case 'WEEKLY':      return 52;
+    // DAILY's period of record is its weekly true-up (daily settlements withhold on 260 themselves).
+    case 'DAILY':       return 52;
     case 'BIWEEKLY':    return 26;
     case 'SEMIMONTHLY': return 24;
     case 'MONTHLY':     return 12;

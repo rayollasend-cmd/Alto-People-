@@ -21,6 +21,7 @@
 //     `preTaxRetirement` sub-bucket on PayrollItem is added back below.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { readDeferrals } from './retirementDeferrals.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -37,11 +38,33 @@ export interface W2Boxes {
   box5MedicareWages: number;
   /** Box 6 — Medicare tax withheld (1.45% + 0.9% surcharge over $200k YTD). */
   box6MedicareTax: number;
+  /** Box 10 — Dependent care benefits (dependent care FSA, IRC §129). */
+  box10DependentCare?: number;
+  /** Box 7 — Social security tips (cash tips reported to the employer). Box 3 + Box 7 ≤ the wage base. */
+  box7SsTips?: number;
+  /**
+   * Box 12 — coded amounts, in code order. 2026 adds TA (Trump account,
+   * IRC §128), TP (cash tips reported to the employer) and TT (qualified
+   * overtime: the FLSA premium portion). Source: IRS 2026 W-2/W-3 instructions.
+   */
+  box12?: W2Box12Entry[];
+  /** Box 14b — Treasury Tipped Occupation Code(s) (TY2026+), at most two. */
+  box14bTippedOccupationCodes?: string[];
+  /** Box 13 — Third-party sick pay: checked when the employer reports insurer-paid sick pay (lib/manualChecks). */
+  box13ThirdPartySickPay?: boolean;
   /** Box 15-17 — One block per state with non-zero withholding. */
   stateLines: W2StateLine[];
   /** Source items, count only — for a sanity check on the UI. */
   sourceItemCount: number;
 }
+
+export type W2Box12Code = 'D' | 'E' | 'J' | 'W' | 'AA' | 'BB' | 'TA' | 'TP' | 'TT';
+export interface W2Box12Entry {
+  code: W2Box12Code;
+  amount: number;
+}
+/** IRS order of codes on the form. */
+const BOX12_ORDER: W2Box12Code[] = ['D', 'E', 'J', 'W', 'AA', 'BB', 'TA', 'TP', 'TT'];
 
 export interface W2StateLine {
   /** Two-letter USPS code from PayrollItem.taxState. */
@@ -118,6 +141,10 @@ export async function aggregateW2Wages(
       medicare: true,
       stateWithholding: true,
       taxState: true,
+      qualifiedTips: true,
+      qualifiedOvertime: true,
+      tippedOccupationCode: true,
+      deferrals: true,
     },
   });
 
@@ -127,6 +154,11 @@ export async function aggregateW2Wages(
   let box6MedicareTax = 0;
   let preCapSsWages = 0;
   let box4SsTax = 0;
+  let tipsTotal = 0;
+  let dependentCare = 0;
+  const codes = new Map<W2Box12Code, number>();
+  const occupationCodes = new Set<string>();
+  const addCode = (c: W2Box12Code, n: number) => codes.set(c, (codes.get(c) ?? 0) + n);
   const stateBuckets = new Map<string, { wages: number; tax: number }>();
 
   for (const item of items) {
@@ -145,6 +177,19 @@ export async function aggregateW2Wages(
     box6MedicareTax += Number(item.medicare);
     preCapSsWages += box35Slice;
     box4SsTax += Number(item.fica);
+    const tips = Number(item.qualifiedTips);
+    tipsTotal += tips;
+    const d = readDeferrals(item.deferrals, retirement);
+    dependentCare += d.dcap;
+    addCode('D', d.pre401k);
+    addCode('E', d.pre403b);
+    addCode('W', d.hsa);
+    addCode('AA', d.roth401k);
+    addCode('BB', d.roth403b);
+    addCode('TA', d.trumpAccountEmployer);
+    addCode('TP', tips);
+    addCode('TT', Number(item.qualifiedOvertime));
+    if (item.tippedOccupationCode && tips > 0) occupationCodes.add(item.tippedOccupationCode);
 
     if (item.taxState) {
       const b = stateBuckets.get(item.taxState) ?? { wages: 0, tax: 0 };
@@ -156,10 +201,42 @@ export async function aggregateW2Wages(
     }
   }
 
+  // Insurer-paid sick pay the employer reports (PAYEXP §3): the taxable
+  // part is wages in Boxes 1/3/5 with the insurer's withholding; the part
+  // bought with the employee's after-tax premiums is Box 12 J. Not tied to
+  // a client's EIN — it follows the tenant's own W-2.
+  let thirdPartySick = false;
+  if (employerClientId === undefined || (employerClientId !== null && typeof employerClientId === 'object')) {
+    const sick = await tx.thirdPartySickPay.findMany({
+      where: { associateId, voidedAt: null, w2ReportedBy: 'EMPLOYER', payDate: { gte: yearStart, lt: yearEndExclusive } },
+      select: { grossAmount: true, nontaxableAmount: true, federalWithheld: true, socialSecurityWithheld: true, medicareWithheld: true, stateWithheld: true, associate: { select: { state: true } } },
+    });
+    for (const r of sick) {
+      thirdPartySick = true;
+      const taxable = Number(r.grossAmount) - Number(r.nontaxableAmount);
+      box1Wages += taxable;
+      box2FitWithheld += Number(r.federalWithheld);
+      preCapSsWages += taxable;
+      box4SsTax += Number(r.socialSecurityWithheld);
+      box5MedicareWages += taxable;
+      box6MedicareTax += Number(r.medicareWithheld);
+      addCode('J', Number(r.nontaxableAmount));
+      const st = r.associate.state?.toUpperCase();
+      if (st && (Number(r.stateWithheld) > 0 || taxable > 0)) {
+        const b = stateBuckets.get(st) ?? { wages: 0, tax: 0 };
+        b.wages += taxable;
+        b.tax += Number(r.stateWithheld);
+        stateBuckets.set(st, b);
+      }
+    }
+  }
+
   const ssWageBase = await getSsWageBaseForYear(tx, taxYear);
   // Box 3 cannot exceed the SS wage base, even if the running total of
   // signed amendment deltas pushed past it. min() handles both directions.
-  const box3SsWages = Math.min(preCapSsWages, ssWageBase);
+  // Tips are social security tips (Box 7), not Box 3 wages; together they stop at the base.
+  const box3SsWages = Math.min(preCapSsWages - tipsTotal, ssWageBase);
+  const box7SsTips = Math.max(0, Math.min(tipsTotal, ssWageBase - box3SsWages));
 
   const stateLines: W2StateLine[] = [...stateBuckets.entries()]
     .map(([state, b]) => ({
@@ -177,6 +254,11 @@ export async function aggregateW2Wages(
     box4SsTax: round2(box4SsTax),
     box5MedicareWages: round2(box5MedicareWages),
     box6MedicareTax: round2(box6MedicareTax),
+    box7SsTips: round2(box7SsTips),
+    box10DependentCare: round2(dependentCare),
+    box12: BOX12_ORDER.filter((c) => round2(codes.get(c) ?? 0) !== 0).map((c) => ({ code: c, amount: round2(codes.get(c)!) })),
+    box14bTippedOccupationCodes: taxYear >= 2026 ? [...occupationCodes].sort().slice(0, 2) : [],
+    box13ThirdPartySickPay: thirdPartySick,
     stateLines,
     sourceItemCount: items.length,
   };

@@ -7,6 +7,8 @@ import { RecordTemplate } from '@/components/templates';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
 import { Avatar, Badge, Button, Card, CardContent, EmptyState, Label, MetricCard, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
 import { StateCertificateCard } from '@/components/payroll/StateCertificateCard';
+import { TaxWithholdingCard } from '@/components/payroll/TaxWithholdingCard';
+import { RothCatchUpCard } from '@/components/payroll/RothCatchUpCard';
 import { getCareerPosition } from '@/lib/career126Api';
 import { CareerLadderView } from '@/pages/career/CareerPosition';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -184,6 +186,8 @@ export function PersonRecord() {
             </div>
           )}
           {can('process:payroll') && <StateCertificateCard mode="hr" associateId={a.id} />}
+          {can('process:payroll') && <TaxWithholdingCard associateId={a.id} />}
+          {can('process:payroll') && <RothCatchUpCard associateId={a.id} />}
         </div>
       ),
     },

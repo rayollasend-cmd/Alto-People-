@@ -28,6 +28,7 @@ import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 import { computeStatementSnapshot, type StatementSnapshot } from '../lib/clientStatement.js';
+import { claimAdjustmentsForStatement } from '../lib/payBillLink.js';
 import { orgDateKey, startOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
   buildClientServiceReport,
@@ -831,6 +832,9 @@ clientsRouter.post('/:id/statements', STATEMENTS, async (req, res, next) => {
     if (existing?.status === 'FINAL') {
       throw new HttpError(409, 'already_final', 'This period is finalized — its snapshot no longer changes.');
     }
+    if ((existing?.snapshot as unknown as StatementSnapshot | undefined)?.adjustmentsOnly) {
+      throw new HttpError(409, 'adjustments_statement', 'This is an adjustments-only statement — refresh it from the pay and bill desk.');
+    }
     const snapshot = await computeStatementSnapshot(prisma, client.id, start, endExclusive);
     const row = existing
       ? await prisma.clientStatement.update({
@@ -892,9 +896,13 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
       // Invoicing: due on the client's terms; the standing PO unless the
       // statement already carries its own (lib/statementDunning).
       const terms = await finalizationTerms(tx, row.clientId, finalizedAt);
+      // Payroll's adjustments (retro rebills, contract premiums) are claimed by
+      // the statement that finalizes first; the frozen snapshot keeps exactly those.
+      const snapshot = await claimAdjustmentsForStatement(tx, row.id, row.snapshot as unknown as StatementSnapshot, finalizedAt);
       return tx.clientStatement.update({
         where: { id: row.id },
         data: {
+          snapshot: snapshot as unknown as Prisma.InputJsonValue,
           status: 'FINAL',
           number: (max._max.number ?? 0) + 1,
           finalizedById: user.id,

@@ -199,14 +199,16 @@ describe('the guided close', () => {
     return { agent, runId: created.body.id as string };
   }
 
-  it('walks the six steps and blocks finalizing on an unsupported state', async () => {
+  const step = (body: { steps: Array<{ key: string; state: string }> }, key: string) => body.steps.find((s) => s.key === key)?.state;
+
+  it('walks the steps and blocks finalizing on an unsupported state', async () => {
     const { agent, runId } = await seedDraft('AR');
     const close = await agent.get(`/payroll/runs/${runId}/close`);
     expect(close.status).toBe(200);
-    expect(close.body.steps.map((s: { key: string }) => s.key)).toEqual(['readiness', 'exceptions', 'approve', 'disburse', 'deposits', 'quickbooks']);
+    expect(close.body.steps.map((s: { key: string }) => s.key)).toEqual(['readiness', 'exceptions', 'payPreview', 'approve', 'disburse', 'deposits', 'quickbooks']);
     expect(close.body.steps[0].state).toBe('blocked');
     expect(close.body.readiness.unsupportedState[0]).toContain('AR');
-    expect(close.body.steps[2].state).toBe('blocked');
+    expect(step(close.body, 'approve')).toBe('blocked');
 
     const fin = await agent.post(`/payroll/runs/${runId}/finalize`);
     expect(fin.status).toBe(409);
@@ -218,8 +220,8 @@ describe('the guided close', () => {
     const fin = await agent.post(`/payroll/runs/${runId}/finalize`);
     expect(fin.status).toBe(200);
     const close = await agent.get(`/payroll/runs/${runId}/close`);
-    expect(close.body.steps[2].state).toBe('done');
-    expect(close.body.steps[3].state).toBe('current');
-    expect(close.body.steps[5].state).toBe('skip');
+    expect(step(close.body, 'approve')).toBe('done');
+    expect(step(close.body, 'disburse')).toBe('current');
+    expect(step(close.body, 'quickbooks')).toBe('skip');
   });
 });

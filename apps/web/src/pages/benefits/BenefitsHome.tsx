@@ -55,6 +55,7 @@ const KIND_LABEL: Record<BenefitsPlanKind, string> = {
   RETIREMENT_403B: '403(b)',
   LIFE_INSURANCE: 'Life insurance',
   DISABILITY: 'Disability',
+  TRUMP_ACCOUNT: 'Trump account (employer)',
 };
 
 function isActiveEnrollment(e: BenefitsEnrollment): boolean {
@@ -391,6 +392,8 @@ function EnrollDialog({
   const [amountError, setAmountError] = useState<string | null>(null);
   const [coverageStarts, setCoverageStarts] = useState(ymdLocal());
   const [dateError, setDateError] = useState<string | null>(null);
+  const [roth, setRoth] = useState(false);
+  const isRetirement = plan?.kind === 'RETIREMENT_401K' || plan?.kind === 'RETIREMENT_403B';
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -402,6 +405,7 @@ function EnrollDialog({
     }
     setAmountError(null);
     setDateError(null);
+    setRoth(false);
   }, [plan]);
 
   // Live math for the annualized line under the amount field. 26 biweekly
@@ -434,6 +438,7 @@ function EnrollDialog({
         planId: plan.id,
         electedAmountCentsPerPeriod: cents,
         effectiveDate: coverageStarts,
+        ...(isRetirement ? { rothElection: roth } : {}),
       });
       toast.success(`Enrolled in ${plan.name}.`);
       onEnrolled();
@@ -461,7 +466,7 @@ function EnrollDialog({
             label="Election amount (USD/period)"
             required
             error={amountError}
-            hint="Pre-tax — reduces your taxable wages on the paystub."
+            hint={isRetirement && roth ? 'Roth — taken after tax; qualified withdrawals are tax-free.' : 'Pre-tax — reduces your taxable wages on the paystub.'}
           >
             {(p) => (
               <Input
@@ -490,6 +495,15 @@ function EnrollDialog({
               )}
               .
             </p>
+          )}
+          {isRetirement && (
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-silver">
+              <input type="checkbox" checked={roth} onChange={(e) => setRoth(e.target.checked)} className="mt-0.5 rounded border-navy-secondary" />
+              <span>
+                Make my contributions Roth (after tax)
+                <span className="block text-xs">The yearly limit is the same either way. From 2026, catch-up contributions are Roth for higher earners.</span>
+              </span>
+            </label>
           )}
           <Field label="Coverage starts" required error={dateError}>
             {(p) => (
