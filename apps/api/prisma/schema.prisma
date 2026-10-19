@@ -11082,6 +11082,10 @@ model Ride {
   waivedAt              DateTime?     @db.Timestamptz(6)
   waivedById            String?       @db.Uuid
   waiveReason           String?       @db.VarChar(300)
+  /// MANAGER (waived on purpose) | NOT_AUTHORIZED (no current signed authorization when marked)
+  waiveKind             String?       @db.VarChar(16)
+  /// What the ride would have cost when it went uncharged for want of an authorization.
+  uncollectedCents      Int           @default(0)
   chargedRunId          String?       @db.Uuid
   chargedItemId         String?       @db.Uuid
   chargedAt             DateTime?     @db.Timestamptz(6)

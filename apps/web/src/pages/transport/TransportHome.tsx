@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowDown,
@@ -43,6 +43,8 @@ import {
   getLiveBoard,
   getTransportBoard,
   getRideAuthorizations,
+  listUnsignedRiders,
+  remindUnsignedRiders,
   getTransportCharges,
   getTransportSettings,
   type GeocoderStatus,
@@ -1764,14 +1766,31 @@ function RidesTab({ manage }: { manage: boolean }) {
                 key: 'owed',
                 header: 'Owed',
                 accessor: (r) => (r.waived ? 0 : r.owedCents),
-                csv: (r) => (r.waived ? 'waived' : r.owedCents > 0 ? cents(r.owedCents) : ''),
+                csv: (r) => (r.waiveKind === 'NOT_AUTHORIZED' ? 'not authorized' : r.waived ? 'waived' : r.owedCents > 0 ? cents(r.owedCents) : ''),
                 sortable: true,
                 searchable: false,
                 align: 'right',
                 className: 'tabular-nums',
                 cell: (r) => (
                   <>
-                    {r.waived ? <span className="text-success">waived</span> : r.owedCents > 0 ? cents(r.owedCents) : '—'}
+                    {r.waiveKind === 'NOT_AUTHORIZED' ? (
+                      // Not a decision anyone made: the rider had no current signed authorization.
+                      <span className="text-warning" title={r.waiveReason ?? undefined}>
+                        Not authorized
+                        {(r.uncollectedCents ?? 0) > 0 && <span className="block text-2xs text-silver">{cents(r.uncollectedCents ?? 0)} not charged</span>}
+                      </span>
+                    ) : r.waived ? (
+                      <span className="text-success" title={r.waiveReason ?? undefined}>
+                        Waived
+                        {r.waiveReason && <span className="block max-w-[14rem] truncate text-2xs text-silver">{r.waiveReason}</span>}
+                      </span>
+                    ) : r.owedCents > 0 ? (
+                      cents(r.owedCents)
+                    ) : r.signatureNeeded ? (
+                      <span className="text-warning" title={r.signatureNeeded}>Needs signature</span>
+                    ) : (
+                      '—'
+                    )}
                     {r.charged && <div className="text-2xs text-silver">from pay</div>}
                   </>
                 ),
@@ -2605,12 +2624,13 @@ function ChargesTab() {
         </Button>
       </div>
       {totals && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <MetricCard label="Rides" value={totals.rides} />
           <MetricCard label="No-shows" value={totals.noShows} />
           <MetricCard label="Still owed" value={cents(totals.owedCents)} hint="comes out at the next payroll" />
           <MetricCard label="Taken from pay" value={cents(totals.takenCents)} />
-          <MetricCard label="Waived" value={cents(totals.waivedCents)} />
+          <MetricCard label="Waived" value={cents(totals.waivedCents)} hint="by transportation, with a reason" />
+          <MetricCard label="Not authorized" value={cents(totals.unauthorizedCents ?? 0)} hint="no signed authorization — not charged" accent={(totals.unauthorizedCents ?? 0) > 0} />
         </div>
       )}
       {totals && ((totals.deferredCents ?? 0) > 0 || (totals.unauthorizedCents ?? 0) > 0) && (
@@ -2689,7 +2709,7 @@ function SettingsTab({ manage }: { manage: boolean }) {
         geocoder={settings.data.geocoder ?? null}
         manage={manage}
       />
-      <AuthorizationsSection />
+      <AuthorizationsSection manage={manage} />
     </div>
   );
 }
@@ -2728,7 +2748,7 @@ function RateHistory({ rates }: { rates: RideRate[] }) {
 }
 
 /** Brief 1A-3: who has signed the ride charge authorization, and who must. */
-function AuthorizationsSection() {
+function AuthorizationsSection({ manage }: { manage: boolean }) {
   const q = useQuery({ queryKey: ['transport', 'authorizations'], queryFn: getRideAuthorizations });
   const rows = q.data?.rows ?? [];
   const signed = rows.filter((r) => r.status === 'current').length;
@@ -2739,10 +2759,11 @@ function AuthorizationsSection() {
       <div>
         <h3 className="text-sm font-semibold text-white">Authorizations</h3>
         <p className="text-xs text-silver">
-          A rider is charged only with a signed written authorization on file that names the rate in force. A rate change asks everyone to sign again
-          before their next booking.
+          A rider is charged only with a signed written authorization on file that covers the fare. A signature covers any fare up to the one signed
+          for, so only a rate increase asks everyone to sign again.
         </p>
       </div>
+      <UnsignedRiders manage={manage} />
       {q.isLoading ? (
         <Skeleton className="h-24" />
       ) : q.isError ? (
@@ -2777,6 +2798,66 @@ function AuthorizationsSection() {
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Riders with a ride coming up whose authorization doesn't cover it: their
+ * rides would be marked and cost them nothing. Ask them to sign first.
+ */
+function UnsignedRiders({ manage }: { manage: boolean }) {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ['transport', 'unsigned'], queryFn: listUnsignedRiders });
+  const remind = useMutation({
+    mutationFn: (ids?: string[]) => remindUnsignedRiders(ids),
+    onSuccess: (r) => {
+      toast.success(r.sent ? `Asked ${r.sent} ${r.sent === 1 ? 'rider' : 'riders'} to sign${r.skipped ? ` (${r.skipped} reminded in the last day or not reachable)` : ''}.` : 'Everyone here was reminded in the last day.');
+      void queryClient.invalidateQueries({ queryKey: ['transport', 'unsigned'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not send the reminders.'),
+  });
+  const people = q.data?.people ?? [];
+  if (q.isLoading) return <Skeleton className="h-20" />;
+  if (q.isError || people.length === 0) return null;
+  const atRisk = people.reduce((n, p) => n + p.atRiskCents, 0);
+  return (
+    <Card className="border-warning/40">
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink">
+              {people.length} {people.length === 1 ? 'rider has' : 'riders have'} a ride coming up without a signed authorization
+            </p>
+            <p className="mt-0.5 text-xs text-silver">
+              Those rides will be marked but not charged — {cents(atRisk)} in fares over the next two weeks. Ask them to sign before they ride.
+            </p>
+          </div>
+          {manage && (
+            <Button size="sm" loading={remind.isPending} disabled={remind.isPending || !people.some((p) => p.canNotify)} onClick={() => remind.mutate(undefined)}>
+              Ask them to sign
+            </Button>
+          )}
+        </div>
+        <ul className="divide-y divide-navy-secondary text-sm">
+          {people.slice(0, 8).map((p) => (
+            <li key={p.associateId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span className="min-w-0">
+                <span className="block truncate text-ink">{p.name}</span>
+                <span className="block text-xs text-silver">
+                  Next ride {fmtDateTime(p.nextRideAt)} · {p.rides} {p.rides === 1 ? 'ride' : 'rides'} · {p.reason}
+                </span>
+              </span>
+              {manage && p.canNotify && (
+                <Button size="xs" variant="ghost" disabled={remind.isPending} onClick={() => remind.mutate([p.associateId])}>
+                  Remind
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+        {people.length > 8 && <p className="text-xs text-silver">and {people.length - 8} more</p>}
+      </CardContent>
+    </Card>
   );
 }
 

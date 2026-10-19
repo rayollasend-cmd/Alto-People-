@@ -1908,6 +1908,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'ride.waitlistNote': '{shift} servisi dolu — bekleme listesinde {position}. sırada olacaksınız. Bir koltuk açıldığında sıraya göre otomatik olarak sizin olur. Binmedikçe ücret alınmaz.',
   'ride.waitlistTitle': 'Bekleme listesinde · #{position}',
   'ride.waived': 'Muaf tutuldu',
+  'ride.notCharged': 'Ücret alınmadı — imzalı izin yok',
   'ride.whichShift': 'Hangi vardiya?',
   'ride.yourStore': 'mağazanız',
   'rmb.acrossReportOne': '1 raporda',

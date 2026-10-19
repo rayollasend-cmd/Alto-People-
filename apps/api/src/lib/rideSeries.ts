@@ -6,7 +6,7 @@ import { tenantJob } from './tenantJobs.js';
 import { tenantIdForWrite } from './tenant.js';
 import { dateKeyInZone } from './timeAnomalies.js';
 import { zonedWallTimeToUtcInstant } from './timezone.js';
-import { rideAuthorizationStatus } from './rideAuthorization.js';
+import { rideAuthorizationStatus, rideRateOn } from './rideAuthorization.js';
 import { shiftTargetAt, storeShiftWindows } from './transportSeats.js';
 import { OPEN_RIDE_STATUSES, bookableStores, getTransportSettings, noticeFor, serviceDateFor } from './transport.js';
 
@@ -126,6 +126,7 @@ export async function generateSeries(series: SeriesRow, now = new Date(), db: Db
       out.skipped += 1;
       continue;
     }
+    const rateThen = await rideRateOn(db, targetAt);
     const ride = await db.ride.create({
       data: {
         associateId: series.associateId,
@@ -140,8 +141,9 @@ export async function generateSeries(series: SeriesRow, now = new Date(), db: Db
         windowLabel: series.windowLabel,
         shortNotice: notice === 'short_notice',
         note: series.note,
-        fareCents: settings.fareCents,
-        noShowFeeCents: settings.noShowFeeCents,
+        // The fare in force on that ride's day, not today's.
+        fareCents: rateThen?.fareCents ?? settings.fareCents,
+        noShowFeeCents: rateThen?.noShowFeeCents ?? settings.noShowFeeCents,
         seriesId: series.id,
         createdById: series.createdById,
         tenantId: tenantIdForWrite(),

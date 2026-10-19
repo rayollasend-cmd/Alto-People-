@@ -34,6 +34,8 @@ import {
   rideChargeAuthorized,
   rideRateHistory,
   rideRateOn,
+  ridesNeedingSignature,
+  ridersNeedingSignature,
   setRideRate,
   signRideAuthorization,
   withdrawRideAuthorization,
@@ -675,6 +677,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
   });
   if (clash) throw new HttpError(409, 'duplicate', 'You already have a ride booked around then.');
 
+  const rateThen = await rideRateOn(prisma, targetAt);
   const ride = await prisma.ride.create({
     data: {
       associateId,
@@ -690,8 +693,9 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
       windowLabel,
       shortNotice,
       note: input.note || null,
-      fareCents: settings.fareCents,
-      noShowFeeCents: settings.noShowFeeCents,
+      // The fare in force on the ride's day: a ride booked before a rate change for a day after it pays the new rate.
+      fareCents: rateThen?.fareCents ?? settings.fareCents,
+      noShowFeeCents: rateThen?.noShowFeeCents ?? settings.noShowFeeCents,
       createdById: req.user!.id,
     },
     select: rideSelect,
@@ -927,7 +931,15 @@ transportRouter.get('/driver/runs', DRIVE, async (req, res) => {
     orderBy: { departAt: 'asc' },
     include: runInclude,
   });
-  res.json({ today, runs: runs.map(toRunView) });
+  // The driver sees, before boarding, who has no current signed authorization (their ride won't be charged).
+  const unsigned = await ridesNeedingSignature(prisma, runs.flatMap((r) => r.rides.map((x) => ({ id: x.id, associateId: x.associate.id, fareCents: x.fareCents, noShowFeeCents: x.noShowFeeCents, status: x.status }))));
+  res.json({
+    today,
+    runs: runs.map((r) => {
+      const v = toRunView(r);
+      return { ...v, rides: v.rides.map((x) => ({ ...x, signatureNeeded: unsigned.get(x.id) ?? null })) };
+    }),
+  });
 });
 
 /**
@@ -1071,7 +1083,7 @@ transportRouter.post('/driver/rides/:id/board', DRIVE, async (req, res) => {
   const charge = await chargeUnder(ride.associate.id, ride, now);
   const updated = await prisma.ride.update({
     where: { id: ride.id },
-    data: { status: 'BOARDED', boardedAt: now, chargeCents: charge.ok ? ride.fareCents : 0, ...charge.data },
+    data: { status: 'BOARDED', boardedAt: now, chargeCents: charge.ok ? ride.fareCents : 0, uncollectedCents: charge.ok ? 0 : ride.fareCents, ...charge.data },
     select: rideSelect,
   });
   enqueueAudit(
@@ -1138,7 +1150,7 @@ transportRouter.post('/driver/rides/:id/no-show', DRIVE, async (req, res) => {
   const charge = await chargeUnder(ride.associate.id, ride, now);
   const updated = await prisma.ride.update({
     where: { id: ride.id },
-    data: { status: 'NO_SHOW', noShowAt: now, chargeCents: charge.ok ? ride.noShowFeeCents : 0, ...charge.data },
+    data: { status: 'NO_SHOW', noShowAt: now, chargeCents: charge.ok ? ride.noShowFeeCents : 0, uncollectedCents: charge.ok ? 0 : ride.noShowFeeCents, ...charge.data },
     select: rideSelect,
   });
   enqueueAudit(
@@ -1171,7 +1183,7 @@ transportRouter.post('/driver/rides/:id/undo', DRIVE, async (req, res) => {
   if (ride.chargedRunId) throw new HttpError(409, 'already_charged', 'Payroll has already taken this charge.');
   const updated = await prisma.ride.update({
     where: { id: ride.id },
-    data: { status: 'SCHEDULED', boardedAt: null, noShowAt: null, chargeCents: 0, authorizedSignatureId: null, waivedAt: null, waiveReason: null },
+    data: { status: 'SCHEDULED', boardedAt: null, noShowAt: null, chargeCents: 0, authorizedSignatureId: null, waivedAt: null, waiveReason: null, waiveKind: null, uncollectedCents: 0 },
     select: rideSelect,
   });
   enqueueAudit(
@@ -1199,7 +1211,7 @@ async function chargeUnder(
   return {
     ok: false,
     reason: check.reason,
-    data: { authorizedSignatureId: null, waivedAt: now, waiveReason: `Not charged: ${check.reason ?? 'no signed authorization on file.'}`.slice(0, 300) },
+    data: { authorizedSignatureId: null, waivedAt: now, waiveKind: 'NOT_AUTHORIZED', waiveReason: `Not charged: ${check.reason ?? 'no signed authorization on file.'}`.slice(0, 300) },
   };
 }
 
@@ -2093,9 +2105,55 @@ const DateQuery = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optio
 
 /** Rides with their shift's seats and each one's place in line. */
 async function withSeats(rides: RideRowOf[]) {
-  const trips = await tripStates(rides.map((r) => ({ ...r, locationId: r.location.id })));
-  return rides.map((r) => ({ ...toRideView(r), ...seatView(r, trips.stateOf({ ...r, locationId: r.location.id })) }));
+  const [trips, unsigned] = await Promise.all([
+    tripStates(rides.map((r) => ({ ...r, locationId: r.location.id }))),
+    ridesNeedingSignature(prisma, rides.map((r) => ({ id: r.id, associateId: r.associate.id, fareCents: r.fareCents, noShowFeeCents: r.noShowFeeCents, status: r.status }))),
+  ]);
+  return rides.map((r) => ({
+    ...toRideView(r),
+    ...seatView(r, trips.stateOf({ ...r, locationId: r.location.id })),
+    // Would go uncharged if marked now: no current signed authorization covers its fare.
+    signatureNeeded: unsigned.get(r.id) ?? null,
+  }));
 }
+
+/** Who still has to sign before their next ride, and what is at stake. */
+transportRouter.get('/authorizations/missing', VIEW, async (_req, res) => {
+  const people = await ridersNeedingSignature(prisma);
+  res.json({ people: people.map(({ userId, ...p }) => ({ ...p, canNotify: !!userId })) });
+});
+
+/** Ask riders to sign (all who still need to, or the ones named). At most once a day per person. */
+transportRouter.post('/authorizations/remind', MANAGE, async (req, res) => {
+  const body = z.object({ associateIds: z.array(z.string().uuid()).max(500).optional() }).parse(req.body ?? {});
+  const people = (await ridersNeedingSignature(prisma)).filter((p) => !body.associateIds || body.associateIds.includes(p.associateId));
+  const since = new Date(Date.now() - 86_400_000);
+  let sent = 0;
+  let skipped = 0;
+  for (const p of people) {
+    if (!p.userId) {
+      skipped += 1;
+      continue;
+    }
+    const recent = await prisma.notification.findFirst({ where: { recipientUserId: p.userId, category: 'transport', linkUrl: '/rides?sign=1', createdAt: { gte: since } }, select: { id: true } });
+    if (recent) {
+      skipped += 1;
+      continue;
+    }
+    void trackNotificationWork(
+      notifyAssociate(p.associateId, {
+        subject: 'Sign your ride authorization',
+        body: `Your next ride is ${fmtTime(new Date(p.nextRideAt), DEFAULT_TIMEZONE)} on ${dateKeyInZone(new Date(p.nextRideAt), DEFAULT_TIMEZONE)}. Rides can only be taken from pay with your signed authorization — it takes a minute.`,
+        category: 'transport',
+        linkUrl: '/rides?sign=1',
+        emailFallback: true,
+      }),
+    );
+    sent += 1;
+  }
+  enqueueAudit({ actorUserId: req.user!.id, action: 'transport.authorization_reminders', entityType: 'RideConsent', entityId: 'reminders', metadata: { sent, skipped } }, 'transport');
+  res.json({ sent, skipped });
+});
 
 transportRouter.get('/board', VIEW, async (req, res) => {
   const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
@@ -2222,7 +2280,7 @@ transportRouter.post('/rides/:id/waive', MANAGE, async (req, res) => {
   if (ride.chargedRunId) {
     throw new HttpError(409, 'already_charged', 'Payroll already took this charge — refund it as a reimbursement instead.');
   }
-  await prisma.ride.update({ where: { id }, data: { waivedAt: new Date(), waivedById: req.user!.id, waiveReason: reason } });
+  await prisma.ride.update({ where: { id }, data: { waivedAt: new Date(), waivedById: req.user!.id, waiveReason: reason, waiveKind: 'MANAGER' } });
   enqueueAudit(
     { actorUserId: req.user!.id, action: 'transport.charge_waived', entityType: 'Ride', entityId: id, metadata: { reason, cents: ride.chargeCents } },
     'transport',
@@ -2958,7 +3016,7 @@ transportRouter.get('/fleet', VIEW, async (req, res) => {
         vanId: true,
         serviceDate: true,
         status: true,
-        rides: { select: { status: true, chargeCents: true, waivedAt: true } },
+        rides: { select: { status: true, chargeCents: true, waivedAt: true, waiveKind: true, uncollectedCents: true } },
         van: { select: { capacity: true } },
       },
     }),
@@ -3002,7 +3060,9 @@ transportRouter.get('/fleet', VIEW, async (req, res) => {
         ...toVanView(v),
         stats: {
           revenueCents: rides.reduce((n, r) => n + (r.waivedAt ? 0 : r.chargeCents), 0),
-          waivedCents: rides.reduce((n, r) => n + (r.waivedAt ? r.chargeCents : 0), 0),
+          waivedCents: rides.reduce((n, r) => n + (r.waivedAt && r.waiveKind !== 'NOT_AUTHORIZED' ? r.chargeCents : 0), 0),
+          // Fares and fees not taken because the rider had no current signed authorization.
+          notAuthorizedCents: rides.reduce((n, r) => n + (r.waiveKind === 'NOT_AUTHORIZED' ? r.uncollectedCents : 0), 0),
           runs: mine.length,
           riders: carried,
           noShows: rides.filter((r) => r.status === 'NO_SHOW').length,
@@ -3120,9 +3180,12 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
     .parse(req.query);
   const format = typeof req.query.format === 'string' && req.query.format === 'csv' ? 'csv' : 'json';
   const rides = await prisma.ride.findMany({
-    where: { serviceDate: { gte: q.from, lte: q.to }, chargeCents: { gt: 0 } },
+    // Charged rides, and the ones left uncharged for want of a signed authorization.
+    where: { serviceDate: { gte: q.from, lte: q.to }, OR: [{ chargeCents: { gt: 0 } }, { uncollectedCents: { gt: 0 } }] },
     select: {
       chargeCents: true,
+      uncollectedCents: true,
+      waiveKind: true,
       status: true,
       waivedAt: true,
       chargedRunId: true,
@@ -3163,7 +3226,8 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
     };
     if (r.status === 'NO_SHOW') row.noShows += 1;
     else row.rides += 1;
-    if (r.waivedAt) row.waivedCents += r.chargeCents;
+    if (r.waiveKind === 'NOT_AUTHORIZED') row.unauthorizedCents += r.uncollectedCents;
+    else if (r.waivedAt) row.waivedCents += r.chargeCents;
     else if (r.chargedRunId) row.takenCents += r.chargeCents;
     else if (!r.authorizedSignatureId) row.unauthorizedCents += r.chargeCents;
     else row.owedCents += owedCents(r);

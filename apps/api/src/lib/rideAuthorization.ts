@@ -117,7 +117,10 @@ export function authorizationCovers(
   if (c.version !== RIDE_AUTHORIZATION_VERSION) return { ok: false, reason: 'The authorization wording changed; a new signature is needed.' };
   if (c.acceptedAt > on) return { ok: false, reason: 'Signed after the ride.' };
   if (!rate) return { ok: false, reason: 'No ride rate is set.' };
-  if (c.fareCents !== rate.fareCents || c.noShowFeeCents !== rate.noShowFeeCents) return { ok: false, reason: 'The rate changed since it was signed; a new signature is needed.' };
+  // The signature authorizes deductions UP TO the amounts signed for: a ride
+  // booked at a lower fare (or a rate that went down) is still covered; a
+  // higher one needs a new signature.
+  if (rate.fareCents > c.fareCents || rate.noShowFeeCents > c.noShowFeeCents) return { ok: false, reason: 'The rate went up since it was signed; a new signature is needed.' };
   return { ok: true, reason: null };
 }
 
@@ -221,3 +224,48 @@ export async function withdrawRideAuthorization(db: Db, associateId: string, use
 }
 
 export { defaultPrisma as rideAuthorizationDb };
+
+/**
+ * Which of these upcoming rides would go uncharged today for want of a
+ * current signed authorization covering their fare — so the driver and
+ * transportation see it before the rider boards, and the rider can be
+ * asked to sign. One query for all the riders.
+ */
+export async function ridesNeedingSignature(
+  db: Db,
+  rides: Array<{ id: string; associateId: string; fareCents: number; noShowFeeCents: number; status: string }>,
+  now: Date = new Date(),
+): Promise<Map<string, string>> {
+  const open = rides.filter((r) => r.status === 'REQUESTED' || r.status === 'SCHEDULED');
+  const out = new Map<string, string>();
+  if (open.length === 0) return out;
+  const consents = await db.rideConsent.findMany({ where: { associateId: { in: [...new Set(open.map((r) => r.associateId))] } } });
+  const byAssociate = new Map(consents.map((c) => [c.associateId, c]));
+  for (const r of open) {
+    // A free ride (an evacuation) needs nothing signed.
+    if (r.fareCents === 0 && r.noShowFeeCents === 0) continue;
+    const check = authorizationCovers(byAssociate.get(r.associateId) ?? null, r, now);
+    if (!check.ok) out.set(r.id, check.reason ?? 'No signed authorization on file.');
+  }
+  return out;
+}
+
+/** The people who still need to sign: anyone with an open ride in the next `days` whose authorization doesn't cover it. */
+export async function ridersNeedingSignature(db: Db, now: Date = new Date(), days = 14) {
+  const rides = await db.ride.findMany({
+    where: { status: { in: ['REQUESTED', 'SCHEDULED'] }, targetAt: { gte: new Date(now.getTime() - 3_600_000), lt: new Date(now.getTime() + days * 86_400_000) } },
+    select: { id: true, associateId: true, fareCents: true, noShowFeeCents: true, status: true, targetAt: true, associate: { select: { firstName: true, lastName: true, user: { select: { id: true } } } } },
+    orderBy: { targetAt: 'asc' },
+  });
+  const need = await ridesNeedingSignature(db, rides, now);
+  const people = new Map<string, { associateId: string; name: string; userId: string | null; nextRideAt: string; rides: number; reason: string; atRiskCents: number }>();
+  for (const r of rides) {
+    const reason = need.get(r.id);
+    if (!reason) continue;
+    const p = people.get(r.associateId) ?? { associateId: r.associateId, name: `${r.associate.firstName} ${r.associate.lastName}`, userId: r.associate.user?.id ?? null, nextRideAt: r.targetAt.toISOString(), rides: 0, reason, atRiskCents: 0 };
+    p.rides += 1;
+    p.atRiskCents += r.fareCents;
+    people.set(r.associateId, p);
+  }
+  return [...people.values()];
+}

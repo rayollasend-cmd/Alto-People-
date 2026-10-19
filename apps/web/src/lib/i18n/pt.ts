@@ -1909,6 +1909,7 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'ride.waitlistNote': 'A van do turno {shift} está lotada — você será o nº {position} na lista de espera. Quando um assento abrir, é seu automaticamente, por ordem de chegada. Nada é cobrado a menos que você viaje.',
   'ride.waitlistTitle': 'Na lista de espera · nº {position}',
   'ride.waived': 'Isento',
+  'ride.notCharged': 'Sem cobrança — sem autorização assinada',
   'ride.whichShift': 'Qual turno?',
   'ride.yourStore': 'sua loja',
   'rmb.acrossReportOne': 'em 1 relatório',

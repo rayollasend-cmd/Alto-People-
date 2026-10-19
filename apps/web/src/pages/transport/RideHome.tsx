@@ -1081,7 +1081,11 @@ function RideRow({ ride, action }: { ride: Ride; action?: React.ReactNode }) {
           <RideBadge ride={ride} size="sm" />
           {ride.coRiders && ride.coRiders.length > 0 && <FaceStack faces={ride.coRiders} size={20} max={5} />}
           {ride.owedCents > 0 && <span className="text-xs tabular-nums text-silver">{cents(ride.owedCents)}</span>}
-          {ride.waived && <span className="text-xs text-success">{t('ride.waived')}</span>}
+          {ride.waiveKind === 'NOT_AUTHORIZED' ? (
+            <span className="text-xs text-warning">{t('ride.notCharged')}</span>
+          ) : (
+            ride.waived && <span className="text-xs text-success">{t('ride.waived')}</span>
+          )}
         </div>
       </div>
       {action}

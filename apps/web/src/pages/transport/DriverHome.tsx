@@ -1289,6 +1289,11 @@ function RiderAtStop({
                 {t(`drive.signal.${ride.riderSignal.kind}` as MessageKey)}
               </Badge>
             )}
+            {ride.signatureNeeded && ride.status === 'SCHEDULED' && (
+              <Badge size="sm" variant="pending" title={ride.signatureNeeded}>
+                {t('drive.notSigned')}
+              </Badge>
+            )}
           </div>
           {ride.direction === 'FROM_WORK' && <div className="text-xs text-silver">{t('drive.dropAt', { place: ride.pickup.kind === 'stop' ? ride.pickup.name : ride.pickup.address })}</div>}
           {ride.note && <div className="text-xs text-gold">{ride.note}</div>}

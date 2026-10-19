@@ -148,6 +148,10 @@ describe('the signed written authorization', () => {
     expect(boarded.status).toBe(200);
     expect(boarded.body.ride).toMatchObject({ status: 'BOARDED', owedCents: 0, authorized: false, waived: true });
     expect(boarded.body.ride.waiveReason).toMatch(/Not charged: Authorization withdrawn/);
+    // Not a decision anyone made: kept apart from a manager's waiver, with what it would have cost.
+    expect(boarded.body.ride).toMatchObject({ waiveKind: 'NOT_AUTHORIZED', uncollectedCents: 500 });
+    const report = await s.directorAgent.get(`/transport/charges?from=${ride.serviceDate}&to=${ride.serviceDate}`);
+    expect(report.body.totals).toMatchObject({ unauthorizedCents: 500, waivedCents: 0 });
 
     const list = await s.directorAgent.get('/transport/authorizations');
     expect(list.body.rows[0]).toMatchObject({ associateId: s.kim.id, status: 'withdrawn' });
@@ -203,7 +207,7 @@ describe('the configurable rate', () => {
 
     // Kim's signature names $5/$1: not current any more.
     const me = await s.kimAgent.get('/transport/me');
-    expect(me.body.authorization).toMatchObject({ current: false, reason: expect.stringMatching(/rate changed/), fareCents: 500 });
+    expect(me.body.authorization).toMatchObject({ current: false, reason: expect.stringMatching(/rate went up/), fareCents: 500 });
     expect(me.body.authorization.agreement).toMatchObject({ fareCents: 600, noShowFeeCents: 150 });
     expect((await book(s.kimAgent, s.store, s.stop)).body.error.code).toBe('authorization_required');
     expect((await s.directorAgent.get('/transport/authorizations')).body.rows[0]).toMatchObject({ status: 'outdated' });
@@ -265,7 +269,81 @@ describe('the configurable rate', () => {
     expect(authorizationCovers({ ...good, withdrawnAt: new Date('2026-05-02T00:00:00.000Z') }, rate, on).ok).toBe(true);
     expect(authorizationCovers({ ...good, version: RIDE_AUTHORIZATION_VERSION + 1 }, rate, on).reason).toMatch(/wording changed/);
     expect(authorizationCovers({ ...good, acceptedAt: new Date('2026-05-02T00:00:00.000Z') }, rate, on).reason).toMatch(/after/);
-    expect(authorizationCovers(good, { fareCents: 600, noShowFeeCents: 100 }, on).reason).toMatch(/rate changed/);
+    expect(authorizationCovers(good, { fareCents: 600, noShowFeeCents: 100 }, on).reason).toMatch(/rate went up/);
+    expect(authorizationCovers(good, { fareCents: 500, noShowFeeCents: 150 }, on).reason).toMatch(/rate went up/);
+    // A signature covers any fare up to the one signed for: a lower fare (or a free ride) is still covered.
+    expect(authorizationCovers(good, { fareCents: 400, noShowFeeCents: 100 }, on)).toEqual({ ok: true, reason: null });
+    expect(authorizationCovers(good, { fareCents: 0, noShowFeeCents: 0 }, on).ok).toBe(true);
     expect(authorizationCovers(good, null, on).reason).toMatch(/No ride rate/);
+  });
+});
+
+describe('rides that would go uncharged', () => {
+  it('a ride is booked at the rate in force on its day, and shows it needs a new signature', async () => {
+    const s = await seed();
+    await sign(s.kimAgent);
+    const inTenDays = ymd(new Date(Date.now() + 10 * 86_400_000));
+    await s.directorAgent.put('/transport/settings').send({ fareCents: 700, noShowFeeCents: 200, cutoffHours: 10, effectiveFrom: inTenDays });
+    // Booked today for a day after the increase: the new fare, which Kim's $5 signature doesn't cover.
+    const later = (await book(s.kimAgent, s.store, s.stop, 12 * 24)).body.ride;
+    expect(later).toMatchObject({ fareCents: 700, noShowFeeCents: 200 });
+    const soon = (await book(s.kimAgent, s.store, s.stop)).body.ride;
+    expect(soon).toMatchObject({ fareCents: 500 });
+    const rides = (await s.directorAgent.get('/transport/rides')).body.rides as Array<{ id: string; signatureNeeded: string | null }>;
+    expect(rides.find((r) => r.id === later.id)?.signatureNeeded).toMatch(/rate went up/);
+    expect(rides.find((r) => r.id === soon.id)?.signatureNeeded).toBeNull();
+  });
+
+  it('transportation sees who still has to sign, the driver sees it on the manifest, and reminders go once a day', async () => {
+    const s = await seed();
+    await sign(s.kimAgent);
+    const ride = (await book(s.kimAgent, s.store, s.stop)).body.ride;
+    await s.kimAgent.delete('/transport/me/authorization');
+    await s.directorAgent.post('/transport/runs').send({
+      vanId: s.van.id,
+      driverUserId: s.driver.id,
+      direction: 'TO_WORK',
+      serviceDate: ride.serviceDate,
+      departAt: inHours(19).toISOString(),
+      rides: [{ rideId: ride.id, pickupAt: inHours(19.5).toISOString() }],
+    });
+    const missing = await s.directorAgent.get('/transport/authorizations/missing');
+    expect(missing.status).toBe(200);
+    expect(missing.body.people).toEqual([expect.objectContaining({ associateId: s.kim.id, rides: 1, atRiskCents: 500, canNotify: true, reason: expect.stringMatching(/withdrawn/) })]);
+
+    const manifest = await s.driverAgent.get('/transport/driver/runs');
+    const onRun = manifest.body.runs.flatMap((r: { rides: Array<{ id: string; signatureNeeded: string | null }> }) => r.rides).find((r: { id: string }) => r.id === ride.id);
+    expect(onRun.signatureNeeded).toMatch(/withdrawn/);
+
+    expect((await s.directorAgent.post('/transport/authorizations/remind').send({})).body).toEqual({ sent: 1, skipped: 0 });
+    // Wait for the reminder to land, then a second ask the same day is skipped.
+    const { flushPendingNotifications } = await import('../../lib/notify.js');
+    await flushPendingNotifications();
+    expect((await s.directorAgent.post('/transport/authorizations/remind').send({})).body).toEqual({ sent: 0, skipped: 1 });
+    const note = await prisma.notification.findFirst({ where: { recipientUserId: s.kimUser.id, linkUrl: '/rides?sign=1' } });
+    expect(note?.subject).toBe('Sign your ride authorization');
+
+    // A driver can't send reminders.
+    expect((await s.driverAgent.post('/transport/authorizations/remind').send({})).status).toBe(403);
+  });
+
+  it("a manager's waiver is its own kind and counts as waived", async () => {
+    const s = await seed();
+    await sign(s.kimAgent);
+    const ride = (await book(s.kimAgent, s.store, s.stop)).body.ride;
+    await s.directorAgent.post('/transport/runs').send({
+      vanId: s.van.id,
+      driverUserId: s.driver.id,
+      direction: 'TO_WORK',
+      serviceDate: ride.serviceDate,
+      departAt: inHours(19).toISOString(),
+      rides: [{ rideId: ride.id, pickupAt: inHours(19.5).toISOString() }],
+    });
+    await s.driverAgent.post(`/transport/driver/rides/${ride.id}/board`);
+    expect((await s.directorAgent.post(`/transport/rides/${ride.id}/waive`).send({ reason: 'The van was 20 minutes late.' })).status).toBe(200);
+    const row = await prisma.ride.findUniqueOrThrow({ where: { id: ride.id } });
+    expect(row).toMatchObject({ waiveKind: 'MANAGER', uncollectedCents: 0 });
+    const report = await s.directorAgent.get(`/transport/charges?from=${ride.serviceDate}&to=${ride.serviceDate}`);
+    expect(report.body.totals).toMatchObject({ waivedCents: 500, unauthorizedCents: 0 });
   });
 });

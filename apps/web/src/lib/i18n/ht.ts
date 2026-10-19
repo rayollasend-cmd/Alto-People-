@@ -1909,6 +1909,7 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'ride.waitlistNote': 'Machin chif {shift} la plen — w ap #{position} sou lis datant lan. Lè yon plas ouvri, se pou ou otomatikman, premye rive premye sèvi. Anyen pa faktire sof si w vwayaje.',
   'ride.waitlistTitle': 'Sou lis datant · #{position}',
   'ride.waived': 'Egzante',
+  'ride.notCharged': 'Pa chaje — pa gen otorizasyon siyen',
   'ride.whichShift': 'Ki chif?',
   'ride.yourStore': 'magazen w',
   'rmb.acrossReportOne': 'nan 1 rapò',

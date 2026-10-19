@@ -90,6 +90,12 @@ export interface Ride {
   owedCents: number;
   waived: boolean;
   waiveReason: string | null;
+  /** MANAGER: transportation waived it on purpose. NOT_AUTHORIZED: no current signed authorization when marked. */
+  waiveKind?: 'MANAGER' | 'NOT_AUTHORIZED' | null;
+  /** What a ride left uncharged for want of an authorization would have cost. */
+  uncollectedCents?: number;
+  /** Set on an open ride that would go uncharged if marked now: why (no signature, rate went up …). */
+  signatureNeeded?: string | null;
   charged: boolean;
   boardedAt: string | null;
   completedAt: string | null;
@@ -631,6 +637,8 @@ export interface FleetVan extends Van {
   stats: {
     revenueCents: number;
     waivedCents: number;
+    /** Fares and fees not taken because the rider had no current signed authorization. */
+    notAuthorizedCents?: number;
     runs: number;
     riders: number;
     noShows: number;
@@ -1300,3 +1308,17 @@ export interface CostRow {
 
 export const getTransportCosts = (from: string, to: string) =>
   apiFetch<{ from: string; to: string; rows: CostRow[]; totals: CostRow; note: string }>(`/transport/costs?from=${from}&to=${to}`);
+
+/** Riders with an open ride soon whose authorization doesn't cover it. */
+export interface UnsignedRider {
+  associateId: string;
+  name: string;
+  nextRideAt: string;
+  rides: number;
+  reason: string;
+  atRiskCents: number;
+  canNotify: boolean;
+}
+export const listUnsignedRiders = () => apiFetch<{ people: UnsignedRider[] }>('/transport/authorizations/missing');
+export const remindUnsignedRiders = (associateIds?: string[]) =>
+  apiFetch<{ sent: number; skipped: number }>('/transport/authorizations/remind', { method: 'POST', body: associateIds ? { associateIds } : {} });

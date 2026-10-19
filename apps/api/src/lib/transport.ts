@@ -188,6 +188,8 @@ export const rideSelect = {
   chargeCents: true,
   waivedAt: true,
   waiveReason: true,
+  waiveKind: true,
+  uncollectedCents: true,
   chargedRunId: true,
   chargedAt: true,
   authorizedSignatureId: true,
@@ -290,6 +292,10 @@ export function toRideView(r: RideRow) {
     owedCents: owedCents(r),
     waived: !!r.waivedAt,
     waiveReason: r.waiveReason,
+    /** MANAGER: transportation waived it on purpose. NOT_AUTHORIZED: no current signed authorization when marked. */
+    waiveKind: (r.waiveKind as 'MANAGER' | 'NOT_AUTHORIZED' | null) ?? (r.waivedAt ? 'MANAGER' : null),
+    /** What a ride left uncharged for want of an authorization would have cost. */
+    uncollectedCents: r.uncollectedCents,
     charged: !!r.chargedRunId,
     authorized: !!r.authorizedSignatureId,
     boardedAt: r.boardedAt?.toISOString() ?? null,

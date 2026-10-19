@@ -448,6 +448,30 @@ describe('<TransportHome> — the command center', () => {
     expect(body.rides.map((r) => r.rideId)).toEqual(['r1', 'r2']);
   });
 
+  it('the rides list tells a manager’s waiver from a ride nobody could charge, and flags rides that still need a signature', async () => {
+    const base = { status: 'BOARDED' as const, owedCents: 0, waived: true, charged: false };
+    routes((path) => {
+      if (path.startsWith('/transport/board')) return board();
+      if (path.startsWith('/transport/rides')) {
+        return {
+          rides: [
+            ride({ id: 'r-auth', ...base, associate: { id: 'a1', name: 'Kim Nguyen' } as never, waiveKind: 'NOT_AUTHORIZED', uncollectedCents: 500, waiveReason: 'Not charged: No signed authorization on file.' }),
+            ride({ id: 'r-mgr', ...base, associate: { id: 'a2', name: 'Lee Park' } as never, waiveKind: 'MANAGER', waiveReason: 'The van was 20 minutes late.' }),
+            ride({ id: 'r-open', status: 'SCHEDULED', owedCents: 0, waived: false, associate: { id: 'a3', name: 'Ana Ruiz' } as never, signatureNeeded: 'The rate went up since it was signed; a new signature is needed.' }),
+          ],
+        };
+      }
+      return undefined;
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+    await userEvent.click(await screen.findByRole('tab', { name: /^Rides/ }));
+    expect(await screen.findByText('Not authorized')).toBeInTheDocument();
+    expect(screen.getByText('$5.00 not charged')).toBeInTheDocument();
+    expect(screen.getByText('Waived')).toBeInTheDocument();
+    expect(screen.getByText('The van was 20 minutes late.')).toBeInTheDocument();
+    expect(screen.getByText('Needs signature')).toBeInTheDocument();
+  });
+
   it('reads without acting for a view-only role', async () => {
     routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
     renderAs('EXECUTIVE_CHAIRMAN', <TransportHome />);

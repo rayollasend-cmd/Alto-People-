@@ -1909,6 +1909,7 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'ride.waitlistNote': 'Фургон зміни {shift} заповнений — ви будете №{position} у списку очікування. Коли звільниться місце, воно автоматично ваше, у порядку черги. Платити не треба, якщо ви не їдете.',
   'ride.waitlistTitle': 'У списку очікування · №{position}',
   'ride.waived': 'Скасовано',
+  'ride.notCharged': 'Без оплати — немає підписаного дозволу',
   'ride.whichShift': 'Яка зміна?',
   'ride.yourStore': 'ваш магазин',
   'rmb.acrossReportOne': 'в 1 звіті',
