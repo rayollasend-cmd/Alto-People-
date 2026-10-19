@@ -2120,3 +2120,13 @@ export function doorKeyForPath(shape: NavShape, pathname: string): DoorKey | nul
   }
   return null;
 }
+
+/**
+ * Names that depend on who is reading: under an associate's "My pay", their
+ * pay page is their paystubs, not "Payroll" (the office's word). Applied
+ * after applyTerms by every nav surface (Sidebar, phone menu).
+ */
+export function roleNavLabels(modules: ModuleNav[], role: string | undefined, t: (key: 'nav.paystubs') => string): ModuleNav[] {
+  if (role !== 'ASSOCIATE') return modules;
+  return modules.map((m) => (m.key === 'payroll' ? { ...m, label: t('nav.paystubs') } : m));
+}

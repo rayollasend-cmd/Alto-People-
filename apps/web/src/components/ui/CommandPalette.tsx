@@ -22,7 +22,8 @@ import {
 } from 'lucide-react';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
-import { DASHBOARD_NAV, visibleModules, applyTerms } from '@/lib/modules';
+import { DASHBOARD_NAV, visibleModules, applyTerms, roleNavLabels } from '@/lib/modules';
+import { useI18n } from '@/lib/i18n';
 import { useRecentModules } from '@/lib/navPersonalization';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
@@ -204,9 +205,10 @@ export function CommandPalette({
   // Design system §4.1: the pages this person opened last come first, so the
   // palette is a way back as much as a way in (the sidebar already shows them).
   const recentKeys = useRecentModules();
+  const { t: tr } = useI18n();
   const nav = useMemo(
-    () => applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules),
-    [user?.role, user?.regionId, can, tenant.modules, tenant.id, term],
+    () => roleNavLabels(applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules), user?.role, tr),
+    [user?.role, user?.regionId, can, tenant.modules, tenant.id, term, tr],
   );
   const items: PaletteItem[] = useMemo(() => [
     ...recentKeys.slice(0, 5).flatMap<PaletteItem>((key) => {

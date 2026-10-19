@@ -8,7 +8,7 @@ import {
   useKeyboardShortcutsHook,
 } from './KeyboardShortcutsDialog';
 import { Sidebar } from './Sidebar';
-import { Topbar } from './Topbar';
+import { StoreScopeStrip, Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
 import { BottomTabBar, tabBarHiddenFrom } from './BottomTabBar';
 import { InstallPrompt } from './InstallPrompt';
@@ -269,6 +269,7 @@ export function Layout() {
             onOpenCommandPalette={() => setPaletteOpen(true)}
             onOpenHelp={() => setHelpOpen(true)}
           />
+          <StoreScopeStrip />
           {/* Access pack: what was saved offline and waits to be sent. */}
           <OfflineQueueBanner />
           <main

@@ -18,11 +18,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
+import { useI18n } from '@/lib/i18n';
 import {
   applyTerms,
   DASHBOARD_NAV,
   doorKeyForPath,
   navShapeFor,
+  roleNavLabels,
   visibleModules,
   useActiveNavPath,
   type ModuleNav,
@@ -124,10 +126,11 @@ export function Sidebar() {
   const { can, user } = useAuth();
   const tenant = useTenant();
   const term = useTerm();
-  const visible = applyTerms(
-    visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }),
-    term,
-    tenant.modules,
+  const { t: tr } = useI18n();
+  const visible = roleNavLabels(
+    applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules),
+    user?.role,
+    tr,
   );
   const shape = useMemo(() => navShapeFor(visible, user?.role, term), [visible, user?.role, term]);
   const activePath = useActiveNavPath();

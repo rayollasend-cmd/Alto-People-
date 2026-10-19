@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, Sparkles, User, WifiOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, Sparkles, User, WifiOff, X } from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
 import { Link } from 'react-router-dom';
 import { useAuth, useRoleLabel } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
@@ -38,8 +39,13 @@ interface TopbarProps {
 // (their scope is pinned server-side) and on small screens (the per-page
 // pickers still exist there).
 function StoreScopeBar() {
-  const { enabled, clients, clientId, setClientId } = useStoreScope();
+  const { enabled, clients } = useStoreScope();
   if (!enabled || clients.length < 2) return null;
+  return <StoreScopeControl />;
+}
+
+function StoreScopeControl() {
+  const { clients, clientId, setClientId } = useStoreScope();
 
   if (clients.length > 6) {
     return (
@@ -464,3 +470,32 @@ function AssistantButton() {
     </Tooltip>
   );
 }
+
+/**
+ * Below desktop width the scope is chosen in the phone menu; when one client
+ * is chosen, a strip under the top bar says so (and clears it) so nobody reads a filtered
+ * page as the whole company.
+ */
+export function StoreScopeStrip() {
+  const { clients, clientId, setClientId } = useStoreScope();
+  const { t } = useI18n();
+  const chosen = clients.find((c) => c.id === clientId);
+  if (!chosen) return null;
+  // A slim strip under the top bar (the bar itself has no room on a phone).
+  return (
+    <div className="lg:hidden flex min-h-8 items-center gap-2 border-b border-gold/30 bg-gold/10 px-4 text-xs text-gold" role="status">
+      <span className="min-w-0 flex-1 truncate">
+        {t('nav.viewingClient')} <span className="font-semibold">{chosen.name}</span>
+      </span>
+      <button
+        type="button"
+        onClick={() => setClientId('')}
+        className="grid h-6 w-6 shrink-0 place-items-center rounded-full hover:bg-gold/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        aria-label={`${t('nav.allClients')}: ${shortStoreName(chosen.name)}`}
+      >
+        <X className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+

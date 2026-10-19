@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Briefcase, Monitor, Moon, Search, Sparkles, Sun, X, type LucideIcon } from 'lucide-react';
+import { ChevronDown, Globe, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucide-react';
 import {
   applyTerms,
   DASHBOARD_NAV,
   navShapeFor,
+  roleNavLabels,
   useActiveNavPath,
   visibleModules,
   type ModuleNav,
 } from '@/lib/modules';
 import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
-import { useAssistant } from '@/lib/assistantContext';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { prefetchRoute } from '@/lib/prefetch';
 import { useInbox } from '@/lib/inboxApi';
@@ -19,6 +19,10 @@ import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { LANGS, LANG_LABELS, useI18n, type Lang } from '@/lib/i18n';
 import { useTheme, type ThemePreference } from '@/lib/theme';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Select } from '@/components/ui/Select';
+import { tabBarHiddenFrom, tabSetFor } from '@/components/BottomTabBar';
+import { useMediaQuery } from '@/lib/useViewport';
+import { shortStoreName, useStoreScope } from '@/lib/storeScope';
 import { cn } from '@/lib/cn';
 
 
@@ -34,7 +38,6 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const { can, user } = useAuth();
   const tenant = useTenant();
   const term = useTerm();
-  const assistant = useAssistant();
   const { lang, setLang, t } = useI18n();
   const { preference, setTheme } = useTheme();
   // The same counts the desktop rail shows, from the one inbox request.
@@ -48,7 +51,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
     m.key === 'inbox' ? (inbox.data?.total ?? null) : (countByPath.get(m.path) ?? null);
   const { pinned } = usePinnedModules();
   const recents = useRecentModules();
-  const visible = applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules);
+  const visible = roleNavLabels(applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules), user?.role, t);
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned
     .map((k) => byKey.get(k))
@@ -87,7 +90,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
     const t = window.setTimeout(() => {
       setMounted(false);
       setExiting(false);
-    }, 180); // matches slide-out-to-left
+    }, 200); // matches slide-down-out
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -138,237 +141,272 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
     };
   }, [open, onClose]);
 
+  // Sections start closed (the one holding this page opens itself); a tap opens or closes one.
+  const [openDoors, setOpenDoors] = useState<Set<string>>(new Set());
+  const [closedDoors, setClosedDoors] = useState<Set<string>>(new Set());
+  const toggleDoor = (key: string, isOpen: boolean) => {
+    setOpenDoors((prev) => {
+      const next = new Set(prev);
+      if (isOpen) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    setClosedDoors((prev) => {
+      const next = new Set(prev);
+      if (isOpen) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+  const tabBarShowing = useMediaQuery(tabBarHiddenFrom(user?.role) === 'lg' ? '(max-width: 1023.98px)' : '(max-width: 767.98px)');
+
   if (!mounted) return null;
+
+  // What the tab bar already offers isn't repeated here while the tab bar is
+  // on screen (phones); at tablet widths this sheet is the whole menu.
+  const inTabBar = new Set(tabBarShowing ? tabSetFor(user, can).filter((x) => x.requires === null || can(x.requires)).slice(0, 4).map((x) => x.path) : []);
+  const notInTabBar = (m: { path: string }) => !inTabBar.has(m.path);
+  const rows = coreItems.filter(notInTabBar);
+  const pinnedRows = pinnedModules.filter(notInTabBar);
+  const recentRows = recentModules.filter(notInTabBar);
+  const doors = user?.role !== 'CLIENT_PORTAL' ? shape.doors : [];
 
   return (
     <div
-      className={cn(
-        'fixed inset-0 z-40 lg:hidden',
-        exiting ? 'pointer-events-none animate-fade-out' : 'animate-fade-in',
-      )}
+      className={cn('fixed inset-0 z-40 lg:hidden', exiting ? 'pointer-events-none animate-fade-out' : 'animate-fade-in')}
       role="dialog"
       aria-modal="true"
       aria-label={t('nav.mainAria')}
     >
-      <div
-        className="absolute inset-0 bg-backdrop backdrop-blur-sm"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 bg-backdrop backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
+      {/* A sheet that rises from the tab bar the way a native "More" does,
+          leaving the top of the page peeking above it. */}
       <aside
         ref={panelRef}
         className={cn(
-          'absolute left-0 top-0 h-full w-72 max-w-[calc(100vw-3rem)] bg-navy border-r border-navy-secondary flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]',
-          exiting ? 'animate-slide-out-to-left' : 'animate-slide-in-from-left',
+          'absolute inset-x-0 bottom-0 top-[calc(env(safe-area-inset-top)+2.5rem)] mx-auto flex max-w-xl flex-col rounded-t-2xl border-t border-navy-secondary bg-navy shadow-2xl',
+          'pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]',
+          exiting ? 'animate-slide-down-out' : 'animate-slide-up-in',
         )}
       >
-        <div className="px-4 min-h-14 flex items-center justify-between gap-3 border-b border-navy-secondary">
-          <div className="flex items-center gap-2 min-w-0">
-            <div
-              className="h-7 w-7 rounded-md bg-gold/15 border border-gold/40 grid place-items-center shrink-0"
-              aria-hidden="true"
-            >
-              <Briefcase className="h-3.5 w-3.5 text-gold" />
-            </div>
-            <span className="text-lg text-white leading-none tracking-tight truncate">
-              Alto <span className="text-gold">People</span>
-            </span>
-          </div>
+        <div className="flex justify-center pt-2" aria-hidden="true">
+          <span className="h-1 w-10 rounded-full bg-silver/30" />
+        </div>
+        <div className="flex min-h-12 items-center justify-between gap-3 px-4">
+          <span className="text-base font-semibold text-ink">{t('tabs.more')}</span>
           <button
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="grid place-items-center h-10 w-10 -mr-2 text-silver hover:text-white rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="-mr-2 grid h-10 w-10 place-items-center rounded text-silver hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             aria-label={t('nav.closeMenu')}
           >
             <X className="h-5 w-5" />
           </button>
         </div>
-
-        <nav className="flex-1 overflow-y-auto py-2" onClick={onClose}>
-          {onOpenCommandPalette && (
+        {/* Search stays on top while the list scrolls under it. */}
+        {onOpenCommandPalette && (
+          <div className="px-4 pb-2">
             <button
               type="button"
               onClick={() => {
                 onClose();
                 onOpenCommandPalette();
               }}
-              className="mx-2 my-0.5 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 py-2.5 min-h-11 text-sm text-silver hover:text-white hover:bg-navy-secondary/50 active:bg-navy-secondary/60 transition-colors"
+              className="flex h-11 w-full items-center gap-2.5 rounded-lg border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-silver transition-colors hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             >
               <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{t('common.search')}</span>
+              <span className="truncate">{t('nav.searchEverything')}</span>
             </button>
-          )}
-          {assistant.available && assistant.me && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                assistant.setOpen(true);
-              }}
-              className="mx-2 my-0.5 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 py-2.5 min-h-11 text-sm text-silver hover:text-ink hover:bg-navy-secondary/50 active:bg-navy-secondary/60 transition-colors"
-            >
-              <Sparkles className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">Ask {assistant.me.name}</span>
-            </button>
-          )}
-          <MobileLink
-            to={DASHBOARD_NAV.path}
-            active={activePath === DASHBOARD_NAV.path}
-            label={DASHBOARD_NAV.label}
-            icon={DASHBOARD_ICON}
-          />
-          {coreItems.length > 0 && (
-            <div className="mt-1">
-              {coreItems.map((m) => (
-                <MobileLink
-                  key={m.key}
-                  to={m.path}
-                  active={activePath === m.path}
-                  label={m.label}
-                  icon={MODULE_ICONS[m.key]}
-                  badge={badgeFor(m)}
-                />
-              ))}
-            </div>
-          )}
-          {pinnedModules.length > 0 && (
-            <div className="mt-3">
-              <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
-                {t('nav.pinned')}
-              </div>
-              {pinnedModules.map((m) => (
-                <MobileLink
-                  key={`pin-${m.key}`}
-                  to={m.path}
-                  active={activePath === m.path}
-                  label={m.label}
-                  icon={MODULE_ICONS[m.key]}
-                  badge={badgeFor(m)}
-                />
-              ))}
-            </div>
-          )}
-          {recentModules.length > 0 && (
-            <div className="mt-3">
-              <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
-                Recent
-              </div>
-              {recentModules.map((m) => (
-                <MobileLink
-                  key={`recent-${m.key}`}
-                  to={m.path}
-                  active={activePath === m.path}
-                  label={m.label}
-                  icon={MODULE_ICONS[m.key]}
-                  badge={badgeFor(m)}
-                />
-              ))}
-            </div>
-          )}
-          {user?.role !== 'CLIENT_PORTAL' &&
-            shape.doors.map((door) => {
-              const single = door.children.length === 1 && door.target.key === door.children[0]!.key;
-              if (single) {
-                return (
-                  <div key={door.key} className="mt-1">
-                    <MobileLink
-                      to={door.target.path}
-                      active={activePath === door.target.path}
-                      label={door.label}
-                      icon={DOOR_ICONS[door.key]}
-                      badge={badgeFor(door.target)}
-                    />
-                  </div>
-                );
-              }
-              const items = door.children.includes(door.target) ? door.children : [door.target, ...door.children];
-              return (
-                <div key={door.key} className="mt-3">
-                  <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
-                    {door.label}
-                  </div>
-                  {items.map((m) => (
-                    <MobileLink
-                      key={m.key}
-                      to={m.path}
-                      active={activePath === m.path}
-                      label={m.label}
-                      icon={MODULE_ICONS[m.key]}
-                      badge={badgeFor(m)}
-                    />
-                  ))}
-                </div>
-              );
-            })}
-        </nav>
-
-        {/* Language + theme switchers — the drawer is the one nav surface
-            every phone user opens, so both toggles live here instead of
-            buried in Settings. stopPropagation: the nav's onClick closes
-            the drawer, and flipping a preference shouldn't. */}
-        <div
-          className="px-4 py-3 border-t border-navy-secondary space-y-2.5"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-2xs font-semibold uppercase tracking-widest text-silver/80">
-              {t('common.language')}
-            </span>
-            <SegmentedControl<Lang>
-              className="flex-wrap"
-              ariaLabel={t('common.language')}
-              options={LANGS.map((l) => ({ value: l, label: LANG_LABELS[l] }))}
-              value={lang}
-              onChange={setLang}
-            />
           </div>
-          {/* Same Light / Dark / System choices (and setTheme mechanics) as
-              the desktop Sidebar's Appearance menu — this drawer is the only
-              chrome phones ever see, so without it mobile had no theme
-              control at all. Icon pills keep the three options inside the
-              288px drawer; sr-only text carries the Sidebar's labels. */}
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-2xs font-semibold uppercase tracking-widest text-silver/80">
-              Theme
-            </span>
+        )}
+        <StoreScopeChips onPicked={onClose} />
+
+        <nav className="flex-1 overflow-y-auto overscroll-contain border-t border-navy-secondary py-2" onClick={onClose} aria-label={t('nav.mainAria')}>
+          {!inTabBar.has(DASHBOARD_NAV.path) && (
+            <MobileLink to={DASHBOARD_NAV.path} active={activePath === DASHBOARD_NAV.path} label={DASHBOARD_NAV.label} icon={DASHBOARD_ICON} />
+          )}
+          {rows.map((m) => (
+            <MobileLink key={m.key} to={m.path} active={activePath === m.path} label={m.label} icon={MODULE_ICONS[m.key]} badge={badgeFor(m)} />
+          ))}
+          {pinnedRows.length > 0 && (
+            <SheetGroup title={t('nav.pinned')}>
+              {pinnedRows.map((m) => (
+                <MobileLink key={`pin-${m.key}`} to={m.path} active={activePath === m.path} label={m.label} icon={MODULE_ICONS[m.key]} badge={badgeFor(m)} />
+              ))}
+            </SheetGroup>
+          )}
+          {recentRows.length > 0 && (
+            <SheetGroup title={t('nav.recent')}>
+              {recentRows.map((m) => (
+                <MobileLink key={`recent-${m.key}`} to={m.path} active={activePath === m.path} label={m.label} icon={MODULE_ICONS[m.key]} badge={badgeFor(m)} />
+              ))}
+            </SheetGroup>
+          )}
+          {doors.length > 0 && <div className="mt-2" />}
+          {doors.map((door) => {
+            const single = door.children.length === 1 && door.target.key === door.children[0]!.key;
+            if (single) {
+              if (!notInTabBar(door.target)) return null;
+              return <MobileLink key={door.key} to={door.target.path} active={activePath === door.target.path} label={door.label} icon={DOOR_ICONS[door.key]} badge={badgeFor(door.target)} />;
+            }
+            const items = (door.children.includes(door.target) ? door.children : [door.target, ...door.children]).filter(notInTabBar);
+            if (items.length === 0) return null;
+            const total = items.reduce((n, m) => n + (badgeFor(m) ?? 0), 0);
+            const holdsActive = items.some((m) => m.path === activePath);
+            const isOpen = openDoors.has(door.key) || (holdsActive && !closedDoors.has(door.key));
+            return (
+              <div key={door.key}>
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={(e) => {
+                    // Opening a section doesn't close the sheet.
+                    e.stopPropagation();
+                    toggleDoor(door.key, isOpen);
+                  }}
+                  className={cn(
+                    'mx-2 my-0.5 flex min-h-12 w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
+                    holdsActive ? 'text-ink' : 'text-silver hover:text-ink hover:bg-navy-secondary/50',
+                  )}
+                >
+                  {(() => {
+                    const Icon = DOOR_ICONS[door.key];
+                    return Icon ? <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /> : null;
+                  })()}
+                  <span className="truncate font-medium">{door.label}</span>
+                  {!isOpen && total > 0 && <CountPill n={total} />}
+                  <ChevronDown className={cn('h-4 w-4 shrink-0 text-silver/70 transition-transform', !isOpen || total > 0 ? 'ml-1' : 'ml-auto', isOpen && 'rotate-180', !(!isOpen && total > 0) && 'ml-auto')} aria-hidden="true" />
+                </button>
+                {isOpen && (
+                  <div className="mb-1 ml-6 border-l border-navy-secondary pl-1">
+                    {items.map((m) => (
+                      <MobileLink key={m.key} to={m.path} active={activePath === m.path} label={m.label} icon={MODULE_ICONS[m.key]} badge={badgeFor(m)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <DisplayAndLanguage lang={lang} setLang={setLang} preference={preference} setTheme={setTheme} />
+        </nav>
+      </aside>
+    </div>
+  );
+}
+
+function SheetGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-3">
+      <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function CountPill({ n }: { n: number }) {
+  return (
+    <span className="ml-auto grid h-5 min-w-[1.25rem] shrink-0 place-items-center rounded-full border border-gold/40 bg-gold/15 px-1.5 text-2xs font-semibold tabular-nums text-gold" aria-label={`${n} pending`}>
+      {n > 99 ? '99+' : n}
+    </span>
+  );
+}
+
+/**
+ * The store scope on a phone: the same choice as the desktop top bar's
+ * "All / client" control, as a row of chips that scrolls sideways.
+ */
+function StoreScopeChips({ onPicked }: { onPicked: () => void }) {
+  const { enabled, clients, clientId, setClientId: choose } = useStoreScope();
+  // Choosing a scope applies it and shows the page it narrows (the top bar then names the client).
+  const setClientId = (id: string) => {
+    choose(id);
+    onPicked();
+  };
+  const { t } = useI18n();
+  if (!enabled || clients.length < 2) return null;
+  const chip = (active: boolean) =>
+    cn(
+      'h-8 shrink-0 rounded-full border px-3 text-xs whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+      active ? 'border-gold bg-gold text-on-accent font-semibold' : 'border-navy-secondary text-silver hover:text-ink',
+    );
+  return (
+    <div className="px-4 pb-2">
+      <div role="group" aria-label={t('nav.storeScope')} className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+        <button type="button" className={chip(clientId === '')} aria-pressed={clientId === ''} onClick={() => setClientId('')}>
+          {t('nav.allClients')}
+        </button>
+        {clients.map((c) => (
+          <button key={c.id} type="button" className={chip(clientId === c.id)} aria-pressed={clientId === c.id} onClick={() => setClientId(c.id)}>
+            {shortStoreName(c.name)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Language and theme: set once, so one quiet row at the end of the list that
+ * opens in place — not a block pinned over half the menu.
+ */
+function DisplayAndLanguage({
+  lang,
+  setLang,
+  preference,
+  setTheme,
+}: {
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  preference: ThemePreference;
+  setTheme: (p: ThemePreference) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const themeLabel = preference === 'light' ? t('theme.light') : preference === 'dark' ? t('theme.dark') : t('theme.system');
+  return (
+    <div className="mt-3 border-t border-navy-secondary pt-2" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="mx-2 flex min-h-12 w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 text-sm text-silver transition-colors hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright"
+      >
+        <Globe className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="truncate">{t('nav.displayLanguage')}</span>
+        <span className="ml-auto truncate text-xs text-silver/80">
+          {LANG_LABELS[lang]} · {themeLabel}
+        </span>
+        <ChevronDown className={cn('h-4 w-4 shrink-0 text-silver/70 transition-transform', open && 'rotate-180')} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="space-y-3 px-5 pb-3 pt-1">
+          <label className="block">
+            <span className="text-2xs font-semibold uppercase tracking-widest text-silver/80">{t('common.language')}</span>
+            <Select className="mt-1" value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label={t('common.language')}>
+              {LANGS.map((l) => (
+                <option key={l} value={l}>
+                  {LANG_LABELS[l]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <div>
+            <span className="block text-2xs font-semibold uppercase tracking-widest text-silver/80">{t('nav.theme')}</span>
             <SegmentedControl<ThemePreference>
-              ariaLabel="Appearance"
+              className="mt-1"
+              ariaLabel={t('nav.theme')}
               options={[
-                {
-                  value: 'light',
-                  label: (
-                    <>
-                      <Sun className="h-4 w-4" aria-hidden="true" />
-                      <span className="sr-only">{t('theme.light')}</span>
-                    </>
-                  ),
-                },
-                {
-                  value: 'dark',
-                  label: (
-                    <>
-                      <Moon className="h-4 w-4" aria-hidden="true" />
-                      <span className="sr-only">{t('theme.dark')}</span>
-                    </>
-                  ),
-                },
-                {
-                  value: 'system',
-                  label: (
-                    <>
-                      <Monitor className="h-4 w-4" aria-hidden="true" />
-                      <span className="sr-only">{t('theme.system')}</span>
-                    </>
-                  ),
-                },
+                { value: 'light', label: (<span className="inline-flex items-center gap-1.5"><Sun className="h-4 w-4" aria-hidden="true" />{t('theme.light')}</span>) },
+                { value: 'dark', label: (<span className="inline-flex items-center gap-1.5"><Moon className="h-4 w-4" aria-hidden="true" />{t('theme.dark')}</span>) },
+                { value: 'system', label: (<span className="inline-flex items-center gap-1.5"><Monitor className="h-4 w-4" aria-hidden="true" />{t('theme.system')}</span>) },
               ]}
               value={preference}
               onChange={setTheme}
             />
           </div>
         </div>
-      </aside>
+      )}
     </div>
   );
 }

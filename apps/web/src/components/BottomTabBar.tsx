@@ -106,7 +106,7 @@ const FINANCE_TABS: TabDef[] = [
 const SCHEDULER_TABS: TabDef[] = [
   HOME_TAB,
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
-  { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling' },
+  { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
   { path: '/time-attendance', labelKey: 'tabs.time', icon: Timer, requires: 'view:time' },
 ];
 

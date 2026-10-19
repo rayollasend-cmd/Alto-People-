@@ -80,6 +80,14 @@ const en = {
   'common.loading': 'Loading…',
   'common.logoAlt': 'Company logo',
   'nav.pinned': 'Pinned',
+  'nav.searchEverything': 'Search people, pages and actions',
+  'nav.recent': 'Recent',
+  'nav.paystubs': 'Paystubs',
+  'nav.storeScope': 'Client scope',
+  'nav.allClients': 'All clients',
+  'nav.viewingClient': 'Viewing',
+  'nav.displayLanguage': 'Display & language',
+  'nav.theme': 'Theme',
 
   // Bottom tab bar — the manager/scheduler/recruiter tabs (wired by BottomTabBar)
   'tabs.approvals': 'Approvals',
