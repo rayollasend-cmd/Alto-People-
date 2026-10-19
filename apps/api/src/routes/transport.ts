@@ -62,6 +62,7 @@ import {
   MAX_DAYS_AHEAD,
   noticeFor,
   owedCents,
+  rideHeldForSignature,
   rideSelect,
   serviceDateFor,
   toRideView,
@@ -1081,15 +1082,28 @@ transportRouter.post('/driver/rides/:id/board', DRIVE, async (req, res) => {
   if (ride.status !== 'SCHEDULED') throw new HttpError(409, 'not_scheduled', 'This rider is already marked.');
   const now = new Date();
   const charge = await chargeUnder(ride.associate.id, ride, now);
+  // A ride taken is never waived. Without a signed authorization covering
+  // it the fare is HELD: owed, with no signature behind it, so payroll
+  // waits; signing releases it (lib/rideAuthorization, item 5 of the words).
   const updated = await prisma.ride.update({
     where: { id: ride.id },
-    data: { status: 'BOARDED', boardedAt: now, chargeCents: charge.ok ? ride.fareCents : 0, uncollectedCents: charge.ok ? 0 : ride.fareCents, ...charge.data },
+    data: { status: 'BOARDED', boardedAt: now, chargeCents: ride.fareCents, uncollectedCents: 0, authorizedSignatureId: charge.ok ? (charge.data.authorizedSignatureId as string) : null },
     select: rideSelect,
   });
   enqueueAudit(
-    { actorUserId: req.user!.id, action: 'transport.boarded', entityType: 'Ride', entityId: ride.id, metadata: { chargeCents: updated.chargeCents, authorized: charge.ok, reason: charge.reason } },
+    { actorUserId: req.user!.id, action: 'transport.boarded', entityType: 'Ride', entityId: ride.id, metadata: { chargeCents: updated.chargeCents, authorized: charge.ok, held: !charge.ok && ride.fareCents > 0, reason: charge.reason } },
     'transport',
   );
+  if (!charge.ok && ride.fareCents > 0) {
+    void trackNotificationWork(
+      notifyAssociate(ride.associate.id, {
+        subject: 'Sign your ride authorization',
+        body: `Your ${money(ride.fareCents)} ride today is held until you sign the ride authorization (${(charge.reason ?? 'no signed authorization on file').replace(/\.$/, '').toLowerCase()}). Nothing comes out of your pay before you sign. It takes a minute in the Ride tab.`,
+        category: 'transport',
+        linkUrl: '/rides?sign=1',
+      }),
+    );
+  }
   res.json({ ride: toRideView(updated) });
 });
 
@@ -2143,7 +2157,10 @@ transportRouter.post('/authorizations/remind', MANAGE, async (req, res) => {
     void trackNotificationWork(
       notifyAssociate(p.associateId, {
         subject: 'Sign your ride authorization',
-        body: `Your next ride is ${fmtTime(new Date(p.nextRideAt), DEFAULT_TIMEZONE)} on ${dateKeyInZone(new Date(p.nextRideAt), DEFAULT_TIMEZONE)}. Rides can only be taken from pay with your signed authorization — it takes a minute.`,
+        body:
+          (p.heldCents > 0 ? `${money(p.heldCents)} for ${p.heldRides === 1 ? 'a ride' : `${p.heldRides} rides`} you took is held until you sign. ` : '') +
+          (p.nextRideAt ? `Your next ride is ${fmtTime(new Date(p.nextRideAt), DEFAULT_TIMEZONE)} on ${dateKeyInZone(new Date(p.nextRideAt), DEFAULT_TIMEZONE)}. ` : '') +
+          'Rides can only be taken from pay with your signed authorization — it takes a minute.',
         category: 'transport',
         linkUrl: '/rides?sign=1',
         emailFallback: true,
@@ -2271,11 +2288,18 @@ transportRouter.post('/rides/:id/cancel', MANAGE, async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Waive a no-show fee. A ride the person took is never waived — its fare
+ * is owed (held until they sign, when no authorization covers it).
+ */
 transportRouter.post('/rides/:id/waive', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const { reason } = ReasonInput.parse(req.body);
   const ride = await prisma.ride.findUnique({ where: { id }, select: rideSelect });
   if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
+  if (ride.status === 'BOARDED' || ride.status === 'COMPLETED') {
+    throw new HttpError(409, 'ride_taken', 'They took this ride, so its fare can’t be waived. Only a no-show fee can be.');
+  }
   if (ride.chargeCents === 0 || ride.waivedAt) throw new HttpError(409, 'nothing_to_waive', 'Nothing is owed on this ride.');
   if (ride.chargedRunId) {
     throw new HttpError(409, 'already_charged', 'Payroll already took this charge — refund it as a reimbursement instead.');
@@ -2294,6 +2318,63 @@ transportRouter.post('/rides/:id/waive', MANAGE, async (req, res) => {
     }),
   );
   res.json({ ok: true });
+});
+
+/**
+ * Undo a waiver: the charge is owed again. A waived no-show fee comes back
+ * as it was; a taken ride left uncharged for want of a signature comes
+ * back HELD (owed, taken from pay once the rider signs). A no-show that
+ * went uncharged for want of a signature stays as it is — the
+ * authorization holds only rides taken.
+ */
+transportRouter.post('/rides/:id/unwaive', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const { reason } = ReasonInput.parse(req.body);
+  const ride = await prisma.ride.findUnique({ where: { id }, select: { ...rideSelect, waivedById: true } });
+  if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
+  if (!ride.waivedAt) throw new HttpError(409, 'not_waived', 'This ride isn’t waived.');
+  if (ride.chargedRunId) throw new HttpError(409, 'already_charged', 'Payroll already settled this ride.');
+  const taken = ride.status === 'BOARDED' || ride.status === 'COMPLETED';
+  const notAuthorized = ride.waiveKind === 'NOT_AUTHORIZED';
+  if (notAuthorized && !taken) {
+    throw new HttpError(409, 'no_show_not_authorized', 'This no-show went uncharged because no signed authorization covered it, and a fee can’t be held for one. It stays uncharged.');
+  }
+  // What's owed again: the waived charge, or what a ride left uncharged would have cost.
+  const cents = notAuthorized ? ride.uncollectedCents || ride.fareCents : ride.chargeCents;
+  // A ride left uncharged for want of a signature: if the rider has signed
+  // since, that signature covers it (item 5); otherwise it waits, held.
+  const charge = notAuthorized ? await chargeUnder(ride.associate.id, ride, new Date()) : null;
+  const updated = await prisma.ride.update({
+    where: { id },
+    data: {
+      chargeCents: cents,
+      uncollectedCents: 0,
+      waivedAt: null,
+      waivedById: null,
+      waiveReason: null,
+      waiveKind: null,
+      // A manager's waiver was of a charge already authorized.
+      ...(charge ? { authorizedSignatureId: charge.ok ? (charge.data.authorizedSignatureId as string) : null } : {}),
+    },
+    select: rideSelect,
+  });
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.waiver_undone', entityType: 'Ride', entityId: id, metadata: { reason, cents, was: ride.waiveKind ?? 'MANAGER', held: rideHeldForSignature(updated), waivedById: ride.waivedById } },
+    'transport',
+  );
+  const held = rideHeldForSignature(updated);
+  const what = taken ? `${money(cents)} fare for your ride` : `${money(cents)} no-show fee for your ride`;
+  void trackNotificationWork(
+    notifyAssociate(ride.associate.id, {
+      subject: `Ride charge back on: ${money(cents)}`,
+      body: held
+        ? `The ${what} on ${fmtWhen(ride.targetAt, ride.location.timezone)} is owed after all: ${reason} It's held until you sign the ride authorization — nothing comes out of your pay before you sign.`
+        : `The ${what} on ${fmtWhen(ride.targetAt, ride.location.timezone)} is owed after all: ${reason} It comes out of an upcoming paycheck, never below minimum wage.`,
+      category: 'transport',
+      linkUrl: held ? '/rides?sign=1' : '/rides',
+    }),
+  );
+  res.json({ ride: toRideView(updated) });
 });
 
 const RunInput = z.object({

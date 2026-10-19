@@ -1918,6 +1918,7 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'ride.waitlistTitle': 'Sou lis datant · #{position}',
   'ride.waived': 'Egzante',
   'ride.notCharged': 'Pa chaje — pa gen otorizasyon siyen',
+  'ride.heldForSignature': 'An atant jiskaske ou siyen otorizasyon vwayaj la',
   'ride.whichShift': 'Ki chif?',
   'ride.yourStore': 'magazen w',
   'rmb.acrossReportOne': 'nan 1 rapò',

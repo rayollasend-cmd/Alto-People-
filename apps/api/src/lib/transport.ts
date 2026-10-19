@@ -237,6 +237,11 @@ function coords(lat: Prisma.Decimal | null, lng: Prisma.Decimal | null): { lat: 
   return lat === null || lng === null ? null : { lat: Number(lat), lng: Number(lng) };
 }
 
+/** A taken ride whose fare waits for the rider's signature (payroll never takes it without one). */
+export function rideHeldForSignature(r: { status: string; chargeCents: number; waivedAt: Date | null; chargedRunId: string | null; authorizedSignatureId: string | null }): boolean {
+  return (r.status === 'BOARDED' || r.status === 'COMPLETED') && r.chargeCents > 0 && !r.waivedAt && !r.chargedRunId && !r.authorizedSignatureId;
+}
+
 /** What the rider owes for this ride right now (0 when waived or not due). */
 export function owedCents(r: { chargeCents: number; waivedAt: Date | null }): number {
   return r.waivedAt ? 0 : r.chargeCents;
@@ -298,6 +303,9 @@ export function toRideView(r: RideRow) {
     uncollectedCents: r.uncollectedCents,
     charged: !!r.chargedRunId,
     authorized: !!r.authorizedSignatureId,
+    /** A ride taken while no signed authorization covered it: owed, never
+     *  waived, and taken from pay only once the rider signs. */
+    heldForSignature: rideHeldForSignature(r),
     boardedAt: r.boardedAt?.toISOString() ?? null,
     completedAt: r.completedAt?.toISOString() ?? null,
     noShowAt: r.noShowAt?.toISOString() ?? null,

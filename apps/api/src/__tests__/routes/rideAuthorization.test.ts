@@ -133,8 +133,8 @@ describe('the signed written authorization', () => {
     expect((await book(s.kimAgent, s.store, s.stop)).body.error.code).toBe('authorization_required');
 
     // The ride already booked goes on a run and the driver marks it on
-    // board — but there is no authorization behind a charge any more, so
-    // the ride costs nothing and the record says why.
+    // board — there is no authorization behind a charge any more, so the
+    // fare is HELD: owed, never waived, and not taken until they sign.
     const run = await s.directorAgent.post('/transport/runs').send({
       vanId: s.van.id,
       driverUserId: s.driver.id,
@@ -146,15 +146,26 @@ describe('the signed written authorization', () => {
     expect(run.status).toBe(201);
     const boarded = await s.driverAgent.post(`/transport/driver/rides/${ride.id}/board`);
     expect(boarded.status).toBe(200);
-    expect(boarded.body.ride).toMatchObject({ status: 'BOARDED', owedCents: 0, authorized: false, waived: true });
-    expect(boarded.body.ride.waiveReason).toMatch(/Not charged: Authorization withdrawn/);
-    // Not a decision anyone made: kept apart from a manager's waiver, with what it would have cost.
-    expect(boarded.body.ride).toMatchObject({ waiveKind: 'NOT_AUTHORIZED', uncollectedCents: 500 });
+    expect(boarded.body.ride).toMatchObject({ status: 'BOARDED', owedCents: 500, authorized: false, waived: false, waiveKind: null, uncollectedCents: 0, heldForSignature: true });
     const report = await s.directorAgent.get(`/transport/charges?from=${ride.serviceDate}&to=${ride.serviceDate}`);
     expect(report.body.totals).toMatchObject({ unauthorizedCents: 500, waivedCents: 0 });
+    // They're told, and they're on the list of people who still need to sign.
+    const { flushPendingNotifications } = await import('../../lib/notify.js');
+    await flushPendingNotifications();
+    const note = await prisma.notification.findFirst({ where: { recipientUserId: s.kimUser.id, linkUrl: '/rides?sign=1' } });
+    expect(note?.body).toMatch(/\$5\.00 ride today is held until you sign/);
+    const missing = await s.directorAgent.get('/transport/authorizations/missing');
+    expect(missing.body.people).toEqual([expect.objectContaining({ associateId: s.kim.id, heldCents: 500, heldRides: 1, nextRideAt: null })]);
 
     const list = await s.directorAgent.get('/transport/authorizations');
     expect(list.body.rows[0]).toMatchObject({ associateId: s.kim.id, status: 'withdrawn' });
+
+    // Signing again releases it to payroll, stamped with the new signature.
+    await sign(s.kimAgent);
+    const after = await prisma.ride.findUniqueOrThrow({ where: { id: ride.id } });
+    const consent = await prisma.rideConsent.findUniqueOrThrow({ where: { associateId: s.kim.id } });
+    expect(after).toMatchObject({ chargeCents: 500, waivedAt: null, authorizedSignatureId: consent.signatureId });
+    expect((await s.directorAgent.get('/transport/authorizations/missing')).body.people).toEqual([]);
   });
 
   it('a charge taken under a current authorization is stamped with the signature', async () => {
@@ -327,7 +338,7 @@ describe('rides that would go uncharged', () => {
     expect((await s.driverAgent.post('/transport/authorizations/remind').send({})).status).toBe(403);
   });
 
-  it("a manager's waiver is its own kind and counts as waived", async () => {
+  it('a ride taken can’t be waived; a no-show fee can, and the waiver can be undone', async () => {
     const s = await seed();
     await sign(s.kimAgent);
     const ride = (await book(s.kimAgent, s.store, s.stop)).body.ride;
@@ -340,10 +351,62 @@ describe('rides that would go uncharged', () => {
       rides: [{ rideId: ride.id, pickupAt: inHours(19.5).toISOString() }],
     });
     await s.driverAgent.post(`/transport/driver/rides/${ride.id}/board`);
-    expect((await s.directorAgent.post(`/transport/rides/${ride.id}/waive`).send({ reason: 'The van was 20 minutes late.' })).status).toBe(200);
-    const row = await prisma.ride.findUniqueOrThrow({ where: { id: ride.id } });
-    expect(row).toMatchObject({ waiveKind: 'MANAGER', uncollectedCents: 0 });
-    const report = await s.directorAgent.get(`/transport/charges?from=${ride.serviceDate}&to=${ride.serviceDate}`);
-    expect(report.body.totals).toMatchObject({ waivedCents: 500, unauthorizedCents: 0 });
+    const refused = await s.directorAgent.post(`/transport/rides/${ride.id}/waive`).send({ reason: 'The van was 20 minutes late.' });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe('ride_taken');
+    expect((await prisma.ride.findUniqueOrThrow({ where: { id: ride.id } })).waivedAt).toBeNull();
+
+    // A no-show fee (the rider wasn't there) is the director's to waive.
+    const consent = await prisma.rideConsent.findUniqueOrThrow({ where: { associateId: s.kim.id } });
+    const missed = (await book(s.kimAgent, s.store, s.stop, 30)).body.ride;
+    await prisma.ride.update({ where: { id: missed.id }, data: { status: 'NO_SHOW', noShowAt: new Date(), chargeCents: 100, authorizedSignatureId: consent.signatureId } });
+    expect((await s.directorAgent.post(`/transport/rides/${missed.id}/waive`).send({ reason: 'Their shift was cancelled.' })).status).toBe(200);
+    expect(await prisma.ride.findUniqueOrThrow({ where: { id: missed.id } })).toMatchObject({ waiveKind: 'MANAGER', uncollectedCents: 0 });
+    const report = await s.directorAgent.get(`/transport/charges?from=${missed.serviceDate}&to=${missed.serviceDate}`);
+    expect(report.body.totals).toMatchObject({ waivedCents: 100 });
+
+    // Undone: owed again, the rider told; only transportation can do it.
+    expect((await s.driverAgent.post(`/transport/rides/${missed.id}/unwaive`).send({ reason: 'Waived by mistake.' })).status).toBe(403);
+    const undone = await s.directorAgent.post(`/transport/rides/${missed.id}/unwaive`).send({ reason: 'Waived by mistake.' });
+    expect(undone.status).toBe(200);
+    expect(undone.body.ride).toMatchObject({ waived: false, waiveKind: null, owedCents: 100, authorized: true, heldForSignature: false });
+    expect((await s.directorAgent.post(`/transport/rides/${missed.id}/unwaive`).send({ reason: 'Again.' })).body.error.code).toBe('not_waived');
+    const { flushPendingAudits } = await import('../../lib/audit.js');
+    await flushPendingAudits();
+    expect(await prisma.auditLog.count({ where: { action: 'transport.waiver_undone', entityId: missed.id } })).toBe(1);
+  });
+
+  it('a taken ride left uncharged under the old rule comes back held when the waiver is undone', async () => {
+    const s = await seed();
+    await sign(s.kimAgent);
+    const ride = (await book(s.kimAgent, s.store, s.stop)).body.ride;
+    // How the old rule left it: boarded, uncharged, "not authorized".
+    await prisma.ride.update({ where: { id: ride.id }, data: { status: 'COMPLETED', boardedAt: new Date(), chargeCents: 0, uncollectedCents: 500, waivedAt: new Date(), waiveKind: 'NOT_AUTHORIZED', waiveReason: 'Not charged: No signed authorization on file.' } });
+    const undone = await s.directorAgent.post(`/transport/rides/${ride.id}/unwaive`).send({ reason: 'A ride taken is always owed.' });
+    expect(undone.status).toBe(200);
+    // Kim's authorization is current, so it covers the fare at once.
+    expect(undone.body.ride).toMatchObject({ owedCents: 500, uncollectedCents: 0, waived: false, authorized: true, heldForSignature: false });
+  });
+
+  it('…and without a current authorization it waits, held, for the next signature', async () => {
+    const s = await seed();
+    await sign(s.kimAgent);
+    const ride = (await book(s.kimAgent, s.store, s.stop)).body.ride;
+    await s.kimAgent.delete('/transport/me/authorization');
+    await prisma.ride.update({ where: { id: ride.id }, data: { status: 'COMPLETED', boardedAt: new Date(), chargeCents: 0, uncollectedCents: 500, waivedAt: new Date(), waiveKind: 'NOT_AUTHORIZED' } });
+    const undone = await s.directorAgent.post(`/transport/rides/${ride.id}/unwaive`).send({ reason: 'A ride taken is always owed.' });
+    expect(undone.body.ride).toMatchObject({ owedCents: 500, authorized: false, heldForSignature: true });
+    await sign(s.kimAgent);
+    expect((await prisma.ride.findUniqueOrThrow({ where: { id: ride.id } })).authorizedSignatureId).not.toBeNull();
+  });
+
+  it('an uncharged no-show stays uncharged — a fee is never held', async () => {
+    const s = await seed();
+    await sign(s.kimAgent);
+    const ride = (await book(s.kimAgent, s.store, s.stop)).body.ride;
+    await prisma.ride.update({ where: { id: ride.id }, data: { status: 'NO_SHOW', noShowAt: new Date(), chargeCents: 0, uncollectedCents: 100, waivedAt: new Date(), waiveKind: 'NOT_AUTHORIZED' } });
+    const res = await s.directorAgent.post(`/transport/rides/${ride.id}/unwaive`).send({ reason: 'Should be charged.' });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('no_show_not_authorized');
   });
 });

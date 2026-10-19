@@ -61,6 +61,7 @@ import {
   updateStop,
   updateTransportIssue,
   updateVan,
+  unwaiveRide,
   waiveRide,
   type Ride,
   type RideDirection,
@@ -350,16 +351,37 @@ function useRideActions() {
     },
     waive: async (r: Ride) => {
       const reason = await prompt({
-        title: `Waive ${cents(r.owedCents)} for ${r.rider.name}?`,
-        description: 'It won’t come out of their pay. They hear about it.',
+        title: `Waive ${r.rider.name}’s ${cents(r.owedCents)} no-show fee?`,
+        description: 'It won’t come out of their pay. They hear about it. A ride someone took is never waived.',
         reasonLabel: 'Reason',
-        reasonPlaceholder: 'The van was late',
+        reasonPlaceholder: 'The van came to the wrong stop',
         confirmLabel: 'Waive',
       });
       if (!reason) return;
       try {
         await waiveRide(r.id, reason);
-        toast.success('Charge waived');
+        toast.success('Fee waived');
+        await refresh();
+      } catch (err) {
+        toast.error(errMsg(err));
+      }
+    },
+    unwaive: async (r: Ride) => {
+      const amount = r.waiveKind === 'NOT_AUTHORIZED' ? (r.uncollectedCents ?? r.fareCents) : r.owedCents || (r.status === 'NO_SHOW' ? r.noShowFeeCents : r.fareCents);
+      const reason = await prompt({
+        title: `Put ${cents(amount)} back on ${r.rider.name}’s ride?`,
+        description:
+          r.waiveKind === 'NOT_AUTHORIZED'
+            ? 'They took this ride, so it’s owed. It comes out of pay once they sign the ride authorization, and they hear about it.'
+            : 'It’s owed again and comes out of an upcoming paycheck, never below minimum wage. They hear about it.',
+        reasonLabel: 'Reason',
+        reasonPlaceholder: 'Waived by mistake',
+        confirmLabel: 'Undo waiver',
+      });
+      if (!reason) return;
+      try {
+        const { ride } = await unwaiveRide(r.id, reason);
+        toast.success(ride.heldForSignature ? 'Owed again — held until they sign' : 'Owed again — they were told');
         await refresh();
       } catch (err) {
         toast.error(errMsg(err));
@@ -367,6 +389,11 @@ function useRideActions() {
     },
   };
 }
+
+/** A director waives a no-show fee, never a ride someone took. */
+const canWaive = (r: Ride) => r.status === 'NO_SHOW' && r.owedCents > 0 && !r.charged && !r.waived;
+/** Any waiver can be undone before payroll settles the ride — except a no-show left uncharged for want of a signature. */
+const canUnwaive = (r: Ride) => r.waived && !r.charged && !(r.waiveKind === 'NOT_AUTHORIZED' && r.status === 'NO_SHOW');
 
 interface RideGroup {
   key: string;
@@ -968,9 +995,9 @@ function RunPanel({
                 <Badge size="sm" variant={statusVariant(r.status)}>
                   {STATUS_LABEL[r.status]}
                 </Badge>
-                {manage && r.owedCents > 0 && !r.charged && (
+                {manage && canWaive(r) && (
                   <Button size="xs" variant="ghost" onClick={() => onWaive(r)}>
-                    Waive {cents(r.owedCents)}
+                    Waive {cents(r.owedCents)} fee
                   </Button>
                 )}
                 {manage && r.status === 'SCHEDULED' && run.status === 'PLANNED' && (
@@ -1766,7 +1793,7 @@ function RidesTab({ manage }: { manage: boolean }) {
                 key: 'owed',
                 header: 'Owed',
                 accessor: (r) => (r.waived ? 0 : r.owedCents),
-                csv: (r) => (r.waiveKind === 'NOT_AUTHORIZED' ? 'not authorized' : r.waived ? 'waived' : r.owedCents > 0 ? cents(r.owedCents) : ''),
+                csv: (r) => (r.waiveKind === 'NOT_AUTHORIZED' ? 'not authorized' : r.waived ? 'waived' : r.heldForSignature ? `${cents(r.owedCents)} held until signed` : r.owedCents > 0 ? cents(r.owedCents) : ''),
                 sortable: true,
                 searchable: false,
                 align: 'right',
@@ -1783,6 +1810,12 @@ function RidesTab({ manage }: { manage: boolean }) {
                       <span className="text-success" title={r.waiveReason ?? undefined}>
                         Waived
                         {r.waiveReason && <span className="block max-w-[14rem] truncate text-2xs text-silver">{r.waiveReason}</span>}
+                      </span>
+                    ) : r.heldForSignature ? (
+                      // Taken, so owed — waiting for the rider's signature before payroll takes it.
+                      <span title="They took this ride; it comes out of pay once they sign the ride authorization.">
+                        {cents(r.owedCents)}
+                        <span className="block text-2xs text-warning">held until they sign</span>
                       </span>
                     ) : r.owedCents > 0 ? (
                       cents(r.owedCents)
@@ -1814,9 +1847,14 @@ function RidesTab({ manage }: { manage: boolean }) {
                         Cancel
                       </Button>
                     )}
-                    {manage && r.owedCents > 0 && !r.charged && (
+                    {manage && canWaive(r) && (
                       <Button size="xs" variant="ghost" onClick={() => void actions.waive(r)}>
-                        Waive
+                        Waive fee
+                      </Button>
+                    )}
+                    {manage && canUnwaive(r) && (
+                      <Button size="xs" variant="ghost" onClick={() => void actions.unwaive(r)}>
+                        Undo waiver
                       </Button>
                     )}
                   </div>
@@ -1943,9 +1981,14 @@ function IssuesTab({ manage }: { manage: boolean }) {
                         Working on it
                       </Button>
                     )}
-                    {i.ride && i.ride.owedCents > 0 && !i.ride.charged && (
+                    {i.ride && canWaive(i.ride) && (
                       <Button size="sm" variant="secondary" onClick={() => void actions.waive(i.ride!)}>
-                        Waive {cents(i.ride.owedCents)}
+                        Waive {cents(i.ride.owedCents)} fee
+                      </Button>
+                    )}
+                    {i.ride && canUnwaive(i.ride) && (
+                      <Button size="sm" variant="secondary" onClick={() => void actions.unwaive(i.ride!)}>
+                        Undo waiver
                       </Button>
                     )}
                     <Button size="sm" onClick={() => void resolve(i)}>
@@ -2820,16 +2863,19 @@ function UnsignedRiders({ manage }: { manage: boolean }) {
   if (q.isLoading) return <Skeleton className="h-20" />;
   if (q.isError || people.length === 0) return null;
   const atRisk = people.reduce((n, p) => n + p.atRiskCents, 0);
+  const held = people.reduce((n, p) => n + (p.heldCents ?? 0), 0);
   return (
     <Card className="border-warning/40">
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-medium text-ink">
-              {people.length} {people.length === 1 ? 'rider has' : 'riders have'} a ride coming up without a signed authorization
+              {people.length} {people.length === 1 ? 'rider needs' : 'riders need'} to sign the ride authorization
             </p>
             <p className="mt-0.5 text-xs text-silver">
-              Those rides will be marked but not charged — {cents(atRisk)} in fares over the next two weeks. Ask them to sign before they ride.
+              {held > 0 && `${cents(held)} for rides already taken is held until they sign. `}
+              {atRisk > 0 && `${cents(atRisk)} in fares over the next two weeks will be held too if they ride unsigned. `}
+              A ride taken is never waived — it comes out of pay once they sign.
             </p>
           </div>
           {manage && (
@@ -2844,7 +2890,9 @@ function UnsignedRiders({ manage }: { manage: boolean }) {
               <span className="min-w-0">
                 <span className="block truncate text-ink">{p.name}</span>
                 <span className="block text-xs text-silver">
-                  Next ride {fmtDateTime(p.nextRideAt)} · {p.rides} {p.rides === 1 ? 'ride' : 'rides'} · {p.reason}
+                  {p.nextRideAt ? `Next ride ${fmtDateTime(p.nextRideAt)} · ${p.rides} ${p.rides === 1 ? 'ride' : 'rides'} · ` : ''}
+                  {p.heldCents > 0 ? `${cents(p.heldCents)} held for ${p.heldRides} ${p.heldRides === 1 ? 'ride' : 'rides'} taken · ` : ''}
+                  {p.reason}
                 </span>
               </span>
               {manage && p.canNotify && (

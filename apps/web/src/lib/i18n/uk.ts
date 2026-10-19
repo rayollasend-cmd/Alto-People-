@@ -1918,6 +1918,7 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'ride.waitlistTitle': 'У списку очікування · №{position}',
   'ride.waived': 'Скасовано',
   'ride.notCharged': 'Без оплати — немає підписаного дозволу',
+  'ride.heldForSignature': 'Утримано, доки ви не підпишете дозвіл на поїздки',
   'ride.whichShift': 'Яка зміна?',
   'ride.yourStore': 'ваш магазин',
   'rmb.acrossReportOne': 'в 1 звіті',

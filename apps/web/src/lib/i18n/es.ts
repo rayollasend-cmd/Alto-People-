@@ -3245,6 +3245,7 @@ export const es: Record<MessageKey, string> = {
   'ride.nextPayday': 'Próximo día de pago {date}',
   'ride.waived': 'Perdonado',
   'ride.notCharged': 'Sin cargo — no hay autorización firmada',
+  'ride.heldForSignature': 'Retenido hasta que firmes la autorización de viajes',
   'ride.charged': 'Descontado del pago',
   'ride.report': 'Reportar un problema',
   'ride.reportDesc': 'Transporte lo ve de inmediato y te responde.',

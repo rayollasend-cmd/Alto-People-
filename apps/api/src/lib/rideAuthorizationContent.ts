@@ -11,7 +11,9 @@
  *   rendered PDF (lib/esign.ts) is what gets stored and hashed.
  */
 
-export const RIDE_AUTHORIZATION_VERSION = 1;
+// v2: a ride taken while the authorization doesn't cover it is held, never
+// waived, and charged once the rider signs (item 5).
+export const RIDE_AUTHORIZATION_VERSION = 2;
 
 export type RideAuthLang = 'en' | 'es' | 'tr';
 
@@ -41,8 +43,9 @@ export function rideAuthorizationBody(lang: RideAuthLang, t: RideAuthorizationTe
 2. Charges are deducted from the paycheck for the pay period in which the ride took place, or the next one. Each charge is listed on my pay statement with the number of rides and missed rides it covers.
 3. No deduction will reduce my pay for any workweek below the applicable minimum wage. If a charge would, only the part that keeps my pay at or above the minimum wage is deducted in that period and the rest is carried to a later period, and my pay statement says so.
 4. These are the only amounts this authorization covers. If the rate changes, no ride is charged at the new rate until I have signed a new authorization that names it.
-5. I may withdraw this authorization at any time in the app or in writing. Rides already taken are still charged; no new ride is booked or charged after I withdraw.
-6. Rides are voluntary. Whether I use the van has no effect on my employment, my schedule or my pay.
+5. If I board a ride at a time no signed authorization covers it — for example after a rate change, before I sign again — the charge for that ride is held, not waived. It is deducted only after I sign this authorization, at the price the ride was booked at, and item 3 applies to it.
+6. I may withdraw this authorization at any time in the app or in writing. Rides already taken are still charged; no new ride is booked after I withdraw.
+7. Rides are voluntary. Whether I use the van has no effect on my employment, my schedule or my pay.
 
 I have read this authorization in a language I understand. By typing my name below I sign it.`;
 
@@ -52,8 +55,9 @@ I have read this authorization in a language I understand. By typing my name bel
 2. Los cargos se descuentan del cheque del período de pago en que ocurrió el viaje, o del siguiente. Cada cargo aparece en mi recibo de pago con el número de viajes y de viajes perdidos que cubre.
 3. Ningún descuento reducirá mi pago por una semana de trabajo por debajo del salario mínimo aplicable. Si un cargo lo hiciera, solo se descuenta en ese período la parte que mantiene mi pago en el salario mínimo o por encima, el resto pasa a un período posterior, y mi recibo de pago lo indica.
 4. Estos son los únicos montos que cubre esta autorización. Si la tarifa cambia, ningún viaje se cobra a la nueva tarifa hasta que yo firme una nueva autorización que la indique.
-5. Puedo retirar esta autorización en cualquier momento en la app o por escrito. Los viajes ya realizados se cobran igual; no se reserva ni se cobra ningún viaje nuevo después de retirarla.
-6. Los viajes son voluntarios. Usar o no la van no afecta mi empleo, mi horario ni mi pago.
+5. Si abordo un viaje en un momento en que ninguna autorización firmada lo cubre —por ejemplo, después de un cambio de tarifa y antes de volver a firmar—, el cargo de ese viaje queda retenido, no se condona. Se descuenta solo después de que firme esta autorización, al precio con que se reservó el viaje, y se le aplica el punto 3.
+6. Puedo retirar esta autorización en cualquier momento en la app o por escrito. Los viajes ya realizados se cobran igual; no se reserva ningún viaje nuevo después de retirarla.
+7. Los viajes son voluntarios. Usar o no la van no afecta mi empleo, mi horario ni mi pago.
 
 He leído esta autorización en un idioma que entiendo. Al escribir mi nombre abajo, la firmo.`;
 
@@ -63,8 +67,9 @@ He leído esta autorización en un idioma que entiendo. Al escribir mi nombre ab
 2. Ücretler, servisin yapıldığı maaş döneminin çekinden veya bir sonrakinden kesilir. Her kesinti, kapsadığı servis ve gelmeme sayısıyla birlikte maaş dökümümde görünür.
 3. Hiçbir kesinti herhangi bir çalışma haftası için maaşımı geçerli asgari ücretin altına düşürmez. Bir kesinti bunu yapacaksa, o dönemde yalnızca maaşımı asgari ücrette veya üzerinde tutan kısım kesilir, kalanı sonraki bir döneme aktarılır ve maaş dökümüm bunu belirtir.
 4. Bu yetkilendirme yalnızca bu tutarları kapsar. Ücret değişirse, yeni ücreti belirten yeni bir yetkilendirme imzalayana kadar hiçbir servis yeni ücretten alınmaz.
-5. Bu yetkilendirmeyi istediğim zaman uygulamada veya yazılı olarak geri çekebilirim. Zaten yapılmış servisler yine de ücretlendirilir; geri çektikten sonra yeni servis ayırtılmaz ve ücretlendirilmez.
-6. Servisler gönüllüdür. Servisi kullanıp kullanmamam işimi, programımı veya maaşımı etkilemez.
+5. Hiçbir imzalı yetkilendirmenin kapsamadığı bir zamanda servise binersem — örneğin bir ücret değişikliğinden sonra, yeniden imzalamadan önce — o servisin ücreti bekletilir, silinmez. Yalnızca bu yetkilendirmeyi imzaladıktan sonra, servisin ayırtıldığı fiyattan kesilir ve 3. madde ona da uygulanır.
+6. Bu yetkilendirmeyi istediğim zaman uygulamada veya yazılı olarak geri çekebilirim. Zaten yapılmış servisler yine de ücretlendirilir; geri çektikten sonra yeni servis ayırtılmaz.
+7. Servisler gönüllüdür. Servisi kullanıp kullanmamam işimi, programımı veya maaşımı etkilemez.
 
 Bu yetkilendirmeyi anladığım bir dilde okudum. Aşağıya adımı yazarak imzalıyorum.`;
 

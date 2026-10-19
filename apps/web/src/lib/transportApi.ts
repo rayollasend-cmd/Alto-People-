@@ -96,6 +96,8 @@ export interface Ride {
   uncollectedCents?: number;
   /** Set on an open ride that would go uncharged if marked now: why (no signature, rate went up …). */
   signatureNeeded?: string | null;
+  /** A ride taken while no signed authorization covered it: owed, never waived, taken from pay once they sign. */
+  heldForSignature?: boolean;
   charged: boolean;
   boardedAt: string | null;
   completedAt: string | null;
@@ -558,8 +560,12 @@ export function searchRides(q: { from?: string; to?: string; status?: RideStatus
 export const cancelRide = (id: string, reason: string) =>
   apiFetch<{ ok: true }>(`/transport/rides/${id}/cancel`, { method: 'POST', body: { reason } });
 
+/** Waive a no-show fee (a ride taken is never waived). */
 export const waiveRide = (id: string, reason: string) =>
   apiFetch<{ ok: true }>(`/transport/rides/${id}/waive`, { method: 'POST', body: { reason } });
+/** Undo a waiver: the charge is owed again (held until they sign, when no authorization covers it). */
+export const unwaiveRide = (id: string, reason: string) =>
+  apiFetch<{ ride: Ride }>(`/transport/rides/${id}/unwaive`, { method: 'POST', body: { reason } });
 
 export interface RunInput {
   vanId: string;
@@ -1313,10 +1319,14 @@ export const getTransportCosts = (from: string, to: string) =>
 export interface UnsignedRider {
   associateId: string;
   name: string;
-  nextRideAt: string;
+  /** Null when they have no ride coming up — only fares held for their signature. */
+  nextRideAt: string | null;
   rides: number;
   reason: string;
   atRiskCents: number;
+  /** Fares for rides already taken, held until they sign. */
+  heldCents: number;
+  heldRides: number;
   canNotify: boolean;
 }
 export const listUnsignedRiders = () => apiFetch<{ people: UnsignedRider[] }>('/transport/authorizations/missing');

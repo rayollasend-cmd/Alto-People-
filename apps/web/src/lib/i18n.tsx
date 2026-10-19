@@ -3323,6 +3323,7 @@ const en = {
   'ride.nextPayday': 'Next payday {date}',
   'ride.waived': 'Waived',
   'ride.notCharged': 'Not charged — no signed authorization',
+  'ride.heldForSignature': 'Held until you sign the ride authorization',
   'ride.charged': 'Paid from pay',
   'ride.report': 'Report a problem',
   'ride.reportDesc': 'Transportation sees it right away and gets back to you.',

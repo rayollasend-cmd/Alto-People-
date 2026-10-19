@@ -1918,6 +1918,7 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'ride.waitlistTitle': 'Na lista de espera · nº {position}',
   'ride.waived': 'Isento',
   'ride.notCharged': 'Sem cobrança — sem autorização assinada',
+  'ride.heldForSignature': 'Retido até você assinar a autorização de viagens',
   'ride.whichShift': 'Qual turno?',
   'ride.yourStore': 'sua loja',
   'rmb.acrossReportOne': 'em 1 relatório',

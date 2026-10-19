@@ -102,6 +102,16 @@ export interface RideAuthorizationStatus {
   agreement: { title: string; body: string; version: number; lang: RideAuthLang; fareCents: number; noShowFeeCents: number } | null;
 }
 
+/** Taken rides whose fare is held for the rider's signature (lib/transport rideHeldForSignature). */
+export const HELD_FOR_SIGNATURE = (associateId: string): Prisma.RideWhereInput => ({
+  associateId,
+  status: { in: ['BOARDED', 'COMPLETED'] },
+  chargeCents: { gt: 0 },
+  waivedAt: null,
+  chargedRunId: null,
+  authorizedSignatureId: null,
+});
+
 async function consentRow(db: Db, associateId: string) {
   return db.rideConsent.findUnique({ where: { associateId } });
 }
@@ -184,6 +194,7 @@ export async function signRideAuthorization(
   const relativeKey = `esign/ride-authorization/${associate.id}/${pdfHash.slice(0, 16)}.pdf`;
   await getBlobStore().put(relativeKey, pdf, 'application/pdf');
 
+  let released = { count: 0 };
   await db.$transaction(async (tx) => {
     const doc = await tx.documentRecord.create({
       data: {
@@ -206,9 +217,12 @@ export async function signRideAuthorization(
       create: { associateId: associate.id, fareCents: rate.fareCents, noShowFeeCents: rate.noShowFeeCents, acceptedAt: now, ip: input.ipAddress, signatureId: sig.id, documentId: doc.id, version: RIDE_AUTHORIZATION_VERSION, signedName: typedName, rateId: rate.id, withdrawnAt: null },
       update: { fareCents: rate.fareCents, noShowFeeCents: rate.noShowFeeCents, acceptedAt: now, ip: input.ipAddress, signatureId: sig.id, documentId: doc.id, version: RIDE_AUTHORIZATION_VERSION, signedName: typedName, rateId: rate.id, withdrawnAt: null },
     });
+    // Item 5: rides taken while no authorization covered them were held, not
+    // waived — this signature lets payroll take them, at the price booked.
+    released = await tx.ride.updateMany({ where: HELD_FOR_SIGNATURE(associate.id), data: { authorizedSignatureId: sig.id } });
   });
   enqueueAudit(
-    { actorUserId: input.userId, clientId: null, action: 'transport.authorization_signed', entityType: 'Associate', entityId: associate.id, metadata: { version: RIDE_AUTHORIZATION_VERSION, fareCents: rate.fareCents, noShowFeeCents: rate.noShowFeeCents, lang, pdfHash } },
+    { actorUserId: input.userId, clientId: null, action: 'transport.authorization_signed', entityType: 'Associate', entityId: associate.id, metadata: { version: RIDE_AUTHORIZATION_VERSION, fareCents: rate.fareCents, noShowFeeCents: rate.noShowFeeCents, lang, pdfHash, heldRidesReleased: released.count } },
     'transport',
   );
   return rideAuthorizationStatus(db, { id: associate.id, language: input.language }, now);
@@ -258,13 +272,24 @@ export async function ridersNeedingSignature(db: Db, now: Date = new Date(), day
     orderBy: { targetAt: 'asc' },
   });
   const need = await ridesNeedingSignature(db, rides, now);
-  const people = new Map<string, { associateId: string; name: string; userId: string | null; nextRideAt: string; rides: number; reason: string; atRiskCents: number }>();
+  const people = new Map<string, { associateId: string; name: string; userId: string | null; nextRideAt: string | null; rides: number; reason: string; atRiskCents: number; heldCents: number; heldRides: number }>();
   for (const r of rides) {
     const reason = need.get(r.id);
     if (!reason) continue;
-    const p = people.get(r.associateId) ?? { associateId: r.associateId, name: `${r.associate.firstName} ${r.associate.lastName}`, userId: r.associate.user?.id ?? null, nextRideAt: r.targetAt.toISOString(), rides: 0, reason, atRiskCents: 0 };
+    const p = people.get(r.associateId) ?? { associateId: r.associateId, name: `${r.associate.firstName} ${r.associate.lastName}`, userId: r.associate.user?.id ?? null, nextRideAt: r.targetAt.toISOString(), rides: 0, reason, atRiskCents: 0, heldCents: 0, heldRides: 0 };
     p.rides += 1;
     p.atRiskCents += r.fareCents;
+    people.set(r.associateId, p);
+  }
+  // …and everyone with a fare already held for their signature, upcoming rides or not.
+  const held = await db.ride.findMany({
+    where: { status: { in: ['BOARDED', 'COMPLETED'] }, chargeCents: { gt: 0 }, waivedAt: null, chargedRunId: null, authorizedSignatureId: null },
+    select: { associateId: true, chargeCents: true, associate: { select: { firstName: true, lastName: true, user: { select: { id: true } } } } },
+  });
+  for (const r of held) {
+    const p = people.get(r.associateId) ?? { associateId: r.associateId, name: `${r.associate.firstName} ${r.associate.lastName}`, userId: r.associate.user?.id ?? null, nextRideAt: null, rides: 0, reason: 'Rides taken are held until they sign.', atRiskCents: 0, heldCents: 0, heldRides: 0 };
+    p.heldCents += r.chargeCents;
+    p.heldRides += 1;
     people.set(r.associateId, p);
   }
   return [...people.values()];

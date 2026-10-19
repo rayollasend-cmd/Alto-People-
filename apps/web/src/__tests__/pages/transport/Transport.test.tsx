@@ -472,6 +472,34 @@ describe('<TransportHome> — the command center', () => {
     expect(screen.getByText('Needs signature')).toBeInTheDocument();
   });
 
+  it('a ride taken is never waived: its fare shows held until they sign; a no-show fee can be waived; a waiver can be undone', async () => {
+    routes((path) => {
+      if (path.startsWith('/transport/board')) return board();
+      if (path.startsWith('/transport/rides/r-mgr/unwaive')) return { ride: ride({ id: 'r-mgr', status: 'BOARDED', owedCents: 500, authorized: true } as never) };
+      if (path.startsWith('/transport/rides')) {
+        return {
+          rides: [
+            ride({ id: 'r-held', status: 'COMPLETED', owedCents: 500, heldForSignature: true, rider: { associateId: 'a1', name: 'Kim Nguyen', phone: null } }),
+            ride({ id: 'r-paid', status: 'COMPLETED', owedCents: 500, rider: { associateId: 'a4', name: 'Dee Moss', phone: null } }),
+            ride({ id: 'r-miss', status: 'NO_SHOW', owedCents: 100, rider: { associateId: 'a3', name: 'Ana Ruiz', phone: null } }),
+            ride({ id: 'r-mgr', status: 'BOARDED', owedCents: 0, waived: true, waiveKind: 'MANAGER', waiveReason: 'The van was late.', rider: { associateId: 'a2', name: 'Lee Park', phone: null } }),
+          ],
+        };
+      }
+      return undefined;
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+    await userEvent.click(await screen.findByRole('tab', { name: /^Rides/ }));
+    expect(await screen.findByText('held until they sign')).toBeInTheDocument();
+    // One "Waive fee" — the no-show — and none for the two rides taken.
+    expect(screen.getAllByRole('button', { name: 'Waive fee' })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Undo waiver' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByRole('textbox'), 'Waived by mistake');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Undo waiver' }));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/rides/r-mgr/unwaive', { method: 'POST', body: { reason: 'Waived by mistake' } }));
+  });
+
   it('reads without acting for a view-only role', async () => {
     routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
     renderAs('EXECUTIVE_CHAIRMAN', <TransportHome />);
