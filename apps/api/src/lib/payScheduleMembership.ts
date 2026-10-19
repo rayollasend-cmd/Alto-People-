@@ -1,9 +1,10 @@
 import type { PayrollFrequency, Prisma, PrismaClient } from '@prisma/client';
-import { RULE_SPECIFICITY, type ScheduleRuleKind } from '@alto-people/shared';
+import { RULE_SPECIFICITY, becauseSentence, type ScheduleRuleKind } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { enqueueAudit } from './audit.js';
 import { notifyUser } from './notify.js';
-import { getCurrentPeriod, type PeriodWindow, type ScheduleInput } from './payrollSchedule.js';
+import { getCurrentPeriod, windowBetween, type PeriodWindow, type ScheduleInput } from './payrollSchedule.js';
+export { inWindows, workDayOf } from './payrollSchedule.js';
 import { rolesHolding } from './approvalPolicy.js';
 import { runWithTenant, tenantIdForWrite } from './tenant.js';
 import { setScheduleRecomputeHandler, type ScheduleTrigger } from './payScheduleTriggers.js';
@@ -68,9 +69,37 @@ export function patternOn(s: ScheduleWithVersions, on: string): ScheduleInput {
   return { frequency: s.frequency, anchorDate: s.anchorDate, payDateOffsetDays: s.payDateOffsetDays };
 }
 
-/** The period of `s` containing `on`. */
-export function periodContaining(s: ScheduleWithVersions, on: string): PeriodWindow {
-  return getCurrentPeriod(patternOn(s, on), dateOnly(on));
+/**
+ * The period of `s` containing `on`. A period never reaches back across a
+ * pattern change nor past the next one: where the new pattern's periods
+ * don't line up with the change (every other week → twice a month from a
+ * Saturday), the days between are one short BRIDGE period under the new
+ * pattern, so no day is paid twice or not at all.
+ */
+export function periodContaining(s: ScheduleWithVersions, on: string): PeriodWindow & { bridge?: boolean } {
+  const pattern = patternOn(s, on);
+  const p = getCurrentPeriod(pattern, dateOnly(on));
+  // The first version is where history starts, not a change.
+  const changes = (s.versions ?? []).map((v) => ymd(v.effectiveFrom)).sort().slice(1);
+  const began = changes.filter((d) => d <= on).pop();
+  const ends = changes.find((d) => d > on);
+  const start = began && p.periodStart < began ? began : p.periodStart;
+  const end = ends && p.periodEnd >= ends ? addDaysYmd(ends, -1) : p.periodEnd;
+  if (start === p.periodStart && end === p.periodEnd) return p;
+  const w = end === p.periodEnd ? { ...p, periodStart: start } : windowBetween(start, end, pattern.payDateOffsetDays);
+  return { ...w, bridge: true };
+}
+
+/** The period paid next on or after `today` (pay lands after a period ends, so often the one just over). */
+export function nextPaydayOn(s: ScheduleWithVersions, today: string = todayYmd()): PeriodWindow & { bridge?: boolean } {
+  const cur = periodContaining(s, today);
+  const prev = periodContaining(s, addDaysYmd(cur.periodStart, -1));
+  return prev.payDate >= today ? prev : cur;
+}
+
+/** The period right after `w` on `s`. */
+export function periodAfter(s: ScheduleWithVersions, w: PeriodWindow): PeriodWindow & { bridge?: boolean } {
+  return periodContaining(s, addDaysYmd(w.periodEnd, 1));
 }
 
 /** The first day of a period of `s` on or after `on` (on itself when it starts one). */
@@ -566,7 +595,8 @@ const TRIGGER_WORDS: Record<ScheduleTrigger, string> = {
 async function noticeToPayroll(db: Db, w: World, moves: Move[], trigger: ScheduleTrigger): Promise<void> {
   const fmtDay = (s: string) => dateOnly(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const name = (id: string | null) => (id ? (w.names.schedules.get(id) ?? 'a schedule') : 'no schedule');
-  const lines = moves.slice(0, 8).map((m) => `${m.name} — ${name(m.fromScheduleId)} → ${name(m.toScheduleId)} from ${fmtDay(m.effectiveFrom)} (${m.because.toLowerCase().startsWith('client') || m.because.toLowerCase().startsWith('site') ? `${TRIGGER_WORDS[trigger]}; ${m.because}` : TRIGGER_WORDS[trigger]})`);
+  // "Ana Worker — Weekly → Biweekly from Oct 31 (transferred; Ana works for Seaside Inn)"
+  const lines = moves.slice(0, 8).map((m) => `${m.name} — ${name(m.fromScheduleId)} → ${name(m.toScheduleId)} from ${fmtDay(m.effectiveFrom)} (${TRIGGER_WORDS[trigger]}; ${becauseSentence(m.because, m.name.split(' ')[0])})`);
   const more = moves.length > 8 ? `\n…and ${moves.length - 8} more.` : '';
   const target = moves.find((m) => m.toScheduleId)?.toScheduleId;
   const roles = rolesHolding('process:payroll');

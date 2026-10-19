@@ -41,8 +41,7 @@ import { renderPayrollReviewXlsx } from '../lib/payrollReviewXlsx.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
-import { getNextPayday, getPeriodAfter } from '../lib/payrollSchedule.js';
-import { membershipWindows, scheduleFilterFor, tenantUsesScheduleRules } from '../lib/payScheduleMembership.js';
+import { membershipWindows, nextPaydayOn, periodAfter, scheduleFilterFor, tenantUsesScheduleRules } from '../lib/payScheduleMembership.js';
 import { assignPeople } from './paySchedules.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
 import { applyRideCharges, planRideCharges, releaseRideCharges } from '../lib/transport.js';
@@ -617,6 +616,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       include: {
         client: { select: { name: true } },
         _count: { select: { associates: true } },
+        versions: true,
       },
     });
 
@@ -630,17 +630,8 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
     // period instead of a findFirst per schedule (this is a landing-page
     // endpoint; the loop used to be O(schedules) serial round-trips).
     const currentBySchedule = new Map(
-      schedules.map((s) => [
-        s.id,
-        getNextPayday(
-          {
-            frequency: s.frequency,
-            anchorDate: s.anchorDate,
-            payDateOffsetDays: s.payDateOffsetDays,
-          },
-          today,
-        ),
-      ]),
+      // Version-aware: a pattern change (and its bridge period) is on the calendar it will run.
+      schedules.map((s) => [s.id, nextPaydayOn(s, ymd(today))]),
     );
     const runProbes = schedules.flatMap((s) => [
       {
@@ -684,16 +675,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
         existingRun &&
         (existingRun.status === 'FINALIZED' ||
           existingRun.status === 'DISBURSED');
-      const w = isCompleted
-        ? getPeriodAfter(
-            {
-              frequency: s.frequency,
-              anchorDate: s.anchorDate,
-              payDateOffsetDays: s.payDateOffsetDays,
-            },
-            cur,
-          )
-        : cur;
+      const w = isCompleted ? periodAfter(s, cur) : cur;
       const draftRunId =
         existingRun && existingRun.status === 'DRAFT' ? existingRun.id : null;
 
@@ -786,7 +768,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       const cur = currentBySchedule.get(s.id)!;
       const existing = findExistingRun(s.clientId, new Date(`${cur.periodStart}T00:00:00.000Z`).getTime(), s.id);
       const done = existing && (existing.status === 'FINALIZED' || existing.status === 'DISBURSED');
-      const w = done ? getPeriodAfter({ frequency: s.frequency, anchorDate: s.anchorDate, payDateOffsetDays: s.payDateOffsetDays }, cur) : cur;
+      const w = done ? periodAfter(s, cur) : cur;
       const people = (await membershipWindows(prisma, s.id, w.periodStart, w.periodEnd)).size;
       bySchedule.push({
         scheduleId: s.id,
@@ -4011,6 +3993,7 @@ type RawSchedule = Prisma.PayrollScheduleGetPayload<{
   include: {
     client: { select: { name: true } };
     _count: { select: { associates: true } };
+    versions: true;
   };
 }>;
 
@@ -4018,11 +4001,7 @@ function toSchedule(s: RawSchedule): PayrollScheduleDto {
   // The next payday and the period it pays for — pay lands after the
   // period ends (a Sat–Fri biweekly period paid the Friday after), so this
   // is often the period that has already ended, not the one running now.
-  const nxt = getNextPayday({
-    frequency: s.frequency,
-    anchorDate: s.anchorDate,
-    payDateOffsetDays: s.payDateOffsetDays,
-  });
+  const nxt = nextPaydayOn(s);
   return {
     id: s.id,
     clientId: s.clientId,
@@ -4045,6 +4024,7 @@ function toSchedule(s: RawSchedule): PayrollScheduleDto {
 const SCHEDULE_INCLUDE = {
   client: { select: { name: true } },
   _count: { select: { associates: true } },
+  versions: true,
 } as const;
 
 payrollRouter.get('/schedules', PROCESS, async (req, res, next) => {

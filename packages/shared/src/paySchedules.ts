@@ -29,8 +29,9 @@ import { z } from 'zod';
  *   GET    /payroll/pay-schedules/unassigned              → UnassignedResponse
  *   GET    /payroll/pay-schedules/candidates?clientId&siteId&departmentId&payType&scheduleId&q&status
  *                                                         → ScheduleCandidatesResponse (EVERYONE, new hires included, paged)
- *   GET    /payroll/pay-schedules/preview-pattern?frequency&anchorDate&payDateOffsetDays&months
- *                                                         → PayCalendarResponse (for the setup wizard, before saving)
+ *   GET    /payroll/pay-schedules/preview-pattern?frequency&anchorDate&payDateOffsetDays&months[&scheduleId&effectiveFrom]
+ *                                                         → PayCalendarResponse (the setup wizard before saving; with scheduleId
+ *                                                           + effectiveFrom, a pattern change's periods from that date, bridge first)
  *   GET    /associates/:id/pay-schedule                   → AssociatePaySchedule (view:payroll, or the person's onboarding reviewer)
  *   PUT    /associates/:id/pay-schedule                   { scheduleId, effectiveFrom? } → AssociatePaySchedule
  *          (an INDIVIDUAL rule; used by onboarding and the person's record)
@@ -53,6 +54,45 @@ export const RULE_SPECIFICITY: Record<Exclude<ScheduleRuleKind, 'EXCLUDE'>, numb
   CLIENT: 30,
   PAY_TYPE: 20,
 };
+
+/**
+ * Why someone is on a schedule, as a sentence about them. The engine
+ * records a short reason ("Client: Coastal Resort Holdings", "Site:
+ * Seaside", "Individual", "Company default"); this is how every surface
+ * says it — the notice to payroll, the roster, a person's record:
+ *
+ *   becauseSentence('Client: Coastal Resort Holdings')        → "They work for Coastal Resort Holdings"
+ *   becauseSentence('Client: Coastal Resort Holdings', 'Ana') → "Ana works for Coastal Resort Holdings"
+ *
+ * A reason it doesn't know reads as given, capitalized.
+ */
+export function becauseSentence(because: string, name?: string | null): string {
+  const t = because.trim();
+  const who = name?.trim() || null;
+  const say = (they: string, one: string) => (who ? `${who} ${one}` : they);
+  const named = /^(Site|Department|Client): (.+)$/.exec(t);
+  if (named) {
+    const [, kind, place] = named;
+    if (kind === 'Department') return `${say('They’re in', 'is in')} ${place}`;
+    if (kind === 'Site') return `${say('They work at', 'works at')} ${place}`;
+    return `${say('They work for', 'works for')} ${place}`;
+  }
+  switch (t) {
+    case 'Individual':
+      return `Chosen for ${who ?? 'them'} by name`;
+    case 'Company default':
+      return `No rule covers ${who ?? 'them'}, so the company default applies`;
+    case 'Assigned earlier':
+      return 'Assigned before schedule rules existed';
+    case 'Salaried staff':
+      return say('They’re salaried', 'is salaried');
+    case 'Hourly staff':
+      return say('They’re paid hourly', 'is paid hourly');
+    case 'Planned move cancelled':
+      return 'A planned move was called off';
+  }
+  return t ? t[0]!.toUpperCase() + t.slice(1) : t;
+}
 
 export const ScheduleRuleSchema = z.object({
   id: Id,
@@ -92,6 +132,8 @@ export const SchedulePeriodSchema = z.object({
   run: z.object({ id: Id, status: z.string() }).nullable(),
   /** A schedule version starts in this period (the pattern changed). */
   versionChange: z.boolean().optional(),
+  /** A short period joining two patterns whose periods don't line up (no day paid twice or not at all). */
+  bridge: z.boolean().optional(),
 });
 export type SchedulePeriod = z.infer<typeof SchedulePeriodSchema>;
 
@@ -197,7 +239,7 @@ export const MovePersonSchema = z.object({
   toScheduleName: z.string().nullable(),
   /** First day on the new schedule. */
   effectiveFrom: Ymd,
-  /** Why: the rule that decided it ("Client: Coastal Resort Holdings", "Individual"). */
+  /** Why: the rule that decided it ("Client: Coastal Resort Holdings", "Individual") — say it with becauseSentence. */
   because: z.string(),
   /** The paychecks that bridge the move: the old schedule's last check covers through effectiveFrom − 1. */
   transition: z.object({ lastOldPayDate: Ymd.nullable(), firstNewPayDate: Ymd.nullable(), note: z.string().nullable() }),

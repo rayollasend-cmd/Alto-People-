@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, ChevronDown, ChevronRight, LayoutGrid, List, MoreHorizontal, MoveRight, Pencil, Power, Star, UserMinus, UserPlus } from 'lucide-react';
-import type { PayFrequencyKind, PayScheduleDetail, PayScheduleHistoryResponse, PayScheduleSummary, RosterPerson, ScheduleRule } from '@alto-people/shared';
+import { becauseSentence, type PayFrequencyKind, type PayScheduleDetail, type PayScheduleHistoryResponse, type PayScheduleSummary, type RosterPerson, type ScheduleRule } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useTenant } from '@/lib/auth';
 import { fmtDateTime, fmtMoney, ymdLocal } from '@/lib/format';
@@ -378,7 +378,7 @@ function RosterList({ people, onOpen, onMove, onRemove, others }: { people: Rost
       ),
     },
     { key: 'since', header: 'On it since', sortable: true, accessor: (p) => p.onScheduleSince, cell: (p) => <span className="tabular-nums">{payDay(p.onScheduleSince, false)}</span>, defaultHidden: true },
-    { key: 'because', header: 'Because', accessor: (p) => p.because, defaultHidden: true },
+    { key: 'because', header: 'Because', accessor: (p) => becauseSentence(p.because), defaultHidden: true },
     { key: 'moving', header: 'Moving', accessor: (p) => p.pendingMove?.effectiveFrom ?? '', cell: (p) => (p.pendingMove ? <span className="text-xs">{p.pendingMove.toScheduleName ?? 'Off'} · {payDay(p.pendingMove.effectiveFrom, false)}</span> : '—') },
   ];
   return (
@@ -468,7 +468,7 @@ function QuickCard({ person, schedule, others, onClose, onMove }: { person: Rost
               </div>
             </dl>
             <p className="text-sm text-ink-muted">
-              {p.onScheduleSince > ymdLocal() ? 'Joins' : 'On'} {schedule.name} {p.onScheduleSince > ymdLocal() ? 'on' : 'since'} {payDay(p.onScheduleSince, false)} — {p.because}.
+              {p.onScheduleSince > ymdLocal() ? 'Joins' : 'On'} {schedule.name} {p.onScheduleSince > ymdLocal() ? 'on' : 'since'} {payDay(p.onScheduleSince, false)} — {lowerFirst(becauseSentence(p.because))}.
               {p.pendingMove && ` Moves to ${p.pendingMove.toScheduleName ?? 'no schedule'} on ${payDay(p.pendingMove.effectiveFrom, false)}.`}
             </p>
             {p.issues.length > 0 && (
@@ -797,6 +797,8 @@ function EditDialog({ open, onOpenChange, schedule }: { open: boolean; onOpenCha
   );
 }
 
+const lowerFirst = (t: string) => (t ? t[0]!.toLowerCase() + t.slice(1) : t);
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** The date a refusal suggests ("…The next one starts Nov 14."), as the next such day after today. */
@@ -812,7 +814,7 @@ export function suggestedDate(message: string, today = ymdLocal()): string | nul
   return null;
 }
 
-const PATTERN_REFUSALS = new Set(['effective_from_required', 'effective_in_past', 'not_a_period_start', 'version_misaligned']);
+const PATTERN_REFUSALS = new Set(['effective_from_required', 'effective_in_past', 'not_a_period_start']);
 
 function PatternDialog({ open, onOpenChange, schedule }: { open: boolean; onOpenChange: (o: boolean) => void; schedule: PayScheduleDetail }) {
   const qc = useQueryClient();
@@ -827,14 +829,15 @@ function PatternDialog({ open, onOpenChange, schedule }: { open: boolean; onOpen
   const changed = frequency !== schedule.frequency || offset !== schedule.payDateOffsetDays;
   // Week-based periods count from the first new period; calendar-based ones ignore the anchor.
   const preview = useQuery({
-    queryKey: ['paySchedules', 'previewPattern', frequency, effectiveFrom, offset],
-    queryFn: () => previewPattern({ frequency, anchorDate: effectiveFrom, payDateOffsetDays: offset, months: 3 }),
+    queryKey: ['paySchedules', 'previewPattern', schedule.id, frequency, effectiveFrom, offset],
+    queryFn: () => previewPattern({ frequency, anchorDate: effectiveFrom, payDateOffsetDays: offset, months: 3, scheduleId: schedule.id, effectiveFrom }),
     enabled: open && changed && !!effectiveFrom,
   });
+  const bridge = preview.data?.periods.find((p) => p.bridge && p.periodStart === effectiveFrom) ?? null;
   const save = useMutation({
     mutationFn: () => updatePaySchedule(schedule.id, { frequency, payDateOffsetDays: offset, effectiveFrom }),
     onSuccess: () => {
-      toast.success(`The new pattern starts ${payDay(effectiveFrom)}. Earlier periods keep the old one, and payroll was told.`);
+      toast.success(`The new pattern starts ${payDay(effectiveFrom)}. Earlier periods keep the old one; the change is in this schedule’s history.`);
       void qc.invalidateQueries({ queryKey: ['paySchedules'] });
       setRefusal(null);
       onOpenChange(false);
@@ -904,6 +907,12 @@ function PatternDialog({ open, onOpenChange, schedule }: { open: boolean; onOpen
         {changed && preview.data && preview.data.periods.length > 0 && (
           <div className="rounded-lg border border-line p-3 text-sm">
             <p className="font-medium text-ink">{patternSentence(frequency, effectiveFrom, offset)}</p>
+            {bridge && (
+              <p className="mt-1 text-ink">
+                The new periods don’t line up with {payDay(effectiveFrom, false)}, so one short period, {periodRange(bridge.periodStart, bridge.periodEnd)}, paid{' '}
+                {payDay(bridge.payDate, false)}, joins the two. No day is paid twice or missed.
+              </p>
+            )}
             <p className="mt-1 text-ink-muted">
               First paydays: {preview.data.periods.slice(0, 3).map((p) => payDay(p.payDate, false)).join(' · ')}
             </p>

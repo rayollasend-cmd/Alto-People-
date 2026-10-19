@@ -38,7 +38,7 @@ import { internalSites, scopeAssociates, scopePayrollSchedules, scopeWhere } fro
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { loadTenantHolidays } from '../lib/banking/funding.js';
-import { getCurrentPeriod, getNextPayday, type PeriodWindow } from '../lib/payrollSchedule.js';
+import { type PeriodWindow } from '../lib/payrollSchedule.js';
 import { isStateTaxSupported, primeStateAcknowledgments } from '../lib/payrollTax.js';
 import {
   addDaysYmd,
@@ -48,6 +48,7 @@ import {
   loadAssignments,
   loadFacts,
   loadWorld,
+  nextPaydayOn,
   patternOn,
   patternSentence,
   periodContaining,
@@ -122,7 +123,7 @@ function versionStarts(s: ScheduleWithVersions): string[] {
   return vs.slice(1);
 }
 
-function periodDto(s: ScheduleWithVersions, p: PeriodWindow, run: { id: string; status: string } | null): SchedulePeriod {
+function periodDto(s: ScheduleWithVersions, p: PeriodWindow & { bridge?: boolean }, run: { id: string; status: string } | null): SchedulePeriod {
   const starts = versionStarts(s);
   return {
     periodStart: p.periodStart,
@@ -132,6 +133,7 @@ function periodDto(s: ScheduleWithVersions, p: PeriodWindow, run: { id: string; 
     adjustedFor: p.nominalPayDate && p.nominalPayDate !== p.payDate ? (p.payDateShiftReason ?? null) : null,
     run,
     versionChange: starts.some((v) => v >= p.periodStart && v <= p.periodEnd),
+    ...(p.bridge ? { bridge: true } : {}),
   };
 }
 
@@ -156,7 +158,7 @@ async function runsByPeriod(schedules: Array<{ id: string; clientId: string | nu
 
 /** The period paid next on a schedule (pay lands after the period ends). */
 function nextPaidPeriod(s: ScheduleWithVersions, now: Date = new Date()): PeriodWindow {
-  return getNextPayday(patternOn(s, todayYmd(now)), now);
+  return nextPaydayOn(s, todayYmd(now));
 }
 
 /* ---- Readiness ----------------------------------------------------------- */
@@ -982,13 +984,22 @@ paySchedulesRouter.get('/preview-pattern', async (req, res, next) => {
         anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         payDateOffsetDays: z.coerce.number().int().min(0).max(31),
         months: z.coerce.number().int().min(1).max(24).default(3),
+        /** A change to an existing schedule: its periods from `effectiveFrom`, the bridge (if any) first. */
+        scheduleId: z.string().max(64).optional(),
+        effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       })
       .parse(req.query);
     await loadTenantHolidays(prisma);
-    const s: ScheduleWithVersions = { id: 'preview', name: 'Preview', frequency: q.frequency, anchorDate: dateOnly(q.anchorDate), payDateOffsetDays: q.payDateOffsetDays };
     const today = todayYmd();
-    const until = ymd(new Date(dateOnly(today).getTime() + q.months * 31 * DAY));
-    const periods = periodsFrom(s, today, 400).filter((p) => p.periodStart <= until);
+    let s: ScheduleWithVersions = { id: 'preview', name: 'Preview', frequency: q.frequency, anchorDate: dateOnly(q.anchorDate), payDateOffsetDays: q.payDateOffsetDays };
+    let from = today;
+    if (q.scheduleId && q.effectiveFrom) {
+      const existing = await scheduleInReach(req.user!, q.scheduleId);
+      s = withVersion(existing, proposedVersion(existing, { frequency: q.frequency, payDateOffsetDays: q.payDateOffsetDays, effectiveFrom: q.effectiveFrom }), today);
+      from = q.effectiveFrom;
+    }
+    const until = ymd(new Date(dateOnly(from).getTime() + q.months * 31 * DAY));
+    const periods = periodsFrom(s, from, 400).filter((p) => p.periodStart <= until);
     res.json(PayCalendarResponseSchema.parse({ periods: periods.map((p) => periodDto(s, p, null)) }));
   } catch (err) {
     next(err);
@@ -1090,14 +1101,33 @@ paySchedulesRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-/** The first date on or after `from` that starts a period of both patterns (for a pattern change). */
-function alignedStart(oldS: ScheduleWithVersions, next: ScheduleWithVersions, from: string): string | null {
-  let d = from;
-  for (let i = 0; i < 400; i++) {
-    if (periodStartOnOrAfter(oldS, d) === d && getCurrentPeriod(patternOn(next, d), dateOnly(d)).periodStart === d) return d;
-    d = addDaysYmd(d, 1);
-  }
-  return null;
+interface PatternVersion {
+  effectiveFrom: string;
+  frequency: PayrollFrequency;
+  anchorDate: string;
+  payDateOffsetDays: number;
+}
+
+/** A pattern change as it would be stored: whatever isn't changing carries over from the pattern in force. */
+function proposedVersion(s: ScheduleWithVersions, input: { frequency?: PayrollFrequency; anchorDate?: string; payDateOffsetDays?: number; effectiveFrom: string }): PatternVersion {
+  const cur = patternOn(s, input.effectiveFrom);
+  const frequency = input.frequency ?? cur.frequency;
+  // Week-based periods count from the first new period; calendar-based ones ignore the anchor.
+  const weekBased = frequency === 'WEEKLY' || frequency === 'BIWEEKLY' || frequency === 'DAILY';
+  const anchorDate = input.anchorDate ?? (weekBased ? input.effectiveFrom : ymd(typeof cur.anchorDate === 'string' ? dateOnly(cur.anchorDate) : cur.anchorDate));
+  return { effectiveFrom: input.effectiveFrom, frequency, anchorDate, payDateOffsetDays: input.payDateOffsetDays ?? cur.payDateOffsetDays };
+}
+
+/** The schedule's first version (where history starts) when it has none yet. */
+const baseVersionFrom = (s: ScheduleWithVersions, today: string): string => (ymd(s.anchorDate) < today ? ymd(s.anchorDate) : today);
+
+/** `s` with `v` added to its pattern history, as it would read once saved. */
+function withVersion(s: ScheduleWithVersions, v: PatternVersion, today: string): ScheduleWithVersions {
+  const base = s.versions?.length ? s.versions : [{ effectiveFrom: dateOnly(baseVersionFrom(s, today)), frequency: s.frequency, anchorDate: s.anchorDate, payDateOffsetDays: s.payDateOffsetDays }];
+  return {
+    ...s,
+    versions: [...base.filter((x) => ymd(x.effectiveFrom) !== v.effectiveFrom), { effectiveFrom: dateOnly(v.effectiveFrom), frequency: v.frequency, anchorDate: dateOnly(v.anchorDate), payDateOffsetDays: v.payDateOffsetDays }],
+  };
 }
 
 paySchedulesRouter.patch('/:id', PROCESS, async (req, res, next) => {
@@ -1116,24 +1146,18 @@ paySchedulesRouter.patch('/:id', PROCESS, async (req, res, next) => {
       if (s.isDefault) throw new HttpError(409, 'schedule_is_default', 'This is the company default. Make another schedule the default first.');
     }
 
-    let version: { effectiveFrom: string; frequency: PayrollFrequency; anchorDate: string; payDateOffsetDays: number } | null = null;
+    let version: PatternVersion | null = null;
+    let bridge: PeriodWindow | null = null;
     if (patternChange) {
       if (!input.effectiveFrom) throw new HttpError(400, 'effective_from_required', 'A pattern change starts at a future pay period: say which.');
       if (input.effectiveFrom <= today) throw new HttpError(400, 'effective_in_past', 'A pattern change starts at a future pay period, so no period already running changes.');
       if (periodStartOnOrAfter(s, input.effectiveFrom) !== input.effectiveFrom) {
         throw new HttpError(400, 'not_a_period_start', `${fmtDay(input.effectiveFrom)} isn’t the start of a pay period on this schedule. The next one starts ${fmtDay(periodStartOnOrAfter(s, input.effectiveFrom))}.`);
       }
-      const cur = patternOn(s, input.effectiveFrom);
-      const frequency = input.frequency ?? cur.frequency;
-      const weekBased = frequency === 'WEEKLY' || frequency === 'BIWEEKLY' || frequency === 'DAILY';
-      const anchorDate = input.anchorDate ?? (weekBased ? input.effectiveFrom : ymd(typeof cur.anchorDate === 'string' ? dateOnly(cur.anchorDate) : cur.anchorDate));
-      const payDateOffsetDays = input.payDateOffsetDays ?? cur.payDateOffsetDays;
-      const nextS: ScheduleWithVersions = { ...s, versions: [{ effectiveFrom: dateOnly(input.effectiveFrom), frequency, anchorDate: dateOnly(anchorDate), payDateOffsetDays }] };
-      if (getCurrentPeriod(patternOn(nextS, input.effectiveFrom), dateOnly(input.effectiveFrom)).periodStart !== input.effectiveFrom) {
-        const ok = alignedStart(s, nextS, input.effectiveFrom);
-        throw new HttpError(400, 'version_misaligned', `The new pattern’s periods don’t start on ${fmtDay(input.effectiveFrom)}, so a period would be paid twice or not at all.${ok ? ` The first date both patterns start a period is ${fmtDay(ok)}.` : ''}`);
-      }
-      version = { effectiveFrom: input.effectiveFrom, frequency, anchorDate, payDateOffsetDays };
+      version = proposedVersion(s, { ...input, effectiveFrom: input.effectiveFrom });
+      // Periods that don't line up with the change get one short bridge period (periodContaining).
+      const first = periodContaining(withVersion(s, version, today), input.effectiveFrom);
+      if (first.bridge) bridge = first;
     } else if (input.effectiveFrom) {
       throw new HttpError(400, 'nothing_to_version', 'effectiveFrom goes with a frequency, anchor date or pay-date change.');
     }
@@ -1157,7 +1181,7 @@ paySchedulesRouter.patch('/:id', PROCESS, async (req, res, next) => {
       if (Object.keys(data).length) await tx.payrollSchedule.update({ where: { id: s.id }, data });
       if (version) {
         if (s.versions.length === 0) {
-          await tx.payrollScheduleVersion.create({ data: { tenantId, scheduleId: s.id, effectiveFrom: dateOnly(ymd(s.anchorDate) < today ? ymd(s.anchorDate) : today), frequency: s.frequency, anchorDate: s.anchorDate, payDateOffsetDays: s.payDateOffsetDays } });
+          await tx.payrollScheduleVersion.create({ data: { tenantId, scheduleId: s.id, effectiveFrom: dateOnly(baseVersionFrom(s, today)), frequency: s.frequency, anchorDate: s.anchorDate, payDateOffsetDays: s.payDateOffsetDays } });
         }
         await tx.payrollScheduleVersion.upsert({
           where: { scheduleId_effectiveFrom: { scheduleId: s.id, effectiveFrom: dateOnly(version.effectiveFrom) } },
@@ -1168,7 +1192,7 @@ paySchedulesRouter.patch('/:id', PROCESS, async (req, res, next) => {
     });
     if (version) {
       enqueueAudit(
-        { actorUserId: req.user!.id, clientId: null, action: 'payroll.schedule.version', entityType: 'PayrollSchedule', entityId: s.id, metadata: { ...version, summary: `Pattern changes ${fmtDay(version.effectiveFrom)}: ${patternSentence({ ...version, anchorDate: dateOnly(version.anchorDate) })}` } },
+        { actorUserId: req.user!.id, clientId: null, action: 'payroll.schedule.version', entityType: 'PayrollSchedule', entityId: s.id, metadata: { ...version, ...(bridge ? { bridge: { periodStart: bridge.periodStart, periodEnd: bridge.periodEnd, payDate: bridge.payDate } } : {}), summary: `Pattern changes ${fmtDay(version.effectiveFrom)}: ${patternSentence({ ...version, anchorDate: dateOnly(version.anchorDate) })}${bridge ? ` (a short bridge period ${fmtDay(bridge.periodStart)}–${fmtDay(bridge.periodEnd)}, paid ${fmtDay(bridge.payDate)}, joins the two)` : ''}` } },
         'paySchedules.version',
       );
     }

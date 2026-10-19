@@ -190,7 +190,7 @@ describe('membership by rules', () => {
     const notes = await testDb.notification.findMany({ where: { recipientUserId: s.hrUser.id, category: 'payroll', channel: 'IN_APP' } });
     expect(notes).toHaveLength(1);
     expect(notes[0]!.subject).toBe('1 person moves pay schedules');
-    expect(notes[0]!.body).toContain('Ana Worker — Weekly → Biweekly from Oct 31 (transferred; Client: Seaside Inn)');
+    expect(notes[0]!.body).toContain('Ana Worker — Weekly → Biweekly from Oct 31 (transferred; Ana works for Seaside Inn)');
     expect(notes[0]!.linkUrl).toBe(`/payroll/schedules/${s.biweekly.id}`);
     await flushPendingAudits();
     expect(await testDb.auditLog.count({ where: { action: 'payroll.schedule.auto_move', entityId: ana.id } })).toBe(1);
@@ -217,7 +217,7 @@ describe('membership by rules', () => {
     expect(await assignments(hire.id)).toEqual([{ schedule: 'Biweekly', from: '2026-10-17', to: null }]);
     await flushPendingNotifications();
     const note = await testDb.notification.findFirstOrThrow({ where: { recipientUserId: s.hrUser.id, category: 'payroll', channel: 'IN_APP' } });
-    expect(note.body).toContain('Dee New — no schedule → Biweekly from Oct 17 (hired; Client: Harbor Grill)');
+    expect(note.body).toContain('Dee New — no schedule → Biweekly from Oct 17 (hired; Dee works for Harbor Grill)');
 
     const mine = await s.hr.get(`/associates/${hire.id}/pay-schedule`);
     expect(mine.status).toBe(200);
@@ -312,6 +312,28 @@ describe('payroll runs by schedule', () => {
     ]);
   });
 
+  it('the pre-payroll checks look only at the days a run pays — a move mid-period splits them too', async () => {
+    const s = await seed();
+    const ana = await worker('Ana', s.coastalSite.id);
+    await clientRule(s.hr, s.weekly.id, s.coastal.id);
+    // By hand, from Wednesday Oct 28: Weekly has her Oct 24–27, Biweekly from Oct 28.
+    await s.hr.post('/payroll/pay-schedules/move').send({ toScheduleId: s.biweekly.id, associateIds: [ana.id], effectiveFrom: '2026-10-28' }).expect(200);
+    await hours(ana.id, s.coastal.id, '2026-10-26', 4);
+    // Clocked out Thursday, not yet approved — Biweekly's day.
+    await testDb.timeEntry.create({ data: { associateId: ana.id, clientId: s.coastal.id, clockInAt: new Date('2026-10-29T13:00:00.000Z'), clockOutAt: new Date('2026-10-29T19:00:00.000Z'), status: 'COMPLETED' } });
+
+    const kinds = async (scheduleId: string, periodStart: string, periodEnd: string) => {
+      const res = await s.hr.post('/payroll/runs/exceptions').send({ periodStart, periodEnd, payrollScheduleId: scheduleId });
+      expect(res.status).toBe(200);
+      return (res.body.exceptions as Array<{ kind: string; associateId: string }>).filter((e) => e.associateId === ana.id).map((e) => e.kind);
+    };
+    expect(await kinds(s.weekly.id, '2026-10-24', '2026-10-30')).not.toContain('UNAPPROVED_TIME');
+    expect(await kinds(s.weekly.id, '2026-10-24', '2026-10-30')).toContain('MISSING_W4');
+    expect(await kinds(s.biweekly.id, '2026-10-17', '2026-10-30')).toContain('UNAPPROVED_TIME');
+    // Her approved Monday is Weekly's, so Biweekly has nothing of hers to check against a W-4.
+    expect(await kinds(s.biweekly.id, '2026-10-17', '2026-10-30')).not.toContain('MISSING_W4');
+  });
+
   it('a schedule from another tenant’s reach is refused for a run', async () => {
     const s = await seed();
     const res = await s.hr.post('/payroll/runs').send({ periodStart: '2026-10-31', periodEnd: '2026-11-13', payrollScheduleId: '11111111-1111-4111-8111-111111111111' });
@@ -350,6 +372,37 @@ describe('schedules over time', () => {
     const preview = await s.hr.get('/payroll/pay-schedules/preview-pattern?frequency=SEMIMONTHLY&anchorDate=2026-10-01&payDateOffsetDays=0&months=1');
     expect(preview.status).toBe(200);
     expect(preview.body.periods[0]).toMatchObject({ periodStart: '2026-10-16', periodEnd: '2026-10-31' });
+  });
+
+  it('a pattern whose periods don’t line up gets one short bridge period — previewed, then on the calendar and the run’s payday', async () => {
+    const s = await seed();
+    // Every other week (… Oct 31–Nov 13, Nov 14–27) → twice a month from Nov 14: the half-month Nov 1–15 began before the change.
+    const preview = await s.hr.get(`/payroll/pay-schedules/preview-pattern?frequency=SEMIMONTHLY&anchorDate=2026-11-14&payDateOffsetDays=4&months=1&scheduleId=${s.biweekly.id}&effectiveFrom=2026-11-14`);
+    expect(preview.status).toBe(200);
+    expect(preview.body.periods[0]).toMatchObject({ periodStart: '2026-11-14', periodEnd: '2026-11-15', payDate: '2026-11-19', bridge: true, versionChange: true });
+    expect(preview.body.periods[1]).toMatchObject({ periodStart: '2026-11-16', periodEnd: '2026-11-30', payDate: '2026-12-04' });
+    expect(preview.body.periods[1].bridge).toBeUndefined();
+
+    const ok = await s.hr.patch(`/payroll/pay-schedules/${s.biweekly.id}`).send({ frequency: 'SEMIMONTHLY', payDateOffsetDays: 4, effectiveFrom: '2026-11-14' });
+    expect(ok.status).toBe(200);
+    const cal = await s.hr.get(`/payroll/pay-schedules/${s.biweekly.id}/calendar?months=3`);
+    const starts = (cal.body.periods as Array<{ periodStart: string; periodEnd: string }>).map((p) => `${p.periodStart}..${p.periodEnd}`);
+    // Every day once: the old fortnight ends the day before, the bridge, then whole half-months.
+    expect(starts).toEqual(expect.arrayContaining(['2026-10-31..2026-11-13', '2026-11-14..2026-11-15', '2026-11-16..2026-11-30', '2026-12-01..2026-12-15']));
+    expect(cal.body.periods.find((p: { periodStart: string }) => p.periodStart === '2026-10-31')).toMatchObject({ payDate: '2026-11-20', versionChange: false });
+
+    // The old pattern's last period keeps its payday (offset 7), the bridge is paid on the new one's.
+    const run = async (periodStart: string, periodEnd: string) => {
+      const r = await s.hr.post('/payroll/runs').send({ periodStart, periodEnd, payrollScheduleId: s.biweekly.id });
+      expect(r.status).toBe(201);
+      return r.body.id as string;
+    };
+    const { payDateFor } = await import('../../lib/banking/funding.js');
+    const [oldRun, bridgeRun] = [await run('2026-10-31', '2026-11-13'), await run('2026-11-14', '2026-11-15')];
+    await runWithTenant(ALTO_TENANT_ID, 'job', async () => {
+      expect(await payDateFor(prisma, oldRun)).toBe('2026-11-20');
+      expect(await payDateFor(prisma, bridgeRun)).toBe('2026-11-19');
+    });
   });
 
   it('the old schedule endpoints still work, and assign goes through the rules', async () => {

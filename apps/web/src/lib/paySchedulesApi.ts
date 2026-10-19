@@ -81,13 +81,18 @@ export function listScheduleCandidates(f: CandidateFilters = {}) {
   return apiFetch<ScheduleCandidatesResponse>(`${B}/candidates${qs ? `?${qs}` : ''}`);
 }
 
-export function previewPattern(input: { frequency: PayFrequencyKind; anchorDate: string; payDateOffsetDays: number; months?: number }) {
+/** A new pattern's periods; with scheduleId + effectiveFrom, a change to that schedule from that date (a bridge period first, if one is needed). */
+export function previewPattern(input: { frequency: PayFrequencyKind; anchorDate: string; payDateOffsetDays: number; months?: number; scheduleId?: string; effectiveFrom?: string }) {
   const p = new URLSearchParams({
     frequency: input.frequency,
     anchorDate: input.anchorDate,
     payDateOffsetDays: String(input.payDateOffsetDays),
     months: String(input.months ?? 12),
   });
+  if (input.scheduleId && input.effectiveFrom) {
+    p.set('scheduleId', input.scheduleId);
+    p.set('effectiveFrom', input.effectiveFrom);
+  }
   return apiFetch<PayCalendarResponse>(`${B}/preview-pattern?${p.toString()}`);
 }
 

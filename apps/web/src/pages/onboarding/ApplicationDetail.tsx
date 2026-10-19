@@ -104,6 +104,7 @@ import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
 import { listClientLocations } from '@/lib/clientsApi';
 import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
+import { getAssociatePaySchedule } from '@/lib/payScheduleFlowApi';
 import { ReadyToWorkLine } from '@/components/ReadyToWorkLine';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
@@ -278,6 +279,17 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
     enabled: !!applicationId && canManage,
   });
   const queueNext = reviewQueueQuery.data ?? null;
+
+  // The pay schedule the hire lands on — the same query the card below
+  // reads. One-click approve names it; a hire no schedule covers goes
+  // through the dialog instead, where the schedule is chosen.
+  const hireAssociateId = detailQuery.data?.associateId ?? null;
+  const payScheduleQuery = useQuery({
+    queryKey: ['associatePaySchedule', hireAssociateId],
+    queryFn: () => getAssociatePaySchedule(hireAssociateId!),
+    enabled: canManage && !!hireAssociateId && detailQuery.data?.status !== 'APPROVED',
+    retry: false,
+  });
 
   const detail: ApplicationDetailType | null = detailQuery.data ?? null;
   const audit: AuditLogEntry[] = auditQuery.data ?? [];
@@ -474,9 +486,14 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
   // date (today or future, LOCAL — same rule as the dialog's prefill). A
   // past start date still needs the dialog so it can't silently become the
   // official hire date that drives I-9/E-Verify deadlines.
+  // A hire no pay schedule covers also goes through the dialog, so the
+  // schedule is chosen with the approval rather than discovered at payroll.
   const startYmd = detail.startDate ? detail.startDate.slice(0, 10) : null;
+  const hirePs = payScheduleQuery.data ?? null;
+  const hireUncovered = !!hirePs && !hirePs.current && !hirePs.pending?.scheduleId && !hirePs.ruleDefault;
+  const hireScheduleName = hirePs ? (hirePs.current?.name ?? (hirePs.pending?.scheduleId ? hirePs.pending.name : null) ?? hirePs.ruleDefault?.name ?? null) : null;
   const directApproveDate =
-    startYmd && startYmd >= ymdLocal() ? startYmd : null;
+    startYmd && startYmd >= ymdLocal() && !hireUncovered ? startYmd : null;
 
   const handleDirectApprove = async () => {
     if (!directApproveDate || directApproving) return;
@@ -534,6 +551,8 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
                 onReopen={() => void handleReopen()}
                 reopening={reopening}
                 directApproveDate={directApproveDate}
+                directApproveSchedule={hireScheduleName}
+                needsSchedule={hireUncovered}
                 directApproving={directApproving}
                 onDirectApprove={handleDirectApprove}
               />
@@ -553,6 +572,8 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
                 onReopen={() => void handleReopen()}
                 reopening={reopening}
                 directApproveDate={directApproveDate}
+                directApproveSchedule={hireScheduleName}
+                needsSchedule={hireUncovered}
                 directApproving={directApproving}
                 onDirectApprove={handleDirectApprove}
                 compact
@@ -871,6 +892,8 @@ function DetailActions({
   onReopen,
   reopening,
   directApproveDate,
+  directApproveSchedule,
+  needsSchedule,
   directApproving,
   onDirectApprove,
   compact,
@@ -888,6 +911,10 @@ function DetailActions({
   /** YYYY-MM-DD when the record's start date is today-or-future — enables
    *  the one-click approve; null falls back to the dialog. */
   directApproveDate: string | null;
+  /** The pay schedule the hire lands on, when known — named on the one-click approve. */
+  directApproveSchedule: string | null;
+  /** No pay schedule covers the hire: approve opens the dialog, where one is chosen. */
+  needsSchedule: boolean;
   directApproving: boolean;
   onDirectApprove: () => void;
   compact?: boolean;
@@ -1003,8 +1030,10 @@ function DetailActions({
           title={
             checklistComplete
               ? directApproveDate
-                ? 'Approve now with the start date already on file'
-                : undefined
+                ? `Approve now with the start date already on file${directApproveSchedule ? ` · paid on ${directApproveSchedule}` : ''}`
+                : needsSchedule
+                  ? 'No pay schedule covers this hire yet — choose one as you approve'
+                  : undefined
               : 'Checklist must be 100% before approving'
           }
         >

@@ -109,6 +109,7 @@ export async function computePayrollExceptions(
     },
     include: {
       associate: { select: { id: true, firstName: true, lastName: true } },
+      location: { select: { timezone: true } },
     },
   });
 
@@ -148,16 +149,18 @@ export async function computePayrollExceptions(
     },
   });
 
-  // A run for one pay schedule: only its people's time (lib/payScheduleMembership),
-  // and a warning for anyone with approved time who is on no schedule at all.
+  // A run for one pay schedule: only its people's time on their days on it
+  // (the same cut the aggregator pays — someone who moved mid-period is
+  // checked here only for the days this run pays), and a warning for anyone
+  // with approved time who is on no schedule at all.
   const scheduleWarnings: PayrollExceptionRow[] = [];
   if (input.payrollScheduleId) {
-    const { membershipWindows, unscheduledWithTime, ymd } = await import('./payScheduleMembership.js');
+    const { inWindows, membershipWindows, unscheduledWithTime, workDayOf, ymd } = await import('./payScheduleMembership.js');
     const from = ymd(periodStart);
     const to = ymd(new Date(periodEndExclusive.getTime() - 86_400_000));
     const windows = await membershipWindows(tx, input.payrollScheduleId, from, to);
-    entries = entries.filter((e) => windows.has(e.associateId));
-    unapproved = unapproved.filter((e) => windows.has(e.associateId));
+    entries = entries.filter((e) => inWindows(windows, e.associateId, workDayOf(e.clockInAt, e.location?.timezone)));
+    unapproved = unapproved.filter((e) => inWindows(windows, e.associateId, workDayOf(e.clockInAt, e.location?.timezone)));
     for (const u of await unscheduledWithTime(tx, from, to, clientId)) {
       scheduleWarnings.push({
         associateId: u.associateId,

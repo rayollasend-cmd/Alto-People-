@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
-import type { MembershipImpact, MoveInput, PayScheduleSummary } from '@alto-people/shared';
+import { becauseSentence, type MembershipImpact, type MoveInput, type PayScheduleSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { applyMove, previewMove } from '@/lib/paySchedulesApi';
 import { Avatar } from '@/components/ui/Avatar';
@@ -43,7 +43,7 @@ export function ImpactPeople({ impact, max = 200 }: { impact: MembershipImpact; 
               </span>
             </p>
             <p className="text-xs text-ink-muted">
-              From {payDay(p.effectiveFrom, false)} · {p.because}
+              From {payDay(p.effectiveFrom, false)} · {becauseSentence(p.because, p.name.split(' ')[0])}
               {p.transition.lastOldPayDate && ` · last check on the old schedule ${payDay(p.transition.lastOldPayDate, false)}`}
               {p.transition.firstNewPayDate && ` · first on the new ${payDay(p.transition.firstNewPayDate, false)}`}
             </p>

@@ -264,7 +264,11 @@ export function PayCalendar({ periods, linkRun }: { periods: SchedulePeriod[]; l
                       {p.adjustedFor} on {payDay(p.unadjustedPayDate, false)} — paid {payDay(p.payDate, false)} instead
                     </span>
                   )}
-                  {p.versionChange && <span className="mt-0.5 block text-xs text-accent">The pay pattern changes from this period</span>}
+                  {p.versionChange && (
+                    <span className="mt-0.5 block text-xs text-accent">
+                      {p.bridge ? 'A short bridge period — the new pay pattern starts here' : 'The pay pattern changes from this period'}
+                    </span>
+                  )}
                   {p.run && (
                     <span className="mt-0.5 block text-xs">
                       {linkRun ? (

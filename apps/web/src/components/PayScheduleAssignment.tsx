@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CalendarClock, CalendarDays } from 'lucide-react';
 import { toast } from 'sonner';
-import type { AssociatePaySchedule } from '@alto-people/shared';
+import { becauseSentence, type AssociatePaySchedule } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDayShort, parseYmd, ymdLocal } from '@/lib/format';
@@ -124,28 +124,6 @@ function fmtPayday(ymd: string | null | undefined): string {
 
 const lowerFirst = (t: string) => (t ? t[0]!.toLowerCase() + t.slice(1) : t);
 
-/**
- * The engine's reason label ("Site: Seaside", "Individual", "Company
- * default") as a plain sentence about the person.
- */
-function plainBecause(because: string): string {
-  const t = because.trim();
-  const named = /^(Site|Department|Client): (.+)$/.exec(t);
-  if (named) {
-    const [, kind, name] = named;
-    return kind === 'Department' ? `They’re in ${name}` : kind === 'Site' ? `They work at ${name}` : `They work for ${name}`;
-  }
-  const fixed: Record<string, string> = {
-    Individual: 'Chosen for them by name',
-    'Company default': 'No rule covers them, so the company default applies',
-    'Assigned earlier': 'Assigned before schedule rules existed',
-    'Salaried staff': 'They’re salaried',
-    'Hourly staff': 'They’re paid hourly',
-  };
-  if (fixed[t]) return fixed[t]!;
-  return t ? t[0]!.toUpperCase() + t.slice(1) : t;
-}
-
 function Summary({
   ps,
   variant,
@@ -187,7 +165,7 @@ function Summary({
             </div>
             <p className="text-xs text-silver">
               {shown.since ? `Since ${fmtYmd(shown.since)} · ` : variant === 'hire' && !ps.current ? 'Will be on it from the hire date · ' : ''}
-              {plainBecause(shown.because)}
+              {becauseSentence(shown.because)}
             </p>
           </>
         ) : (
@@ -200,7 +178,7 @@ function Summary({
               {pendingMove.scheduleId
                 ? `Moves to ${pendingMove.name ?? 'another schedule'} on ${fmtYmd(pendingMove.effectiveFrom)}`
                 : `Leaves this schedule on ${fmtYmd(pendingMove.effectiveFrom)}`}
-              {pendingMove.because ? ` — ${lowerFirst(plainBecause(pendingMove.because))}` : ''}
+              {pendingMove.because ? ` — ${lowerFirst(becauseSentence(pendingMove.because))}` : ''}
             </span>
           </p>
         )}

@@ -139,6 +139,24 @@ export function getPeriodAfter(schedule: ScheduleInput, w: PeriodWindow): Period
   return getCurrentPeriod(schedule, addDays(toUtcDate(w.periodEnd), 1));
 }
 
+/** The calendar day a shift counts on: its clock-in, on the site's clock (Eastern when unknown). */
+export function workDayOf(clockInAt: Date, timezone: string | null | undefined): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(clockInAt);
+  } catch {
+    return clockInAt.toISOString().slice(0, 10);
+  }
+}
+
+/** Whether a day is inside one of a person's windows on a pay schedule (lib/payScheduleMembership). */
+export const inWindows = (windows: Map<string, Array<{ start: string; end: string }>>, associateId: string, day: string): boolean =>
+  (windows.get(associateId) ?? []).some((w) => w.start <= day && day <= w.end);
+
+/** A window between explicit dates — a period cut short where a schedule's pattern changes. */
+export function windowBetween(periodStart: string, periodEnd: string, payOffset: number): PeriodWindow {
+  return buildWindow(toUtcDate(periodStart), toUtcDate(periodEnd), payOffset);
+}
+
 function buildWindow(start: Date, end: Date, payOffset: number): PeriodWindow {
   // People are paid early, never late: a pay date on a weekend or a Federal
   // Reserve holiday moves to the banking day before it (lib/banking/holidays).

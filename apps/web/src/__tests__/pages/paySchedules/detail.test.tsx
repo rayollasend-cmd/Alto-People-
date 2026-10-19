@@ -84,7 +84,7 @@ describe('<PayScheduleDetailPage>', () => {
     await user.click(screen.getByRole('button', { name: /Sam Okafor —/ }));
     const card = await screen.findByRole('dialog');
     expect(within(card).getByText('$18.50/h')).toBeInTheDocument();
-    expect(within(card).getByText(/On Biweekly Hourly since .* — Client: Coastal Resort/)).toBeInTheDocument();
+    expect(within(card).getByText(/On Biweekly Hourly since .* — they work for Coastal Resort/)).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: 'Collect W-4' })).toHaveAttribute('href', '/people/a2?tab=tax');
     expect(within(card).getByRole('link', { name: 'Open profile' })).toHaveAttribute('href', '/people/a2');
   });
@@ -175,7 +175,7 @@ describe('<PayScheduleDetailPage>', () => {
     await user.click(screen.getByRole('button', { name: /^Joining/ }));
     expect(screen.queryByRole('button', { name: /Maria Lopez —/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Jo Future —/ }));
-    expect(await screen.findByText(/Joins Biweekly Hourly on .* — Individual/)).toBeInTheDocument();
+    expect(await screen.findByText(/Joins Biweekly Hourly on .* — chosen for them by name/)).toBeInTheDocument();
     expect(api.getPayScheduleRoster).toHaveBeenCalledWith('s1');
   });
 
@@ -184,7 +184,7 @@ describe('<PayScheduleDetailPage>', () => {
     api.getPayCalendar.mockResolvedValue({ periods: [period({ periodStart: '2099-10-24' }), period({ periodStart: '2099-11-07' })] });
     api.previewPattern.mockResolvedValue({ periods: [period({ payDate: '2099-11-05' })] });
     api.updatePaySchedule
-      .mockRejectedValueOnce(new ApiError(400, 'version_misaligned', 'The new pattern’s periods don’t start on Oct 24, so a period would be paid twice or not at all. The first date both patterns start a period is Nov 7.'))
+      .mockRejectedValueOnce(new ApiError(400, 'not_a_period_start', 'Oct 24 isn’t the start of a pay period on this schedule. The next one starts Nov 7.'))
       .mockResolvedValueOnce({ schedule: detail() });
     open();
     await screen.findByRole('heading', { name: 'Biweekly Hourly' });
@@ -193,10 +193,26 @@ describe('<PayScheduleDetailPage>', () => {
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('How often'), { target: { value: 'WEEKLY' } });
     await user.click(within(dialog).getByRole('button', { name: 'Schedule the change' }));
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/first date both patterns start a period is Nov 7/);
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/The next one starts Nov 7/);
     await user.click(within(dialog).getByRole('button', { name: /Start .*Nov 7 instead/ }));
     await user.click(within(dialog).getByRole('button', { name: 'Schedule the change' }));
     await waitFor(() => expect(api.updatePaySchedule).toHaveBeenLastCalledWith('s1', { frequency: 'WEEKLY', payDateOffsetDays: 7, effectiveFrom: suggestedDate('starts Nov 7.') }));
+  });
+
+  it('a pattern whose periods don’t line up shows the short bridge period before it is saved', async () => {
+    const user = userEvent.setup();
+    api.getPayCalendar.mockResolvedValue({ periods: [period({ periodStart: '2099-11-07' })] });
+    api.previewPattern.mockResolvedValue({
+      periods: [period({ periodStart: '2099-11-07', periodEnd: '2099-11-15', payDate: '2099-11-20', bridge: true, versionChange: true }), period({ periodStart: '2099-11-16', periodEnd: '2099-11-30', payDate: '2099-12-04' })],
+    });
+    open();
+    await screen.findByRole('heading', { name: 'Biweekly Hourly' });
+    await user.click(screen.getByRole('button', { name: 'More actions' }));
+    await user.click(await screen.findByRole('menuitem', { name: /Change the pay pattern/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('How often'), { target: { value: 'SEMIMONTHLY' } });
+    expect(await within(dialog).findByText(/one short period, .*paid .*joins the two/)).toBeInTheDocument();
+    expect(api.previewPattern).toHaveBeenLastCalledWith(expect.objectContaining({ frequency: 'SEMIMONTHLY', scheduleId: 's1', effectiveFrom: '2099-11-07' }));
   });
 });
 

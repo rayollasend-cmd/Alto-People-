@@ -50,6 +50,7 @@ import { calculateTaxes, inHouseEngine, type TaxEngineProvider, type TaxLine } f
 import { LOCAL_TAX_STATES, taxableWages, type TaxabilityContext, type TaxableWages } from './deductionTaxability.js';
 import { buildDeductionLines, reconcile, type DeductionLine } from './deductionLines.js';
 import type { PlanDeduction } from './retirementDeferrals.js';
+import { inWindows, workDayOf } from './payrollSchedule.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -401,16 +402,8 @@ export async function aggregatePayrollProjection(
   const byAssociate = new Map<string, typeof entries>();
   // A run for one pay schedule pays its people for their days on it.
   const sf = input.scheduleFilter;
-  const dayOf = (d: Date, tz: string | null | undefined): string => {
-    try {
-      return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
-    } catch {
-      return d.toISOString().slice(0, 10);
-    }
-  };
-  const inWindow = (associateId: string, day: string) => (sf?.windows.get(associateId) ?? []).some((w) => w.start <= day && day <= w.end);
   for (const e of entries) {
-    if (sf && !inWindow(e.associateId, dayOf(e.clockInAt, e.location?.timezone))) continue;
+    if (sf && !inWindows(sf.windows, e.associateId, workDayOf(e.clockInAt, e.location?.timezone))) continue;
     const arr = byAssociate.get(e.associateId) ?? [];
     arr.push(e);
     byAssociate.set(e.associateId, arr);

@@ -87,12 +87,22 @@ export async function payDateFor(db: Db, runId: string): Promise<string> {
   const run = await db.payrollRun.findFirstOrThrow({ where: { id: runId, tenantId: tenantIdForWrite() }, select: { periodEnd: true, clientId: true, payrollScheduleId: true } });
   const schedule =
     // A run made for one pay schedule is paid on that schedule's day.
-    (run.payrollScheduleId ? await db.payrollSchedule.findFirst({ where: { id: run.payrollScheduleId }, select: { payDateOffsetDays: true } }) : null) ??
+    (run.payrollScheduleId ? await scheduleOffsetOn(db, run.payrollScheduleId, run.periodEnd) : null) ??
     (run.clientId ? await db.payrollSchedule.findFirst({ where: { clientId: run.clientId, isActive: true, deletedAt: null }, select: { payDateOffsetDays: true } }) : null) ??
     (await db.payrollSchedule.findFirst({ where: { tenantId: tenantIdForWrite(), clientId: null, isActive: true, deletedAt: null }, select: { payDateOffsetDays: true } }));
   const offset = schedule?.payDateOffsetDays ?? 7;
   const nominal = new Date(run.periodEnd.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
   return adjustPayDate(nominal).payDate;
+}
+
+/** A schedule's pay-date offset for a period ending `periodEnd` — the pattern in force then, so a pattern change never moves an older period's payday. */
+async function scheduleOffsetOn(db: Db, scheduleId: string, periodEnd: Date): Promise<{ payDateOffsetDays: number } | null> {
+  const s = await db.payrollSchedule.findFirst({
+    where: { id: scheduleId },
+    select: { payDateOffsetDays: true, versions: { where: { effectiveFrom: { lte: periodEnd } }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { payDateOffsetDays: true } } },
+  });
+  if (!s) return null;
+  return { payDateOffsetDays: s.versions[0]?.payDateOffsetDays ?? s.payDateOffsetDays };
 }
 
 /** Load this tenant's holiday overrides into the calendar before date math. */
