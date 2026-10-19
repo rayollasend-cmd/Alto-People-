@@ -25,6 +25,8 @@ import {
 } from '../lib/payrollTaxLedger.js';
 import { RETURN_KINDS, RETURN_LABEL, agencyKindFor, amendReturn, generateReturn, reconcile, returnCsv, returnDueDate, type ReturnKind } from '../lib/payrollTaxReturns.js';
 import { isClientBoundedRole, isInternallyScoped } from '../lib/scope.js';
+import { personVariances, yearEndReconciliation, type PersonMetric } from '../lib/yearEndReconciliation.js';
+import { yearEndWorkbook } from '../lib/yearEndWorkbook.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 
@@ -149,6 +151,18 @@ async function expectedReturns(periodLabel: string): Promise<Array<{ kind: Retur
     else if (g.kind === 'STATE_WITHHOLDING' && !NO_INCOME_TAX_STATES.has(g.jurisdiction)) out.push({ kind: 'STATE_WH_QUARTERLY', jurisdiction: g.jurisdiction });
     else if (g.kind === 'STATE_UNEMPLOYMENT') out.push({ kind: 'SUI_WAGE_REPORT', jurisdiction: g.jurisdiction });
     else if (g.kind === 'LOCAL') out.push({ kind: 'LOCAL_QUARTERLY', jurisdiction: g.jurisdiction });
+  }
+  // A state disability / paid-leave program withheld in the quarter files its own report.
+  const q = /^(\d{4})-Q([1-4])$/.exec(periodLabel);
+  if (q) {
+    const from = new Date(Date.UTC(Number(q[1]), (Number(q[2]) - 1) * 3, 1));
+    const to = new Date(Date.UTC(Number(q[1]), Number(q[2]) * 3, 1));
+    const programs = await prisma.payrollItemTaxLine.findMany({
+      where: { tenantId, kind: 'STATE_PROGRAM', payrollItem: { status: 'DISBURSED', payrollRun: { disbursedAt: { gte: from, lt: to } } } },
+      select: { workState: true, code: true },
+      distinct: ['workState', 'code'],
+    });
+    for (const st of new Set(programs.map((p) => (p.workState ?? p.code.slice(0, 2)).toUpperCase()))) out.push({ kind: 'STATE_PROGRAM_REPORT', jurisdiction: st });
   }
   if (periodLabel.endsWith('-Q4')) {
     const year = periodLabel.slice(0, 4);
@@ -956,3 +970,36 @@ payrollTaxesRouter.get(
     res.json({ assignees: users.map((u) => ({ id: u.id, name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : u.email })) });
   }),
 );
+
+/* ----- Year-end reconciliation (lib/yearEndReconciliation) ------------------------- */
+
+const yearParam = (raw: string) => {
+  const y = Number(raw);
+  if (!Number.isInteger(y) || y < 2000 || y > 2100) throw new HttpError(400, 'bad_year', 'Give a four-digit tax year.');
+  return y;
+};
+const METRIC = z.union([z.enum(['box1', 'box2', 'box3', 'box4', 'box5', 'box6']), z.string().regex(/^(state|stateTax):[A-Z]{2}$/)]);
+
+/** GET /payroll-taxes/year-end/:year — paychecks vs 941s vs deposits vs W-2s, by tax and jurisdiction, with the pre-filing checklist. */
+payrollTaxesRouter.get('/year-end/:year', h(async (req, res) => {
+  res.json(await yearEndReconciliation(prisma, yearParam(req.params.year!)));
+}));
+
+/** GET /payroll-taxes/year-end/:year/people?metric=box1 — the people behind a variance. */
+payrollTaxesRouter.get('/year-end/:year/people', h(async (req, res) => {
+  const metric = METRIC.parse(req.query.metric) as PersonMetric;
+  res.json({ metric, people: await personVariances(prisma, yearParam(req.params.year!), metric) });
+}));
+
+/** GET /payroll-taxes/year-end/:year/export.xlsx — the reconciliation as a workbook. */
+payrollTaxesRouter.get('/year-end/:year/export.xlsx', h(async (req, res) => {
+  const year = yearParam(req.params.year!);
+  const recon = await yearEndReconciliation(prisma, year);
+  const people = await personVariances(prisma, year, 'box1');
+  const brand = await prisma.orgSetting.findFirst({ where: { tenantId: tenantIdForWrite() }, select: { orgName: true } });
+  const buf = await yearEndWorkbook(recon, people, brand?.orgName ?? 'Payroll');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="year-end-reconciliation-${year}.xlsx"`);
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'payroll_tax.year_end_exported', entityType: 'TaxYear', entityId: String(year), metadata: { variances: recon.summary.variances } }, 'payrollTaxes.yearEnd');
+  res.send(buf);
+}));

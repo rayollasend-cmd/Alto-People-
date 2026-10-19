@@ -8,6 +8,7 @@ import { flushPendingNotifications } from '../../lib/notify.js';
 import { ATTESTATION_TEXT } from '../../lib/laborRules/live.js';
 import { roundPunches } from '../../lib/punchRounding.js';
 import { noteScheduleChange } from '../../lib/predictabilityPay.js';
+import { startOfWeekForSite } from '../../lib/timeAnomalies.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
@@ -259,7 +260,10 @@ describe('overtime offered fairly', () => {
     const people = await Promise.all(['Bea Busy', 'Cal Calm', 'Dee Done'].map((n) => createAssociate({ firstName: n.split(' ')[0], lastName: n.split(' ')[1] })));
     for (const p of people) await prisma.associateAssignment.create({ data: { associateId: p.id, locationId: site.id, startedAt: new Date('2026-01-01') } });
     const [bea, cal, dee] = people;
-    const monday = new Date(Date.now() + 10 * 86_400_000);
+    // Anchor to the site's own workweek (it starts on a fixed weekday), so every
+    // shift below lands in one week whatever day the suite runs on.
+    const weekStart = startOfWeekForSite(new Date(Date.now() + 10 * 86_400_000), site.timezone);
+    const monday = new Date(weekStart.getTime() + 3 * 86_400_000);
     monday.setUTCHours(14, 0, 0, 0);
     // Bea and Dee already have 36 h in that week; Cal has none.
     for (const p of [bea!, dee!]) {

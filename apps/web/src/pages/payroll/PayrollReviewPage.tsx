@@ -161,6 +161,7 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
         <TaxesCard report={report} />
       </div>
 
+      {(report.payByCheck?.length ?? 0) > 0 && <PaperChecks rows={report.payByCheck!} runId={r.id} />}
       <LookAt rows={flagged} previous={report.previous} />
       <Breakdown report={report} />
       <Register rows={report.rows} totals={report.totals} />
@@ -305,6 +306,42 @@ function TaxesCard({ report }: { report: PayrollReviewReport }) {
   );
 }
 
+/* ---- Paid by paper check this time --------------------------------------- */
+
+function PaperChecks({ rows, runId }: { rows: NonNullable<PayrollReviewReport['payByCheck']>; runId: string }) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>
+            Paid by check this time <span className="ml-1 text-ink-muted">({rows.length})</span>
+          </CardTitle>
+          <CardDescription>How these people are paid changes, not how much. They’re left out of the bank file and printed from Paper checks.</CardDescription>
+        </div>
+        <Button asChild size="sm" variant="ghost">
+          <Link to={`/payroll/runs/${runId}/checks`}>
+            Paper checks
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </Button>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ul className="divide-y divide-line">
+          {rows.map((p) => (
+            <li key={p.itemId} className="flex items-baseline justify-between gap-3 px-5 py-2.5 text-sm">
+              <span className="min-w-0">
+                <span className="block truncate text-ink">{p.name}</span>
+                <span className="block truncate text-xs text-ink-muted">{p.reason}</span>
+              </span>
+              <span className="shrink-0 tabular-nums text-ink">{fmtMoney(p.net)}</span>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 /* ---- Paychecks to look at --------------------------------------------- */
 
 function LookAt({ rows, previous }: { rows: ReviewRow[]; previous: PayrollReviewReport['previous'] }) {
@@ -439,7 +476,7 @@ function Breakdown({ report }: { report: PayrollReviewReport }) {
 
 function Register({ rows, totals }: { rows: ReviewRow[]; totals: PayrollReviewReport['totals'] }) {
   const money = (pick: (r: ReviewRow) => number) => (r: ReviewRow) => fmtMoney(pick(r));
-  const taxes = (r: ReviewRow) => r.federal + r.socialSecurity + r.medicare + r.stateTax + r.localTax;
+  const taxes = (r: ReviewRow) => r.federal + r.socialSecurity + r.medicare + r.stateTax + r.localTax + (r.stateProgram ?? 0);
   const deductions = (r: ReviewRow) => r.preTax + r.postTax + r.other;
   const columns: GridColumn<ReviewRow>[] = [
     {
@@ -469,6 +506,7 @@ function Register({ rows, totals }: { rows: ReviewRow[]; totals: PayrollReviewRe
     { key: 'medicare', header: 'Medicare', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.medicare, cell: money((r) => r.medicare), className: 'tabular-nums' },
     { key: 'stateTax', header: 'State tax', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.stateTax, cell: money((r) => r.stateTax), className: 'tabular-nums' },
     { key: 'localTax', header: 'Local tax', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.localTax, cell: money((r) => r.localTax), className: 'tabular-nums' },
+    { key: 'stateProgram', header: 'Disability & leave', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.stateProgram ?? 0, cell: money((r) => r.stateProgram ?? 0), className: 'tabular-nums' },
     { key: 'deductions', header: 'Deductions', align: 'right', sortable: true, searchable: false, accessor: deductions, cell: (r) => fmtMoney(deductions(r)), className: 'tabular-nums' },
     { key: 'net', header: 'Net', align: 'right', sortable: true, searchable: false, accessor: (r) => r.net, cell: (r) => <span className="font-medium text-ink">{fmtMoney(r.net)}</span>, className: 'tabular-nums' },
     {

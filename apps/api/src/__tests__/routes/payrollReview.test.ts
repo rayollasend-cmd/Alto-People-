@@ -70,7 +70,7 @@ describe('the review report', () => {
     expect(report.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(report.totals.people).toBe(2);
     for (const r of report.rows) {
-      const out = r.federal + r.socialSecurity + r.medicare + r.stateTax + r.localTax + r.preTax + r.postTax + r.other;
+      const out = r.federal + r.socialSecurity + r.medicare + r.stateTax + r.localTax + r.stateProgram + r.preTax + r.postTax + r.other;
       expect(Math.round((r.gross + r.reimbursements - out) * 100) / 100).toBeCloseTo(r.net, 2);
     }
     const net = report.rows.reduce((s: number, r: { net: number }) => s + r.net, 0);

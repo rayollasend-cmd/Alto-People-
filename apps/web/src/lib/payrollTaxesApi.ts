@@ -7,7 +7,7 @@ export type LiabilityStatus = 'OPEN' | 'SCHEDULED' | 'PAID' | 'VOID';
 export type PaymentStatus = 'SCHEDULED' | 'SUBMITTED' | 'PAID' | 'FAILED' | 'CANCELLED';
 export type ReturnStatus = 'DRAFT' | 'SUBMITTED' | 'FILED' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED';
 export type NoticeStatus = 'NEW' | 'IN_REVIEW' | 'RESPONDED' | 'RESOLVED';
-export type ReturnKind = 'F941' | 'F940' | 'STATE_WH_QUARTERLY' | 'STATE_WH_ANNUAL' | 'SUI_WAGE_REPORT' | 'LOCAL_QUARTERLY' | 'F941X' | 'STATE_AMENDED';
+export type ReturnKind = 'F941' | 'F940' | 'STATE_WH_QUARTERLY' | 'STATE_WH_ANNUAL' | 'SUI_WAGE_REPORT' | 'STATE_PROGRAM_REPORT' | 'LOCAL_QUARTERLY' | 'F941X' | 'STATE_AMENDED';
 export type DepositFrequency = 'NEXT_DAY' | 'SEMIWEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'ANNUAL';
 
 export interface DepositLine {

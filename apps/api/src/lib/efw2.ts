@@ -5,45 +5,36 @@
 // Each record is exactly 512 characters wide; lines are joined with CRLF
 // and the file is sent as plain ASCII (no BOM, no UTF-8).
 //
-//   RA  Submitter   — one per file, first record
-//   RE  Employer    — one per Employer-EIN block
-//   RW  Employee    — one per W-2, immediately after its RE
-//   RS  State       — one per state line per RW (Box 15-17)
-//   RT  Totals      — closes the RE block, sums RW dollar fields
-//   RF  Final       — one per file, last record, total RW count + grand totals
+//   RA  Submitter        — one per file, first record
+//   RE  Employer         — opens an employer (EIN) block
+//   RW  Employee wage    — one per W-2
+//   RO  Employee optional— after its RW, only when an RO field is non-zero
+//   RS  State            — after its RW/RO, one per state (and per extra locality)
+//   RT  Total            — closes the RE block: RW count and RW dollar totals
+//   RU  Total optional   — after RT, only when the block has RO records
+//   RV  State total      — after RT/RU, only when the block has RS records
+//   RF  Final            — last record: RW count across the file
 //
-// =============================================================================
-// !!  AccuWage validation required before any production BSO upload  !!
+// Positions: SSA Publication 42-007, EFW2 Tax Year 2025, Version 3.3
+// (01/20/2026), sections 4.4–4.13 and Appendix E (paper-box cross
+// reference). The TY2026 publication (26efw2.pdf) could not be retrieved
+// (ssa.gov refuses automated download), so the 2026 additions — Box 12 TA,
+// TP, TT and Box 14b — are refused rather than guessed at (efw2Unsupported).
 //
-// Field positions below are written from the SSA Pub 42-007 (Tax Year
-// 2024) spec but have not been validated against AccuWage Online —
-// AccuWage is the only authoritative cross-check (SSA rejects the
-// entire file on a single positional mismatch).
-//
-//   $ npx tsx apps/api/scripts/sample-efile.ts
-//
-// generates a sample file from real, exercised code paths. Upload it
-// to https://www.ssa.gov/employer/accuwage/ and reconcile any errors
-// the validator reports against this file BEFORE filing.
-//
-// Areas I am LEAST sure of and finance should pay extra attention to:
-//   - RA position 31     (Resub Indicator: 1 char per spec; current
-//                        code lays it across positions 31-32)
-//   - RA position 200-201 (commented "Country Code" but spec section
-//                        for that range is "Foreign State / Province")
-//   - RS position 3-4    (USPS code in current code; spec may want
-//                        FIPS numeric — already flagged inline as TODO)
-// Until the AccuWage pass lands, treat this output as a draft.
-// =============================================================================
+// Validate every file with AccuWage Online before a BSO upload:
+//   https://www.ssa.gov/employer/accuwage/
+// RS (state) records are passed through by SSA only to states that ask for
+// them; each state's own EFW2 variant (taxing-entity code, optional code,
+// "other state data", supplemental data) is CONFIRM per state.
 
-import type { W2Boxes } from './w2Aggregator.js';
+import type { W2Boxes, W2LocalLine, W2StateLine } from './w2Aggregator.js';
 
 const RECORD_LEN = 512;
 
 export interface Efw2Submitter {
   /** 9 digits, no dashes. */
   ein: string;
-  /** SSA-assigned User ID. Submitter cannot file electronically without one. */
+  /** SSA-assigned BSO User ID (8 characters). */
   userId: string;
   name: string;
   addressLine1: string;
@@ -55,6 +46,9 @@ export interface Efw2Submitter {
   contactName: string;
   contactPhone: string;
   contactEmail: string;
+  /** "98" in-house program (default) or "99" off-the-shelf software (needs a NACTP vendor code). */
+  softwareCode?: '98' | '99';
+  vendorCode?: string | null;
 }
 
 export interface Efw2Employer {
@@ -69,6 +63,18 @@ export interface Efw2Employer {
   state: string;
   zip5: string;
   zip4?: string | null;
+  /** N none apply (default), T 501c non-govt, S state/local non-501c, Y state/local 501c, F federal. */
+  kindOfEmployer?: 'N' | 'T' | 'S' | 'Y' | 'F';
+  /** R regular 941 (default), F regular 944, A agriculture 943, H household, M military, Q MQGE, X railroad. */
+  employmentCode?: 'R' | 'F' | 'A' | 'H' | 'M' | 'Q' | 'X';
+  /** Employer contact; defaults to the submitter's. */
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  /** State employer account numbers, by state (RS positions 248-267). */
+  stateAccountNumbers?: Record<string, string>;
+  /** Last tax year this EIN files W-2s (RE position 26). */
+  terminating?: boolean;
 }
 
 export interface Efw2Employee {
@@ -91,26 +97,22 @@ export interface Efw2Employee {
 
 export interface Efw2File {
   submitter: Efw2Submitter;
-  /**
-   * For now we expect every W-2 in a file to share one employer (one RE
-   * block). Multi-employer support — common for PEOs — is a future add.
-   */
+  /** One RE block per file (multi-employer / PEO files are a future add). */
   employer: Efw2Employer;
   employees: Efw2Employee[];
 }
 
 /**
- * What this file layout cannot carry yet. Rather than write a W-2 that
+ * What this file layout cannot carry. Rather than write a W-2 that
  * silently drops an amount, the build refuses and names what is missing.
  *
  *   - Tax year 2026 adds Box 12 TA / TP / TT and Box 14b (Treasury Tipped
  *     Occupation Code) — OBBBA §§70201, 70202, 70204. SSA's EFW2 for TY2026
- *     defines new RW fields for them; their positions could NOT be confirmed
- *     against the published SSA EFW2 specification while this was written
- *     (ssa.gov blocked automated retrieval), so they are not guessed at.
- *   - The RW layout here carries Boxes 1–6 only; Box 7 tips, Box 10
- *     dependent care and the Box 12 deferral codes (D, E, W, AA, BB) are
- *     zero-filled placeholders, so a W-2 with any of them is refused too.
+ *     defines new fields for them; their positions could not be confirmed
+ *     (ssa.gov refused retrieval of 26efw2.pdf), so they are not guessed at.
+ *   - Box 12 codes K (golden parachute excise), L (substantiated business
+ *     expenses) and P (moving expenses) and J (nontaxable sick pay) have no
+ *     EFW2 field by design (Appendix E): they do not block a file.
  *
  * File those W-2s through the e-file provider (Pay → Tax filing), which
  * submits every box.
@@ -131,6 +133,40 @@ export class Efw2UnsupportedError extends Error {
   }
 }
 
+/** Box 12 codes and where each lives in the TY2025 layout. */
+const RW_CODE: Record<string, [number, number]> = {
+  D: [287, 297],
+  E: [298, 308],
+  F: [309, 319],
+  G: [320, 330],
+  H: [331, 341],
+  W: [364, 374],
+  Q: [386, 396],
+  C: [408, 418],
+  V: [419, 429],
+  Y: [430, 440],
+  AA: [441, 451],
+  BB: [452, 462],
+  DD: [463, 473],
+  FF: [474, 484],
+};
+const RO_CODE: Record<string, [number, number]> = {
+  R: [34, 44],
+  S: [45, 55],
+  T: [56, 66],
+  M: [67, 77],
+  N: [78, 88],
+  Z: [89, 99],
+  EE: [111, 121],
+  GG: [122, 132],
+  HH: [133, 143],
+  II: [144, 154],
+};
+/** Codes with no EFW2 field (Appendix E): reported on the paper form only. */
+const NO_FIELD = new Set(['J', 'K', 'L', 'P']);
+/** Codes A and B share RO 23-33 (uncollected tax on tips). */
+const RO_TIPS = new Set(['A', 'B']);
+
 export function efw2Unsupported(input: Efw2File): Efw2Gap[] {
   const gaps: Efw2Gap[] = [];
   const ty = input.employer.taxYear;
@@ -139,15 +175,17 @@ export function efw2Unsupported(input: Efw2File): Efw2Gap[] {
     const missing: string[] = [];
     for (const c of b.box12 ?? []) {
       if (c.amount === 0) continue;
-      missing.push(ty >= 2026 && (c.code === 'TA' || c.code === 'TP' || c.code === 'TT') ? `Box 12 ${c.code} (TY${ty} position not confirmed)` : `Box 12 ${c.code}`);
+      if (c.code === 'TA' || c.code === 'TP' || c.code === 'TT') missing.push(`Box 12 ${c.code} (TY${ty} position not confirmed)`);
+      else if (!RW_CODE[c.code] && !RO_CODE[c.code] && !NO_FIELD.has(c.code) && !RO_TIPS.has(c.code)) missing.push(`Box 12 ${c.code}`);
     }
     if ((b.box14bTippedOccupationCodes ?? []).length > 0) missing.push(`Box 14b (TY${ty} position not confirmed)`);
-    if ((b.box7SsTips ?? 0) > 0) missing.push('Box 7');
-    if ((b.box10DependentCare ?? 0) > 0) missing.push('Box 10');
     if (missing.length > 0) gaps.push({ ssnLast4: e.ssn.slice(-4), name: `${e.firstName} ${e.lastName}`, missing });
   }
   return gaps;
 }
+
+const code12 = (b: W2Boxes, code: string) => (b.box12 ?? []).filter((c) => c.code === code).reduce((s, c) => s + c.amount, 0);
+const needsRo = (b: W2Boxes) => (b.box12 ?? []).some((c) => c.amount !== 0 && (RO_CODE[c.code] || RO_TIPS.has(c.code)));
 
 /**
  * Builds the full EFW2 file as a string (CRLF-joined records, no
@@ -158,248 +196,351 @@ export function buildEfw2File(input: Efw2File): string {
   const unsupported = efw2Unsupported(input);
   if (unsupported.length > 0) throw new Efw2UnsupportedError(unsupported);
   const records: string[] = [];
-
   records.push(buildRA(input.submitter));
-  records.push(buildRE(input.employer));
+  records.push(buildRE(input.employer, input.submitter, input.employees.some((e) => e.boxes.box13ThirdPartySickPay)));
 
-  // RT totals across the RE block
-  const reTotals = newReTotals();
+  const rt = new Map<string, number>();
+  const ru = new Map<string, number>();
+  let rwCount = 0;
+  let roCount = 0;
+  let rsCount = 0;
+  const addT = (m: Map<string, number>, k: string, n: number) => m.set(k, (m.get(k) ?? 0) + n);
 
   for (const employee of input.employees) {
+    const b = employee.boxes;
     records.push(buildRW(employee));
-    reTotals.box1Wages += employee.boxes.box1Wages;
-    reTotals.box2FitWithheld += employee.boxes.box2FitWithheld;
-    reTotals.box3SsWages += employee.boxes.box3SsWages;
-    reTotals.box4SsTax += employee.boxes.box4SsTax;
-    reTotals.box5MedicareWages += employee.boxes.box5MedicareWages;
-    reTotals.box6MedicareTax += employee.boxes.box6MedicareTax;
-    reTotals.rwCount += 1;
-
-    for (const stateLine of employee.boxes.stateLines) {
-      records.push(buildRS(employee, stateLine));
+    rwCount += 1;
+    addT(rt, 'box1', b.box1Wages);
+    addT(rt, 'box2', b.box2FitWithheld);
+    addT(rt, 'box3', b.box3SsWages);
+    addT(rt, 'box4', b.box4SsTax);
+    addT(rt, 'box5', b.box5MedicareWages);
+    addT(rt, 'box6', b.box6MedicareTax);
+    addT(rt, 'box7', b.box7SsTips ?? 0);
+    addT(rt, 'box10', b.box10DependentCare ?? 0);
+    for (const c of Object.keys(RW_CODE)) addT(rt, c, code12(b, c));
+    if (needsRo(b)) {
+      records.push(buildRO(employee));
+      roCount += 1;
+      addT(ru, 'AB', code12(b, 'A') + code12(b, 'B'));
+      for (const c of Object.keys(RO_CODE)) addT(ru, c, code12(b, c));
+    }
+    for (const rs of rsRecords(employee, input.employer)) {
+      records.push(rs);
+      rsCount += 1;
     }
   }
 
-  records.push(buildRT(reTotals));
-  records.push(
-    buildRF({
-      rwCount: reTotals.rwCount,
-    }),
-  );
-
+  records.push(buildRT(rwCount, rt));
+  if (roCount > 0) records.push(buildRU(roCount, ru));
+  if (rsCount > 0) records.push(assemble([fixed('RV', 1, 2), blank(3, 512)]));
+  records.push(assemble([fixed('RF', 1, 2), blank(3, 7), digits(String(rwCount), 8, 16), blank(17, 512)]));
   return records.join('\r\n');
 }
 
-// ---- Record builders -----------------------------------------------------
+// ---- Record builders (TY2025 Pub 42-007 positions) -----------------------
 
 function buildRA(s: Efw2Submitter): string {
-  // RA SUBMITTER RECORD — first record in every EFW2 file. SSA matches the
-  // submitter EIN against their on-file record before they accept any
-  // employer block. The User ID was issued when the company first
-  // registered for BSO.
-  const fields: Field[] = [
+  const software = s.softwareCode ?? '98';
+  return assemble([
     fixed('RA', 1, 2),
     digits(s.ein, 3, 11),
-    text(s.userId, 12, 28),
-    blank(29, 30), // Software Vendor Code — not used
-    digits('0', 31, 32), // Resub Indicator: 0 = original
-    blank(33, 38), // Resub WFID
-    digits('99', 39, 46), // Software Code: 99 = third-party / vendor
-    text(s.name, 47, 103),
-    text(s.addressLine1, 104, 125),
-    text(s.addressLine2 ?? '', 126, 147),
-    text(s.city, 148, 169),
-    text(s.state, 170, 171),
-    digits(s.zip5, 172, 176),
-    text(s.zip4 ?? '', 177, 180),
-    blank(181, 199),
-    blank(200, 201), // Country Code (blank = US)
-    text(s.contactName, 202, 258),
-    text(stripPhone(s.contactPhone), 259, 273),
-    blank(274, 278), // Phone Extension
-    text(s.contactEmail, 279, 318),
-    blank(319, 322),
-    blank(323, 332), // Fax
-    fixed('S', 333, 333), // Preparer Code: S = self-prepared
-    blank(334, 512), // Reserved trailer
-  ];
-  return assemble(fields);
+    text(s.userId, 12, 19),
+    software === '99' && s.vendorCode ? digits(s.vendorCode, 20, 23) : blank(20, 23),
+    blank(24, 28),
+    fixed('0', 29, 29), // Resub indicator: original
+    blank(30, 35), // Resub WFID
+    fixed(software, 36, 37),
+    // Company (the submitter's company)
+    text(s.name, 38, 94),
+    blank(95, 116), // Location address
+    text(s.addressLine1, 117, 138), // Delivery address
+    text(s.city, 139, 160),
+    text(s.state, 161, 162),
+    digits(s.zip5, 163, 167),
+    text(s.zip4 ?? '', 168, 171),
+    blank(172, 176),
+    blank(177, 199), // Foreign state/province
+    blank(200, 214), // Foreign postal code
+    blank(215, 216), // Country code (blank = US)
+    // Submitter
+    text(s.name, 217, 273),
+    blank(274, 295),
+    text(s.addressLine1, 296, 317),
+    text(s.city, 318, 339),
+    text(s.state, 340, 341),
+    digits(s.zip5, 342, 346),
+    text(s.zip4 ?? '', 347, 350),
+    blank(351, 355),
+    blank(356, 378),
+    blank(379, 393),
+    blank(394, 395),
+    text(s.contactName, 396, 422),
+    text(stripPhone(s.contactPhone), 423, 437),
+    blank(438, 442), // Phone extension
+    blank(443, 445),
+    text(s.contactEmail, 446, 485),
+    blank(486, 488),
+    blank(489, 498), // Fax
+    blank(499, 499),
+    fixed('L', 500, 500), // Preparer code: L = self-prepared
+    blank(501, 512),
+  ]);
 }
 
-function buildRE(e: Efw2Employer): string {
-  // RE EMPLOYER RECORD — opens an Employer block. One per EIN. The taxYear
-  // in positions 3-6 is the calendar year reported in the W-2 forms that
-  // follow.
-  const fields: Field[] = [
+function buildRE(e: Efw2Employer, s: Efw2Submitter, thirdPartySick: boolean): string {
+  return assemble([
     fixed('RE', 1, 2),
     digits(String(e.taxYear), 3, 6),
-    blank(7, 7), // Agent Indicator Code
+    blank(7, 7), // Agent indicator
     digits(e.ein, 8, 16),
-    blank(17, 25), // Agent For EIN
-    fixed('R', 26, 26), // Terminating Business Indicator: R = none
-    blank(27, 29), // Establishment Number
-    blank(30, 38), // Other EIN
-    text(e.name, 39, 95),
-    blank(96, 117), // Employer Location Address (use Delivery instead)
-    text(e.addressLine1, 118, 139),
-    text(e.city, 140, 161),
-    text(e.state, 162, 163),
-    digits(e.zip5, 164, 168),
-    text(e.zip4 ?? '', 169, 172),
-    blank(173, 174),
-    blank(175, 178), // Foreign State/Province
-    blank(179, 193), // Foreign Postal Code
-    blank(194, 195), // Country Code
-    fixed('R', 196, 196), // Employment Code: R = regular (944/941); A = agricultural; H = household; M = military; X = railroad; Q = MQGE; F = farm
-    blank(197, 197), // Tax Jurisdiction Code (blank = W-2)
-    fixed('N', 198, 198), // Third-Party Sick Pay Indicator: N = no
-    blank(199, 512), // Reserved trailer
-  ];
-  return assemble(fields);
+    blank(17, 25), // Agent for EIN
+    fixed(e.terminating ? '1' : '0', 26, 26),
+    blank(27, 30), // Establishment number
+    blank(31, 39), // Other EIN
+    text(e.name, 40, 96),
+    blank(97, 118), // Location address
+    text(e.addressLine1, 119, 140), // Delivery address
+    text(e.city, 141, 162),
+    text(e.state, 163, 164),
+    digits(e.zip5, 165, 169),
+    text(e.zip4 ?? '', 170, 173),
+    fixed(e.kindOfEmployer ?? 'N', 174, 174),
+    blank(175, 178),
+    blank(179, 201),
+    blank(202, 216),
+    blank(217, 218),
+    fixed(e.employmentCode ?? 'R', 219, 219),
+    blank(220, 220), // Tax jurisdiction: blank = W-2
+    fixed(thirdPartySick ? '1' : '0', 221, 221),
+    text(e.contactName ?? s.contactName, 222, 248),
+    text(stripPhone(e.contactPhone ?? s.contactPhone), 249, 263),
+    blank(264, 268),
+    blank(269, 278), // Fax
+    text(e.contactEmail ?? s.contactEmail, 279, 318),
+    blank(319, 512),
+  ]);
 }
 
 function buildRW(emp: Efw2Employee): string {
-  // RW EMPLOYEE WAGE RECORD — one per W-2. All dollar fields are in cents
-  // (i.e. multiplied by 100) and zero-padded to 11 digits, no decimal
-  // point. Wage figures match the Box totals from w2Aggregator exactly.
-  const fields: Field[] = [
+  const b = emp.boxes;
+  const codeFields = Object.entries(RW_CODE).map(([c, [a, z]]) => money(code12(b, c), a, z));
+  return assemble([
     fixed('RW', 1, 2),
     digits(emp.ssn, 3, 11),
     text(emp.firstName, 12, 26),
     text(emp.middleName ?? '', 27, 41),
     text(emp.lastName, 42, 61),
     text(emp.suffix ?? '', 62, 65),
-    text(emp.addressLine1, 66, 87),
-    text(emp.addressLine2 ?? '', 88, 109),
+    blank(66, 87), // Location address
+    text([emp.addressLine1, emp.addressLine2].filter(Boolean).join(' '), 88, 109), // Delivery address
     text(emp.city, 110, 131),
     text(emp.state, 132, 133),
     digits(emp.zip5, 134, 138),
     text(emp.zip4 ?? '', 139, 142),
-    blank(143, 147), // ZIP suffix
-    blank(148, 149), // Foreign State
-    blank(150, 164), // Foreign Postal Code
-    blank(165, 166), // Country Code
-    money(emp.boxes.box1Wages, 167, 177),
-    money(emp.boxes.box2FitWithheld, 178, 188),
-    money(emp.boxes.box3SsWages, 189, 199),
-    money(emp.boxes.box4SsTax, 200, 210),
-    money(emp.boxes.box5MedicareWages, 211, 221),
-    money(emp.boxes.box6MedicareTax, 222, 232),
-    // Boxes 7-11 (SS tips, allocated tips, advanced EIC, dependent care,
-    // nonqualified plans) — all zero until those features land. Positions
-    // 233-287.
-    money(0, 233, 243), // Box 7
-    money(0, 244, 254), // Box 8
-    blank(255, 265), // Box 9 (verification code, deprecated)
-    money(0, 266, 276), // Box 10 dependent care
-    money(0, 277, 287), // Box 11 nonqualified plans
-    // Box 12 codes (D=401k, DD=employer health) — empty for now.
-    money(0, 288, 298), // Box 12 codes A-H subtotal — placeholder
-    blank(299, 309),
-    money(0, 310, 320),
-    blank(321, 331),
-    money(0, 332, 342),
-    blank(343, 353),
-    // Box 13 checkboxes
-    fixed('0', 354, 354), // Statutory employee
-    fixed('0', 355, 355), // Retirement plan
-    fixed(emp.boxes.box13ThirdPartySickPay ? '1' : '0', 356, 356), // Third-party sick pay (lib/w2Aggregator)
-    blank(357, 462),
-    // Boxes 14 (Other) — blank
-    blank(463, 485),
-    blank(486, 512),
-  ];
-  return assemble(fields);
+    blank(143, 147),
+    blank(148, 170), // Foreign state/province
+    blank(171, 185), // Foreign postal code
+    blank(186, 187), // Country code
+    money(b.box1Wages, 188, 198),
+    money(b.box2FitWithheld, 199, 209),
+    money(b.box3SsWages, 210, 220),
+    money(b.box4SsTax, 221, 231),
+    money(b.box5MedicareWages, 232, 242),
+    money(b.box6MedicareTax, 243, 253),
+    money(b.box7SsTips ?? 0, 254, 264),
+    blank(265, 275),
+    money(b.box10DependentCare ?? 0, 276, 286),
+    ...codeFields,
+    blank(342, 352),
+    money(0, 353, 363), // Box 11 nonqualified §457
+    money(0, 375, 385), // Box 11 nonqualified not §457
+    blank(397, 407),
+    blank(485, 485),
+    fixed('0', 486, 486), // Statutory employee
+    blank(487, 487),
+    fixed(b.box13RetirementPlan ? '1' : '0', 488, 488),
+    fixed(b.box13ThirdPartySickPay ? '1' : '0', 489, 489),
+    blank(490, 512),
+  ]);
 }
 
-function buildRS(emp: Efw2Employee, line: { state: string; stateWages: number; stateIncomeTax: number }): string {
-  // RS STATE WAGE RECORD — one per state per employee. SSA forwards these
-  // to the corresponding state revenue agency. Position 5-6 carries the
-  // state's FIPS numeric code, not the USPS letter code; we approximate
-  // here by mapping the USPS code at fill time. TODO: drop in a
-  // FIPS-by-USPS lookup before BSO upload.
-  const fields: Field[] = [
+function buildRO(emp: Efw2Employee): string {
+  const b = emp.boxes;
+  return assemble([
+    fixed('RO', 1, 2),
+    blank(3, 11),
+    money(0, 12, 22), // Allocated tips (Box 8)
+    money(code12(b, 'A') + code12(b, 'B'), 23, 33),
+    ...Object.entries(RO_CODE).map(([c, [a, z]]) => money(code12(b, c), a, z)),
+    blank(100, 110),
+    blank(155, 274),
+    // Puerto Rico / Virgin Islands fields (W-2PR, W-2VI) — not used for a W-2.
+    money(0, 275, 285),
+    money(0, 286, 296),
+    money(0, 297, 307),
+    money(0, 308, 318),
+    money(0, 319, 329),
+    money(0, 330, 340),
+    money(0, 341, 351),
+    blank(352, 362),
+    money(0, 363, 373),
+    money(0, 374, 384),
+    blank(385, 512),
+  ]);
+}
+
+/** SSA numeric state codes (Appendix F). */
+const STATE_NUMERIC: Record<string, string> = {
+  AL: '01', AK: '02', AZ: '04', AR: '05', CA: '06', CO: '08', CT: '09', DE: '10', DC: '11', FL: '12', GA: '13', HI: '15', ID: '16', IL: '17', IN: '18', IA: '19', KS: '20', KY: '21', LA: '22', ME: '23', MD: '24', MA: '25', MI: '26', MN: '27', MS: '28', MO: '29', MT: '30', NE: '31', NV: '32', NH: '33', NJ: '34', NM: '35', NY: '36', NC: '37', ND: '38', OH: '39', OK: '40', OR: '41', PA: '42', RI: '44', SC: '45', SD: '46', TN: '47', TX: '48', UT: '49', VT: '50', VA: '51', WA: '53', WV: '54', WI: '55', WY: '56',
+};
+export function stateNumericCode(usps: string): string | null {
+  return STATE_NUMERIC[usps.toUpperCase()] ?? null;
+}
+
+/** Tax type code for RS position 308. */
+function taxTypeCode(l: W2LocalLine): string {
+  if (l.kind === 'SCHOOL') return 'E';
+  if (/COUNTY|^IN-|CNTY/i.test(`${l.code} ${l.locality}`)) return 'D';
+  if (l.kind === 'LOCAL') return 'C';
+  return 'F';
+}
+
+/**
+ * RS records for one employee: one per state line, carrying that state's
+ * first locality; a second locality in the same state rides an extra RS
+ * record with the state wage fields zero, so state totals are not doubled.
+ * CONFIRM: each state's treatment of multiple localities on RS records.
+ */
+function rsRecords(emp: Efw2Employee, employer: Efw2Employer): string[] {
+  const b = emp.boxes;
+  const out: string[] = [];
+  const locals = [...(b.localLines ?? [])];
+  const states = [...b.stateLines];
+  // A locality in a state without a state line still needs a record.
+  for (const l of locals) if (l.state && !states.some((s) => s.state === l.state)) states.push({ state: l.state, stateWages: 0, stateIncomeTax: 0 });
+  for (const st of states) {
+    const numeric = stateNumericCode(st.state);
+    if (!numeric) continue;
+    const mine = locals.filter((l) => l.state === st.state);
+    out.push(buildRS(emp, employer, numeric, st, mine[0] ?? null));
+    for (const extra of mine.slice(1)) out.push(buildRS(emp, employer, numeric, { state: st.state, stateWages: 0, stateIncomeTax: 0 }, extra));
+  }
+  return out;
+}
+
+function buildRS(emp: Efw2Employee, employer: Efw2Employer, numeric: string, line: W2StateLine, local: W2LocalLine | null): string {
+  const account = employer.stateAccountNumbers?.[line.state] ?? '';
+  return assemble([
     fixed('RS', 1, 2),
-    text(line.state, 3, 4), // USPS code — verify SSA wants USPS or FIPS here
-    digits(emp.ssn, 5, 13),
-    text(emp.firstName, 14, 28),
-    text(emp.middleName ?? '', 29, 43),
-    text(emp.lastName, 44, 63),
-    text(emp.suffix ?? '', 64, 67),
-    text(emp.addressLine1, 68, 89),
-    text(emp.addressLine2 ?? '', 90, 111),
-    text(emp.city, 112, 133),
-    text(emp.state, 134, 135),
-    digits(emp.zip5, 136, 140),
-    text(emp.zip4 ?? '', 141, 144),
-    blank(145, 195),
-    money(line.stateWages, 196, 206),
-    money(line.stateIncomeTax, 207, 217),
-    blank(218, 247),
-    money(0, 248, 258), // Local wages — not supported yet
-    money(0, 259, 269), // Local income tax — not supported yet
-    blank(270, 273),
-    blank(274, 512),
-  ];
-  return assemble(fields);
+    fixed(numeric, 3, 4),
+    blank(5, 9), // Taxing entity code (state/local defined)
+    digits(emp.ssn, 10, 18),
+    text(emp.firstName, 19, 33),
+    text(emp.middleName ?? '', 34, 48),
+    text(emp.lastName, 49, 68),
+    text(emp.suffix ?? '', 69, 72),
+    blank(73, 94), // Location address
+    text([emp.addressLine1, emp.addressLine2].filter(Boolean).join(' '), 95, 116),
+    text(emp.city, 117, 138),
+    text(emp.state, 139, 140),
+    digits(emp.zip5, 141, 145),
+    text(emp.zip4 ?? '', 146, 149),
+    blank(150, 154),
+    blank(155, 177),
+    blank(178, 192),
+    blank(193, 194),
+    // Unemployment reporting (195-247) is not used on an annual W-2 file.
+    blank(195, 196),
+    blank(197, 202),
+    blank(203, 213),
+    blank(214, 224),
+    blank(225, 226),
+    blank(227, 234),
+    blank(235, 242),
+    blank(243, 247),
+    text(account, 248, 267),
+    blank(268, 273),
+    fixed(numeric, 274, 275),
+    money(line.stateWages, 276, 286),
+    money(line.stateIncomeTax, 287, 297),
+    blank(298, 307), // Other state data (state defined)
+    local ? fixed(taxTypeCode(local), 308, 308) : blank(308, 308),
+    local ? money(local.localWages, 309, 319) : blank(309, 319),
+    local ? money(local.localIncomeTax, 320, 330) : blank(320, 330),
+    blank(331, 337), // State control number
+    local ? text(local.locality, 338, 412) : blank(338, 412), // Supplemental data 1: locality name
+    blank(413, 487),
+    blank(488, 512),
+  ]);
 }
 
-interface ReTotals {
-  rwCount: number;
-  box1Wages: number;
-  box2FitWithheld: number;
-  box3SsWages: number;
-  box4SsTax: number;
-  box5MedicareWages: number;
-  box6MedicareTax: number;
-}
+const RT_CODE: Record<string, [number, number]> = {
+  D: [145, 159],
+  E: [160, 174],
+  F: [175, 189],
+  G: [190, 204],
+  H: [205, 219],
+  W: [250, 264],
+  Q: [280, 294],
+  DD: [295, 309],
+  C: [310, 324],
+  V: [340, 354],
+  Y: [355, 369],
+  AA: [370, 384],
+  BB: [385, 399],
+  FF: [400, 414],
+};
 
-function newReTotals(): ReTotals {
-  return {
-    rwCount: 0,
-    box1Wages: 0,
-    box2FitWithheld: 0,
-    box3SsWages: 0,
-    box4SsTax: 0,
-    box5MedicareWages: 0,
-    box6MedicareTax: 0,
-  };
-}
-
-function buildRT(t: ReTotals): string {
-  // RT TOTAL RECORD — closes an RE block. Counts the RW records and sums
-  // their dollar fields. SSA validates these against the actual RW figures
-  // it parsed; a mismatch rejects the entire file.
-  const fields: Field[] = [
+function buildRT(rwCount: number, t: Map<string, number>): string {
+  const g = (k: string) => t.get(k) ?? 0;
+  return assemble([
     fixed('RT', 1, 2),
-    digits(String(t.rwCount).padStart(7, '0'), 3, 9),
-    money(t.box1Wages, 10, 24),
-    money(t.box2FitWithheld, 25, 39),
-    money(t.box3SsWages, 40, 54),
-    money(t.box4SsTax, 55, 69),
-    money(t.box5MedicareWages, 70, 84),
-    money(t.box6MedicareTax, 85, 99),
-    money(0, 100, 114), // Total Box 7
-    money(0, 115, 129), // Total Box 8
-    blank(130, 144), // Total Box 9 (deprecated)
-    money(0, 145, 159), // Total Box 10
-    money(0, 160, 174), // Total Box 11
-    money(0, 175, 189), // Total Box 12 codes
-    blank(190, 512),
-  ];
-  return assemble(fields);
+    digits(String(rwCount), 3, 9),
+    money(g('box1'), 10, 24),
+    money(g('box2'), 25, 39),
+    money(g('box3'), 40, 54),
+    money(g('box4'), 55, 69),
+    money(g('box5'), 70, 84),
+    money(g('box6'), 85, 99),
+    money(g('box7'), 100, 114),
+    blank(115, 129),
+    money(g('box10'), 130, 144),
+    ...Object.entries(RT_CODE).map(([c, [a, z]]) => money(g(c), a, z)),
+    blank(220, 234),
+    money(0, 235, 249), // Nonqualified §457
+    money(0, 265, 279), // Nonqualified not §457
+    money(0, 325, 339), // Income tax withheld by third-party payer
+    blank(415, 512),
+  ]);
 }
 
-function buildRF(input: { rwCount: number }): string {
-  // RF FINAL RECORD — one per file, last record. Carries the total RW
-  // count across every RE block in the file (we have one block).
-  const fields: Field[] = [
-    fixed('RF', 1, 2),
-    blank(3, 7),
-    digits(String(input.rwCount).padStart(9, '0'), 8, 16),
-    blank(17, 512),
-  ];
-  return assemble(fields);
+const RU_CODE: Record<string, [number, number]> = {
+  R: [40, 54],
+  S: [55, 69],
+  T: [70, 84],
+  M: [85, 99],
+  N: [100, 114],
+  Z: [115, 129],
+  EE: [145, 159],
+  GG: [160, 174],
+  HH: [175, 189],
+  II: [190, 204],
+};
+
+function buildRU(roCount: number, t: Map<string, number>): string {
+  const g = (k: string) => t.get(k) ?? 0;
+  return assemble([
+    fixed('RU', 1, 2),
+    digits(String(roCount), 3, 9),
+    money(0, 10, 24), // Allocated tips
+    money(g('AB'), 25, 39),
+    ...Object.entries(RU_CODE).map(([c, [a, z]]) => money(g(c), a, z)),
+    blank(130, 144),
+    blank(205, 354),
+    ...[355, 370, 385, 400, 415, 430, 445, 460, 475].map((a) => money(0, a, a + 14)), // PR / VI totals
+    blank(490, 512),
+  ]);
 }
 
 // ---- Field primitives ----------------------------------------------------

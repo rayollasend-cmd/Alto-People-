@@ -34,6 +34,8 @@ import {
 
 import {
   computePaycheckTaxes,
+  federalW4Fields,
+  supplementalFederalWithholding,
   zeroTaxBreakdown,
   type PaycheckTaxBreakdown,
   type PayFrequency,
@@ -45,6 +47,9 @@ import { enrollmentFacts, loadPayrollElections, projectRetirement, type Enrollme
 import { computeYtdWagesBatch } from './payrollYtd.js';
 import { computeCheckDeductions, loadDeferralContexts, type DeferralRecord } from './retirementDeferrals.js';
 import { calculateTaxes, inHouseEngine, type TaxEngineProvider, type TaxLine } from './taxEngine/index.js';
+import { LOCAL_TAX_STATES, taxableWages, type TaxabilityContext, type TaxableWages } from './deductionTaxability.js';
+import { buildDeductionLines, reconcile, type DeductionLine } from './deductionLines.js';
+import type { PlanDeduction } from './retirementDeferrals.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -101,6 +106,12 @@ export interface AggregatorInput {
    * omitted, Alto's engine answers.
    */
   taxEngine?: TaxEngineProvider;
+  /**
+   * The check's pay date, for the W-4 rules that turn on it (an "Exempt"
+   * W-4 lapses after February 15; an IRS lock-in letter's effective date).
+   * Omitted, the day after the period ends.
+   */
+  payDate?: Date;
 }
 
 export type AddOnKind =
@@ -115,7 +126,6 @@ export type AddOnKind =
 // alongside (but identified separately from) regular wages. Tips and
 // leave payouts are regular wages taxed by the percentage method.
 const SUPPLEMENTAL_KINDS = new Set<AddOnKind>(['BONUS', 'COMMISSION']);
-const SUPPLEMENTAL_FLAT_RATE = 0.22;
 
 const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
   WEEKLY: 52,
@@ -283,6 +293,20 @@ export interface ProjectedItem {
   wagesByState: Record<string, number>;
   /** Employer-paid local payroll taxes (Oregon transit …), not withheld. */
   employerLocalTax: number;
+  /** Withheld state program contributions (CA SDI, NJ TDI/FLI, WA PFML …), inside totalEmployeeTax and out of net. */
+  stateProgramTax: number;
+  /** Employer-paid state program contributions (WA PFML employer share …). */
+  employerProgramTax: number;
+  /** What changed the W-4 on file for this check (an expired exemption, an IRS lock-in letter). */
+  w4Flags: Array<'EXEMPT_EXPIRED' | 'LOCK_IN_LETTER'>;
+  /**
+   * Every deduction on this check, itemized, with the wage bases each one
+   * lowered (lib/deductionLines). Persisted as PayrollItemDeduction; the
+   * lump columns above are their sums.
+   */
+  deductionLines: DeductionLine[];
+  /** The wage bases this check was taxed on, by tax and by state (lib/deductionTaxability). */
+  taxableWages: TaxableWages | null;
 }
 
 export interface ProjectedTotals {
@@ -352,6 +376,14 @@ export async function aggregatePayrollProjection(
               deductions: true,
               otherIncome: true,
               dependentsAmount: true,
+              multipleJobs: true,
+              exempt: true,
+              exemptTaxYear: true,
+              nonresidentAlien: true,
+              pre2020Allowances: true,
+              lockInFilingStatus: true,
+              lockInMultipleJobs: true,
+              lockInEffectiveDate: true,
             },
           },
         },
@@ -524,6 +556,14 @@ export async function aggregatePayrollProjection(
         deductions: true,
         otherIncome: true,
         dependentsAmount: true,
+        multipleJobs: true,
+        exempt: true,
+        exemptTaxYear: true,
+        nonresidentAlien: true,
+        pre2020Allowances: true,
+        lockInFilingStatus: true,
+        lockInMultipleJobs: true,
+        lockInEffectiveDate: true,
       },
     },
   } as const;
@@ -611,6 +651,7 @@ export async function aggregatePayrollProjection(
         OR: [{ terminationDate: null }, { terminationDate: { gte: periodStart } }],
       },
       select: {
+        id: true,
         associateId: true,
         electedAmountCentsPerPeriod: true,
         rothElection: true,
@@ -715,6 +756,55 @@ export async function aggregatePayrollProjection(
       reimbByAssociate.set(r.associateId, arr);
     }
   }
+
+  // State program caps (CA SDI has none; NJ TDI/FLI, WA PFML, MA … do): the
+  // wages each program already took this calendar year, from prior checks'
+  // STATE_PROGRAM tax lines. An employer line (code_ER) carries the same wages.
+  const ytdProgramByAssociate = new Map<string, Record<string, number>>();
+  // Supplemental wages paid so far this year, for the mandatory 37% tier past $1M.
+  const ytdSupplementalByAssociate = new Map<string, number>();
+  if (universeIds.length > 0 && tx.payrollItemTaxLine) {
+    const priorWhere = {
+      associateId: { in: universeIds },
+      status: { not: 'VOIDED' as const },
+      payrollRun: { status: { notIn: ['CANCELLED' as const, 'DRAFT' as const] }, periodStart: { gte: yearStart, lt: periodStart } },
+    };
+    const [programRows, suppRows] = await Promise.all([
+      tx.payrollItemTaxLine.findMany({
+        where: { kind: 'STATE_PROGRAM', payrollItem: priorWhere },
+        select: { code: true, wages: true, payrollItemId: true, payrollItem: { select: { associateId: true } } },
+      }),
+      tx.payrollItemEarning
+        ? tx.payrollItemEarning.findMany({
+            where: { kind: { in: ['BONUS', 'COMMISSION'] }, payrollItem: priorWhere },
+            select: { amount: true, payrollItem: { select: { associateId: true } } },
+          })
+        : [],
+    ]);
+    // One figure per check per program: the larger of its employee and employer lines.
+    const perItem = new Map<string, { associateId: string; code: string; wages: number }>();
+    for (const r of programRows) {
+      const code = r.code.replace(/_ER$/, '');
+      const k = `${r.payrollItemId}|${code}`;
+      const w = Number(r.wages);
+      const cur = perItem.get(k);
+      if (!cur || w > cur.wages) perItem.set(k, { associateId: r.payrollItem.associateId, code, wages: w });
+    }
+    for (const v of perItem.values()) {
+      const m = ytdProgramByAssociate.get(v.associateId) ?? {};
+      m[v.code] = round2((m[v.code] ?? 0) + v.wages);
+      ytdProgramByAssociate.set(v.associateId, m);
+    }
+    for (const r of suppRows) {
+      const id = r.payrollItem.associateId;
+      ytdSupplementalByAssociate.set(id, round2((ytdSupplementalByAssociate.get(id) ?? 0) + Number(r.amount)));
+    }
+  }
+  // Covered employees on the payroll, for headcount-tiered programs (WA 50+, OR and MA 25+, CO 10+, DE, MN).
+  const employerSize = tx.associate.count
+    ? await tx.associate.count({ where: { tenantId: tenantIdForWrite(), deletedAt: null, employmentType: 'W2_EMPLOYEE' } })
+    : undefined;
+  const payDate = input.payDate ?? periodEndExclusive;
 
   const items: ProjectedItem[] = [];
   let totalGross = 0;
@@ -958,6 +1048,7 @@ export async function aggregatePayrollProjection(
     let preTaxRetirement = 0;
     let rothDeferral = 0;
     let deferrals: DeferralRecord | null = null;
+    let perPlan: PlanDeduction[] = [];
     if (employmentType === 'W2_EMPLOYEE') {
       // One election per deferral: the benefits enrollment (a 401(k) rate is
       // stored on it as a percent and turned into this paycheck's cents).
@@ -969,8 +1060,27 @@ export async function aggregatePayrollProjection(
         preTaxRetirement = ded.preTaxRetirement;
         rothDeferral = ded.roth;
         deferrals = ded.deferrals;
+        perPlan = ded.perPlan ?? [];
       }
     }
+    // Where the person worked and lives, for each deduction's state treatment.
+    const workStatesHere = [
+      ...new Set(
+        group
+          .map((e) => (e.location?.state ?? clientWorkState ?? meta.state ?? null)?.toUpperCase() ?? null)
+          .filter((x): x is string => !!x),
+      ),
+    ];
+    if (workStatesHere.length === 0 && associateState) workStatesHere.push(associateState.toUpperCase());
+    const taxCtx: TaxabilityContext = {
+      workStates: workStatesHere,
+      residentState: (meta.state ?? associateState ?? null)?.toUpperCase() ?? null,
+      localApplies: [...workStatesHere, (meta.state ?? '').toUpperCase()].some((st) => LOCAL_TAX_STATES.has(st)),
+    };
+    // The wage bases, by tax and by state, from the pre-tax lines' treatment.
+    const wageBases: TaxableWages | null = employmentType === 'W2_EMPLOYEE'
+      ? taxableWages(grossPay, buildDeductionLines({ perPlan, garnishments: [], loans: [], employerRetirement: 0, ctx: taxCtx }), taxCtx)
+      : null;
     // FIT base subtracts ALL pre-tax (Section 125 + retirement).
     // FICA / Medicare base subtracts ONLY the Section 125 slice — retirement
     // contributions are FIT-deferred but FICA-includable per IRS rules.
@@ -980,17 +1090,25 @@ export async function aggregatePayrollProjection(
     );
 
     let breakdown: PaycheckTaxBreakdown;
+    // The W-4 as withholding must read it on the pay date (lib/payrollTax
+    // federalW4Fields): Step 2 two-jobs, an exemption past February 15, the
+    // nonresident-alien add-on, a 2019-or-earlier W-4, an IRS lock-in letter.
+    const fedW4 = federalW4Fields(w4, payDate);
     if (employmentType === 'W2_EMPLOYEE') {
       const w4Fields = {
-        filingStatus: w4?.filingStatus ?? null,
+        filingStatus: fedW4?.filingStatus ?? null,
         payFrequency,
         state: associateState,
         ytdWages,
         ytdMedicareWages,
-        extraWithholding: w4?.extraWithholding ? Number(w4.extraWithholding) : 0,
-        deductions: w4?.deductions ? Number(w4.deductions) : 0,
-        otherIncome: w4?.otherIncome ? Number(w4.otherIncome) : 0,
-        dependentsAmount: w4?.dependentsAmount ? Number(w4.dependentsAmount) : 0,
+        extraWithholding: fedW4?.extraWithholding ?? 0,
+        deductions: fedW4?.deductions ?? 0,
+        otherIncome: fedW4?.otherIncome ?? 0,
+        dependentsAmount: fedW4?.dependentsAmount ?? 0,
+        multipleJobs: fedW4?.multipleJobs ?? false,
+        pre2020Allowances: fedW4?.pre2020Allowances ?? null,
+        nonresidentAlien: fedW4?.nonresidentAlien ?? false,
+        exempt: fedW4?.exempt ?? false,
         sutaOverride,
         // TAXCOMP — the state's own certificate for the state taxed here.
         stateW4: (() => {
@@ -1019,9 +1137,9 @@ export async function aggregatePayrollProjection(
           ficaMedicareGross,
           ...w4Fields,
         });
-        const fit = round2(
-          regularPass.federalIncomeTax + SUPPLEMENTAL_FLAT_RATE * supplementalGross,
-        );
+        // 22%, and 37% on the part that takes the year's supplemental wages past $1,000,000 (Pub 15 §7).
+        const supplementalFit = fedW4?.exempt ? 0 : supplementalFederalWithholding(supplementalGross, ytdSupplementalByAssociate.get(associateId) ?? 0, periodStart.getUTCFullYear());
+        const fit = round2(regularPass.federalIncomeTax + supplementalFit);
         const totalEmp = round2(
           fit + full.socialSecurity + full.medicare + full.stateIncomeTax,
         );
@@ -1043,6 +1161,37 @@ export async function aggregatePayrollProjection(
       }
     }
 
+    // A state that doesn't follow the federal treatment of a deduction (PA
+    // taxes 401(k) deferrals, NJ taxes §125 and HSA, CA taxes HSA): its
+    // income tax is figured on its own base (lib/deductionTaxability).
+    if (employmentType === 'W2_EMPLOYEE' && associateState && wageBases && breakdown.stateIncomeTax >= 0) {
+      const stBase = wageBases.stateIncome[associateState.toUpperCase()];
+      if (stBase !== undefined && Math.abs(stBase - fitGross) >= 0.01) {
+        const stateOnly = computePaycheckTaxes({
+          grossPay: stBase,
+          ficaMedicareGross,
+          filingStatus: w4?.filingStatus ?? null,
+          payFrequency,
+          state: associateState,
+          ytdWages,
+          ytdMedicareWages,
+          extraWithholding: 0,
+          deductions: 0,
+          otherIncome: 0,
+          dependentsAmount: 0,
+          sutaOverride,
+          stateW4: (() => {
+            const c = meta.stateW4s?.find((x) => x.state === associateState.toUpperCase());
+            return c ? { filingStatus: c.filingStatus, allowances: c.allowances, dependents: c.dependents, additionalWithholding: Number(c.additionalWithholding), exempt: c.exempt, county: c.county } : null;
+          })(),
+        }).stateIncomeTax;
+        const delta = round2(stateOnly - breakdown.stateIncomeTax);
+        if (delta !== 0) {
+          breakdown = { ...breakdown, stateIncomeTax: stateOnly, totalEmployeeTax: round2(breakdown.totalEmployeeTax + delta), netPay: round2(breakdown.netPay - delta) };
+        }
+      }
+    }
+
     // Tier-2 — city/county withholding on gross (Philadelphia-style flat
     // wage tax). W-2 employees only; zero without an assigned rule. An
     // assigned rule is a manual override: it replaces the engine's locals.
@@ -1061,6 +1210,8 @@ export async function aggregatePayrollProjection(
     let suiState: string | null = associateState;
     let wagesByState: Record<string, number> = associateState ? { [associateState]: fitGross } : {};
     let employerLocalTax = 0;
+    let stateProgramTax = 0;
+    let employerProgramTax = 0;
     if (employmentType === 'W2_EMPLOYEE' && grossPay > 0 && input.stateOverride === undefined) {
       const work = group.map((e) => ({
         state: e.location?.state ?? clientWorkState ?? meta.state ?? null,
@@ -1092,7 +1243,15 @@ export async function aggregatePayrollProjection(
             { filingStatus: c.filingStatus, allowances: c.allowances, dependents: c.dependents, additionalWithholding: Number(c.additionalWithholding), exempt: c.exempt, county: c.county },
           ]),
         ),
+        // Each state's own base for the deductions it treats differently (lib/deductionTaxability).
+        ...(wageBases ? { bases: { stateIncome: wageBases.stateIncome, stateProgram: wageBases.stateProgram, stateUi: wageBases.stateUi, local: wageBases.local } } : {}),
+        // State disability, paid leave and employee UI shares (taxEngine/statePrograms).
+        includePrograms: true,
+        ytdProgramWages: ytdProgramByAssociate.get(associateId) ?? {},
+        ...(employerSize !== undefined ? { employerSize } : {}),
       });
+      stateProgramTax = result.programTotal ?? 0;
+      employerProgramTax = result.employerProgramTotal ?? 0;
       taxEngineKey = result.engine;
       taxEngineFallback = result.fallbackReason;
       suiState = result.sui.state;
@@ -1111,7 +1270,7 @@ export async function aggregatePayrollProjection(
         if (stateLines[0]) stateLines[0] = { ...stateLines[0], amount: stateTotal };
       }
       const others = result.lines.filter((l) => l.kind !== 'STATE');
-      const localLines = manualLocalRule ? others.filter((l) => l.kind === 'SUI') : others;
+      const localLines = manualLocalRule ? others.filter((l) => l.kind === 'SUI' || l.kind === 'STATE_PROGRAM') : others;
       taxLines = [...stateLines, ...localLines];
       if (manualLocalRule) {
         taxLines.push({ code: 'LOCAL_RULE', kind: 'LOCAL', label: meta.localTaxRule!.name, resident: true, workState: associateState, wages: grossPay, amount: localIncomeTax, employer: false, note: 'Set by hand on the person; it replaces the local taxes the engine would work out.' });
@@ -1138,6 +1297,14 @@ export async function aggregatePayrollProjection(
         netPay: round2(breakdown.netPay - localIncomeTax),
       };
     }
+    // State programs withheld (SDI, TDI/FLI, PFML, employee UI): a tax, out of net.
+    if (stateProgramTax > 0) {
+      breakdown = {
+        ...breakdown,
+        totalEmployeeTax: round2(breakdown.totalEmployeeTax + stateProgramTax),
+        netPay: round2(breakdown.netPay - stateProgramTax),
+      };
+    }
 
     const disposableEarnings =
       employmentType === 'W2_EMPLOYEE'
@@ -1147,7 +1314,9 @@ export async function aggregatePayrollProjection(
               breakdown.socialSecurity -
               breakdown.medicare -
               breakdown.stateIncomeTax -
-              localIncomeTax
+              localIncomeTax -
+              // Amounts required by law to be withheld (CCPA): state disability and paid leave too.
+              stateProgramTax
           )
         : 0;
 
@@ -1294,6 +1463,26 @@ export async function aggregatePayrollProjection(
     const qualifiedOvertime = meta.jobProfile?.isExempt ? 0 : round2(0.5 * hourlyRate * flsaOtHours);
     const associateName = `${meta.firstName} ${meta.lastName}`.trim();
 
+    // Every deduction, itemized; the lump columns are their sums.
+    const garnById = new Map(activeGarns.map((g) => [g.id, g]));
+    const deductionLines = employmentType === 'W2_EMPLOYEE'
+      ? reconcile(
+          buildDeductionLines({
+            perPlan,
+            garnishments: garnResult.deductions.map((d) => {
+              const g = garnById.get(d.garnishmentId);
+              return { garnishmentId: d.garnishmentId, amount: d.amount, adminFee: d.adminFee ?? 0, kind: g?.kind ?? 'OTHER', caseNumber: g?.caseNumber ?? null, state: g?.state ?? null, agencyName: g?.agencyName ?? null };
+            }),
+            loans: (retirement?.loanRepayments ?? []).map((l) => ({ loanNumber: l.loanNumber, amount: l.amount })),
+            employerRetirement: retirement ? round2(retirement.employerMatch + retirement.safeHarbor) : 0,
+            retirementPlanId: retirement?.planId ?? null,
+            ctx: taxCtx,
+          }),
+          { preTax: preTaxDeductions, postTax: postTaxDeductions },
+          taxCtx,
+        )
+      : [];
+
     items.push({
       associateId,
       associateName,
@@ -1342,6 +1531,11 @@ export async function aggregatePayrollProjection(
       suiState,
       wagesByState,
       employerLocalTax,
+      deductionLines,
+      taxableWages: wageBases,
+      stateProgramTax,
+      employerProgramTax,
+      w4Flags: fedW4?.flags ?? [],
     });
 
     totalGross += grossPay;
@@ -1352,7 +1546,8 @@ export async function aggregatePayrollProjection(
       breakdown.employer.medicare +
       breakdown.employer.futa +
       breakdown.employer.suta +
-      employerLocalTax;
+      employerLocalTax +
+      employerProgramTax;
     totalGarnishments += postTaxDeductions;
   }
 

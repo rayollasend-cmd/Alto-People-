@@ -77,3 +77,4 @@ src/pages/me/MyW9.tsx
 src/components/PayPreviewCard.tsx
 src/components/DailyPayCard.tsx
 src/pages/payroll/W4Estimator.tsx
+src/pages/payroll/PaperCheckRequestCard.tsx

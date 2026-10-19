@@ -31,6 +31,8 @@ interface VendorTax {
 
 function kindOf(type: string): TaxLineKind {
   const t = type.toUpperCase();
+  // Disability, paid-leave and employee unemployment contributions (SDI, TDI, FLI, PFL, PFML, FAMLI, WA Cares, SUI-EE).
+  if (/SDI|TDI|FLI|PFL|PFML|FAMLI|PAID.?LEAVE|DISAB|LTC|CARES|SUI.?EE|UI.?EMPLOYEE|EMPLOYEE.?UI/.test(t)) return 'STATE_PROGRAM';
   if (t.includes('SCHOOL')) return 'SCHOOL';
   if (t.includes('TRANSIT')) return 'TRANSIT';
   if (t.includes('OCC') || t.includes('OLT')) return 'OLT';
@@ -45,7 +47,7 @@ function toResult(engine: EmployeePeriodResult['engine'], input: EmployeePeriodI
     .filter((t) => !/FEDERAL|FICA|MEDICARE|SOCIAL/i.test(t.type))
     .map((t) => ({
       code: `${engine}:${t.id}`,
-      kind: t.employer ? 'EMPLOYER' : kindOf(t.type),
+      kind: kindOf(t.type) === 'STATE_PROGRAM' ? 'STATE_PROGRAM' : t.employer ? 'EMPLOYER' : kindOf(t.type),
       label: t.description,
       resident: t.resident,
       workState: t.state,
@@ -59,14 +61,21 @@ function toResult(engine: EmployeePeriodResult['engine'], input: EmployeePeriodI
     if (s.state) byState[s.state] = round2((byState[s.state] ?? 0) + s.wages);
   }
   const stateTotal = round2(lines.filter((l) => l.kind === 'STATE').reduce((s, l) => s + l.amount, 0));
-  const localTotal = round2(lines.filter((l) => l.kind !== 'STATE' && !l.employer).reduce((s, l) => s + l.amount, 0));
-  const employerLocalTotal = round2(lines.filter((l) => l.employer).reduce((s, l) => s + l.amount, 0));
+  const program = (l: TaxLine) => l.kind === 'STATE_PROGRAM';
+  const localTotal = round2(lines.filter((l) => l.kind !== 'STATE' && !program(l) && !l.employer).reduce((s, l) => s + l.amount, 0));
+  const employerLocalTotal = round2(lines.filter((l) => l.employer && !program(l)).reduce((s, l) => s + l.amount, 0));
+  // Programs only count when the caller withholds them (EmployeePeriodInput.includePrograms).
+  const programLinesOut = input.includePrograms ? lines.filter(program) : [];
+  const programTotal = round2(programLinesOut.filter((l) => !l.employer).reduce((s, l) => s + l.amount, 0));
+  const employerProgramTotal = round2(programLinesOut.filter((l) => l.employer).reduce((s, l) => s + l.amount, 0));
   const top = Object.entries(byState).sort((a, b) => b[1] - a[1])[0]?.[0] ?? input.residence.state;
   return {
-    lines,
+    lines: input.includePrograms ? lines : lines.filter((l) => !program(l)),
     stateTotal,
     localTotal,
     employerLocalTotal,
+    programTotal,
+    employerProgramTotal,
     wagesByState: byState,
     sui: { state: top ?? null, reason: `Reported by ${engine === 'SYMMETRY_STE' ? 'Symmetry' : 'Vertex'} where most of the work was.` },
     // The vendor's own tables are reviewed by the vendor: no Alto review gate.
@@ -97,6 +106,8 @@ export function symmetryEngine(ctx: ProviderContext): TaxEngineProvider {
           residence: address(input.residence.state, input.residence.city, input.residence.zip),
           workLocations: input.work.map((w) => ({ ...address(w.state, w.city, w.zip), hours: w.hours })),
           wages: input.wages,
+          // CONFIRM WITH Symmetry: per-state taxable-wage overrides (deductions each state treats differently).
+          ...(input.bases ? { taxableWageOverrides: input.bases } : {}),
           federalFilingStatus: input.federalFilingStatus,
           stateCertificates: input.stateW4s,
           certificates: input.certificates,
@@ -146,6 +157,8 @@ export function vertexEngine(ctx: ProviderContext): TaxEngineProvider {
           employee: { residence: address(input.residence.state, input.residence.city, input.residence.zip), filingStatus: input.federalFilingStatus },
           worksites: input.work.map((w) => ({ ...address(w.state, w.city, w.zip), hoursWorked: w.hours })),
           grossWages: input.wages,
+          // CONFIRM WITH Vertex: per-state taxable-wage overrides (deductions each state treats differently).
+          ...(input.bases ? { taxableWageOverrides: input.bases } : {}),
           withholdingCertificates: input.stateW4s,
         }),
       });

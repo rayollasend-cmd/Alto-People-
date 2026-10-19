@@ -138,7 +138,7 @@ describe('returned deposits', () => {
     expect(r.status).toBe(200);
     expect(r.body.outcome).toBe('check');
     expect(r.body.to).toMatch(/^Paper check #\d+/);
-    const check = await prisma.payCheck.findUnique({ where: { payrollItemId: item.id } });
+    const check = await prisma.payCheck.findFirst({ where: { payrollItemId: item.id, voidedAt: null } });
     expect(check).not.toBeNull();
     expect(Number(check!.amount)).toBe(640);
   });

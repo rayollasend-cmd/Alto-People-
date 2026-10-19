@@ -114,6 +114,7 @@ const PayrollReadiness = lazyNamed(
 );
 const PayrollYtd = lazyNamed(() => import('@/pages/payroll/PayrollYtd'), 'PayrollYtd');
 const PayrollClosePage = lazyNamed(() => import('@/pages/payroll/PayrollClosePage'), 'PayrollClosePage');
+const PayrollChecksPage = lazyNamed(() => import('@/pages/payroll/PayrollChecksPage'), 'PayrollChecksPage');
 const PayrollReviewPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewPage'), 'PayrollReviewPage');
 const PayrollReviewsPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewsPage'), 'PayrollReviewsPage');
 const EarnedWageDesk = lazyNamed(() => import('@/pages/payroll/EarnedWageDesk'), 'EarnedWageDesk');
@@ -130,6 +131,7 @@ const CashForecastPage = lazyNamed(() => import('@/pages/finance/CashForecastPag
 const PayBillPage = lazyNamed(() => import('@/pages/finance/PayBillPage'), 'PayBillPage');
 const MarketRatesHome = lazyNamed(() => import('@/pages/market/MarketRatesHome'), 'MarketRatesHome');
 const LaborRulesPage = lazyNamed(() => import('@/pages/payroll/LaborRulesPage'), 'LaborRulesPage');
+const YearEndReconciliation = lazyNamed(() => import('@/pages/payroll/YearEndReconciliation'), 'YearEndReconciliation');
 const PayrollYearEndClose = lazyNamed(
   () => import('@/pages/payroll/PayrollYearEndClose'),
   'PayrollYearEndClose',
@@ -677,6 +679,7 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/runs/:id/close', element: <RequireCapability cap="process:payroll"><PayrollClosePage /></RequireCapability> },
+  { path: 'payroll/runs/:id/checks', element: <RequireCapability cap="process:payroll"><PayrollChecksPage /></RequireCapability> },
   { path: 'payroll/runs/:id/review', element: <RequireCapability cap="process:payroll"><PayrollReviewPage /></RequireCapability> },
   { path: 'payroll/review', element: <RequireCapability cap="process:payroll"><PayrollReviewsPage /></RequireCapability> },
   { path: 'payroll/earned-wage', element: <RequireCapability cap="process:payroll"><EarnedWageDesk /></RequireCapability> },
@@ -693,6 +696,7 @@ const LAYOUT_ROUTES = [
   { path: 'market-rates', element: <RequireCapability cap="view:clients"><MarketRatesHome /></RequireCapability> },
   { path: 'payroll/labor-rules', element: <RequireCapability cap="process:payroll" anyOf={['manage:org', 'view:executive']}><LaborRulesPage /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
+  { path: 'payroll/year-end/reconciliation', element: <RequireCapability cap="process:payroll"><YearEndReconciliation /></RequireCapability> },
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
   { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
   { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },

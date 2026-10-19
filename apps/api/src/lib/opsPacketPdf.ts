@@ -14,7 +14,7 @@ import {
   W,
   pdfHelpers,
   pdfSafe,
-} from './pdfDesign.js';
+} from './docKit/biz.js';
 import {
   clock,
   duration,
@@ -29,7 +29,7 @@ import {
 /**
  * The SOP packet, printed.
  *
- * The house style is in lib/pdfDesign.ts — the same grid, palette and type
+ * The house style is in lib/docKit/biz.ts — the same grid, palette and type
  * scale the client service report uses, so a store manager holding both
  * does not have to learn two documents.
  *
@@ -203,6 +203,7 @@ export function renderOpsPacketPdf(p: OpsPacket): Promise<Buffer> {
       const parts: string[] = [];
       const where = p.scopeLabel;
       if (r.shifts === 0) {
+        if (where === 'No stores in range') return 'No stores are in scope for this period, so there are no operations shifts to report.';
         return `No operations shifts were recorded for ${where} in this period. Either none ran, or they ran without an SOP open — which is itself the finding.`;
       }
       parts.push(

@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { XL, XL_FMT } from './docKit/xlsx.js';
 import type { TimesheetWeekResponse } from '@alto-people/shared';
 
 /**
@@ -9,18 +10,18 @@ import type { TimesheetWeekResponse } from '@alto-people/shared';
  * generates it) and Revision is 0 — kept so the columns line up for copy/paste.
  */
 
-const BAND = 'FF1F2A37';
-const SUBTOTAL = 'FFEAEDF1';
-const MUTED = 'FF6B7280';
-const INK = 'FF111827';
-const WARN = 'FFB5360F';
-const HOURS_FMT = '0.00';
+const BAND = XL.band;
+const SUBTOTAL = XL.subtotal;
+const MUTED = XL.muted;
+const INK = XL.ink;
+const WARN = XL.bad;
+const HOURS_FMT = XL_FMT.hours;
 
 const THIN: Partial<ExcelJS.Borders> = {
-  top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  right: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+  top: { style: 'thin', color: { argb: XL.rule } },
+  left: { style: 'thin', color: { argb: XL.rule } },
+  bottom: { style: 'thin', color: { argb: XL.rule } },
+  right: { style: 'thin', color: { argb: XL.rule } },
 };
 
 const HOUR_COLS = [7, 8, 9, 10, 11, 12]; // ST, OT, DT, Others, NB, Total
@@ -146,7 +147,7 @@ export async function renderTimesheetXlsx(
     });
     if ((r - headerRowNum) % 2 === 0) {
       xl.eachCell((cell) => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F6F8' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
       });
     }
     r += 1;

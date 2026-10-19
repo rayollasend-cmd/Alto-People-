@@ -13,7 +13,7 @@ import {
   W,
   pdfHelpers,
   pdfSafe,
-} from './pdfDesign.js';
+} from './docKit/biz.js';
 import { periodLabel, shortStamp, stamp } from './opsPacket.js';
 import { metricLabel } from './opsPacketPdf.js';
 import { hourLabel, type OpsStoreReport, type Tone } from './opsStoreReport.js';
@@ -21,7 +21,7 @@ import { hourLabel, type OpsStoreReport, type Tone } from './opsStoreReport.js';
 /**
  * The Store Operations Report, printed.
  *
- * Same house style as every client-facing PDF (pdfDesign): one grid, five
+ * Same house style as every client-facing PDF (lib/docKit/biz.ts): one grid, five
  * type sizes, one data colour, judgement colours only for judgements,
  * brand gold only on the masthead. What is new here is that the evidence
  * is DRAWN — a department-by-shift grid, a day-by-day bar, each

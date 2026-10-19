@@ -1,10 +1,11 @@
-import PDFDocument from 'pdfkit';
+import { createDoc, fmt } from './docKit/index.js';
 
 /**
  * EFTPS payment worksheet — one page carrying exactly the figures finance
  * keys into eftps.gov (or their bank's tax-payment screen) for a federal
  * deposit: EIN, form (941/940), tax period, settlement deadline, and the
- * sub-amount breakdown the IRS asks for on 941 deposits.
+ * sub-amount breakdown the IRS asks for on 941 deposits. Laid out in the
+ * order the EFTPS screens ask for them, the deadline and amount first.
  */
 
 export interface EftpsWorksheetData {
@@ -20,89 +21,63 @@ export interface EftpsWorksheetData {
   confirmationNumber: string | null;
 }
 
-const money = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const BREAKDOWN: Record<string, string> = {
+  fit: 'Federal income tax withheld',
+  ssEmployee: 'Social Security — employee share',
+  ssEmployer: 'Social Security — employer share',
+  medEmployee: 'Medicare — employee share',
+  medEmployer: 'Medicare — employer share',
+  futa: 'FUTA (net 0.6%)',
+};
 
-export function renderEftpsWorksheetPdf(data: EftpsWorksheetData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 56 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    doc.font('Helvetica-Bold').fontSize(16).text('Federal tax deposit worksheet');
-    doc
-      .font('Helvetica')
-      .fontSize(10)
-      .fillColor('#666666')
-      .text('Key these figures into EFTPS (eftps.gov) or your bank\'s federal tax payment service.')
-      .fillColor('#000000')
-      .moveDown(1.5);
-
-    const row = (label: string, value: string, bold = false) => {
-      doc.font('Helvetica').fontSize(10).fillColor('#555555').text(label, { continued: false });
-      doc
-        .font(bold ? 'Helvetica-Bold' : 'Helvetica')
-        .fontSize(bold ? 14 : 11)
-        .fillColor('#000000')
-        .text(value)
-        .moveDown(0.7);
-    };
-
-    row('Employer (EIN)', `${data.companyName} — ${data.ein.slice(0, 2)}-${data.ein.slice(2)}`);
-    row('Tax form', data.kind === 'FED_941' ? 'Form 941 — Employer\'s Quarterly Federal Tax Return' : 'Form 940 — FUTA');
-    row('Liability period', `${data.periodLabel} (liability date ${data.liabilityDate})`);
-    row('Settlement deadline', data.dueDate, true);
-    row('Payment amount', money(data.amount), true);
-
-    doc.moveDown(0.5);
-    doc.font('Helvetica-Bold').fontSize(11).text('Breakdown');
-    doc.moveDown(0.3);
-    const labels: Record<string, string> = {
-      fit: 'Federal income tax withheld',
-      ssEmployee: 'Social Security — employee share',
-      ssEmployer: 'Social Security — employer share',
-      medEmployee: 'Medicare — employee share',
-      medEmployer: 'Medicare — employer share',
-      futa: 'FUTA (net 0.6%)',
-    };
-    doc.font('Helvetica').fontSize(10);
-    for (const [key, label] of Object.entries(labels)) {
-      const v = data.breakdown[key];
-      if (typeof v !== 'number') continue;
-      const y = doc.y;
-      doc.text(label, 56, y);
-      doc.text(money(v), 400, y, { width: 100, align: 'right' });
-      doc.moveDown(0.35);
-    }
-    if (data.breakdown.nextDayRule === true) {
-      doc
-        .moveDown(0.5)
-        .fillColor('#aa0000')
-        .fontSize(10)
-        .text('⚠ $100,000 next-day rule applies — this deposit is due the next business day after the payday.')
-        .fillColor('#000000');
-    }
-    if (data.breakdown.belowDepositFloor === true) {
-      doc
-        .moveDown(0.5)
-        .fillColor('#666666')
-        .fontSize(9)
-        .text('FUTA quarter liability is $500 or less — it may roll into the next quarter instead of depositing now (Form 940 instructions).')
-        .fillColor('#000000');
-    }
-
-    doc.moveDown(1.5);
-    doc
-      .font('Helvetica')
-      .fontSize(10)
-      .text(
-        data.status === 'PAID'
-          ? `PAID — EFTPS acknowledgment: ${data.confirmationNumber ?? '—'}`
-          : 'After paying, record the EFTPS acknowledgment number in Alto (Payroll → Tax deposits → Mark paid).',
-      );
-
-    doc.end();
+export async function renderEftpsWorksheetPdf(data: EftpsWorksheetData): Promise<Buffer> {
+  const paid = data.status === 'PAID';
+  const form = data.kind === 'FED_941' ? "Form 941 — Employer's Quarterly Federal Tax Return" : 'Form 940 — Federal Unemployment (FUTA) Tax';
+  const { k } = createDoc({ title: `Federal tax deposit · ${data.periodLabel}`, author: data.companyName });
+  let y = k.masthead({
+    title: 'Federal tax deposit',
+    subtitle: 'EFTPS payment worksheet',
+    brand: { name: data.companyName, lines: [`EIN ${fmt.ein(data.ein)}`] },
   });
+  if (paid) y = k.callout({ tone: 'good', title: 'Paid', body: `EFTPS acknowledgment number ${data.confirmationNumber ?? '—'}.` }, y);
+  y = k.figures(
+    [
+      { label: 'Settle by', value: fmt.date(data.dueDate), tone: paid ? undefined : 'warn' },
+      { label: 'Amount to pay', value: fmt.money(data.amount), emphasis: true },
+    ],
+    y,
+  );
+  y = k.section('Enter in EFTPS', y, 'In the order the screens ask');
+  y = k.facts(
+    [
+      { label: 'Employer identification number', value: fmt.ein(data.ein), strong: true },
+      { label: 'Tax form', value: form },
+      { label: 'Tax period', value: data.periodLabel },
+      { label: 'Liability date', value: fmt.date(data.liabilityDate) },
+    ],
+    y,
+  );
+  const rows = Object.entries(BREAKDOWN)
+    .filter(([key]) => typeof data.breakdown[key] === 'number')
+    .map(([key, label]) => ({ label, amount: data.breakdown[key] as number }));
+  if (rows.length) {
+    y = k.section('Breakdown', y);
+    y = k.table({
+      y,
+      rows,
+      columns: [
+        { key: 'label', header: 'Amount type', width: 7, value: (r) => r.label },
+        { key: 'amount', header: 'Amount', width: 3, align: 'right', value: (r) => fmt.money(r.amount) },
+      ],
+      totals: { label: 'Total deposit', amount: fmt.money(data.amount) },
+    });
+  }
+  if (data.breakdown.nextDayRule === true) {
+    y = k.callout({ tone: 'bad', title: '$100,000 next-day rule applies', body: 'This deposit is due the next business day after the payday, not on the normal schedule.' }, y);
+  }
+  if (data.breakdown.belowDepositFloor === true) {
+    y = k.callout({ tone: 'neutral', body: 'FUTA liability for the quarter is $500 or less: it may roll into the next quarter instead of being deposited now (Form 940 instructions).' }, y);
+  }
+  if (!paid) k.callout({ tone: 'info', title: 'After you pay', body: 'Record the EFTPS acknowledgment number in Alto: Payroll → Payroll taxes → Deposits → Mark paid.' }, y);
+  return k.finish({ reference: `EFTPS worksheet · ${data.periodLabel}` });
 }

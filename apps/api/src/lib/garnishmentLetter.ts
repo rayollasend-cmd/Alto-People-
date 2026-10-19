@@ -6,11 +6,12 @@
 // notice itself — this is the *response* the employer is required to
 // send acknowledging compliance.
 //
-// Layout is intentionally form-shaped (header → addressee block →
-// recipient block → garnishment summary → withheld-to-date table →
-// signature block) so finance can review before mailing.
+// A business letter on the employer's letterhead: the addressee, the
+// "Re:" block that lets the agency match it to its case, the
+// acknowledgment, the withholding terms, every deduction so far, and a
+// signature block — reviewed by finance before it goes in the mail.
 
-import PDFDocument from 'pdfkit';
+import { COLOR, SIZE, createDoc, fmt } from './docKit/index.js';
 import type {
   Garnishment,
   GarnishmentDeduction,
@@ -44,118 +45,71 @@ export interface GarnishmentLetterData {
   };
 }
 
-const fmt = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
-
-export async function renderGarnishmentLetterPdf(
-  data: GarnishmentLetterData,
-): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    const { garnishment: g, associate, deductions, employer } = data;
-
-    doc.font('Helvetica-Bold').fontSize(14).text(KIND_LABEL[g.kind]);
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor('#444')
-      .text(`Employer acknowledgment letter · generated ${fmtDate(new Date())}`)
-      .moveDown(0.5);
-    doc.fillColor('#000');
-
-    doc.fontSize(10);
-    doc.text(employer.name);
-    if (employer.addressLine1) doc.text(employer.addressLine1);
-    if (employer.addressLine2) doc.text(employer.addressLine2);
-    if (employer.city || employer.state || employer.zip) {
-      doc.text([employer.city, employer.state, employer.zip].filter(Boolean).join(', '));
-    }
-    if (employer.phone) doc.text(`Phone: ${employer.phone}`);
-    if (employer.ein) doc.text(`EIN: ${employer.ein}`);
-    doc.moveDown();
-
-    doc.font('Helvetica-Bold').text('To:');
-    doc.font('Helvetica');
-    doc.text(g.remitTo ?? g.agencyName ?? '— Issuing authority —');
-    if (g.remitAddress) {
-      g.remitAddress.split('\n').forEach((line) => doc.text(line));
-    }
-    doc.moveDown();
-
-    doc.font('Helvetica-Bold').text('Re:');
-    doc.font('Helvetica');
-    doc.text(`Employee: ${associate.firstName} ${associate.lastName}`);
-    if (g.caseNumber) doc.text(`Case number: ${g.caseNumber}`);
-    doc.text(`Order received: ${fmtDate(g.startDate)}`);
-    if (g.endDate) doc.text(`Order ends: ${fmtDate(g.endDate)}`);
-    doc.moveDown();
-
-    doc
-      .text(
-        `This letter confirms that we received the above order and have begun ` +
-          `withholding from the named employee's wages in accordance with applicable ` +
-          `federal and state law. Withholding will continue until the cap is reached, ` +
-          `the order terminates, or we receive written notice from your office.`,
-        { align: 'justify' },
-      )
-      .moveDown();
-
-    doc.font('Helvetica-Bold').text('Withholding terms');
-    doc.font('Helvetica');
-    if (g.amountPerRun) {
-      doc.text(`Amount per pay period: ${fmt(Number(g.amountPerRun))}`);
-    }
-    if (g.percentOfDisp) {
-      doc.text(`Percentage of disposable earnings: ${(Number(g.percentOfDisp) * 100).toFixed(2)}%`);
-    }
-    if (g.totalCap) {
-      doc.text(`Total cap: ${fmt(Number(g.totalCap))}`);
-    }
-    doc.text(`Withheld to date: ${fmt(Number(g.amountWithheld))}`);
-    doc.text(`Status: ${g.status}`);
-    doc.moveDown();
-
-    if (deductions.length > 0) {
-      doc.font('Helvetica-Bold').text('Deduction history');
-      doc.font('Helvetica').fontSize(9);
-      const rowH = 14;
-      const colDate = 60;
-      const colRun = 200;
-      const colAmt = 480;
-      const startY = doc.y;
-      doc.text('Deducted on', colDate, startY);
-      doc.text('Payroll run', colRun, startY);
-      doc.text('Amount', colAmt, startY, { align: 'right' });
-      doc.moveTo(54, startY + rowH - 2).lineTo(560, startY + rowH - 2).stroke();
-      let y = startY + rowH;
-      for (const d of deductions.slice(0, 30)) {
-        doc.text(d.deductedOn.toISOString().slice(0, 10), colDate, y);
-        doc.text(d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual', colRun, y);
-        doc.text(fmt(Number(d.amount)), colAmt, y, { align: 'right' });
-        y += rowH;
-      }
-      if (deductions.length > 30) {
-        doc.text(`(+${deductions.length - 30} earlier deductions not shown)`, colDate, y);
-      }
-      doc.moveDown(2);
-      doc.fontSize(10);
-      doc.x = 54;
-    }
-
-    doc.moveDown(2);
-    doc.font('Helvetica-Bold').text('Authorized signature');
-    doc.font('Helvetica');
-    doc.moveDown();
-    doc.text('________________________________________      Date: ___________');
-    doc.moveDown(0.5);
-    doc.text('Print name and title');
-
-    doc.end();
+export async function renderGarnishmentLetterPdf(data: GarnishmentLetterData): Promise<Buffer> {
+  const { garnishment: g, associate, deductions, employer } = data;
+  const name = `${associate.firstName} ${associate.lastName}`;
+  const { k } = createDoc({ title: `${KIND_LABEL[g.kind]} · ${name}`, author: employer.name });
+  const loc = [[employer.city, employer.state].filter(Boolean).join(', '), employer.zip].filter(Boolean).join(' ');
+  let y = k.letterhead({
+    brand: { name: employer.name, lines: [[employer.addressLine1, employer.addressLine2].filter(Boolean).join(', '), loc, [employer.phone ? `Tel ${employer.phone}` : null, employer.ein ? `EIN ${fmt.ein(employer.ein)}` : null].filter(Boolean).join('  ·  ')].filter((l) => !!l) as string[] },
+    date: fmt.date(new Date()),
+    reference: g.caseNumber ? `Case ${g.caseNumber}` : undefined,
   });
+
+  // Addressee.
+  const to = [g.remitTo ?? g.agencyName ?? 'Issuing authority', ...(g.remitAddress ? g.remitAddress.split('\n') : [])];
+  for (const l of to) {
+    k.text(l, k.L, y, { size: SIZE.body, width: k.width() * 0.6 });
+    y += 13;
+  }
+  y += 14;
+
+  // Re: block — what the agency matches the letter to.
+  k.text('Re:', k.L, y, { size: SIZE.body, weight: 'semibold' });
+  const re = [KIND_LABEL[g.kind], `Employee: ${name}`, g.caseNumber ? `Case number: ${g.caseNumber}` : null, `Order received: ${fmt.date(g.startDate)}`, g.endDate ? `Order ends: ${fmt.date(g.endDate)}` : null].filter((l): l is string => !!l);
+  for (const l of re) {
+    k.text(l, k.L + 30, y, { size: SIZE.body, weight: l === re[0] ? 'semibold' : 'regular', width: k.width() - 30 });
+    y += 13;
+  }
+  y += 12;
+
+  const body = [
+    'To whom it may concern:',
+    `This letter confirms that ${employer.name} received the order referenced above and has begun withholding from the named employee's wages in accordance with applicable federal and state law. Withholding will continue until the amount ordered is reached, the order ends, or we receive written notice from your office.`,
+  ];
+  for (const p2 of body) y += k.para(p2, k.L, y, k.width(), { size: SIZE.body, color: COLOR.ink }) + 10;
+
+  y = k.section('Withholding terms', y);
+  const terms = [
+    ...(g.amountPerRun ? [{ label: 'Amount per pay period', value: fmt.money(Number(g.amountPerRun)) }] : []),
+    ...(g.percentOfDisp ? [{ label: 'Share of disposable earnings', value: fmt.percent(Number(g.percentOfDisp), 2) }] : []),
+    ...(g.totalCap ? [{ label: 'Total ordered', value: fmt.money(Number(g.totalCap)) }] : []),
+    { label: 'Withheld to date', value: fmt.money(Number(g.amountWithheld)), strong: true },
+    { label: 'Status', value: g.status.charAt(0) + g.status.slice(1).toLowerCase() },
+  ];
+  y = k.facts(terms, y, { cols: 3 });
+
+  if (deductions.length) {
+    y = k.section('Deductions so far', y, `${deductions.length} ${deductions.length === 1 ? 'deduction' : 'deductions'}`);
+    y = k.table({
+      y,
+      rows: deductions,
+      columns: [
+        { key: 'on', header: 'Deducted on', width: 3, value: (d) => fmt.date(d.deductedOn) },
+        { key: 'run', header: 'Payroll run', width: 4, value: (d) => (d.payrollRunId ? d.payrollRunId.slice(0, 8).toUpperCase() : 'Manual') },
+        { key: 'amt', header: 'Amount', width: 3, align: 'right', value: (d) => fmt.money(Number(d.amount)) },
+      ],
+      totals: { on: 'Total', amt: fmt.money(deductions.reduce((s, d) => s + Number(d.amount), 0)) },
+    });
+  }
+
+  y = k.ensure(y + 10, 90);
+  y += k.para('Please contact our payroll office with any questions about this order.', k.L, y, k.width(), { size: SIZE.body }) + 8;
+  k.text('Sincerely,', k.L, y, { size: SIZE.body });
+  y += 46;
+  k.signatureLine(k.L, y, 230, 'Authorized signature');
+  k.signatureLine(k.L + 260, y, 140, 'Date');
+  y += 34;
+  k.signatureLine(k.L, y, 230, 'Printed name and title');
+  return k.finish({ reference: g.caseNumber ? `Case ${g.caseNumber}` : 'Garnishment acknowledgment', note: employer.name });
 }

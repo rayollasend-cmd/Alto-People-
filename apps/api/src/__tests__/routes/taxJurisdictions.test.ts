@@ -133,18 +133,19 @@ describe('a run’s taxes by jurisdiction', () => {
     const row = await prisma.payrollItem.findUniqueOrThrow({ where: { id: item.id } });
     expect(Number(row.localWithholding)).toBeCloseTo(32, 2);
     const lines = await prisma.payrollItemTaxLine.findMany({ where: { payrollItemId: item.id } });
-    expect(lines.map((l) => l.code).sort()).toEqual(['PA-PITTSBURGH', 'PA-PITTSBURGH-LST', 'ST-PA', 'SUI-PA']);
+    // PA_UC_EE: Pennsylvania's 0.07% employee unemployment share, now withheld with the state programs.
+    expect(lines.map((l) => l.code).sort()).toEqual(['PA-PITTSBURGH', 'PA-PITTSBURGH-LST', 'PA_UC_EE', 'ST-PA', 'SUI-PA']);
     expect(Number(lines.find((l) => l.code === 'ST-PA')!.amount)).toBeCloseTo(item.stateWithholding, 2);
 
     const by = await h.get(`/payroll/runs/${run.body.id}/tax-lines`);
     expect(by.status).toBe(200);
-    expect(by.body.totals).toMatchObject({ local: 32, employer: 0 });
+    expect(by.body.totals).toMatchObject({ local: 32, programs: 0.7, employer: 0 });
     expect(by.body.jurisdictions[0]).toMatchObject({ kind: 'STATE', code: 'ST-PA', people: 1 });
 
     // Re-aggregating replaces, never duplicates.
     const bonus = await h.post(`/payroll/runs/${run.body.id}/add-ons`).send({ associateId: item.associateId, kind: 'BONUS', amount: 100 });
     expect(bonus.status).toBeLessThan(300);
-    expect(await prisma.payrollItemTaxLine.count({ where: { payrollItem: { payrollRunId: run.body.id } } })).toBe(4);
+    expect(await prisma.payrollItemTaxLine.count({ where: { payrollItem: { payrollRunId: run.body.id } } })).toBe(5);
   });
 });
 

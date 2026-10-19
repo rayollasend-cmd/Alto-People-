@@ -13,6 +13,8 @@ import {
   type PayFrequency,
 } from '../lib/payrollTax.js';
 import { MD_COUNTY_RATES_2025, STATE_SPECS } from '../lib/stateWithholding.js';
+import { VERIFIED_STATE_SPECS } from '../lib/stateWithholding2026.js';
+import { PROGRAMS_NOT_YET_LIVE, programsFor } from '../lib/taxEngine/statePrograms.js';
 import type { SessionUser } from '../types/express.js';
 
 /**
@@ -71,17 +73,31 @@ stateTaxRouter.get('/payroll/state-tax/coverage', VIEW, async (req, res) => {
   const states = Object.entries(STATE_NAMES)
     .map(([code, name]) => {
       const spec = STATE_SPECS[code];
+      const verified = VERIFIED_STATE_SPECS[code];
       const ack = ackBy.get(code);
+      const notLive = PROGRAMS_NOT_YET_LIVE.filter((p) => p.state === code);
       return {
         state: code,
         name,
         coverage: stateCoverageOf(code),
         people: peopleBy.get(code) ?? 0,
-        taxYear: spec?.taxYear ?? null,
+        taxYear: spec?.taxYear ?? verified?.taxYear ?? null,
         confidence: spec?.confidence ?? null,
-        source: spec?.source ?? null,
-        notes: spec?.notes ?? null,
-        form: spec?.form ?? null,
+        source: spec?.source ?? verified?.source ?? null,
+        notes: spec?.notes ?? verified?.notes ?? null,
+        form: spec?.form ?? verified?.form ?? null,
+        // Disability, paid-leave and employee-UI contributions withheld for work in this state.
+        programs: programsFor(code).map((p) => ({
+          code: p.code,
+          label: p.label,
+          employeeRate: p.employeeRate,
+          employerRate: p.employerRate,
+          wageCap: p.wageCap,
+          weeklyEmployeeMax: p.weeklyEmployeeMax ?? null,
+          verified: p.verified,
+          source: p.source,
+        })),
+        programsComing: notLive.map((p) => ({ label: p.label, startsOn: p.startsOn, source: p.source })),
         acknowledgment: ack
           ? { taxYear: ack.taxYear, at: ack.acknowledgedAt.toISOString(), by: ack.acknowledgedById ? (nameOf.get(ack.acknowledgedById) ?? null) : null, note: ack.note, current: ack.taxYear === spec?.taxYear }
           : null,
@@ -205,7 +221,7 @@ const certView = (c: {
 }) => ({
   state: c.state,
   stateName: STATE_NAMES[c.state] ?? c.state,
-  form: STATE_SPECS[c.state]?.form ?? null,
+  form: (STATE_SPECS[c.state] ?? VERIFIED_STATE_SPECS[c.state])?.form ?? null,
   filingStatus: c.filingStatus,
   allowances: c.allowances,
   dependents: c.dependents,
@@ -247,8 +263,9 @@ async function saveCertificate(associateId: string, input: z.infer<typeof Certif
 /** The states with their own certificate, for the pickers. */
 stateTaxRouter.get('/payroll/state-w4-forms', requireAuth, (_req, res) => {
   res.json({
-    forms: Object.values(STATE_SPECS)
+    forms: [...Object.values(STATE_SPECS), ...Object.values(VERIFIED_STATE_SPECS)]
       .filter((s) => s.form)
+      .sort((a, b) => a.name.localeCompare(b.name))
       .map((s) => ({ state: s.state, name: s.name, form: s.form })),
     marylandCounties: Object.keys(MD_COUNTY_RATES_2025).sort(),
   });
@@ -283,7 +300,7 @@ stateTaxRouter.get('/me/state-w4', requireAuth, async (req, res) => {
   res.json({
     workState,
     // The certificate the person's work state asks for, if it has its own.
-    needed: workState && STATE_SPECS[workState]?.form ? { state: workState, name: STATE_NAMES[workState], form: STATE_SPECS[workState]!.form } : null,
+    needed: workState && (STATE_SPECS[workState] ?? VERIFIED_STATE_SPECS[workState])?.form ? { state: workState, name: STATE_NAMES[workState], form: (STATE_SPECS[workState] ?? VERIFIED_STATE_SPECS[workState])!.form } : null,
     certificates: rows.map(certView),
   });
 });

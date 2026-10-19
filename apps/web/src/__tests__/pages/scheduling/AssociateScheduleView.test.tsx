@@ -305,7 +305,8 @@ describe('<AssociateScheduleView> shift detail', () => {
     vi.mocked(listMyShifts).mockResolvedValue({
       shifts: [
         shift({
-          startsAt: new Date(Date.now() - 60_000).toISOString(),
+          // Never earlier than local midnight: run just after 00:00, "a minute ago" would be yesterday.
+          startsAt: new Date(Math.max(Date.now() - 60_000, new Date().setHours(0, 0, 0, 0))).toISOString(),
           endsAt: new Date(Date.now() + 3 * 3_600_000).toISOString(),
         }),
       ] as never,

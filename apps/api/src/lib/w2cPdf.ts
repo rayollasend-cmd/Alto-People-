@@ -1,21 +1,21 @@
-// Gap 1 — Form W-2c (Corrected Wage and Tax Statement) renderer.
+// Form W-2c (Corrected Wage and Tax Statement) for the employee.
 //
-// Plain-paper layout in the same austere style as w2Pdf. The defining
-// difference from a W-2 is that every dollar box is split into a
-// "Previously reported" column and a "Correct information" column —
-// the IRS and SSA reconcile against the previous values to identify
-// what changed. We render those side by side per box so a recipient
-// can verify the correction visually.
-//
-// Field positions follow the substitute-form rules from IRS Pub 1141
-// to a best-effort match. Same disclaimer as w2Pdf: finance reviewer
-// should compare against the SSA-approved fillable PDF before this is
-// shipped to the IRS or to employees as their authoritative correction.
+// The employee's download is the whole correction:
+//   1. a cover letter in the house style saying exactly what changed —
+//      each corrected box with what was reported, what is correct, and the
+//      difference — and why;
+//   2. Copies B, C and 2 in black ink (IRS Pub 1141 / Pub 1223 substitute
+//      rules): the identifying boxes, then every corrected box with its
+//      "Previously reported" and "Correct information" amounts. As the
+//      General Instructions for Forms W-2 and W-3 direct, only the boxes
+//      being corrected are filled in; the rest stay blank;
+//   3. a short notice on what to do with a corrected W-2.
 
-import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
 import type { W2Boxes, W2StateLine } from './w2Aggregator.js';
 import type { W2cAmounts } from './w2cAggregator.js';
+import { COLOR, SIZE, createDoc, fmt, type Kit } from './docKit/index.js';
+import { BLACK, BOX12_MEANING, GREY, IRS_FURNISHED_NOTE, TREASURY, boxAmount, formBox, truncatedSsn } from './taxFormKit.js';
 
 export interface W2cPdfData {
   taxYear: number;
@@ -54,329 +54,184 @@ export interface W2cPdfData {
   };
 }
 
-export async function renderW2cPdf(data: W2cPdfData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-    // Deterministic bytes: pdfkit stamps CreationDate=now by default, so
-    // every re-render hashed differently and the pdfHash immutability
-    // check warned on EVERY re-download � permanent log noise. Pin the
-    // date to the form's own timestamp (meta.generatedAt = TaxForm
-    // createdAt), making identical inputs produce identical bytes.
-      size: 'LETTER',
-      margin: 36,
-      info: { CreationDate: new Date(data.meta.generatedAt) },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    drawHeader(doc, data);
-    drawIdBlock(doc, data);
-    drawBoxesGrid(doc, data.amounts);
-    drawStateLines(doc, data.amounts);
-    drawCorrectionReason(doc, data.correctionReason);
-    drawFooter(doc, data);
-
-    doc.end();
-  });
-}
-
 export function hashW2cPdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
-// ---- Layout helpers ------------------------------------------------------
+const W2C_LEGEND: Record<'B' | 'C' | '2', string> = {
+  B: "Copy B—To Be Filed With Employee's FEDERAL Tax Return.",
+  C: "Copy C—For EMPLOYEE'S RECORDS.",
+  '2': "Copy 2—To Be Filed With Employee's State, City, or Local Income Tax Return.",
+};
+const W2C_OMB = 'OMB No. 1545-0029';
 
-function drawHeader(doc: PDFKit.PDFDocument, data: W2cPdfData): void {
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(14)
-    .text(
-      `Form W-2c  Corrected Wage and Tax Statement  ${data.taxYear}`,
-      36,
-      36,
-      { width: 540, align: 'left' },
-    );
-  doc
-    .font('Helvetica')
-    .fontSize(8)
-    .fillColor('#444')
-    .text(
-      `Copy B—To Be Filed With Employee's FEDERAL Tax Return.`,
-      36,
-      54,
-      { width: 540 },
-    );
-  doc.fillColor('#000');
-  doc
-    .fontSize(7)
-    .fillColor('#666')
-    .text('Department of the Treasury — Internal Revenue Service', 36, 66, {
-      width: 540,
-    });
-  doc.fillColor('#000');
-
-  // Border
-  doc.rect(36, 84, 540, 600).strokeColor('#000').lineWidth(0.6).stroke();
+interface Change {
+  box: string;
+  label: string;
+  before: number;
+  after: number;
 }
 
-function drawIdBlock(doc: PDFKit.PDFDocument, data: W2cPdfData): void {
-  cell(doc, 36, 90, 270, 40, 'a  Employee\'s social security number', data.employee.ssn);
-  cell(doc, 306, 90, 270, 40, 'b  Employer identification number (EIN)', data.employer.ein);
+const same = (a: number | undefined, b: number | undefined) => Math.round((a ?? 0) * 100) === Math.round((b ?? 0) * 100);
 
-  cell(
-    doc,
-    36,
-    130,
-    540,
-    60,
-    'c  Employer\'s name, address, and ZIP code',
-    [
-      data.employer.name,
-      data.employer.addressLine1,
-      data.employer.addressLine2,
-      [data.employer.city, data.employer.state, data.employer.zip]
-        .filter(Boolean)
-        .join(', '),
-    ]
-      .filter((s) => s && s.length > 0)
-      .join('\n'),
-  );
-
-  cell(doc, 36, 190, 540, 28, 'd  Employer\'s correction number', data.meta.formId.slice(0, 8).toUpperCase());
-
-  cell(
-    doc,
-    36,
-    218,
-    540,
-    32,
-    'e  Employee\'s first name and initial    Last name',
-    `${data.employee.firstName} ${data.employee.lastName}`,
-  );
-  cell(
-    doc,
-    36,
-    250,
-    540,
-    44,
-    'f  Employee\'s address and ZIP code',
-    [
-      data.employee.addressLine1,
-      data.employee.addressLine2,
-      [data.employee.city, data.employee.state, data.employee.zip]
-        .filter(Boolean)
-        .join(', '),
-    ]
-      .filter((s) => s && s.length > 0)
-      .join('\n'),
-  );
-
-  // Original W-2 control number (Box d on the W-2c — different from Box d
-  // on the W-2). Helps the IRS reconcile to the prior submission.
-  cell(
-    doc,
-    36,
-    294,
-    540,
-    22,
-    'g  Original W-2 control number',
-    data.controlNumber,
-  );
-}
-
-function drawBoxesGrid(doc: PDFKit.PDFDocument, amounts: W2cAmounts): void {
-  // The defining W-2c layout: each numbered box has two columns.
-  //   Previously reported (left)  |  Correct information (right)
-  // We render each box pair on one row, with the box label spanning
-  // the full width and the two values stacked beneath. Six rows for
-  // boxes 1-6.
-  const top = 326;
-  const rowH = 38;
-  const labelH = 10;
-
-  const left = 36;
-  const colW = 270;
-  const mid = left + colW;
-  const valW = colW; // each value cell is half the row width? actually full per-half
-
-  const rows: { num: number; label: string; prev: number; curr: number }[] = [
-    { num: 1, label: 'Wages, tips, other compensation', prev: amounts.previous.box1Wages, curr: amounts.corrected.box1Wages },
-    { num: 2, label: 'Federal income tax withheld', prev: amounts.previous.box2FitWithheld, curr: amounts.corrected.box2FitWithheld },
-    { num: 3, label: 'Social security wages', prev: amounts.previous.box3SsWages, curr: amounts.corrected.box3SsWages },
-    { num: 4, label: 'Social security tax withheld', prev: amounts.previous.box4SsTax, curr: amounts.corrected.box4SsTax },
-    { num: 5, label: 'Medicare wages and tips', prev: amounts.previous.box5MedicareWages, curr: amounts.corrected.box5MedicareWages },
-    { num: 6, label: 'Medicare tax withheld', prev: amounts.previous.box6MedicareTax, curr: amounts.corrected.box6MedicareTax },
+/** Every box whose amount differs between what was reported and what is correct. */
+export function w2cChanges(prev: W2Boxes, next: W2Boxes): Change[] {
+  const out: Change[] = [];
+  const pairs: Array<[string, string, keyof W2Boxes]> = [
+    ['1', 'Wages, tips, other compensation', 'box1Wages'],
+    ['2', 'Federal income tax withheld', 'box2FitWithheld'],
+    ['3', 'Social security wages', 'box3SsWages'],
+    ['4', 'Social security tax withheld', 'box4SsTax'],
+    ['5', 'Medicare wages and tips', 'box5MedicareWages'],
+    ['6', 'Medicare tax withheld', 'box6MedicareTax'],
+    ['7', 'Social security tips', 'box7SsTips'],
+    ['10', 'Dependent care benefits', 'box10DependentCare'],
   ];
+  for (const [box, label, key] of pairs) {
+    const a = (prev[key] as number | undefined) ?? 0;
+    const b = (next[key] as number | undefined) ?? 0;
+    if (!same(a, b)) out.push({ box, label, before: a, after: b });
+  }
+  const codes = new Set([...(prev.box12 ?? []), ...(next.box12 ?? [])].map((c) => c.code));
+  for (const code of codes) {
+    const a = (prev.box12 ?? []).find((c) => c.code === code)?.amount ?? 0;
+    const b = (next.box12 ?? []).find((c) => c.code === code)?.amount ?? 0;
+    if (!same(a, b)) out.push({ box: `12 ${code}`, label: BOX12_MEANING[code] ?? `Box 12 code ${code}`, before: a, after: b });
+  }
+  const others = new Set([...(prev.box14Other ?? []), ...(next.box14Other ?? [])].map((o) => o.label));
+  for (const l of others) {
+    const a = (prev.box14Other ?? []).find((o) => o.label === l)?.amount ?? 0;
+    const b = (next.box14Other ?? []).find((o) => o.label === l)?.amount ?? 0;
+    if (!same(a, b)) out.push({ box: '14a', label: l, before: a, after: b });
+  }
+  const states = new Set([...(prev.stateLines ?? []), ...(next.stateLines ?? [])].map((s) => s.state));
+  for (const st of states) {
+    const a = (prev.stateLines ?? []).find((s) => s.state === st);
+    const b = (next.stateLines ?? []).find((s) => s.state === st);
+    if (!same(a?.stateWages, b?.stateWages)) out.push({ box: `16 ${st}`, label: `${st} state wages`, before: a?.stateWages ?? 0, after: b?.stateWages ?? 0 });
+    if (!same(a?.stateIncomeTax, b?.stateIncomeTax)) out.push({ box: `17 ${st}`, label: `${st} state income tax`, before: a?.stateIncomeTax ?? 0, after: b?.stateIncomeTax ?? 0 });
+  }
+  const locals = new Set([...(prev.localLines ?? []), ...(next.localLines ?? [])].map((l) => l.locality));
+  for (const loc of locals) {
+    const a = (prev.localLines ?? []).find((l) => l.locality === loc);
+    const b = (next.localLines ?? []).find((l) => l.locality === loc);
+    if (!same(a?.localWages, b?.localWages)) out.push({ box: '18', label: `${loc} local wages`, before: a?.localWages ?? 0, after: b?.localWages ?? 0 });
+    if (!same(a?.localIncomeTax, b?.localIncomeTax)) out.push({ box: '19', label: `${loc} local income tax`, before: a?.localIncomeTax ?? 0, after: b?.localIncomeTax ?? 0 });
+  }
+  return out;
+}
 
-  // Two-column-header strip
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(7)
-    .fillColor('#000')
-    .text('Previously reported', left + 4, top - labelH - 2, { width: colW - 8 })
-    .text('Correct information', mid + 4, top - labelH - 2, { width: colW - 8 });
-
-  let y = top;
-  for (const r of rows) {
-    // Box label row (full width, very small)
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(8)
-      .fillColor('#000')
-      .text(`${r.num}  ${r.label}`, left, y, { width: 540 });
-    // Value cells
-    valueCell(doc, left, y + 12, colW, rowH - 14, usd(r.prev), changeMark(r.prev, r.curr));
-    valueCell(doc, mid, y + 12, valW, rowH - 14, usd(r.curr), changeMark(r.prev, r.curr));
-    y += rowH;
+function cover(k: Kit, d: W2cPdfData, changes: Change[]): void {
+  const er = d.employer;
+  const name = `${d.employee.firstName} ${d.employee.lastName}`.trim();
+  let y = k.masthead({
+    title: `Corrected ${d.taxYear} Form W-2`,
+    subtitle: 'Form W-2c · Corrected Wage and Tax Statement',
+    brand: { name: er.name, lines: [[er.addressLine1, [[er.city, er.state].filter(Boolean).join(', '), er.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '), `EIN ${fmt.ein(er.ein)}`].filter(Boolean) },
+  });
+  y += k.para(`${name}, ${er.name} corrected the Form W-2 it gave you for ${d.taxYear}. This Form W-2c replaces only the amounts listed below; everything else on your original W-2 stays as it was.`, k.L, y, k.width(), { size: SIZE.body, color: COLOR.ink2 }) + 12;
+  if (d.correctionReason) y = k.callout({ tone: 'info', title: 'Why it changed', body: d.correctionReason }, y);
+  y = k.section('What changed', y, `${changes.length} ${changes.length === 1 ? 'box' : 'boxes'}`);
+  y = k.table({
+    y,
+    rows: changes,
+    rowH: 16,
+    empty: 'No amounts changed: this correction fixes your name, SSN or address.',
+    columns: [
+      { key: 'box', header: 'Box', width: 1.1, value: (c) => c.box, strong: true },
+      { key: 'label', header: 'What it is', width: 4.4, value: (c) => c.label },
+      { key: 'before', header: 'Was', width: 1.6, align: 'right', value: (c) => fmt.money(c.before) },
+      { key: 'after', header: 'Correct', width: 1.6, align: 'right', value: (c) => fmt.money(c.after), strong: true },
+      { key: 'diff', header: 'Change', width: 1.5, align: 'right', value: (c) => fmt.money(c.after - c.before, { signed: true }), color: (c) => (c.after - c.before < 0 ? COLOR.bad : COLOR.good) },
+    ],
+  });
+  y = k.section('What to do', y);
+  const steps = [
+    'If you have not filed your return yet, use the correct amounts from this form together with your original W-2.',
+    'If you already filed, you may need to file an amended return (Form 1040-X). Copy B is the one to include.',
+    'Keep Copy C with your original W-2. File Copy 2 with any state, city or local return the correction affects.',
+  ];
+  for (const s of steps) {
+    const h = k.para(s, k.L + 12, y, k.width() - 12, { size: SIZE.body, color: COLOR.ink2 });
+    k.text('•', k.L, y, { size: SIZE.body, color: COLOR.brand });
+    y += h + 5;
   }
 }
 
-function drawStateLines(doc: PDFKit.PDFDocument, amounts: W2cAmounts): void {
-  const top = 580;
-  // Single-row aggregate: shows the union of states across previous +
-  // corrected, with the prev/curr wages and prev/curr tax stacked. For
-  // multi-state cases the row is small; stick with one row for the
-  // common single-state case and let multi-state spill to follow-up.
-  const states = new Set<string>();
-  for (const s of amounts.previous.stateLines) states.add(s.state);
-  for (const s of amounts.corrected.stateLines) states.add(s.state);
+function drawCopy(k: Kit, x: number, y: number, d: W2cPdfData, copy: 'B' | 'C' | '2', changes: Change[]): number {
+  const W = 540;
+  const half = W / 2;
+  const er = d.employer;
+  const ee = d.employee;
+  let cy = y;
+  formBox(k, x, cy, half, 54, "a  Employer's name, address, and ZIP code", [er.name, er.addressLine1, er.addressLine2, [[er.city, er.state].filter(Boolean).join(', '), er.zip].filter(Boolean).join(' ')].filter((s): s is string => !!s), { valueSize: 8.5 });
+  formBox(k, x + half, cy, half / 2, 27, 'c  Tax year/Form corrected', `${d.taxYear} / W-2`);
+  formBox(k, x + half * 1.5, cy, half / 2, 27, "d  Employee's correct SSN", truncatedSsn(ee.ssn));
+  formBox(k, x + half, cy + 27, half, 27, 'b  Employer identification number (EIN)', fmt.ein(er.ein));
+  cy += 54;
+  formBox(k, x, cy, half, 26, "h  Employee's first name and initial      Last name", `${ee.firstName} ${ee.lastName}`.trim());
+  formBox(k, x + half, cy, half, 26, "i  Employee's address and ZIP code", [[ee.addressLine1, ee.addressLine2].filter(Boolean).join(', '), [[ee.city, ee.state].filter(Boolean).join(', '), ee.zip].filter(Boolean).join(' ')].filter(Boolean).join(' · '), { valueSize: 8 });
+  cy += 26;
+  formBox(k, x, cy, half, 20, 'Control number (from the original W-2)', d.controlNumber, { valueSize: 8.5 });
+  formBox(k, x + half, cy, half, 20, 'Note', 'Complete only the boxes being corrected', { valueSize: 7.5 });
+  cy += 26;
 
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(7)
-    .fillColor('#000')
-    .text('15-17  State wages / tax (previous → corrected)', 36, top - 12, {
-      width: 540,
-    });
-
-  if (states.size === 0) {
-    cell(doc, 36, top, 540, 26, '', '— No state withholding —');
-    return;
+  // Corrected boxes: previously reported | correct information, two per row.
+  const head = (hx: number) => {
+    k.text('Previously reported', hx + 4, cy, { size: 6.5, weight: 'semibold', color: BLACK, width: half / 2 - 8 });
+    k.text('Correct information', hx + half / 2 + 4, cy, { size: 6.5, weight: 'semibold', color: BLACK, width: half / 2 - 8 });
+  };
+  head(x);
+  head(x + half);
+  cy += 10;
+  const cells = changes.length ? changes : [];
+  for (let i = 0; i < Math.max(2, cells.length); i += 2) {
+    for (let j = 0; j < 2; j++) {
+      const c = cells[i + j];
+      const cx = x + j * half;
+      formBox(k, cx, cy, half / 2, 24, c ? `${c.box}  ${c.label}` : '', c ? boxAmount(c.before) || '0.00' : '', { align: 'right', labelSize: 5.5 });
+      formBox(k, cx + half / 2, cy, half / 2, 24, c ? `${c.box}  ${c.label}` : '', c ? boxAmount(c.after) || '0.00' : '', { align: 'right', labelSize: 5.5 });
+    }
+    cy += 24;
   }
-
-  let y = top;
-  const rowH = 26;
-  for (const state of [...states].sort()) {
-    const prev = amounts.previous.stateLines.find((s) => s.state === state);
-    const curr = amounts.corrected.stateLines.find((s) => s.state === state);
-    const prevWages = prev?.stateWages ?? 0;
-    const currWages = curr?.stateWages ?? 0;
-    const prevTax = prev?.stateIncomeTax ?? 0;
-    const currTax = curr?.stateIncomeTax ?? 0;
-    doc.rect(36, y, 540, rowH).strokeColor('#000').lineWidth(0.4).stroke();
-    doc
-      .font('Helvetica')
-      .fontSize(10)
-      .fillColor('#000')
-      .text(state, 44, y + 8, { width: 30 })
-      .text(
-        `wages ${usd(prevWages)} → ${usd(currWages)}    tax ${usd(prevTax)} → ${usd(currTax)}`,
-        80,
-        y + 8,
-        { width: 460 },
-      );
-    y += rowH;
-    if (y > 660) break; // don't push past the form border
-  }
+  cy += 6;
+  k.text('Form', x, cy + 4, { size: 7, color: BLACK });
+  k.text('W-2c', x + 18, cy, { size: 15, weight: 'bold', color: BLACK });
+  k.text('(Rev. 1-2026)', x + 64, cy + 5, { size: 6, color: GREY });
+  k.text('Corrected Wage and Tax Statement', x + 110, cy + 3.5, { size: 9.5, weight: 'semibold', color: BLACK });
+  k.text(TREASURY, x + W - 230, cy + 1, { size: 6.5, color: BLACK, width: 230, align: 'right' });
+  k.text(W2C_OMB, x + W - 230, cy + 9.5, { size: 6, color: GREY, width: 230, align: 'right' });
+  cy += 20;
+  k.text(W2C_LEGEND[copy], x, cy, { size: 7, weight: 'semibold', color: BLACK, width: W });
+  cy += 10;
+  if (copy !== '2') cy += k.para(IRS_FURNISHED_NOTE, x, cy, W, { size: 6.5, color: BLACK });
+  return cy - y + 2;
 }
 
-function drawCorrectionReason(doc: PDFKit.PDFDocument, reason: string | null): void {
-  if (!reason) return;
-  doc.save();
-  doc
-    .roundedRect(36, 668, 540, 18, 2)
-    .fillColor('#fff7e6')
-    .fill();
-  doc
-    .fillColor('#a05a00')
-    .font('Helvetica-Bold')
-    .fontSize(8)
-    .text('REASON FOR CORRECTION', 42, 672);
-  doc
-    .font('Helvetica')
-    .fontSize(8)
-    .fillColor('#5a3a00')
-    .text(reason, 170, 672, {
-      width: 400,
-      lineBreak: false,
-      ellipsis: true,
-    });
-  doc.restore();
+export async function renderW2cPdf(data: W2cPdfData): Promise<Buffer> {
+  const changes = w2cChanges(data.amounts.previous, data.amounts.corrected);
+  const { k } = createDoc({
+    title: `Form W-2c ${data.taxYear} · ${data.employee.firstName} ${data.employee.lastName}`,
+    author: data.employer.name,
+    margin: 36,
+    creationDate: new Date(data.meta.generatedAt),
+  });
+  cover(k, data, changes);
+  k.doc.addPage();
+  let y = 36;
+  (['B', 'C', '2'] as const).forEach((copy, i) => {
+    const estimate = 160 + Math.ceil(Math.max(2, changes.length) / 2) * 24 + 50;
+    if (i > 0 && y + 18 + estimate > 792 - 52) {
+      k.doc.addPage();
+      y = 36;
+    } else if (i > 0) {
+      k.doc.save().lineWidth(0.5).dash(3, { space: 3 }).strokeColor(GREY).moveTo(36, y + 6).lineTo(576, y + 6).stroke().undash().restore();
+      k.text('Cut along the dotted line', 36, y + 9, { size: 5.5, color: GREY });
+      y += 18;
+    }
+    y += drawCopy(k, 36, y, data, copy, changes);
+  });
+  return k.finish({ reference: `Form W-2c ${data.taxYear} · ${data.meta.formId.slice(0, 8)} · corrects ${data.meta.originalFormId.slice(0, 8)}`, note: data.employer.name });
 }
 
-function drawFooter(doc: PDFKit.PDFDocument, data: W2cPdfData): void {
-  doc
-    .font('Helvetica')
-    .fontSize(7)
-    .fillColor('#666')
-    .text(
-      `Form W-2c (${data.taxYear})  ·  ID ${data.meta.formId.slice(0, 8)}  ·  ` +
-        `Amends ${data.meta.originalFormId.slice(0, 8)}  ·  ` +
-        `Generated by Alto People at ${data.meta.generatedAt}`,
-      36,
-      702,
-      { width: 540, align: 'center' },
-    );
-  doc.fillColor('#000');
-}
-
-function cell(
-  doc: PDFKit.PDFDocument,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  label: string,
-  value: string,
-): void {
-  doc.rect(x, y, w, h).strokeColor('#000').lineWidth(0.4).stroke();
-  if (label) {
-    doc
-      .font('Helvetica')
-      .fontSize(6)
-      .fillColor('#444')
-      .text(label, x + 4, y + 3, { width: w - 8, lineBreak: false, ellipsis: true });
-  }
-  doc
-    .font('Helvetica')
-    .fontSize(11)
-    .fillColor('#000')
-    .text(value, x + 4, y + 13, { width: w - 8 });
-}
-
-function valueCell(
-  doc: PDFKit.PDFDocument,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  value: string,
-  changed: boolean,
-): void {
-  doc
-    .rect(x, y, w, h)
-    .strokeColor(changed ? '#a05a00' : '#000')
-    .lineWidth(changed ? 0.8 : 0.4)
-    .stroke();
-  doc
-    .font('Helvetica')
-    .fontSize(11)
-    .fillColor(changed ? '#a05a00' : '#000')
-    .text(value || '—', x + 4, y + 4, { width: w - 8 });
-  doc.fillColor('#000');
-}
-
-/** Returns true when the two figures differ enough to highlight (cents). */
-function changeMark(prev: number, curr: number): boolean {
-  return Math.round(prev * 100) !== Math.round(curr * 100);
-}
-
-function usd(n: number): string {
-  if (n === 0) return '';
-  return n.toFixed(2);
-}
-
-// Re-exports so route code only imports from one module.
 export type { W2Boxes, W2StateLine };

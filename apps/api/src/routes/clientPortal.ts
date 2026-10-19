@@ -10,7 +10,8 @@ import type { SessionUser } from '../types/express.js';
 import { orgDateKey } from '../lib/timeAnomalies.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
-import { renderStatementPdf } from '../lib/statementPdf.js';
+import { renderStatementPdf, statementContext } from '../lib/statementPdf.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { REPORT_MAX_DAYS, buildPortalReport, renderPortalReportPdf } from '../lib/portalDayReport.js';
 import { notePortalReportDownload } from '../lib/portalEngagement.js';
 import { notifyUser, trackNotificationWork } from '../lib/notify.js';
@@ -1113,6 +1114,7 @@ clientPortalRouter.get(
         finalizedByEmail: row.finalizedBy?.email ?? null,
         orgName: branding.orgName,
         billTo: client,
+        ...(await statementContext(prisma, { statementId: row.id, clientId: row.clientId, tenantId: row.tenantId ?? tenantIdForWrite() })),
       });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader(

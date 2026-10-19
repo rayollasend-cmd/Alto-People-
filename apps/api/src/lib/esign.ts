@@ -1,19 +1,23 @@
-import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
+import { COLOR, SIZE, createDoc, fmt, type Brand } from './docKit/index.js';
+import { certificateBlock, pinDocument, richHeight, richText } from './docKit/biz.js';
 
 /**
- * E-signature PDF renderer (Phase 19).
+ * E-signature PDF renderer.
  *
- * Renders the agreement body verbatim into a PDF with a signature block
- * and audit panel at the bottom. The audit panel embeds the typed name,
- * IP, user agent, signedAt, and a sha256 placeholder line — the placeholder
- * is replaced AFTER the first render with the actual hash and the document
- * is rendered a second time so the hash represents the final bytes. The
- * "double render" pattern keeps the hash self-referential without resorting
- * to PDF /AcroForm trickery, and the bytes are deterministic for the same
- * inputs (pdfkit emits in a stable order with no timestamps in the stream).
+ * The agreement as signed: the company's masthead, the agreement body
+ * verbatim, the signature (the typed name, set in the display face on a
+ * signature line), and a signature certificate — the audit trail an
+ * attorney or an auditor asks for: signer, email, typed signature,
+ * signed-at (UTC and Eastern), IP address, user agent, agreement id, the
+ * document's SHA-256, and the legal basis.
  *
- * Plain text only — body is never interpreted as markdown or HTML, so
+ * The hash is self-referential by a two-pass render: pass 1 carries a
+ * placeholder, pass 2 embeds pass 1's hash. Bytes are deterministic for
+ * the same inputs (the creation date is pinned to signedAt and nothing
+ * else in the stream depends on the clock).
+ *
+ * Plain text only — the body is never interpreted as markdown or HTML, so
  * untrusted body content can't inject formatting or executable code.
  */
 
@@ -25,15 +29,16 @@ export interface EsignRenderInput {
   userAgent: string | null;
   /** What was typed in the signature box (proof). */
   typedName: string;
+  /** The issuing company's name and logo; defaults to the platform name. */
+  brand?: Brand;
 }
 
 export async function renderSignedAgreement(input: EsignRenderInput): Promise<Buffer> {
   // Two-pass render: first with a placeholder hash, then re-render with the
-  // real hash of pass-1 embedded so the audit panel stays self-consistent.
+  // real hash of pass-1 embedded so the certificate stays self-consistent.
   const pass1 = await renderOnce({ ...input, hashOverride: 'pending' });
   const realHash = sha256(pass1);
-  const pass2 = await renderOnce({ ...input, hashOverride: realHash });
-  return pass2;
+  return renderOnce({ ...input, hashOverride: realHash });
 }
 
 export function hashSignedPdf(buf: Uint8Array): string {
@@ -50,86 +55,77 @@ interface RenderArgs extends EsignRenderInput {
   hashOverride: string;
 }
 
-async function renderOnce(args: RenderArgs): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    // Pin font + creation info so repeated renders produce identical bytes.
-    const doc = new PDFDocument({
-      size: 'LETTER',
-      margin: 60,
-      info: {
-        Title: args.agreement.title,
-        Author: 'Alto People',
-        Subject: `Signed agreement ${args.agreement.id}`,
-        // Pinning CreationDate makes the byte stream stable across renders.
-        CreationDate: args.signedAt,
-      },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    // Header
-    doc.font('Helvetica-Bold').fontSize(16).text(args.agreement.title, { align: 'left' });
-    doc.moveDown(0.4);
-    doc.font('Helvetica').fontSize(9).fillColor('#666').text('Issued via Alto People');
-    doc.fillColor('#000');
-    doc.moveDown(1.2);
-
-    // Body — split on \n so paragraphs render naturally; pdfkit handles
-    // word wrap inside each paragraph.
-    doc.font('Helvetica').fontSize(11);
-    for (const paragraph of args.agreement.body.split(/\n\s*\n/)) {
-      doc.text(paragraph.trim(), { align: 'left' });
-      doc.moveDown(0.6);
-    }
-
-    // Spacer before signature block.
-    doc.moveDown(1);
-    rule(doc);
-
-    // Signature block
-    doc.moveDown(0.4);
-    doc.font('Helvetica-Bold').fontSize(11).text('SIGNED');
-    doc.moveDown(0.2);
-
-    // Render the typed name in a script-like style (Helvetica-Oblique is
-    // pdfkit-builtin so we don't ship a font). It's not a drawn signature
-    // — it's an "I-typed-my-name" e-signature, exactly as ESIGN allows.
-    doc.font('Helvetica-Oblique').fontSize(20).fillColor('#0a3d62').text(args.typedName);
-    doc.fillColor('#000');
-
-    doc.font('Helvetica').fontSize(9).fillColor('#444');
-    doc.text(`Signer: ${args.signer.fullName}${args.signer.email ? ` (${args.signer.email})` : ''}`);
-    doc.text(`Signed at: ${args.signedAt.toISOString()}`);
-    doc.text(`IP address: ${args.ipAddress ?? '(not captured)'}`);
-    doc.text(`User agent: ${truncate(args.userAgent ?? '(not captured)', 200)}`);
-    doc.fillColor('#000');
-
-    doc.moveDown(1);
-    rule(doc);
-
-    // Audit panel
-    doc.moveDown(0.4);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#222').text('AUDIT');
-    doc.font('Helvetica').fontSize(8).fillColor('#444');
-    doc.text(`Agreement ID: ${args.agreement.id}`);
-    doc.text(`Document SHA-256: ${args.hashOverride}`);
-    doc.text(
-      'This document was signed electronically per the federal E-SIGN Act ' +
-        '(15 U.S.C. §7001) and applicable state UETA. The typed name above is ' +
-        'the legal signature of the named signer.'
-    );
-    doc.fillColor('#000');
-
-    doc.end();
-  });
+/** The rows of the signature certificate, in order (exported for tests). */
+export function certificateRows(args: Omit<RenderArgs, 'brand'>): Array<{ label: string; value: string }> {
+  const eastern = args.signedAt.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
+  return [
+    { label: 'Signer', value: args.signer.fullName },
+    { label: 'Email', value: args.signer.email ?? '(none on file)' },
+    { label: 'Typed signature', value: args.typedName },
+    { label: 'Signed at', value: `${args.signedAt.toISOString()} (${eastern})` },
+    { label: 'IP address', value: args.ipAddress ?? '(not captured)' },
+    { label: 'User agent', value: truncate(args.userAgent ?? '(not captured)', 200) },
+    { label: 'Agreement ID', value: args.agreement.id },
+    { label: 'Document SHA-256', value: args.hashOverride },
+  ];
 }
 
-function rule(doc: PDFKit.PDFDocument): void {
-  const y = doc.y;
-  doc.moveTo(60, y).lineTo(552, y).strokeColor('#bbb').lineWidth(0.5).stroke();
-  doc.strokeColor('#000');
+async function renderOnce(args: RenderArgs): Promise<Buffer> {
+  const brand = args.brand ?? { name: 'Alto People' };
+  const { k, doc } = createDoc({ title: args.agreement.title, author: brand.name, subject: `Signed agreement ${args.agreement.id}` });
+  // Pinning CreationDate makes the byte stream stable across renders.
+  pinDocument(doc, args.signedAt);
+  const L = k.L;
+  const Wd = k.width();
+
+  let y = k.masthead({
+    title: 'Signed agreement',
+    subtitle: `Signed electronically ${fmt.date(args.signedAt)}`,
+    brand,
+    meta: [
+      { label: 'Signer', value: args.signer.fullName },
+      { label: 'Signed', value: fmt.date(args.signedAt) },
+      { label: 'Status', value: 'Signed' },
+    ],
+  });
+
+  richText(doc, args.agreement.title, L, y, { width: Wd }, { size: SIZE.heading, family: 'display', weight: 'semibold' });
+  y = doc.y + 14;
+
+  // The body, verbatim, paragraph by paragraph.
+  const size = SIZE.body + 1.5;
+  for (const raw of args.agreement.body.split(/\n\s*\n/)) {
+    const p = raw.trim();
+    if (!p) continue;
+    const h = richHeight(doc, p, Wd, { size }, 4);
+    if (y + Math.min(h, 60) > k.bottom()) {
+      doc.addPage();
+      y = k.top;
+    }
+    richText(doc, p, L, y, { width: Wd, lineGap: 4 }, { size });
+    y = doc.y + 12;
+  }
+
+  // The signature: the typed name on a signature line.
+  y = k.ensure(y + 10, 96);
+  k.text('Signature', L, y, { size: SIZE.label, caps: true, color: COLOR.ink3 });
+  richText(doc, args.typedName, L, y + 14, { width: Wd * 0.6 }, { size: 26, family: 'display', weight: 'semibold', color: '#0A3D62' });
+  k.signatureLine(L, y + 58, Wd * 0.6, `Electronically signed by ${args.signer.fullName}`);
+  k.text(fmt.dateTime(args.signedAt), L + Wd * 0.65, y + 46, { size: SIZE.small, color: COLOR.ink2, width: Wd * 0.35, align: 'right' });
+  y += 86;
+
+  // The certificate.
+  certificateBlock(
+    k,
+    {
+      title: 'Signature certificate',
+      rows: certificateRows(args),
+      seal: 'Signed electronically under the federal E-SIGN Act (15 U.S.C. §7001) and the applicable state UETA. The typed name above is the legal signature of the named signer. Any change to this document changes its SHA-256.',
+    },
+    y,
+  );
+
+  return k.finish({ reference: `Agreement ${args.agreement.id}`, note: brand.name });
 }
 
 function truncate(s: string, n: number): string {

@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import PDFDocument from 'pdfkit';
+import { COLOR, SIZE, createDoc, fmt } from './docKit/index.js';
 import { round2 } from './payroll.js';
 
 /**
@@ -121,65 +121,43 @@ export interface RemittanceAdviceData {
   generatedAt: string;
 }
 
-const money = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-
 /** Remittance advice — the sheet that accompanies the payment so the
  *  agency can post each employee's amount to the right case. */
-export function renderRemittanceAdvicePdf(data: RemittanceAdviceData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 56 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    doc.font('Helvetica-Bold').fontSize(15).text('Garnishment remittance advice');
-    doc
-      .font('Helvetica')
-      .fontSize(10)
-      .text(`From: ${data.companyName} — EIN ${data.ein.slice(0, 2)}-${data.ein.slice(2)}`)
-      .moveDown(0.5)
-      .font('Helvetica-Bold')
-      .text(`To: ${data.payeeName}`);
-    if (data.payeeAddress) doc.font('Helvetica').text(data.payeeAddress);
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor('#666666')
-      .moveDown(0.5)
-      .text(`Pay period ${data.period.start} to ${data.period.end} · ${data.status}${data.reference ? ` · ref ${data.reference}` : ''} · generated ${data.generatedAt}`)
-      .fillColor('#000000')
-      .moveDown(1);
-
-    const cols = { emp: 56, caseN: 250, kind: 380, amt: 480 };
-    doc.font('Helvetica-Bold').fontSize(9);
-    const hy = doc.y;
-    doc.text('Employee', cols.emp, hy);
-    doc.text('Case number', cols.caseN, hy);
-    doc.text('Type', cols.kind, hy);
-    doc.text('Amount', cols.amt, hy, { width: 76, align: 'right' });
-    doc.moveTo(56, doc.y + 2).lineTo(556, doc.y + 2).strokeColor('#999999').stroke().strokeColor('#000000');
-    doc.moveDown(0.4);
-
-    doc.font('Helvetica').fontSize(9);
-    let total = 0;
-    for (const line of data.lines) {
-      if (doc.y > 690) doc.addPage();
-      const y = doc.y;
-      doc.text(line.employeeName.slice(0, 34), cols.emp, y, { width: 186 });
-      doc.text(line.caseNumber ?? '—', cols.caseN, y, { width: 120 });
-      doc.text(line.kind.replace(/_/g, ' ').toLowerCase(), cols.kind, y, { width: 92 });
-      doc.text(money(line.amount), cols.amt, y, { width: 76, align: 'right' });
-      total += line.amount;
-      doc.y = y + 16;
-    }
-    doc.moveTo(380, doc.y).lineTo(556, doc.y).stroke();
-    doc.moveDown(0.3);
-    const ty = doc.y;
-    doc.font('Helvetica-Bold').fontSize(10);
-    doc.text('Total remitted', cols.kind, ty);
-    doc.text(money(round2(total)), cols.amt, ty, { width: 76, align: 'right' });
-    doc.end();
+export async function renderRemittanceAdvicePdf(data: RemittanceAdviceData): Promise<Buffer> {
+  const { k } = createDoc({ title: `Remittance advice · ${data.payeeName}`, author: data.companyName });
+  const total = round2(data.lines.reduce((s2, l) => s2 + l.amount, 0));
+  let y = k.masthead({
+    title: 'Remittance advice',
+    subtitle: 'Withholding orders · payment detail',
+    brand: { name: data.companyName, lines: [`EIN ${fmt.ein(data.ein)}`] },
+    meta: [
+      { label: 'Pay period', value: fmt.dateRange(data.period.start, data.period.end) },
+      { label: 'Status', value: data.status.charAt(0) + data.status.slice(1).toLowerCase() },
+      { label: 'Reference', value: data.reference ?? '—' },
+      { label: 'Prepared', value: fmt.date(data.generatedAt) },
+    ],
   });
+  // The payee block sits where a window envelope shows it.
+  k.text('Pay to', k.L, y, { size: SIZE.label, caps: true, color: COLOR.ink3 });
+  k.text(data.payeeName, k.L, y + 11, { size: SIZE.lead, weight: 'semibold', width: k.width() * 0.6 });
+  let py = y + 27;
+  for (const l of (data.payeeAddress ?? '').split('\n').filter(Boolean)) {
+    k.text(l, k.L, py, { size: SIZE.body, color: COLOR.ink2, width: k.width() * 0.6 });
+    py += 12;
+  }
+  y = Math.max(py, y + 27);
+  y = k.figures([{ label: 'Total remitted', value: fmt.money(total), emphasis: true }, { label: 'Orders paid', value: String(data.lines.length) }], y + 8, { w: k.width() * 0.6 });
+  y = k.section('Payment detail', y, 'One line per order');
+  k.table({
+    y,
+    rows: data.lines,
+    columns: [
+      { key: 'emp', header: 'Employee', width: 3.4, value: (l) => l.employeeName },
+      { key: 'case', header: 'Case number', width: 2.4, value: (l) => l.caseNumber ?? '—' },
+      { key: 'kind', header: 'Order type', width: 2.4, value: (l) => l.kind.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase()) },
+      { key: 'amt', header: 'Amount', width: 1.8, align: 'right', value: (l) => fmt.money(l.amount), strong: true },
+    ],
+    totals: { emp: 'Total remitted', amt: fmt.money(total) },
+  });
+  return k.finish({ reference: data.reference ? `Remittance ${data.reference}` : 'Remittance advice', note: data.companyName });
 }

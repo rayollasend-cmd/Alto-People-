@@ -285,6 +285,8 @@ export async function loadPayrollElections(db: Db, associateIds: string[], perio
 
 /** An enrollment row as payroll reads it. */
 export interface EnrollmentRow {
+  /** The BenefitsEnrollment id, carried to the deduction line's sourceId. */
+  id?: string;
   electedAmountCentsPerPeriod: number;
   rothElection: boolean;
   electedPercent?: { toString(): string } | number | null;
@@ -299,12 +301,13 @@ export interface EnrollmentRow {
  * enrollment, one deduction.
  */
 export function enrollmentFacts(e: EnrollmentRow, grossPay: number): EnrollmentFacts[] {
-  if (e.electedPercent == null && e.rothPercent == null) return [{ electedAmountCentsPerPeriod: e.electedAmountCentsPerPeriod, rothElection: e.rothElection, plan: e.plan }];
+  if (e.electedPercent == null && e.rothPercent == null) return [{ electedAmountCentsPerPeriod: e.electedAmountCentsPerPeriod, rothElection: e.rothElection, plan: e.plan, ...(e.id ? { sourceId: e.id } : {}) }];
   const facts: EnrollmentFacts[] = [];
   const pre = Math.round(grossPay * Number(e.electedPercent ?? 0));
   const roth = Math.round(grossPay * Number(e.rothPercent ?? 0));
-  if (pre > 0) facts.push({ electedAmountCentsPerPeriod: pre, rothElection: e.rothElection, plan: e.plan });
-  if (roth > 0) facts.push({ electedAmountCentsPerPeriod: roth, rothElection: true, plan: e.plan });
+  const src = e.id ? { sourceId: e.id } : {};
+  if (pre > 0) facts.push({ electedAmountCentsPerPeriod: pre, rothElection: e.rothElection, plan: e.plan, ...src });
+  if (roth > 0) facts.push({ electedAmountCentsPerPeriod: roth, rothElection: true, plan: e.plan, ...src });
   return facts;
 }
 

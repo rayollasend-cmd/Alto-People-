@@ -37,12 +37,15 @@ export interface FundingBreakdown {
   taxesCents: number;
   garnishmentsCents: number;
   feesCents: number;
+  /** Paychecks payroll set to pay by paper check this time: drawn on the employer's account, so the debit covers them too. */
+  paperCheckNetCents?: number;
+  paperCheckPeople?: number;
 }
 
 /** What this run needs from the employer. */
 export async function computeFunding(db: Db, runId: string, profile: PayrollBankingProfile): Promise<{ amountCents: number; breakdown: FundingBreakdown }> {
   const run = await db.payrollRun.findFirstOrThrow({ where: { id: runId, tenantId: tenantIdForWrite() }, select: { id: true, totalTax: true, totalEmployerTax: true } });
-  const items = await db.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { associateId: true, netPay: true } });
+  const items = await db.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { id: true, associateId: true, netPay: true, payoutOverride: { select: { clearedAt: true, method: true } } } });
   const methods = await db.payoutMethod.findMany({
     where: { associateId: { in: [...new Set(items.map((i) => i.associateId))] }, isPrimary: true, retiredAt: null },
     select: { associateId: true, branchCardId: true, accountNumberEnc: true },
@@ -51,10 +54,16 @@ export async function computeFunding(db: Db, runId: string, profile: PayrollBank
   let net = 0;
   let other = 0;
   let people = 0;
+  let paper = 0;
+  let paperPeople = 0;
   for (const i of items) {
     const n = cents(i.netPay);
     if (n <= 0) continue;
-    if (rail.get(i.associateId) === 'bank') {
+    // A paper check this time: never in the ACH credit file, still the employer's money.
+    if (i.payoutOverride && !i.payoutOverride.clearedAt && i.payoutOverride.method === 'CHECK') {
+      paper += n;
+      paperPeople += 1;
+    } else if (rail.get(i.associateId) === 'bank') {
       net += n;
       people += 1;
     } else other += n;
@@ -65,8 +74,8 @@ export async function computeFunding(db: Db, runId: string, profile: PayrollBank
     const g = await db.garnishmentDeduction.aggregate({ where: { payrollRunId: run.id }, _sum: { amount: true } });
     garnish = cents(g._sum.amount);
   }
-  const breakdown: FundingBreakdown = { netPayCents: net, achPeople: people, otherRailNetCents: other, taxesCents: taxes, garnishmentsCents: garnish, feesCents: 0 };
-  return { amountCents: net + taxes + garnish, breakdown };
+  const breakdown: FundingBreakdown = { netPayCents: net, achPeople: people, otherRailNetCents: other, taxesCents: taxes, garnishmentsCents: garnish, feesCents: 0, paperCheckNetCents: paper, paperCheckPeople: paperPeople };
+  return { amountCents: net + paper + taxes + garnish, breakdown };
 }
 
 /**

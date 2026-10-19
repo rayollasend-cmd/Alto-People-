@@ -1,9 +1,13 @@
-import PDFDocument from 'pdfkit';
+import { COLOR, SIZE, createDoc, fmt, type Brand } from './docKit/index.js';
+import { loadCurrentBrand, pinDocument, richHeight, richText } from './docKit/biz.js';
 
 /**
- * A structured form PDF — the leave notices (WH-381/WH-382 content), the
- * unemployment response packet and the First Report of Injury. Sections of
- * label/value rows and plain paragraphs; nothing is interpreted as markup,
+ * A structured form: the leave notices (WH-381/WH-382 content), the
+ * unemployment response packet and the First Report of Injury. Each is
+ * read by an agency examiner or an adjuster, so it reads like a filed
+ * form: the company's masthead, the form's title and reference, then
+ * numbered sections of labelled fields (ruled, so a blank is visibly
+ * blank), plain paragraphs and lists. Nothing is interpreted as markup,
  * so a value typed into a field can't inject formatting.
  */
 
@@ -11,7 +15,7 @@ export interface FormSection {
   heading: string;
   rows?: Array<[string, string | null | undefined]>;
   paragraphs?: string[];
-  /** Plain list items, each on its own line with a dash. */
+  /** Plain list items, each on its own line. */
   bullets?: string[];
 }
 
@@ -21,55 +25,54 @@ export async function renderFormPdf(input: {
   sections: FormSection[];
   footer?: string;
   issuedAt?: Date;
+  brand?: Brand;
+  reference?: string;
 }): Promise<Buffer> {
   const issuedAt = input.issuedAt ?? new Date();
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-      size: 'LETTER',
-      margin: 56,
-      info: { Title: input.title, Author: 'Alto People', CreationDate: issuedAt },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+  const brand = input.brand ?? (await loadCurrentBrand());
+  const { k, doc } = createDoc({ title: input.title, author: brand.name });
+  pinDocument(doc, issuedAt);
+  const L = k.L;
+  const Wd = k.width();
 
-    doc.font('Helvetica-Bold').fontSize(16).fillColor('#000').text(input.title);
-    if (input.subtitle) {
-      doc.moveDown(0.2).font('Helvetica').fontSize(10).fillColor('#444').text(input.subtitle);
-    }
-    doc.moveDown(0.2).font('Helvetica').fontSize(8).fillColor('#777').text(`Prepared in Alto People · ${issuedAt.toISOString().slice(0, 10)}`);
-    doc.fillColor('#000');
+  let y = k.masthead({ title: input.title, subtitle: `Prepared ${fmt.date(issuedAt)}`, brand });
+  if (input.subtitle) {
+    richText(doc, input.subtitle, L, y, { width: Wd, lineGap: 2 }, { size: SIZE.lead, color: COLOR.ink2 });
+    y = doc.y + 14;
+  }
 
-    for (const section of input.sections) {
-      doc.moveDown(1);
-      doc.font('Helvetica-Bold').fontSize(11).text(section.heading);
-      doc.moveTo(doc.x, doc.y + 2).lineTo(doc.page.width - doc.page.margins.right, doc.y + 2).strokeColor('#ccc').stroke();
-      doc.moveDown(0.5);
-      for (const [label, value] of section.rows ?? []) {
-        const y = doc.y;
-        doc.font('Helvetica').fontSize(9).fillColor('#555').text(label, doc.page.margins.left, y, { width: 170 });
-        const labelBottom = doc.y;
-        doc.font('Helvetica').fontSize(10).fillColor('#000').text(value && value.trim() ? value : '—', doc.page.margins.left + 180, y, {
-          width: doc.page.width - doc.page.margins.left - doc.page.margins.right - 180,
-        });
-        doc.y = Math.max(doc.y, labelBottom) + 3;
-        doc.x = doc.page.margins.left;
-      }
-      for (const p of section.paragraphs ?? []) {
-        doc.font('Helvetica').fontSize(10).fillColor('#000').text(p, { align: 'left' });
-        doc.moveDown(0.5);
-      }
-      for (const b of section.bullets ?? []) {
-        doc.font('Helvetica').fontSize(10).fillColor('#000').text(`– ${b}`, { indent: 6 });
-        doc.moveDown(0.2);
-      }
+  const labelW = 190;
+  input.sections.forEach((section, si) => {
+    y = k.section(`${si + 1}. ${section.heading}`, y);
+    for (const [label, value] of section.rows ?? []) {
+      const v = value && value.trim() ? value : '—';
+      const h = Math.max(18, richHeight(doc, v, Wd - labelW, { size: SIZE.body }, 1.5) + 8);
+      y = k.ensure(y, h);
+      richText(doc, label, L, y + 3, { width: labelW - 14, lineGap: 1 }, { size: SIZE.small, color: COLOR.ink3 });
+      richText(doc, v, L + labelW, y + 2, { width: Wd - labelW, lineGap: 1.5 }, { size: SIZE.body, color: v === '—' ? COLOR.ink3 : COLOR.ink });
+      y += h;
+      k.hr(y - 2, L, Wd, COLOR.rule, 0.4);
     }
-    if (input.footer) {
-      doc.moveDown(1.2).font('Helvetica').fontSize(8).fillColor('#666').text(input.footer);
+    if ((section.rows ?? []).length) y += 8;
+    for (const p of section.paragraphs ?? []) {
+      const h = richHeight(doc, p, Wd, { size: SIZE.body + 0.5 }, 3);
+      y = k.ensure(y, Math.min(h, 60));
+      richText(doc, p, L, y, { width: Wd, lineGap: 3 }, { size: SIZE.body + 0.5 });
+      y = doc.y + 8;
     }
-    doc.end();
+    for (const b of section.bullets ?? []) {
+      const h = richHeight(doc, b, Wd - 16, { size: SIZE.body + 0.5 }, 2);
+      y = k.ensure(y, h + 4);
+      k.box(L + 3, y + 5, 4, 4, COLOR.brand, 2);
+      richText(doc, b, L + 16, y, { width: Wd - 16, lineGap: 2 }, { size: SIZE.body + 0.5 });
+      y = doc.y + 5;
+    }
+    y += 6;
   });
+
+  if (input.footer) y = k.callout({ body: input.footer }, y + 4);
+
+  return k.finish({ reference: input.reference ?? `${input.title} · ${fmt.date(issuedAt)}`, note: brand.name });
 }
 
 export const fmtDay = (d: Date | null | undefined): string => (d ? d.toISOString().slice(0, 10) : '');

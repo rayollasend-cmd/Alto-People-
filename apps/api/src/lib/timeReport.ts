@@ -1,6 +1,8 @@
-import PDFDocument from 'pdfkit';
+import { COLOR, createDoc, fmt, type Column } from './docKit/index.js';
+import { loadCurrentBrand, signatureRow } from './docKit/biz.js';
 import {
   DEFAULT_TIMEZONE,
+  localDateKey,
   formatDateInZone,
   formatDateTimeInZone,
   formatTimeInZone,
@@ -9,9 +11,10 @@ import {
 /**
  * Phase 65 — time entry PDF renderer.
  *
- * Mirrors scheduleReport.ts: a chronological, page-broken table sized for
- * letter-landscape, with a status color bar on each row and a footer
- * summary. Uses pdfkit's built-in Helvetica family.
+ * The time report as a payroll or client reviewer signs it: letter
+ * landscape, the totals up top (entries, hours, approved, waiting,
+ * rejected), then a table per associate with their subtotal, and an
+ * approval block (prepared by / approved by) at the end.
  *
  * Every timestamp renders in the entry's SITE zone (never the server's —
  * this used to call toLocale* on a UTC box, so the PDF disagreed with the
@@ -43,227 +46,74 @@ export interface TimeReportData {
   entries: TimeReportEntry[];
 }
 
-const COLS = [
-  { key: 'date',  label: 'Date',      width: 70 },
-  { key: 'in',    label: 'In',        width: 60 },
-  { key: 'out',   label: 'Out',       width: 60 },
-  { key: 'hrs',   label: 'Hrs',       width: 40, align: 'right' as const },
-  { key: 'assoc', label: 'Associate', width: 130 },
-  { key: 'client',label: 'Client',    width: 110 },
-  { key: 'job',   label: 'Job',       width: 110 },
-  { key: 'status',label: 'Status',    width: 70 },
-];
-
-const ROW_HEIGHT = 16;
-const HEADER_PT = 9;
-const ROW_PT = 9;
-const PAGE_MARGIN = 36;
+const STATUS_LABEL: Record<string, string> = { APPROVED: 'Approved', COMPLETED: 'Awaiting approval', ACTIVE: 'On the clock', REJECTED: 'Rejected', PENDING: 'Pending' };
+const statusColor = (st: string): string | undefined => (st === 'APPROVED' ? COLOR.good : st === 'REJECTED' ? COLOR.bad : st === 'COMPLETED' || st === 'PENDING' ? COLOR.warn : st === 'ACTIVE' ? COLOR.info : undefined);
 
 export async function renderTimeReportPdf(data: TimeReportData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: PAGE_MARGIN });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+  const brand = await loadCurrentBrand();
+  const tz = data.entries[0]?.timezone ?? DEFAULT_TIMEZONE;
+  const { k } = createDoc({ title: `Time report — ${rangeLabel(data.rangeFrom, data.rangeTo, tz)}`, author: brand.name, layout: 'landscape', margin: 36 });
+  const sorted = [...data.entries].sort((a, b) => a.associateName.localeCompare(b.associateName) || a.clockInAt.getTime() - b.clockInAt.getTime());
+  const hours = (list: TimeReportEntry[]) => list.reduce((t, e) => t + e.minutes, 0) / 60;
+  const by = (st: string) => sorted.filter((e) => e.status === st);
 
-    const filterLines: string[] = [];
-    if (data.filters.clientName) filterLines.push(`Client: ${data.filters.clientName}`);
-    if (data.filters.associateName) filterLines.push(`Associate: ${data.filters.associateName}`);
-    if (data.filters.status) filterLines.push(`Status: ${data.filters.status}`);
-
-    const drawHeader = () => {
-      doc.fontSize(16).font('Helvetica-Bold').fillColor('#000').text('TIME ENTRIES', PAGE_MARGIN, PAGE_MARGIN);
-      doc
-        .fontSize(10)
-        .font('Helvetica')
-        .fillColor('#444')
-        .text(formatRange(data.rangeFrom, data.rangeTo), PAGE_MARGIN, PAGE_MARGIN + 22);
-      let y = PAGE_MARGIN + 36;
-      for (const line of filterLines) {
-        doc.text(line, PAGE_MARGIN, y);
-        y += 12;
-      }
-      doc
-        .fontSize(8)
-        .fillColor('#888')
-        .text(
-          `Generated ${formatDateTimeInZone(data.generatedAt, DEFAULT_TIMEZONE)} · Alto People`,
-          PAGE_MARGIN,
-          y + 2
-        );
-      doc.fillColor('#000');
-    };
-
-    const drawTableHeader = (top: number) => {
-      doc.font('Helvetica-Bold').fontSize(HEADER_PT).fillColor('#000');
-      let x = PAGE_MARGIN;
-      for (const c of COLS) {
-        doc.text(c.label, x + 2, top + 4, {
-          width: c.width - 4,
-          align: c.align ?? 'left',
-        });
-        x += c.width;
-      }
-      doc
-        .moveTo(PAGE_MARGIN, top + ROW_HEIGHT - 1)
-        .lineTo(x, top + ROW_HEIGHT - 1)
-        .lineWidth(0.5)
-        .strokeColor('#888')
-        .stroke();
-      doc.strokeColor('#000');
-    };
-
-    const headerHeight = 60 + filterLines.length * 12;
-
-    drawHeader();
-    let y = PAGE_MARGIN + headerHeight;
-    drawTableHeader(y);
-    y += ROW_HEIGHT;
-
-    const pageBottom = doc.page.height - PAGE_MARGIN - ROW_HEIGHT;
-
-    if (data.entries.length === 0) {
-      doc
-        .font('Helvetica-Oblique')
-        .fontSize(11)
-        .fillColor('#666')
-        .text('No time entries in this range.', PAGE_MARGIN, y + 12);
-      doc.end();
-      return;
-    }
-
-    const sorted = [...data.entries].sort(
-      (a, b) => a.clockInAt.getTime() - b.clockInAt.getTime()
-    );
-
-    let prevDate = '';
-    doc.font('Helvetica').fontSize(ROW_PT).fillColor('#000');
-
-    for (const e of sorted) {
-      if (y > pageBottom) {
-        doc.addPage();
-        drawHeader();
-        y = PAGE_MARGIN + headerHeight;
-        drawTableHeader(y);
-        y += ROW_HEIGHT;
-        prevDate = '';
-        doc.font('Helvetica').fontSize(ROW_PT).fillColor('#000');
-      }
-
-      const dateStr = formatDateInZone(e.clockInAt, e.timezone);
-      const showDate = dateStr !== prevDate;
-      prevDate = dateStr;
-
-      if (showDate && y > PAGE_MARGIN + headerHeight + ROW_HEIGHT) {
-        doc
-          .moveTo(PAGE_MARGIN, y - 1)
-          .lineTo(PAGE_MARGIN + COLS.reduce((a, c) => a + c.width, 0), y - 1)
-          .lineWidth(0.25)
-          .strokeColor('#ddd')
-          .stroke();
-      }
-
-      const cells: Record<string, string> = {
-        date: showDate ? dateStr : '',
-        in: formatTimeInZone(e.clockInAt, e.timezone),
-        out: e.clockOutAt ? formatTimeInZone(e.clockOutAt, e.timezone) : '—',
-        hrs: (e.minutes / 60).toFixed(2),
-        assoc: e.associateName,
-        client: e.clientName ?? '—',
-        job: e.jobName ?? '',
-        status: e.status,
-      };
-
-      const statusColor = colorForStatus(e.status);
-      doc
-        .save()
-        .fillColor(statusColor)
-        .rect(PAGE_MARGIN - 2, y + 2, 1.5, ROW_HEIGHT - 4)
-        .fill()
-        .restore();
-
-      let x = PAGE_MARGIN;
-      doc.font('Helvetica').fontSize(ROW_PT).fillColor('#111');
-      for (const c of COLS) {
-        const text = cells[c.key] ?? '';
-        doc.text(text, x + 2, y + 4, {
-          width: c.width - 4,
-          align: c.align ?? 'left',
-          ellipsis: true,
-        });
-        x += c.width;
-      }
-      y += ROW_HEIGHT;
-
-      if (e.rejectionReason) {
-        if (y > pageBottom) {
-          doc.addPage();
-          drawHeader();
-          y = PAGE_MARGIN + headerHeight;
-          drawTableHeader(y);
-          y += ROW_HEIGHT;
-        }
-        doc
-          .font('Helvetica-Oblique')
-          .fontSize(8)
-          .fillColor('#B5360F')
-          .text(
-            `Rejected: ${e.rejectionReason}`,
-            PAGE_MARGIN + COLS[0].width + COLS[1].width + COLS[2].width + COLS[3].width + 2,
-            y - 4,
-            { width: COLS[4].width + COLS[5].width + COLS[6].width + COLS[7].width - 4 }
-          );
-        doc.font('Helvetica').fontSize(ROW_PT).fillColor('#111');
-        y += 10;
-      }
-    }
-
-    const totalMinutes = sorted.reduce((acc, e) => acc + e.minutes, 0);
-    const totalHours = totalMinutes / 60;
-    const counts = sorted.reduce<Record<string, number>>((acc, e) => {
-      acc[e.status] = (acc[e.status] ?? 0) + 1;
-      return acc;
-    }, {});
-    const summary = `Total: ${sorted.length} entries · ${totalHours.toFixed(1)} hours · ${
-      Object.entries(counts)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(' · ')
-    }`;
-    if (y + 24 > doc.page.height - PAGE_MARGIN) {
-      doc.addPage();
-      y = PAGE_MARGIN;
-    } else {
-      y += 8;
-    }
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000').text(summary, PAGE_MARGIN, y);
-
-    doc.end();
+  let y = k.masthead({
+    title: 'Time report',
+    subtitle: `Generated ${formatDateTimeInZone(data.generatedAt, tz)}`,
+    brand,
+    meta: [
+      { label: 'Dates', value: rangeLabel(data.rangeFrom, data.rangeTo, tz) },
+      { label: 'Client', value: data.filters.clientName ?? 'All clients' },
+      { label: 'Associate', value: data.filters.associateName ?? 'Everyone' },
+      { label: 'Status', value: data.filters.status ? STATUS_LABEL[data.filters.status] ?? data.filters.status : 'All' },
+    ],
   });
-}
+  y = k.figures(
+    [
+      { label: 'Entries', value: String(sorted.length), hint: `${new Set(sorted.map((e) => e.associateName)).size} people` },
+      { label: 'Approved hours', value: fmt.number(hours(by('APPROVED')), 1), hint: `${by('APPROVED').length} entries`, tone: 'good' },
+      { label: 'Awaiting approval', value: fmt.number(hours(by('COMPLETED')), 1), hint: `${by('COMPLETED').length} entries`, tone: by('COMPLETED').length ? 'warn' : undefined },
+      { label: 'Rejected', value: String(by('REJECTED').length), hint: 'entries', tone: by('REJECTED').length ? 'bad' : undefined },
+      { label: 'Total hours', value: fmt.number(hours(sorted), 1), emphasis: true },
+    ],
+    y,
+  );
 
-function formatRange(from: Date, toExclusive: Date): string {
-  // The range came from the admin's browser-local pickers; label it in the
-  // org default zone (a range header, not a punch — per-entry rows carry
-  // their own site zone).
-  const last = new Date(toExclusive.getTime() - 1);
-  const fromStr = formatDateInZone(from, DEFAULT_TIMEZONE);
-  const lastStr = formatDateInZone(last, DEFAULT_TIMEZONE);
-  if (fromStr === lastStr) return fromStr;
-  return `${fromStr} – ${lastStr}`;
-}
+  const columns: Column<TimeReportEntry>[] = [
+    { key: 'date', header: 'Date', width: 1.3, value: (e) => formatDateInZone(e.clockInAt, e.timezone) },
+    { key: 'in', header: 'In', width: 0.9, value: (e) => formatTimeInZone(e.clockInAt, e.timezone) },
+    { key: 'out', header: 'Out', width: 0.9, value: (e) => (e.clockOutAt ? formatTimeInZone(e.clockOutAt, e.timezone) : 'Open') },
+    { key: 'hrs', header: 'Hours', width: 0.7, align: 'right', value: (e) => fmt.number(e.minutes / 60, 2), strong: true },
+    { key: 'client', header: 'Client', width: 1.8, value: (e) => e.clientName ?? '—' },
+    { key: 'job', header: 'Job', width: 1.8, value: (e) => e.jobName ?? '—' },
+    { key: 'status', header: 'Status', width: 1.4, value: (e) => STATUS_LABEL[e.status] ?? e.status, color: (e) => statusColor(e.status) },
+    { key: 'note', header: 'Note', width: 2, value: (e) => e.rejectionReason ?? '' , color: () => COLOR.bad },
+  ];
 
-function colorForStatus(status: string): string {
-  switch (status) {
-    case 'APPROVED':
-      return '#34A874';
-    case 'COMPLETED':
-      return '#EDB23C';
-    case 'REJECTED':
-      return '#E85244';
-    case 'ACTIVE':
-      return '#3F8EE0';
-    default:
-      return '#999999';
+  if (sorted.length === 0) y = k.callout({ title: 'No time entries', body: 'No time was recorded in this range for the filters chosen.' }, y);
+  const people = new Map<string, TimeReportEntry[]>();
+  for (const e of sorted) people.set(e.associateName, [...(people.get(e.associateName) ?? []), e]);
+  for (const [name, rows] of people) {
+    y = k.ensure(y, 80);
+    k.text(name, k.L, y, { size: 11, weight: 'semibold', width: k.width() * 0.6 });
+    k.text(`${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} · ${fmt.number(hours(rows), 2)} h`, k.L, y + 1, { size: 8.5, color: COLOR.ink3, width: k.width(), align: 'right' });
+    y = k.table({ y: y + 18, rows, columns, rowH: 17, totals: { date: 'Subtotal', hrs: fmt.number(hours(rows), 2) } });
   }
+
+  // Approval: who prepared the report and who approved the hours.
+  y = k.ensure(y + 6, 80);
+  k.text('Approval', k.L, y, { size: 11, weight: 'semibold' });
+  signatureRow(k, y + 6, ['Prepared by', 'Approved by (client or supervisor)', 'Date']);
+
+  return k.finish({ reference: `Time report · ${rangeLabel(data.rangeFrom, data.rangeTo, tz)}`, note: brand.name });
+}
+
+/** "Oct 10 – Oct 16, 2026" for an end-exclusive range. */
+function rangeLabel(from: Date, toExclusive: Date, tz = DEFAULT_TIMEZONE): string {
+  const last = new Date(toExclusive.getTime() - 1);
+  const a = localDateKey(from, tz);
+  const b = localDateKey(last, tz);
+  if (a === b) return fmt.date(a);
+  if (a.slice(0, 4) === b.slice(0, 4)) return `${new Date(`${a}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })} – ${fmt.date(b)}`;
+  return fmt.dateRange(a, b);
 }

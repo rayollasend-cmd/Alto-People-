@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { XL, XL_FMT } from './docKit/xlsx.js';
 import type { PayrollSheetReportData } from './payrollSheetPdf.js';
 
 /**
@@ -12,19 +13,19 @@ import type { PayrollSheetReportData } from './payrollSheetPdf.js';
  * Hours and money are real numbers so Excel can SUM / pivot.
  */
 
-const BAND = 'FF1F2A37';
-const SUBTOTAL = 'FFEAEDF1';
-const MUTED = 'FF6B7280';
-const INK = 'FF111827';
-const WARN = 'FFB5360F';
-const HOURS_FMT = '0.00';
-const USD_FMT = '"$"#,##0.00';
+const BAND = XL.band;
+const SUBTOTAL = XL.subtotal;
+const MUTED = XL.muted;
+const INK = XL.ink;
+const WARN = XL.bad;
+const HOURS_FMT = XL_FMT.hours;
+const USD_FMT = XL_FMT.money;
 
 const THIN: Partial<ExcelJS.Borders> = {
-  top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  right: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+  top: { style: 'thin', color: { argb: XL.rule } },
+  left: { style: 'thin', color: { argb: XL.rule } },
+  bottom: { style: 'thin', color: { argb: XL.rule } },
+  right: { style: 'thin', color: { argb: XL.rule } },
 };
 
 function hours(min: number): number {
@@ -198,7 +199,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
     });
     if ((r - headerRowNum) % 2 === 0) {
       row.eachCell((cell) => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F6F8' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
       });
     }
     r += 1;

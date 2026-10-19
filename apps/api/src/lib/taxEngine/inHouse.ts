@@ -15,6 +15,7 @@ import type {
   TaxLine,
   WorkAllocation,
 } from './types.js';
+import { programLines } from './statePrograms.js';
 
 /**
  * Alto's own tax engine: state withholding allocated across the states a
@@ -104,6 +105,15 @@ const line = (l: Omit<TaxLine, 'note' | 'employer'> & { note?: string | null; em
 
 /* ----- State ---------------------------------------------------------------- */
 
+/**
+ * A state's income-tax base for the whole check (lib/deductionTaxability:
+ * PA and NJ tax 401(k) deferrals, CA and NJ tax HSA contributions …),
+ * falling back to the federal base.
+ */
+const stateBase = (input: EmployeePeriodInput, state: string) => input.bases?.stateIncome?.[state] ?? input.wages;
+/** The share of the check's hours worked in a slice, from the federal-base allocation. */
+const shareOf = (input: EmployeePeriodInput, allocated: number) => (input.wages > 0 ? allocated / input.wages : 0);
+
 function stateLines(input: EmployeePeriodInput, slices: Slice[]): { lines: TaxLine[]; byState: Record<string, number> } {
   const resident = uc(input.residence.state);
   const byState: Record<string, number> = {};
@@ -112,8 +122,11 @@ function stateLines(input: EmployeePeriodInput, slices: Slice[]): { lines: TaxLi
     byState[s.state] = round2((byState[s.state] ?? 0) + s.wages);
   }
   const lines: TaxLine[] = [];
-  const workTaxes: Array<{ state: string; wages: number; tax: number }> = [];
-  for (const [state, wages] of Object.entries(byState)) {
+  const workTaxes: Array<{ state: string; share: number; tax: number }> = [];
+  for (const [state, allocated] of Object.entries(byState)) {
+    // Each state taxes its own base, allocated by hours exactly as the federal base is.
+    const share = shareOf(input, allocated);
+    const wages = input.wages > 0 ? round2(stateBase(input, state) * share) : allocated;
     if (state === resident) continue;
     if (NO_SIT_STATES.has(state)) continue;
     if (NO_NONRESIDENT_TAX.has(state)) {
@@ -126,7 +139,7 @@ function stateLines(input: EmployeePeriodInput, slices: Slice[]): { lines: TaxLi
       continue;
     }
     const tax = stateTax(input, state, wages);
-    workTaxes.push({ state, wages, tax });
+    workTaxes.push({ state, share, tax });
     lines.push(
       line({
         code: `ST-${state}`,
@@ -143,12 +156,13 @@ function stateLines(input: EmployeePeriodInput, slices: Slice[]): { lines: TaxLi
     );
   }
   if (resident && !NO_SIT_STATES.has(resident)) {
-    const total = input.wages;
+    // The resident state taxes all wages under its own base.
+    const total = stateBase(input, resident);
     const full = stateTax(input, resident, total);
     // The resident state credits tax paid to the work state, up to its own tax on those wages.
     let credit = 0;
     if (!NO_WITHHOLDING_CREDIT.has(resident)) {
-      for (const w of workTaxes) credit += Math.min(w.tax, total > 0 ? (full * w.wages) / total : 0);
+      for (const w of workTaxes) credit += Math.min(w.tax, full * w.share);
     }
     const amount = Math.max(0, full - credit);
     const away = workTaxes.length > 0;
@@ -296,9 +310,14 @@ function localLines(input: EmployeePeriodInput, slices: Slice[], stateRes: TaxLi
   // ---- New York: NYC and Yonkers ----
   const nyc = resJs.find((j) => j.code === 'NY-NYC');
   if (nyc && resState === 'NY' && nyc.residentBrackets) {
+    // NYS-50-T-NYC: annual wages less the deduction (by IT-2104 status) and $1,000 per exemption.
+    const it2104 = input.stateW4s['NY'];
+    const married = (it2104?.filingStatus ?? input.federalFilingStatus ?? '').toUpperCase().startsWith('MARRIED');
+    const d = nyc.residentDeduction;
+    const net = d ? annualized - (married ? d.married : d.single) - d.perExemption * Math.max(0, it2104?.allowances ?? 0) : annualized;
     const brackets = [...nyc.residentBrackets].reverse();
-    const b = brackets.find((x) => annualized > x.over) ?? brackets[brackets.length - 1]!;
-    const annualTax = b.base + (annualized - b.over) * b.rate;
+    const b = brackets.find((x) => net > x.over) ?? brackets[brackets.length - 1]!;
+    const annualTax = net <= 0 ? 0 : b.base + (net - b.over) * b.rate;
     lines.push(line({ code: nyc.code, kind: 'LOCAL', label: nyc.name, resident: true, workState: null, wages: input.wages, amount: Math.max(0, annualTax / periods) }));
   }
   const yonkersRes = resJs.find((j) => j.code === 'NY-YONKERS');
@@ -404,10 +423,17 @@ export function calculateInHouse(input: EmployeePeriodInput): EmployeePeriodResu
   const fallback = uc(input.residence.state);
   const slices = allocateWages(input.wages, input.work, input.work.find((w) => w.state)?.state ?? fallback);
   const st = stateLines(input, slices);
-  const loc = localLines(input, slices, st.lines);
+  // Local income taxes read their own base (PA EIT includes 401(k) deferrals …), allocated the same way.
+  const localBase = input.bases?.local ?? input.wages;
+  const factor = input.wages > 0 ? localBase / input.wages : 1;
+  const localSlices = factor === 1 ? slices : slices.map((sl) => ({ ...sl, wages: round2(sl.wages * factor) }));
+  const loc = localLines({ ...input, wages: localBase }, localSlices, st.lines);
   const lines = [...st.lines, ...loc.lines];
   const sui = suiState(input, st.byState);
   lines.push(line({ code: `SUI-${sui.state ?? 'NONE'}`, kind: 'SUI', label: `Unemployment insurance: ${sui.state ?? 'not set'}`, resident: false, workState: sui.state, wages: input.wages, amount: 0, note: sui.reason }));
+  // State disability, paid leave and employee UI shares follow the UI state.
+  const programs = input.includePrograms ? programLines(input, sui.state) : [];
+  lines.push(...programs);
   const stateTotal = round2(st.lines.reduce((s, l) => s + l.amount, 0));
   const localTotal = round2(loc.lines.filter((l) => !l.employer).reduce((s, l) => s + l.amount, 0));
   const employerLocalTotal = round2(loc.lines.filter((l) => l.employer).reduce((s, l) => s + l.amount, 0));
@@ -416,6 +442,8 @@ export function calculateInHouse(input: EmployeePeriodInput): EmployeePeriodResu
     stateTotal,
     localTotal,
     employerLocalTotal,
+    programTotal: round2(programs.filter((l) => !l.employer).reduce((s, l) => s + l.amount, 0)),
+    employerProgramTotal: round2(programs.filter((l) => l.employer).reduce((s, l) => s + l.amount, 0)),
     wagesByState: st.byState,
     sui,
     jurisdictionsUsed: [...new Set(loc.lines.filter((l) => l.amount > 0 || l.employer).map((l) => l.code))],

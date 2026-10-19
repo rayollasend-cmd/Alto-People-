@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { XL, XL_FMT } from './docKit/xlsx.js';
 import { FLAG_LABEL, type PayrollReviewReport, type ReviewState } from './payrollReview.js';
 
 /**
@@ -9,21 +10,21 @@ import { FLAG_LABEL, type PayrollReviewReport, type ReviewState } from './payrol
  * and by state.
  */
 
-const INK = 'FF111827';
-const MUTED = 'FF6B7280';
-const BAND = 'FF1F2A37';
-const SUBTOTAL = 'FFEAEDF1';
-const OK = 'FF027A48';
-const ALERT = 'FFB42318';
-const USD = '"$"#,##0.00;[Red]-"$"#,##0.00';
-const HRS = '#,##0.00';
-const PCT = '0.0%';
+const INK = XL.ink;
+const MUTED = XL.muted;
+const BAND = XL.band;
+const SUBTOTAL = XL.subtotal;
+const OK = XL.good;
+const ALERT = XL.bad;
+const USD = XL_FMT.money;
+const HRS = XL_FMT.hours;
+const PCT = XL_FMT.percent;
 
 const THIN: Partial<ExcelJS.Borders> = {
-  top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  right: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+  top: { style: 'thin', color: { argb: XL.rule } },
+  left: { style: 'thin', color: { argb: XL.rule } },
+  bottom: { style: 'thin', color: { argb: XL.rule } },
+  right: { style: 'thin', color: { argb: XL.rule } },
 };
 
 function headerRow(row: ExcelJS.Row): void {
@@ -161,6 +162,7 @@ const REG_COLS: Array<{ header: string; key: string; width: number; fmt?: string
   { header: 'Medicare', key: 'medicare', width: 11, fmt: USD },
   { header: 'State income tax', key: 'stateTax', width: 12, fmt: USD },
   { header: 'Local income tax', key: 'localTax', width: 11, fmt: USD },
+  { header: 'State disability & paid leave', key: 'stateProgram', width: 13, fmt: USD },
   { header: 'Post-tax deductions', key: 'postTax', width: 12, fmt: USD },
   { header: 'Other deductions', key: 'other', width: 12, fmt: USD },
   { header: 'Reimbursements', key: 'reimbursements', width: 13, fmt: USD },

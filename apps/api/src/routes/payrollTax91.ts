@@ -23,6 +23,7 @@ import {
 } from '../lib/w2Pdf.js';
 import { hashW2cPdf, renderW2cPdf, type W2cPdfData } from '../lib/w2cPdf.js';
 import { hasW2cDelta, type W2cAmounts } from '../lib/w2cAggregator.js';
+import { employerFor, stateAccountNumbers } from '../lib/payrollTaxLedger.js';
 import { buildEfw2File, Efw2UnsupportedError, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
 import { buildEfw2cFile, type Efw2cEmployee, type Efw2cFile } from '../lib/efw2c.js';
 import {
@@ -509,7 +510,7 @@ payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
 });
 
 /**
- * POST /tax-forms/bulk-file { ids: string[] } � file many drafts in one
+ * POST /tax-forms/bulk-file { ids: string[] } — file many drafts in one
  * action. W-2 season for 200 employees was 400 clicks of per-row
  * File+confirm; this is the select-all path. Per-form failures (wrong
  * state, duplicate filing) skip with a reason instead of failing the
@@ -693,7 +694,7 @@ payrollTax91Router.get('/tax-forms/build/940', VIEW, async (req, res) => {
 });
 
 /**
- * GET /tax-forms/w3.pdf?taxYear=YYYY � W-3 transmittal totals: the sums of
+ * GET /tax-forms/w3.pdf?taxYear=YYYY — W-3 transmittal totals: the sums of
  * every non-VOIDED W-2 for the year, which is exactly what the W-3 boxes
  * carry. Rendered as a labeled summary sheet for transcription to the
  * official form (the SSA EFW2 file's RT/RU records carry the same totals
@@ -709,7 +710,7 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
       select: { amounts: true },
     });
     if (forms.length === 0) {
-      throw new HttpError(404, 'no_forms', `No W-2s exist for ${taxYear} � generate them first.`);
+      throw new HttpError(404, 'no_forms', `No W-2s exist for ${taxYear} — generate them first.`);
     }
     const sumBox = (key: string) =>
       forms.reduce((s, f) => {
@@ -720,21 +721,21 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
       n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
     const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
     const { pdf } = await renderTaxFormSummaryPdf({
-      title: `Form W-3 transmittal totals � ${taxYear}`,
-      employer: { name: profile?.name ?? 'Alto HR', ein: profile?.ein ?? '�' },
+      title: `Form W-3 transmittal totals — ${taxYear}`,
+      employer: { name: profile?.name ?? 'Alto HR', ein: profile?.ein ?? '—' },
       status: 'SUMMARY',
       generatedAt: new Date().toISOString(),
       lines: [
         { label: 'Number of W-2 forms (box c)', value: String(forms.length), bold: true },
-        { label: 'Box 1 � wages, tips, other compensation', value: money(sumBox('box1')) },
-        { label: 'Box 2 � federal income tax withheld', value: money(sumBox('box2')) },
-        { label: 'Box 3 � Social Security wages', value: money(sumBox('box3')) },
-        { label: 'Box 4 � Social Security tax withheld', value: money(sumBox('box4')) },
-        { label: 'Box 5 � Medicare wages and tips', value: money(sumBox('box5')) },
-        { label: 'Box 6 � Medicare tax withheld', value: money(sumBox('box6')) },
+        { label: 'Box 1 — wages, tips, other compensation', value: money(sumBox('box1')) },
+        { label: 'Box 2 — federal income tax withheld', value: money(sumBox('box2')) },
+        { label: 'Box 3 — Social Security wages', value: money(sumBox('box3')) },
+        { label: 'Box 4 — Social Security tax withheld', value: money(sumBox('box4')) },
+        { label: 'Box 5 — Medicare wages and tips', value: money(sumBox('box5')) },
+        { label: 'Box 6 — Medicare tax withheld', value: money(sumBox('box6')) },
       ],
       footnote:
-        'These totals must equal the sums of the attached W-2s and reconcile with the four quarterly 941s for the year. When e-filing via EFW2, the RT/RU records carry these same totals � a standalone W-3 is only mailed with paper Copy A.',
+        'These totals must equal the sums of the attached W-2s and reconcile with the four quarterly 941s for the year. When e-filing via EFW2, the RT/RU records carry these same totals — a standalone W-3 is only mailed with paper Copy A.',
     });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="w3-${taxYear}.pdf"`);
@@ -745,7 +746,7 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
 });
 
 /**
- * POST /tax-forms/:id/send-recipient-copy � email the worker their copy
+ * POST /tax-forms/:id/send-recipient-copy — email the worker their copy
  * (W-2 Copy B, W-2c, or 1099) as a PDF attachment and stamp
  * recipientCopySentAt. Filing isn't complete until the recipient copy is
  * distributed; this makes that step auditable. `force: true` re-sends.
@@ -785,7 +786,7 @@ async function sendRecipientCopyForForm(
     subject: `Your ${form.taxYear} ${label} from Alto HR`,
     body:
       `Hi ${form.associate.firstName},\n\nAttached is your ${form.taxYear} ${label}. ` +
-      `Keep it for your tax records � you'll need it to file your ${form.taxYear} return.\n\n` +
+      `Keep it for your tax records — you'll need it to file your ${form.taxYear} return.\n\n` +
       `If anything on it looks wrong, contact your manager right away so a correction can be issued.`,
     attachments: [{ filename, content: pdf, contentType: 'application/pdf' }],
   });
@@ -809,7 +810,7 @@ payrollTax91Router.post('/tax-forms/:id/send-recipient-copy', MANAGE, async (req
 });
 
 /**
- * POST /tax-forms/bulk-send-copies { ids: string[], force? } � distribute
+ * POST /tax-forms/bulk-send-copies { ids: string[], force? } — distribute
  * recipient copies for many forms in one action. Per-form failures
  * (no email, already sent, aggregate form) skip with a reason.
  */
@@ -869,7 +870,7 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
   const warnings: { associateId: string; code: string; message: string }[] = [];
 
   for (const associateId of associateIds) {
-    // Tier-2 � one W-2 per employer EIN. A worker paid by two clients in
+    // Tier-2 — one W-2 per employer EIN. A worker paid by two clients in
     // the year gets a separate W-2 for each; wages under each EIN
     // aggregate independently (the first-run single-EIN heuristic is
     // retired). Legacy rows with a null ein still block regeneration so
@@ -1251,7 +1252,7 @@ async function renderW2ForForm(
     );
   }
 
-  // Tier-2 � a form stamped with an EIN resolves its employer block from
+  // Tier-2 — a form stamped with an EIN resolves its employer block from
   // the client carrying that EIN; legacy null-EIN forms keep the
   // first-disbursed-run heuristic.
   // Brief 2-1b: the employer of record comes from the employment record (the EIN the
@@ -1591,7 +1592,7 @@ async function renderF1099MiscForForm(formId: string): Promise<{
 // requireAuth is explicit here: this router is mounted bare at '/' with
 // no router-level auth, and the handler dereferences req.user! to decide
 // owner-vs-manager. Without it an unauthenticated request only failed by
-// ACCIDENT � a TypeError producing a 500 � and this endpoint serves W-2
+// ACCIDENT — a TypeError producing a 500 — and this endpoint serves W-2
 // PDFs containing the full SSN.
 payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next) => {
   try {
@@ -1622,7 +1623,7 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
       throw new HttpError(404, 'not_found', 'Form not found.');
     }
 
-    // Aggregate forms (941/940) render as labeled summary sheets � the
+    // Aggregate forms (941/940) render as labeled summary sheets — the
     // review-and-transcribe copy for the official form or e-file portal.
     if (form.kind === 'F941' || form.kind === 'F940') {
       const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
@@ -1638,9 +1639,9 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
       const { pdf } = await renderTaxFormSummaryPdf({
         title:
           form.kind === 'F941'
-            ? `Form 941 � Q${form.quarter} ${form.taxYear}`
-            : `Form 940 � ${form.taxYear}`,
-        employer: { name: profile?.name ?? 'Alto HR', ein: form.ein ?? profile?.ein ?? '�' },
+            ? `Form 941 — Q${form.quarter} ${form.taxYear}`
+            : `Form 940 — ${form.taxYear}`,
+        employer: { name: profile?.name ?? 'Alto HR', ein: form.ein ?? profile?.ein ?? '—' },
         status: form.status,
         generatedAt: new Date().toISOString(),
         lines,
@@ -2241,6 +2242,8 @@ payrollTax91Router.get('/tax-forms/w2/efw2.txt', EXPORT_PII, async (req, res, ne
         state: client.state ?? '',
         zip5: employerZip[1],
         zip4: employerZip[2] ?? undefined,
+        // RS positions 248–267: this employer's withholding account in each state.
+        stateAccountNumbers: await stateAccountNumbers(prisma, await employerFor(prisma, client.id)),
       },
       employees,
     };

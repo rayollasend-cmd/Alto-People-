@@ -14,8 +14,9 @@ import {
   PAGE_W,
   T,
   W,
+  pdfHelpers,
   pdfSafe,
-} from './pdfDesign.js';
+} from './docKit/biz.js';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { formatTimeInZone, zonedMinutes } from './timezone.js';
@@ -198,7 +199,7 @@ function initialsOf(name: string | null): string {
     .toUpperCase();
 }
 
-export { pdfSafe } from './pdfDesign.js';
+export { pdfSafe } from './docKit/biz.js';
 
 const money = (v: number) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -787,7 +788,7 @@ export async function buildPortalReport(
 
 // The palette, the type scale and the 12-column grid are the house style,
 // shared with every other report that prints on Alto letterhead. They live
-// in lib/pdfDesign.ts so two reports on the same desk cannot disagree.
+// in lib/docKit/biz.ts so two reports on the same desk cannot disagree.
 
 const keyDate = (key: string) => new Date(`${key}T12:00:00.000Z`);
 const fmtKey = (key: string, o: Intl.DateTimeFormatOptions) => keyDate(key).toLocaleDateString('en-US', { ...o, timeZone: 'UTC' });
@@ -830,31 +831,11 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    /* ---- text ---------------------------------------------------------- */
-    const spacingOf = (st: Style) => (st.caps ? 0.7 : 0);
-    const prep = (s: string, st: Style) => (st.caps ? pdfSafe(s).toUpperCase() : pdfSafe(s));
-    const font = (st: Style) =>
-      doc
-        .font(st.bold ? 'Helvetica-Bold' : 'Helvetica')
-        .fontSize(st.size ?? T.body)
-        .fillColor(st.color ?? C.ink);
-    const widthOf = (s: string, st: Style = {}) => {
-      font(st);
-      return doc.widthOfString(prep(s, st), { characterSpacing: spacingOf(st) });
-    };
-    const text = (s: string, x: number, y: number, st: Style = {}) => {
-      font(st);
-      doc.text(prep(s, st), x, y, { lineBreak: false, characterSpacing: spacingOf(st) });
-    };
-    const textRight = (s: string, right: number, y: number, st: Style = {}) => text(s, right - widthOf(s, st), y, st);
-    const textCenter = (s: string, cx: number, y: number, st: Style = {}) => text(s, cx - widthOf(s, st) / 2, y, st);
-    const paraH = (s: string, w: number, st: Style = {}) => {
-      font(st);
-      return doc.heightOfString(prep(s, st), { width: w, lineGap: 1.5, characterSpacing: spacingOf(st) });
-    };
+    /* ---- text (the house fonts, lib/docKit/biz.ts) ----------------------- */
+    const H = pdfHelpers(doc);
+    const { widthOf, text, textRight, textCenter, paraH } = H;
     const para = (s: string, x: number, y: number, w: number, st: Style = {}) => {
-      font(st);
-      doc.text(prep(s, st), x, y, { width: w, lineGap: 1.5, characterSpacing: spacingOf(st) });
+      H.para(s, x, y, w, st);
       return paraH(s, w, st);
     };
     const LABEL: Style = { size: T.label, caps: true, bold: true, color: C.ink3 };

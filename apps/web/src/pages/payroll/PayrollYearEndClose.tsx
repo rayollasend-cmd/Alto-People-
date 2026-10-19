@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Button } from '@/components/ui/Button';
 
 export function PayrollYearEndClose() {
   const lastYear = new Date().getUTCFullYear() - 1;
@@ -32,6 +33,14 @@ export function PayrollYearEndClose() {
         title={`Year-end close — ${year}`}
         subtitle="Single checklist that confirms the tax year is fully wrapped: runs disbursed, forms generated, forms filed, recipient copies sent."
         breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Year-end close' }]}
+        secondaryActions={
+          <Button asChild variant="secondary">
+            <Link to="/payroll/year-end/reconciliation">
+              Reconcile the year
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </Button>
+        }
         primaryAction={
           <Input
             type="number"

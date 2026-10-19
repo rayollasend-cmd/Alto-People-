@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildEfw2File, type Efw2File } from '../../lib/efw2.js';
 
-// Structural smoke tests for the EFW2 generator. We don't claim
-// SSA-spec field-position correctness here — that's a finance-review
-// pass against Pub 42-007 + AccuWage. These tests verify the invariants
-// the SSA validator definitely cares about: every record exactly 512
-// chars, RA → RE → RW... → RT → RF order, RT/RF totals reconcile to
-// the RW figures, and CRLF line separators.
+// The EFW2 generator against SSA Pub 42-007 (TY2025, v3.3): every record
+// exactly 512 chars, RA → RE → (RW [RO] [RS…])+ → RT [RU] [RV] → RF order,
+// RT/RF totals reconcile to the RW figures, CRLF separators, and the
+// fields the spec places by position (AccuWage remains the final check).
 
 const sampleInput: Efw2File = {
   submitter: {
@@ -102,9 +100,9 @@ describe('EFW2 generator — structural invariants', () => {
     expect(types.filter((t) => t === 'RS').length).toBe(1);
   });
 
-  it('record order: RA, RE, (RW [RS...])+, RT, RF', () => {
+  it('record order: RA, RE, (RW [RS...])+, RT, RV, RF', () => {
     const types = lines.map((l) => l.slice(0, 2));
-    expect(types).toEqual(['RA', 'RE', 'RW', 'RS', 'RW', 'RT', 'RF']);
+    expect(types).toEqual(['RA', 'RE', 'RW', 'RS', 'RW', 'RT', 'RV', 'RF']);
   });
 
   it('RT totals reconcile to the sum of RW dollar fields', () => {
@@ -132,8 +130,8 @@ describe('EFW2 generator — structural invariants', () => {
 
   it('RW dollar fields encode cents zero-padded with no decimal point', () => {
     const rw1 = lines.find((l) => l.startsWith('RW'))!;
-    // First RW = Jordan's: Box 1 = 1234.56 = 123456 cents, 11 digits.
-    const box1 = rw1.slice(166, 177);
+    // First RW = Jordan's: Box 1 = 1234.56 = 123456 cents, 11 digits, positions 188-198.
+    const box1 = rw1.slice(187, 198);
     expect(box1).toBe('00000123456');
   });
 
@@ -147,5 +145,90 @@ describe('EFW2 generator — structural invariants', () => {
         employer: { ...sampleInput.employer, ein: 'NOT-DIGITS' },
       }),
     ).toThrow(/non-numeric/);
+  });
+});
+
+const at = (line: string, start: number, end: number) => line.slice(start - 1, end);
+
+describe('EFW2 generator — field positions (Pub 42-007 TY2025)', () => {
+  const one = (boxes: Partial<Efw2File['employees'][number]['boxes']>, taxYear = 2025): string[] =>
+    buildEfw2File({
+      ...sampleInput,
+      employer: { ...sampleInput.employer, taxYear, stateAccountNumbers: { PA: '12345678' } },
+      employees: [{ ...sampleInput.employees[0]!, boxes: { ...sampleInput.employees[0]!.boxes, ...boxes } }],
+    }).split('\r\n');
+
+  it('RA and RE put the names and codes where SSA reads them', () => {
+    const [ra, re] = one({});
+    expect(at(ra!, 36, 37)).toBe('98');
+    expect(at(ra!, 38, 94).trim()).toBe('Acme Test Co LLC');
+    expect(at(ra!, 500, 500)).toBe('L');
+    expect(at(re!, 3, 6)).toBe('2025');
+    expect(at(re!, 40, 96).trim()).toBe('Acme Test Co LLC');
+    expect(at(re!, 174, 174)).toBe('N');
+    expect(at(re!, 219, 219)).toBe('R');
+  });
+
+  it('Box 7, 10, 12 D/W/DD/AA/C and the retirement-plan indicator land in their RW fields; RT totals them', () => {
+    const lines = one({
+      box7SsTips: 50,
+      box10DependentCare: 2500,
+      box12: [
+        { code: 'C', amount: 120 },
+        { code: 'D', amount: 1000 },
+        { code: 'W', amount: 300 },
+        { code: 'AA', amount: 400 },
+        { code: 'DD', amount: 6000 },
+        { code: 'J', amount: 10 },
+      ],
+      box13RetirementPlan: true,
+    });
+    const rw = lines.find((l) => l.startsWith('RW'))!;
+    expect(at(rw, 254, 264)).toBe('00000005000');
+    expect(at(rw, 276, 286)).toBe('00000250000');
+    expect(at(rw, 287, 297)).toBe('00000100000');
+    expect(at(rw, 364, 374)).toBe('00000030000');
+    expect(at(rw, 408, 418)).toBe('00000012000');
+    expect(at(rw, 441, 451)).toBe('00000040000');
+    expect(at(rw, 463, 473)).toBe('00000600000');
+    expect(at(rw, 488, 488)).toBe('1');
+    const rt = lines.find((l) => l.startsWith('RT'))!;
+    expect(at(rt, 145, 159)).toBe('000000000100000');
+    expect(at(rt, 295, 309)).toBe('000000000600000');
+  });
+
+  it('an RO record (and RU total) carries Box 12 EE', () => {
+    const lines = one({ box12: [{ code: 'EE', amount: 750 }] });
+    expect(lines.map((l) => l.slice(0, 2))).toEqual(['RA', 'RE', 'RW', 'RO', 'RS', 'RT', 'RU', 'RV', 'RF']);
+    expect(at(lines.find((l) => l.startsWith('RO'))!, 111, 121)).toBe('00000075000');
+    expect(at(lines.find((l) => l.startsWith('RU'))!, 145, 159)).toBe('000000000075000');
+  });
+
+  it('RS carries the numeric state code, the state account, and a locality', () => {
+    const lines = one({
+      stateLines: [{ state: 'PA', stateWages: 1500, stateIncomeTax: 46.05 }],
+      localLines: [
+        { state: 'PA', locality: 'Pittsburgh EIT', code: '700101', kind: 'LOCAL', localWages: 1500, localIncomeTax: 45 },
+        { state: 'PA', locality: 'Pittsburgh LST', code: 'LST-700101', kind: 'OLT', localWages: 1500, localIncomeTax: 52 },
+      ],
+    });
+    const rs = lines.filter((l) => l.startsWith('RS'));
+    expect(rs).toHaveLength(2);
+    expect(at(rs[0]!, 3, 4)).toBe('42');
+    expect(at(rs[0]!, 274, 275)).toBe('42');
+    expect(at(rs[0]!, 248, 267).trim()).toBe('12345678');
+    expect(at(rs[0]!, 276, 286)).toBe('00000150000');
+    expect(at(rs[0]!, 287, 297)).toBe('00000004605');
+    expect(at(rs[0]!, 308, 308)).toBe('C');
+    expect(at(rs[0]!, 320, 330)).toBe('00000004500');
+    // The second locality rides its own RS with the state fields zero, so state totals are not doubled.
+    expect(at(rs[1]!, 276, 286)).toBe('00000000000');
+    expect(at(rs[1]!, 320, 330)).toBe('00000005200');
+    expect(at(rs[1]!, 308, 308)).toBe('F');
+  });
+
+  it('refuses the 2026 codes whose positions SSA has not confirmed, never guessing', () => {
+    expect(() => one({ box12: [{ code: 'TP', amount: 300 }] }, 2026)).toThrow(/TP/);
+    expect(() => one({ box14bTippedOccupationCodes: ['101'] }, 2026)).toThrow(/14b/);
   });
 });

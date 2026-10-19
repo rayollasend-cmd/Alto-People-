@@ -28,6 +28,7 @@ import { fmtDate, fmtDateTz, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@
 import { enterStagger } from '@/lib/motion';
 import { statusTone } from '@/lib/status';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import { PaperCheckRequestCard } from './PaperCheckRequestCard';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { dayHeading, groupByDayBy, isRelativeDayHeading } from '@/lib/dayGroup';
@@ -60,6 +61,9 @@ import {
   Settings,
   Wallet,
 } from 'lucide-react';
+
+/** Deduction codes with a translated label (pay.ded.*); orders and loans keep the server's label. */
+const DEDUCTION_CODES = new Set(['MEDICAL', 'DENTAL', 'VISION', 'HSA', 'HEALTH_FSA', 'DCAP', 'LIFE', 'DISABILITY', 'RET_401K', 'RET_403B', 'RET_457B', 'ROTH_401K', 'ROTH_403B', 'GARNISHMENT_FEE', 'EWA_RECOVERY', 'UNION_DUES', 'AFTER_TAX_OTHER', 'ER_401K_MATCH', 'ER_HEALTH', 'ER_HSA']);
 
 const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   REGULAR: 'pay.kind.REGULAR',
@@ -150,6 +154,8 @@ export function AssociatePayrollView() {
       <NextPaydayCard />
 
       <PayPreviewCard />
+
+      <PaperCheckRequestCard />
 
       <EarnedWageCard />
 
@@ -724,7 +730,7 @@ function PaystubGroup({
   );
 }
 
-function PaystubCard({
+export function PaystubCard({
   item,
   expanded,
   onToggle,
@@ -750,6 +756,17 @@ function PaystubCard({
   });
   const ytd = ytdQuery.data ?? null;
   const transportAmount = item.transport?.amount ?? 0;
+  // State disability / paid leave (CA SDI, NJ TDI …): withheld, with no column of their own.
+  const programTaxes = item.stateProgramTaxes ?? [];
+  const programTotal = programTaxes.reduce((sum, p) => sum + p.amount, 0);
+  const programYtd = programTaxes.reduce((sum, p) => sum + (ytd?.stateProgramTaxes?.[p.code] ?? p.amount), 0);
+  // Every deduction itemized (checks from before itemizing keep their lump rows).
+  const itemized = (item.deductions ?? []).filter((d) => d.employeeAmount !== 0 && d.category !== 'EMPLOYER');
+  const employerLines = (item.deductions ?? []).filter((d) => d.category === 'EMPLOYER' && d.employerAmount !== 0 && d.code !== 'ER_TRUMP_ACCOUNT');
+  const dedLabel = (d: NonNullable<PayrollItem['deductions']>[number]) => {
+    const known = DEDUCTION_CODES.has(d.code) ? t(`pay.ded.${d.code}` as MessageKey) : d.label;
+    return d.category === 'PRE_TAX' ? t('pay.preTaxLine', { label: known }) : known;
+  };
   const [downloading, setDownloading] = useState(false);
 
   const onDownload = async () => {
@@ -800,7 +817,7 @@ function PaystubCard({
               {item.postTaxDeductions > 0 ? t('pay.taxPlusPostTax') : t('pay.taxes')}
             </div>
             <div className="text-white tabular-nums">
-              −{fmtMoney(item.federalWithholding + item.fica + item.medicare + item.stateWithholding + item.postTaxDeductions)}
+              −{fmtMoney(item.federalWithholding + item.fica + item.medicare + item.stateWithholding + programTotal + item.postTaxDeductions)}
             </div>
           </div>
           <div>
@@ -894,9 +911,36 @@ function PaystubCard({
                     `−${fmtMoney(ytd.stateWithholding)}`,
                   ],
                 },
+                ...programTaxes.map((p) => ({
+                  key: `pgm-${p.code}`,
+                  cells: [p.label, '', '', `−${fmtMoney(p.amount)}`, `−${fmtMoney(ytd.stateProgramTaxes?.[p.code] ?? p.amount)}`],
+                })),
+                // Itemized: each plan, order and loan with its own YTD (van
+                // rides keep their own row below, with the ride count).
+                ...[...itemized]
+                  .filter((d) => d.code !== 'RIDES')
+                  .sort((a, b) => (a.category === b.category ? 0 : a.category === 'PRE_TAX' ? -1 : 1))
+                  .map((d) => ({
+                    key: `ded-${d.key}`,
+                    cells: [
+                      dedLabel(d),
+                      '',
+                      '',
+                      `−${fmtMoney(d.employeeAmount)}`,
+                      `−${fmtMoney(ytd.deductions?.[d.key]?.employee ?? d.employeeAmount)}`,
+                    ],
+                  })),
+                ...(itemized.length === 0 && (item.preTaxDeductions ?? 0) > 0.004
+                  ? [
+                      {
+                        key: 'pretax',
+                        cells: [t('pay.preTaxLine', { label: t('pay.ded.MEDICAL') }), '', '', `−${fmtMoney(item.preTaxDeductions ?? 0)}`, `−${fmtMoney(ytd.preTaxDeductions)}`],
+                      },
+                    ]
+                  : []),
                 // Van rides ride inside post-tax deductions; they get their
                 // own line so a ride charge never reads as a garnishment.
-                ...(item.postTaxDeductions - transportAmount > 0.004
+                ...(itemized.length === 0 && item.postTaxDeductions - transportAmount > 0.004
                   ? [
                       {
                         key: 'posttax',
@@ -951,8 +995,8 @@ function PaystubCard({
                 t('pay.totalDeductions'),
                 '',
                 '',
-                `−${fmtMoney(item.federalWithholding + item.fica + item.medicare + item.stateWithholding + item.postTaxDeductions)}`,
-                `−${fmtMoney(ytd.federalWithholding + ytd.fica + ytd.medicare + ytd.stateWithholding + ytd.postTaxDeductions)}`,
+                `−${fmtMoney(item.federalWithholding + item.fica + item.medicare + item.stateWithholding + programTotal + (item.preTaxDeductions ?? 0) + item.postTaxDeductions)}`,
+                `−${fmtMoney(ytd.federalWithholding + ytd.fica + ytd.medicare + ytd.stateWithholding + programYtd + ytd.preTaxDeductions + ytd.postTaxDeductions)}`,
               ]}
             />
           </Section>
@@ -977,6 +1021,17 @@ function PaystubCard({
                   key: 'suta',
                   cells: [t('pay.suta'), '', '', fmtMoney(item.employerSuta), fmtMoney(ytd.employerSuta)],
                 },
+                // Benefits the employer paid on top: never taken from the check.
+                ...employerLines.map((d) => ({
+                  key: `er-${d.key}`,
+                  cells: [
+                    DEDUCTION_CODES.has(d.code) ? t(`pay.ded.${d.code}` as MessageKey) : d.label,
+                    '',
+                    '',
+                    fmtMoney(d.employerAmount),
+                    fmtMoney(ytd.deductions?.[d.key]?.employer ?? d.employerAmount),
+                  ],
+                })),
               ]}
             />
           </Section>

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -420,6 +421,16 @@ auditPacketRouter.post(
       res.destroy(err);
     });
     archive.pipe(res);
+    // Every file's size and SHA-256, for the manifest's file index and the
+    // checksums file an auditor can verify with `sha256sum -c`.
+    const fileIndex: Array<{ name: string; bytes: number; sha256: string }> = [];
+    const append = (data: Buffer | string, opts: { name: string } & Record<string, unknown>): void => {
+      if (Buffer.isBuffer(data) || typeof data === 'string') {
+        const b = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        fileIndex.push({ name: opts.name, bytes: b.length, sha256: createHash('sha256').update(b).digest('hex') });
+      }
+      archive.append(data as never, opts as never);
+    };
 
     // From here on, headers are SENT — an uncaught throw can no longer
     // become a JSON error. The catch below aborts the stream so the
@@ -611,9 +622,9 @@ auditPacketRouter.post(
           ];
         }),
       );
-      archive.append(await pdf.render(), { name: '01-worker-roster/worker-roster.pdf' });
+      append(await pdf.render(), { name: '01-worker-roster/worker-roster.pdf' });
     }
-    archive.append(
+    append(
       csv([
         ['Last name', 'First name', 'Email', 'Position', 'Employment type', 'Employment status', 'Status since', 'Status reason', 'Status set by', 'Client start date', 'Site(s)', 'Assignment span', 'Inclusion basis', 'First worked', 'Last worked', 'Net hours (period)', 'Approved punches', 'Completed shifts', 'I-9 complete', 'E-Verify case'],
         ...associates.map((a) => {
@@ -715,7 +726,7 @@ auditPacketRouter.post(
       } else {
         pdf.para('No documents on file.', { muted: true });
       }
-      archive.append(await pdf.render(), { name: `${folder}/i9-record.pdf` });
+      append(await pdf.render(), { name: `${folder}/i9-record.pdf` });
       for (const d of docs) {
         if (!d.s3Key) {
           missingBlobs += 1;
@@ -726,7 +737,7 @@ auditPacketRouter.post(
           missingBlobs += 1;
           continue;
         }
-        archive.append(blob, {
+        append(blob, {
           name: `${folder}/${safeName(`${d.kind}${d.side ? `-${d.side}` : ''}-${d.filename}`)}`,
         });
       }
@@ -758,9 +769,9 @@ auditPacketRouter.post(
         ],
         everifyRows,
       );
-      archive.append(await pdf.render(), { name: '03-e-verify/e-verify-register.pdf' });
+      append(await pdf.render(), { name: '03-e-verify/e-verify-register.pdf' });
     }
-    archive.append(
+    append(
       csv([
         ['Last name', 'First name', 'E-Verify case number', 'Status', 'Case opened', 'Case closed'],
         ...associates.map((a) => [
@@ -817,14 +828,14 @@ auditPacketRouter.post(
         pdf.callout(reviewWarning);
         pdf.para(attestationClose);
         pdf.signatureBlock();
-        archive.append(await pdf.render(), { name: att.file });
+        append(await pdf.render(), { name: att.file });
       }
     }
 
     /* 05 — Pay-lawfulness records ------------------------------------------ */
     const netMin = netMinutesOf;
     const nameById = new Map(associates.map((a) => [a.id, `${a.lastName}, ${a.firstName}`]));
-    archive.append(
+    append(
       csv([
         ['Worker', 'Date', 'Clock in (UTC)', 'Clock out (UTC)', 'Break minutes', 'Net worked minutes', 'Site', 'Status'],
         ...workedEntries.map((e) => [
@@ -858,7 +869,7 @@ auditPacketRouter.post(
       orderBy: [{ payrollRun: { periodStart: 'asc' } }, { associate: { lastName: 'asc' } }],
       take: 2_000,
     });
-    archive.append(
+    append(
       csv([
         ['Worker', 'Period start', 'Period end', 'Run status', 'Hours', 'Gross', 'Federal tax', 'FICA', 'Medicare', 'State tax', 'Local tax', 'Net pay', 'Disbursed at'],
         ...payItems.map((it) => [
@@ -954,7 +965,7 @@ auditPacketRouter.post(
         'Pay is computed on worked time net of unpaid breaks; meal and rest breaks are recorded per punch and are itemized in the time-punch CSV. Paystubs itemize gross-to-net including all withholdings.',
         { muted: true, size: 8.5 },
       );
-      archive.append(await pdf.render(), { name: '05-pay-records/wage-compliance-summary.pdf' });
+      append(await pdf.render(), { name: '05-pay-records/wage-compliance-summary.pdf' });
     }
 
     const PAYSTUB_CAP = 300;
@@ -965,7 +976,7 @@ auditPacketRouter.post(
       try {
         const data = await buildPaystubDataFromItem(prisma, it);
         const pdf = await renderPaystubPdf(data);
-        archive.append(pdf, {
+        append(pdf, {
           name: `05-pay-records/paystubs/${safeName(`${it.associate.lastName}-${it.associate.firstName}`)}-${ymd(it.payrollRun.periodStart)}.pdf`,
         });
         stubCount += 1;
@@ -975,7 +986,7 @@ auditPacketRouter.post(
     }
 
     if (externalPayments.length > 0) {
-      archive.append(
+      append(
         csv([
           ['Worker', 'Period start', 'Period end', 'Pay date', 'Gross', 'Net', 'Method', 'Reference', 'Evidence files'],
           ...externalPayments.map((p) => [
@@ -1029,7 +1040,7 @@ auditPacketRouter.post(
         } else {
           pdf.para('No evidence file is attached to this payment record.', { muted: true });
         }
-        archive.append(await pdf.render(), { name: `${stem}-payment-record.pdf` });
+        append(await pdf.render(), { name: `${stem}-payment-record.pdf` });
 
         for (const d of p.evidence) {
           if (!d.s3Key) continue;
@@ -1038,7 +1049,7 @@ auditPacketRouter.post(
             missingBlobs += 1;
             continue;
           }
-          archive.append(blob, { name: `${stem}-${safeName(d.filename)}` });
+          append(blob, { name: `${stem}-${safeName(d.filename)}` });
         }
       }
     }
@@ -1065,7 +1076,7 @@ auditPacketRouter.post(
       pdf.para(
         "The Anti-Harassment policy is incorporated into every associate's employment agreement (Section 17 — Equal Employment Opportunity and Anti-Harassment) and is acknowledged at onboarding. The full policy text and the acknowledgment log for the audited roster accompany this document in the same folder.",
       );
-      archive.append(await pdf.render(), { name: '06-harassment-reporting/reporting-process.pdf' });
+      append(await pdf.render(), { name: '06-harassment-reporting/reporting-process.pdf' });
     }
     const eeoPolicy = ALTO_POLICIES.find((p) => /anti-harassment/i.test(p.title));
     if (eeoPolicy) {
@@ -1080,7 +1091,7 @@ auditPacketRouter.post(
         const trimmed = paragraph.trim();
         if (trimmed) pdf.para(trimmed.replace(/\n/g, ' '), { size: 9.5 });
       }
-      archive.append(await pdf.render(), {
+      append(await pdf.render(), {
         name: `06-harassment-reporting/${safeName(eeoPolicy.title)}.pdf`,
       });
     }
@@ -1113,9 +1124,9 @@ auditPacketRouter.post(
           iso(k.acknowledgedAt).slice(0, 16).replace('T', ' '),
         ]),
       );
-      archive.append(await pdf.render(), { name: '06-harassment-reporting/policy-acknowledgment-log.pdf' });
+      append(await pdf.render(), { name: '06-harassment-reporting/policy-acknowledgment-log.pdf' });
     }
-    archive.append(
+    append(
       csv([
         ['Worker', 'Policy', 'Acknowledged at'],
         ...acks.map((k) => [
@@ -1157,9 +1168,9 @@ auditPacketRouter.post(
         ],
         bgRows,
       );
-      archive.append(await pdf.render(), { name: '07-background-checks/background-check-register.pdf' });
+      append(await pdf.render(), { name: '07-background-checks/background-check-register.pdf' });
     }
-    archive.append(
+    append(
       csv([
         ['Worker', 'Provider', 'Status', 'Initiated', 'Completed'],
         ...associates.flatMap((a) =>
@@ -1192,7 +1203,7 @@ auditPacketRouter.post(
         missingBlobs += 1;
         continue;
       }
-      archive.append(blob, {
+      append(blob, {
         name: `07-background-checks/results/${safeName(`${nameById.get(d.associateId) ?? d.associateId}`)}-${safeName(d.filename)}`,
       });
     }
@@ -1215,7 +1226,7 @@ auditPacketRouter.post(
       );
       pdf.para(attestationClose);
       pdf.signatureBlock();
-      archive.append(await pdf.render(), { name: '08-subcontractors/subcontractor-statement.pdf' });
+      append(await pdf.render(), { name: '08-subcontractors/subcontractor-statement.pdf' });
     }
 
     /* 00 — Cover manifest (added last so the counts are real) ---------------- */
@@ -1283,6 +1294,16 @@ auditPacketRouter.post(
             .join(' and ')} contain${includeAttestations && includeSubcontractor ? '' : 's'} generated clean-history templates. An authorized officer must verify each statement is factually accurate, then sign and date them BEFORE this packet is transmitted.`,
         );
       }
+      pdf.heading('File index');
+      pdf.para('Every file in this packet with its size and SHA-256. The same list is in 00-cover/checksums.sha256; run `sha256sum -c 00-cover/checksums.sha256` from the packet root to verify nothing was altered after generation. (This manifest and the checksums file are not listed in themselves.)', { muted: true, size: 8.5 });
+      pdf.table(
+        [
+          { label: 'File' },
+          { label: 'Size', width: 60, align: 'right' },
+          { label: 'SHA-256', width: 210 },
+        ],
+        fileIndex.map((f) => [f.name, f.bytes >= 1024 * 1024 ? `${(f.bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(f.bytes / 1024))} KB`, f.sha256]),
+      );
       pdf.heading('Data integrity');
       pdf.para(
         input.scope === 'ACTIVE_WORKFORCE'
@@ -1300,7 +1321,8 @@ auditPacketRouter.post(
         `Generated ${generatedAt.toISOString()} by ${req.user!.email}. This generation event, including the stated business reason, is permanently recorded in the compliance audit log under reference ${refId}.`,
         { muted: true, size: 8.5 },
       );
-      archive.append(await pdf.render(), { name: '00-cover/manifest.pdf' });
+      append(fileIndex.map((f) => `${f.sha256}  ${f.name}`).join('\n') + '\n', { name: '00-cover/checksums.sha256' });
+      append(await pdf.render(), { name: '00-cover/manifest.pdf' });
     }
 
     await archive.finalize();

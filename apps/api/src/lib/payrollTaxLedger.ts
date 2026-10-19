@@ -72,7 +72,8 @@ async function defaultFrequency(db: Db, kind: TaxAgencyKind): Promise<DepositFre
 }
 
 /** The employer of record a run's tax belongs to: the client's own when it has one, else the tenant's default. */
-async function employerFor(db: Db, clientId: string | null): Promise<string | null> {
+/** The employer a client's pay belongs to: its own employer record, else the tenant's default. */
+export async function employerFor(db: Db, clientId: string | null): Promise<string | null> {
   if (clientId) {
     const own = await db.employerOrganization.findFirst({ where: { tenantId: tenantIdForWrite(), clientId }, select: { id: true } });
     if (own) return own.id;
@@ -128,6 +129,12 @@ export function postingsFor(items: Array<{
   localWithholding: Prisma.Decimal | number;
   taxState: string | null;
   localJurisdiction?: string | null;
+  /**
+   * The tax engine's per-jurisdiction lines for this check (PayrollItemTaxLine).
+   * When present they decide where state, local and program money is owed —
+   * a two-state worker owes two states — instead of the check's one taxState.
+   */
+  lines?: Array<{ kind: string; code: string; label: string; workState: string | null; amount: Prisma.Decimal | number; employer: boolean }>;
 }>): Posting[] {
   const n = (v: Prisma.Decimal | number) => Number(v);
   const out: Posting[] = [];
@@ -141,28 +148,68 @@ export function postingsFor(items: Array<{
   const futa = round2(items.reduce((a, i) => a + n(i.employerFuta), 0));
   if (futa > 0) out.push({ kind: 'FEDERAL_UNEMPLOYMENT', jurisdiction: 'US', amount: futa, breakdown: { futa } });
 
-  const byState = new Map<string, { wh: number; sui: number; people: number }>();
+  const byState = new Map<string, { wh: number; sui: number; pgm: number; people: number }>();
   const byLocal = new Map<string, { amount: number; people: number }>();
+  const stateOf = (l: { code: string; workState: string | null }) => (l.workState ?? l.code.slice(0, 2)).toUpperCase().trim();
+  const addState = (st: string, wh: number, sui: number, seen: Set<string>, pgm = 0) => {
+    if (!st) return;
+    const cur = byState.get(st) ?? { wh: 0, sui: 0, pgm: 0, people: 0 };
+    cur.wh += wh;
+    cur.sui += sui;
+    cur.pgm += pgm;
+    if (!seen.has(`S:${st}`)) {
+      cur.people += 1;
+      seen.add(`S:${st}`);
+    }
+    byState.set(st, cur);
+  };
+  const addLocal = (key: string, amount: number, seen: Set<string>) => {
+    const cur = byLocal.get(key) ?? { amount: 0, people: 0 };
+    cur.amount += amount;
+    if (!seen.has(`L:${key}`)) {
+      cur.people += 1;
+      seen.add(`L:${key}`);
+    }
+    byLocal.set(key, cur);
+  };
   for (const i of items) {
+    const seen = new Set<string>();
+    const lines = (i.lines ?? []).filter((l) => n(l.amount) !== 0);
+    const engineLines = lines.filter((l) => l.kind !== 'TAX_ENGINE');
+    if (engineLines.some((l) => l.kind === 'STATE' || l.kind === 'LOCAL' || l.kind === 'SCHOOL' || l.kind === 'OLT' || l.kind === 'TRANSIT' || l.kind === 'STATE_PROGRAM' || l.kind === 'EMPLOYER')) {
+      // State withholding by state; local taxes by "XX:Name" (the key the local return files under);
+      // disability / paid-leave contributions with the state's employment agency, as the program report files.
+      let stateWithheld = 0;
+      for (const l of engineLines) {
+        const amt = n(l.amount);
+        if (l.kind === 'STATE' && !l.employer) {
+          addState(stateOf(l), amt, 0, seen);
+          stateWithheld += amt;
+        } else if (l.kind === 'STATE_PROGRAM') {
+          addState(stateOf(l), 0, 0, seen, amt);
+        } else if (l.kind === 'LOCAL' || l.kind === 'SCHOOL' || l.kind === 'OLT' || l.kind === 'TRANSIT' || l.kind === 'EMPLOYER') {
+          addLocal(`${stateOf(l)}:${l.label}`, amt, seen);
+        }
+      }
+      // Withholding the lines don't place (a pre-engine amendment) stays with the check's state.
+      const rest = round2(n(i.stateWithholding) - stateWithheld);
+      const home = (i.taxState ?? '').toUpperCase().trim();
+      if (Math.abs(rest) >= 0.01 && home) addState(home, rest, 0, seen);
+      // Employer unemployment goes to the state the engine reported UI to, else the check's state.
+      const sui = engineLines.find((l) => l.kind === 'SUI');
+      const suiState = sui ? stateOf(sui) : home;
+      if (suiState) addState(suiState, 0, n(i.employerSuta), seen);
+      continue;
+    }
     const st = (i.taxState ?? '').toUpperCase().trim();
-    if (st) {
-      const cur = byState.get(st) ?? { wh: 0, sui: 0, people: 0 };
-      cur.wh += n(i.stateWithholding);
-      cur.sui += n(i.employerSuta);
-      cur.people += 1;
-      byState.set(st, cur);
-    }
+    if (st) addState(st, n(i.stateWithholding), n(i.employerSuta), seen);
     const local = i.localJurisdiction ?? null;
-    if (local && n(i.localWithholding) > 0) {
-      const cur = byLocal.get(local) ?? { amount: 0, people: 0 };
-      cur.amount += n(i.localWithholding);
-      cur.people += 1;
-      byLocal.set(local, cur);
-    }
+    if (local && n(i.localWithholding) > 0) addLocal(local, n(i.localWithholding), seen);
   }
   for (const [st, v] of [...byState.entries()].sort()) {
     if (round2(v.wh) > 0) out.push({ kind: 'STATE_WITHHOLDING', jurisdiction: st, amount: round2(v.wh), breakdown: { stateIncomeTax: round2(v.wh), people: v.people } });
-    if (round2(v.sui) > 0) out.push({ kind: 'STATE_UNEMPLOYMENT', jurisdiction: st, amount: round2(v.sui), breakdown: { unemployment: round2(v.sui), people: v.people } });
+    // Disability / paid-leave contributions file with the state's employment agency, next to unemployment.
+    if (round2(v.sui + v.pgm) > 0) out.push({ kind: 'STATE_UNEMPLOYMENT', jurisdiction: st, amount: round2(v.sui + v.pgm), breakdown: { unemployment: round2(v.sui), ...(round2(v.pgm) > 0 ? { disabilityAndPaidLeave: round2(v.pgm) } : {}), people: v.people } });
   }
   for (const [loc, v] of [...byLocal.entries()].sort()) out.push({ kind: 'LOCAL', jurisdiction: loc, amount: round2(v.amount), breakdown: { localTax: round2(v.amount), people: v.people } });
   return out;
@@ -187,6 +234,7 @@ export async function postLiabilitiesForRun(db: Db, runId: string): Promise<numb
           federalWithholding: true, fica: true, medicare: true, employerFica: true, employerMedicare: true,
           employerFuta: true, employerSuta: true, stateWithholding: true, localWithholding: true, taxState: true,
           associate: { select: { localTaxRule: { select: { state: true, name: true } } } },
+          taxLines: { select: { kind: true, code: true, label: true, workState: true, amount: true, employer: true } },
         },
       },
     },
@@ -194,7 +242,7 @@ export async function postLiabilitiesForRun(db: Db, runId: string): Promise<numb
   if (!run || run.items.length === 0) return 0;
   const payday = run.disbursedAt ?? new Date();
   const employerOrgId = await employerFor(db, run.clientId);
-  const postings = postingsFor(run.items.map((i) => ({ ...i, localJurisdiction: localJurisdictionOf(i.associate.localTaxRule) })));
+  const postings = postingsFor(run.items.map((i) => ({ ...i, lines: i.taxLines, localJurisdiction: localJurisdictionOf(i.associate.localTaxRule) })));
   let posted = 0;
   for (const p of postings) {
     const account = await resolveAccount(db, employerOrgId, p.kind, p.jurisdiction);
@@ -468,4 +516,25 @@ export async function payrollTaxesNeedingYou(db: Db, now = new Date()): Promise<
     db.agencyNotice.count({ where: { tenantId, OR: [{ status: 'NEW' }, { status: 'IN_REVIEW', responseDueAt: { lte: in7 } }] } }),
   ]);
   return deposits.length + failed + returns + notices;
+}
+
+/**
+ * The employer's state withholding account numbers, by state (W-2 box 15,
+ * EFW2 RS record). An account of this employer wins over a tenant-wide one;
+ * closed accounts and ones still waiting on registration don't count.
+ */
+export async function stateAccountNumbers(db: Db, employerOrgId: string | null): Promise<Record<string, string>> {
+  const rows = await db.taxAgencyAccount.findMany({
+    where: { tenantId: tenantIdForWrite(), kind: 'STATE_WITHHOLDING', status: { notIn: ['CLOSED', 'PENDING_REGISTRATION'] }, accountNumber: { not: null } },
+    select: { jurisdiction: true, accountNumber: true, employerOrgId: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    const st = r.jurisdiction.toUpperCase();
+    if (!r.accountNumber) continue;
+    if (r.employerOrgId && employerOrgId && r.employerOrgId === employerOrgId) out[st] = r.accountNumber;
+    else if (!out[st]) out[st] = r.accountNumber;
+  }
+  return out;
 }

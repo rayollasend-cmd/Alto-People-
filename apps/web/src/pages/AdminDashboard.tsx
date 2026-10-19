@@ -26,7 +26,7 @@ import type {
   KpiTrend,
   TermKey,
 } from '@alto-people/shared';
-import { useAuth, useRoleLabel, useTerm } from '@/lib/auth';
+import { useAuth, useRoleLabel, useTenant, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
   hasCapability,
@@ -827,6 +827,24 @@ function ActivityFeed({
   onRetry: () => void;
 }) {
   const { t } = useI18n();
+  const term = useTerm();
+  const { moduleOn } = useTenant();
+  // A record's kind in the company's own words (a hotel never reads "Client" or "Associate").
+  const entityLabel = (type: string): string => {
+    switch (type) {
+      case 'Client':
+        return moduleOn('clientPortal') ? term('label.client') : 'Account';
+      case 'Associate':
+        return term('role.associate');
+      case 'Site':
+      case 'Location':
+        return term('label.store');
+      default: {
+        const words = type.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+        return words.charAt(0).toUpperCase() + words.slice(1);
+      }
+    }
+  };
   const [expanded, setExpanded] = useState(false);
   const collapsible =
     entries !== null && entries.length > ACTIVITY_FEED_PREVIEW;
@@ -913,10 +931,10 @@ function ActivityFeed({
                               to={href}
                               className="text-gold hover:text-gold-bright"
                             >
-                              {e.entityType}
+                              {entityLabel(e.entityType)}
                             </Link>
                           ) : (
-                            e.entityType
+                            entityLabel(e.entityType)
                           )}{' '}
                           ·{' '}
                           <span className="tabular-nums">

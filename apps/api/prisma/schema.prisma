@@ -3283,6 +3283,18 @@ model W4Submission {
   otherIncome      Decimal        @default(0) @db.Decimal(12, 2)
   deductions       Decimal        @default(0) @db.Decimal(12, 2)
   extraWithholding Decimal        @default(0) @db.Decimal(12, 2)
+  /// An "Exempt" W-4 and the tax year it covers (good through February 15 of the next).
+  exempt              Boolean         @default(false)
+  exemptTaxYear       Int?
+  /// Nonresident alien employee: Pub 15-T Tables 1/2 add-on to wages for the calculation.
+  nonresidentAlien    Boolean         @default(false)
+  /// Allowances on a 2019-or-earlier W-4 that was never replaced (null = 2020-or-later form).
+  pre2020Allowances   Int?
+  /// IRS lock-in letter (Letter 2800C): the filing status and Step 2 it fixes, from this date.
+  lockInFilingStatus  W4FilingStatus?
+  lockInMultipleJobs  Boolean?
+  lockInEffectiveDate DateTime?       @db.Date
+  lockInReceivedAt    DateTime?       @db.Timestamptz(6)
   ssnEncrypted     Bytes?
   signedDocumentId String?        @db.Uuid
   signedAt         DateTime?      @db.Timestamptz(6)
@@ -4168,7 +4180,10 @@ model PayrollItem {
 
   // Tier-1 — paper check issued for this item (CHECK rail or electronic
   // fallback). One check per item; reissue voids and re-creates.
-  payCheck PayCheck?
+  /// Every deduction on this check, itemized (PayrollItemDeduction).
+  deductions PayrollItemDeduction[]
+  payChecks PayCheck[]
+  payoutOverride PayrollItemPayoutOverride?
 
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
@@ -4338,7 +4353,8 @@ model PayrollRunAddOn {
 model PayCheck {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   checkNumber   Int         @unique @default(autoincrement())
-  payrollItemId String      @unique @db.Uuid
+  /// One live (unvoided) check per paycheck — a partial unique index in the migration.
+  payrollItemId String      @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId      String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   payeeName     String
@@ -4346,10 +4362,73 @@ model PayCheck {
   memo          String?
   issuedAt      DateTime    @default(now()) @db.Timestamptz(6)
   voidedAt      DateTime?   @db.Timestamptz(6)
+  /// The mailing address printed in the envelope window, as it was when the check was issued.
+  payeeAddress      Json?
+  printedAt         DateTime? @db.Timestamptz(6)
+  printedById       String?   @db.Uuid
+  printCount        Int       @default(0)
+  voidReason        String?   @db.VarChar(500)
+  voidedById        String?   @db.Uuid
+  /// The voided check this one replaces.
+  reissuedFromId    String?   @db.Uuid
+  stopPaymentAt     DateTime? @db.Timestamptz(6)
+  stopPaymentById   String?   @db.Uuid
+  stopPaymentReason String?   @db.VarChar(500)
+  stopPaymentRef    String?   @db.VarChar(80)
+  /// Sent to the bank's positive-pay file as issued / as void.
+  positivePayAt     DateTime? @db.Timestamptz(6)
+  positivePayVoidAt DateTime? @db.Timestamptz(6)
   payrollItem   PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
 
   @@index([issuedAt])
   @@index([tenantId])
+  @@index([payrollItemId])
+}
+
+/// "Pay this paycheck by paper check this time" — payroll's decision, or an associate's request payroll approved.
+model PayrollItemPayoutOverride {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  payrollItemId     String      @unique @db.Uuid
+  /// CHECK
+  method            String      @default("CHECK") @db.VarChar(10)
+  reason            String      @db.VarChar(500)
+  /// PAYROLL | ASSOCIATE
+  source            String      @default("PAYROLL") @db.VarChar(12)
+  requestedById     String?     @db.Uuid
+  approvalRequestId String?     @db.Uuid
+  createdAt         DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime    @updatedAt @db.Timestamptz(6)
+  clearedAt         DateTime?   @db.Timestamptz(6)
+  clearedById       String?     @db.Uuid
+  clearReason       String?     @db.VarChar(500)
+  payrollItem       PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+/// How this tenant's paper checks print: the account they're drawn on, calibration, signature.
+model CheckSettings {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId              String?  @unique @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// The EmployerBankAccount checks are drawn on (its routing / account print in the MICR line).
+  bankAccountId         String?  @db.Uuid
+  bankName              String?  @db.VarChar(120)
+  bankAddress           String?  @db.VarChar(200)
+  /// The ABA fraction printed top right, e.g. "63-1234/631".
+  fractionalRouting     String?  @db.VarChar(20)
+  /// Printer calibration: shifts everything by this many points (±36).
+  offsetXPt             Float    @default(0)
+  offsetYPt             Float    @default(0)
+  signatureImage        Bytes?
+  signatureContentType  String?  @db.VarChar(40)
+  signatureSignerName   String?  @db.VarChar(120)
+  /// Checks above this need two signatures (the facsimile never prints on them).
+  twoSignatureOverCents BigInt?
+  voidAfterDays         Int      @default(90)
+  updatedById           String?  @db.Uuid
+  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(6)
 }
 
 // Wave 1.2 — One row per earning line on a paystub. The sum of all
@@ -5614,6 +5693,7 @@ enum ApprovalRequestKind {
   DAILY_PAY_POLICY
   BILLING_ADJUSTMENT
   GARNISHMENT_PAYEE_BANK
+  PAY_BY_CHECK
 }
 
 enum ApprovalRequestStatus {
@@ -15715,4 +15795,32 @@ model PayrollRunReview {
 
   @@index([payrollRunId, signedAt])
   @@index([tenantId])
+}
+
+/// One deduction on one paycheck: what it was, whose money, and which wage bases it lowered.
+model PayrollItemDeduction {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  payrollItemId  String      @db.Uuid
+  /// MEDICAL | DENTAL | VISION | HSA | HEALTH_FSA | DCAP | RET_401K | RET_403B | ROTH_401K | ROTH_403B | RET_LOAN | GARNISHMENT | EWA_RECOVERY | RIDES | LIFE | DISABILITY | UNION_DUES | AFTER_TAX_OTHER | ER_401K_MATCH | ER_HEALTH | ER_HSA …
+  code           String      @db.VarChar(40)
+  /// PRE_TAX | POST_TAX | EMPLOYER (an employer-paid amount, never taken from the check)
+  category       String      @db.VarChar(12)
+  label          String      @db.VarChar(160)
+  employeeAmount Decimal     @default(0) @db.Decimal(12, 2)
+  employerAmount Decimal     @default(0) @db.Decimal(12, 2)
+  /// BenefitEnrollment | RetirementElection | Garnishment | RetirementLoan | EarnedWageAdvance | RideCharge | PendingPayrollDeduction …
+  sourceType     String?     @db.VarChar(40)
+  sourceId       String?     @db.Uuid
+  /// Wage bases this deduction lowered when the check was cut: FIT, SS, MEDICARE, FUTA, "SIT:PA", "SUI:CA", "PGM:CA_SDI", "LOCAL".
+  exemptFrom     String[]    @default([])
+  w2Box12Code    String?     @db.VarChar(4)
+  w2Box14Label   String?     @db.VarChar(40)
+  w2Box10        Boolean     @default(false)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+  payrollItem    PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+
+  @@index([payrollItemId])
+  @@index([tenantId, code])
+  @@index([sourceType, sourceId])
 }

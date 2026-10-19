@@ -1,49 +1,49 @@
-// Gap 1 — Form W-2 plain-paper renderer.
+// Form W-2 for the employee, on plain paper (IRS Pub 1141 §2.3 substitute
+// employee copies).
 //
-// One layout, five copy variants (A/B/C/D/2) — the only material
-// difference between the recipient copies is the header label per IRS
-// Pub 1141 §4.05. Copy A is the SSA submission copy; Copy B is the
-// employee's federal-return attachment; Copy C is the employee's
-// personal record; Copy 2 is the employee's state/local-return
-// attachment; Copy D is the employer's record.
+// The default download is the employee's whole statement:
+//   1. a cover letter in the house style (a permissible enclosure — the
+//      only page with brand colour) explaining each box with the person's
+//      own numbers, and what to do with each copy;
+//   2. Copy B and Copy C, then Copy 2 (two of them: state and local), each
+//      a compliant black-ink copy, two to a page with a cut line between;
+//      a copy that can't hold every box 12 code or state/local row
+//      continues on another copy;
+//   3. the Notice to Employee and box instructions, including the earned
+//      income credit notice Pub 1141 §2.3 .20 requires.
+// A single copy (A, C, D or 2) renders just that copy; the 4-up layout
+// puts B, C, 2, 2 on one perforated-stock sheet in the vertical format.
 //
-// Practical reality: most employers (this product included) submit
-// Copy A *electronically* via EFW2 — paper Copy A on red drop-out
-// ink with prior IRS approval is rare. We still render a Copy A
-// variant so a finance reviewer can compare the form's shape, and so
-// the 4-up multi-copy layout below has all the labels it needs.
-//
-// Output is intentionally austere; Rippling/Gusto's plain-paper W-2
-// looks essentially identical. Substitute-form approval (Pub 1141) is
-// a separate process — this renderer is a starting point that finance
-// can review before we commit to either pursuing approval or shipping
-// pre-printed forms.
+// Copy A is filed with the SSA electronically (EFW2). Paper Copy A needs
+// red drop-out ink and SSA approval, so the Copy A printout is labelled
+// as a record, not a filing.
 
-import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
 import type { W2Boxes, W2StateLine } from './w2Aggregator.js';
+import { COLOR, SIZE, createDoc, fmt, type Kit } from './docKit/index.js';
+import {
+  BLACK,
+  BOX12_MEANING,
+  GREY,
+  W2_BOX_INSTRUCTIONS,
+  W2_NOTICE_TO_EMPLOYEE,
+  drawW2Copy,
+  drawW2CopyNarrow,
+  w2NarrowHeight,
+  stateLocalRows,
+  w2CopyHeight,
+  w2Parts,
+  type W2CopyData,
+} from './taxFormKit.js';
 
 /**
- * Which copy of the W-2 to render. Header label and footer disclaimer
- * change per IRS Pub 1141; everything else is identical.
+ * Which copy of the W-2 to render. Copy B (the default) renders the
+ * employee's full statement: cover, Copies B, C and 2, instructions.
  */
 export type W2CopyVariant = 'A' | 'B' | 'C' | 'D' | '2';
 
-const COPY_LABEL: Record<W2CopyVariant, string> = {
-  A: 'Copy A—For Social Security Administration. Send this entire page with Form W-3 to the SSA; photocopies are not acceptable.',
-  B: "Copy B—To Be Filed With Employee's FEDERAL Tax Return.",
-  C: "Copy C—For EMPLOYEE'S RECORDS (See Notice to Employee on the back of Copy B.)",
-  D: 'Copy D—For Employer.',
-  '2': "Copy 2—To Be Filed With Employee's State, City, or Local Income Tax Return.",
-};
-
 export interface W2PdfData {
   taxYear: number;
-  /**
-   * Which copy to render. Defaults to Copy B (employee files with their
-   * federal return) — the most-requested copy. The 4-up layout below
-   * passes B/C/2/2 explicitly.
-   */
   copyVariant?: W2CopyVariant;
   /** Employer block (Box b/c). */
   employer: {
@@ -59,7 +59,7 @@ export interface W2PdfData {
   };
   /** Employee block (Box a/e/f). */
   employee: {
-    /** Full SSN, formatted "XXX-XX-XXXX" (Box a). */
+    /** Full SSN, formatted "XXX-XX-XXXX" (Box a); employee copies show the last four. */
     ssn: string;
     firstName: string;
     lastName: string;
@@ -73,330 +73,213 @@ export interface W2PdfData {
   controlNumber: string;
   /** Box totals from w2Aggregator. */
   boxes: W2Boxes;
-  /** Stamped on the bottom-right for audit; doesn't affect IRS validity. */
   meta: {
     formId: string;
     generatedAt: string;
   };
 }
 
-export async function renderW2Pdf(data: W2PdfData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-    // Deterministic bytes: pdfkit stamps CreationDate=now by default, so
-    // every re-render hashed differently and the pdfHash immutability
-    // check warned on EVERY re-download � permanent log noise. Pin the
-    // date to the form's own timestamp (meta.generatedAt = TaxForm
-    // createdAt), making identical inputs produce identical bytes.
-      size: 'LETTER',
-      margin: 36,
-      info: { CreationDate: new Date(data.meta.generatedAt) },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    drawHeader(doc, data);
-    drawIdBlock(doc, data);
-    drawWageBoxes(doc, data.boxes);
-    drawStateLines(doc, data.boxes.stateLines);
-    drawFooter(doc, data);
-
-    doc.end();
-  });
-}
-
-/**
- * 4-up multi-copy paper layout — packs Copy B (federal), Copy C
- * (employee record), and two Copy 2's (state/local) onto one Letter-
- * size sheet. This is the standard payroll-house format that's
- * pre-perforated by 1099/W-2 paper vendors so the employee can tear
- * off each copy.
- *
- * Page divides into four 4×5.5" quadrants (top-left, top-right,
- * bottom-left, bottom-right) with a shared header strip across the
- * top and a thin tear/cut line down the middle and across the
- * horizontal seam. Each quadrant uses PDFKit's `save/translate/scale`
- * to reuse the single-copy layout at half scale — no duplicated
- * draw code.
- */
-export async function renderW2Pdf4Up(data: W2PdfData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-    // Deterministic bytes: pdfkit stamps CreationDate=now by default, so
-    // every re-render hashed differently and the pdfHash immutability
-    // check warned on EVERY re-download � permanent log noise. Pin the
-    // date to the form's own timestamp (meta.generatedAt = TaxForm
-    // createdAt), making identical inputs produce identical bytes.
-      size: 'LETTER',
-      margin: 0,
-      info: { CreationDate: new Date(data.meta.generatedAt) },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    // Letter @ 72dpi = 612 × 792. Each quadrant is 306 × 396.
-    const W = 612;
-    const H = 792;
-    const halfW = W / 2;
-    const halfH = H / 2;
-
-    // Tear/cut guides — single-pixel hairlines at the seams.
-    doc
-      .strokeColor('#999')
-      .lineWidth(0.3)
-      .moveTo(halfW, 0).lineTo(halfW, H).stroke()
-      .moveTo(0, halfH).lineTo(W, halfH).stroke();
-
-    // The four quadrants — Copy B (federal) / C (employee record)
-    // top, two Copy 2's (state) bottom. This matches every paper
-    // vendor's preprinted W-2 stock I've checked.
-    const quadrants: Array<{ x: number; y: number; copy: W2CopyVariant }> = [
-      { x: 0,     y: 0,     copy: 'B' },
-      { x: halfW, y: 0,     copy: 'C' },
-      { x: 0,     y: halfH, copy: '2' },
-      { x: halfW, y: halfH, copy: '2' },
-    ];
-
-    for (const q of quadrants) {
-      doc.save();
-      // The single-copy renderer assumes a full 612×792 canvas; squeeze
-      // it into the quadrant by translating to the quadrant's origin
-      // and scaling by 0.5.
-      doc.translate(q.x, q.y).scale(0.5);
-      drawHeader(doc, { ...data, copyVariant: q.copy });
-      drawIdBlock(doc, data);
-      drawWageBoxes(doc, data.boxes);
-      drawStateLines(doc, data.boxes.stateLines);
-      drawFooter(doc, { ...data, copyVariant: q.copy });
-      doc.restore();
-    }
-
-    doc.end();
-  });
-}
-
 export function hashW2Pdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
-// ---- Layout helpers ------------------------------------------------------
-
-function drawHeader(doc: PDFKit.PDFDocument, data: W2PdfData): void {
-  const variant = data.copyVariant ?? 'B';
-  // Title strip
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(14)
-    .text(`Form W-2  Wage and Tax Statement  ${data.taxYear}`, 36, 36, {
-      width: 540,
-      align: 'left',
-    });
-  doc
-    .font('Helvetica')
-    .fontSize(8)
-    .fillColor('#444')
-    .text(COPY_LABEL[variant], 36, 54, { width: 540 });
-  doc.fillColor('#000');
-  // Department footer line at top — IRS substitute forms typically carry
-  // this so a recipient can verify the form's source.
-  doc
-    .fontSize(7)
-    .fillColor('#666')
-    .text('Department of the Treasury — Internal Revenue Service', 36, 66, {
-      width: 540,
-    });
-  doc.fillColor('#000');
-
-  // Border around the whole form
-  doc.rect(36, 84, 540, 600).strokeColor('#000').lineWidth(0.6).stroke();
+function copyData(d: W2PdfData): W2CopyData {
+  return { taxYear: d.taxYear, employer: d.employer, employee: d.employee, controlNumber: d.controlNumber, boxes: d.boxes };
 }
 
-function drawIdBlock(doc: PDFKit.PDFDocument, data: W2PdfData): void {
-  // Top three boxes: a (SSN), b (EIN), c (Employer)
-  // Layout splits the top 110px vertically into:
-  //   row 1 (90-130): a (left half) | b (right half)
-  //   row 2 (130-190): c (full width)
-  cell(doc, 36, 90, 270, 40, 'a  Employee\'s social security number', data.employee.ssn);
-  cell(doc, 306, 90, 270, 40, 'b  Employer identification number (EIN)', data.employer.ein);
+const MARGIN = 36;
 
-  cell(
-    doc,
-    36,
-    130,
-    540,
-    60,
-    'c  Employer\'s name, address, and ZIP code',
+/** Copies of one kind, two to a page with a cut line between. Returns nothing; pages are added as needed. */
+function drawCopies(k: Kit, d: W2PdfData, copies: W2CopyVariant[], firstPage: boolean): void {
+  const cd = copyData(d);
+  let y = MARGIN;
+  let onPage = 0;
+  let pageStarted = !firstPage;
+  const startPage = () => {
+    if (pageStarted) k.doc.addPage();
+    pageStarted = true;
+    y = MARGIN;
+    onPage = 0;
+  };
+  startPage();
+  for (const copy of copies) {
+    for (const part of w2Parts(d.boxes, copy)) {
+      const h = w2CopyHeight(d.boxes, part, copy);
+      if (onPage > 0 && y + 18 + h > 792 - 52) startPage();
+      if (onPage > 0) {
+        // Cut line between copies (Pub 1141 §2.3 .05: each copy easily separated).
+        k.doc.save().lineWidth(0.5).dash(3, { space: 3 }).strokeColor(GREY).moveTo(MARGIN, y + 6).lineTo(612 - MARGIN, y + 6).stroke().undash().restore();
+        k.text('Cut along the dotted line', MARGIN, y + 9, { size: 5.5, color: GREY });
+        y += 18;
+      }
+      y += drawW2Copy(k, MARGIN, y, cd, copy, part);
+      onPage += 1;
+    }
+  }
+}
+
+function coverPage(k: Kit, d: W2PdfData): void {
+  const b = d.boxes;
+  const er = d.employer;
+  const name = `${d.employee.firstName} ${d.employee.lastName}`.trim();
+  let y = k.masthead({
+    title: `Your ${d.taxYear} Form W-2`,
+    subtitle: 'Wage and Tax Statement',
+    brand: { name: er.name, lines: [[er.addressLine1, [[er.city, er.state].filter(Boolean).join(', '), er.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '), `EIN ${fmt.ein(er.ein)}`].filter(Boolean) },
+  });
+  const intro = `${name}, this is your Form W-2 for ${d.taxYear}: what ${er.name} paid you and the taxes withheld from that pay. You'll need it to file your tax return. The official copies follow this page; the boxes are explained below with your numbers.`;
+  y += k.para(intro, k.L, y, k.width(), { size: SIZE.body, color: COLOR.ink2 }) + 12;
+
+  const stateTax = (b.stateLines ?? []).reduce((s, l) => s + l.stateIncomeTax, 0) + (b.localLines ?? []).reduce((s, l) => s + l.localIncomeTax, 0);
+  y = k.figures(
     [
-      data.employer.name,
-      data.employer.addressLine1,
-      data.employer.addressLine2,
-      [data.employer.city, data.employer.state, data.employer.zip]
-        .filter(Boolean)
-        .join(', '),
-    ]
-      .filter((s) => s && s.length > 0)
-      .join('\n'),
+      { label: 'Wages (box 1)', value: fmt.money(b.box1Wages) },
+      { label: 'Federal tax (box 2)', value: fmt.money(b.box2FitWithheld) },
+      { label: 'SS + Medicare tax', value: fmt.money(b.box4SsTax + b.box6MedicareTax), hint: 'Boxes 4 and 6' },
+      { label: 'State and local tax', value: fmt.money(stateTax), hint: 'Boxes 17 and 19' },
+    ],
+    y,
   );
 
-  // d Control number — single full-width row
-  cell(doc, 36, 190, 540, 28, 'd  Control number', data.controlNumber);
+  y = k.section('What each box means', y, 'Your amounts');
+  type R = { box: string; what: string; amount: string };
+  const rows: R[] = [
+    { box: '1', what: 'Wages, tips and other pay subject to federal income tax', amount: fmt.money(b.box1Wages) },
+    { box: '2', what: 'Federal income tax withheld from your pay', amount: fmt.money(b.box2FitWithheld) },
+    { box: '3', what: 'Wages subject to Social Security tax (up to the yearly limit)', amount: fmt.money(b.box3SsWages) },
+    { box: '4', what: 'Social Security tax withheld', amount: fmt.money(b.box4SsTax) },
+    { box: '5', what: 'Wages subject to Medicare tax (no limit)', amount: fmt.money(b.box5MedicareWages) },
+    { box: '6', what: 'Medicare tax withheld', amount: fmt.money(b.box6MedicareTax) },
+  ];
+  if (b.box7SsTips) rows.push({ box: '7', what: 'Tips you reported, subject to Social Security tax', amount: fmt.money(b.box7SsTips) });
+  if (b.box10DependentCare) rows.push({ box: '10', what: 'Dependent care benefits', amount: fmt.money(b.box10DependentCare) });
+  for (const c of b.box12 ?? []) rows.push({ box: `12 · ${c.code}`, what: BOX12_MEANING[c.code] ?? 'See the box 12 instructions', amount: fmt.money(c.amount) });
+  if (b.box13RetirementPlan) rows.push({ box: '13', what: 'You took part in a workplace retirement plan this year', amount: 'Checked' });
+  if (b.box13ThirdPartySickPay) rows.push({ box: '13', what: 'Sick pay from an insurer is included', amount: 'Checked' });
+  for (const o of b.box14Other ?? []) rows.push({ box: '14a', what: o.label, amount: fmt.money(o.amount) });
+  for (const r of stateLocalRows(b)) {
+    if (r.stateWages || r.stateTax) rows.push({ box: `16–17 · ${r.state}`, what: `${r.state} wages and state income tax withheld`, amount: `${fmt.money(r.stateWages)} · ${fmt.money(r.stateTax)}` });
+    if (r.locality) rows.push({ box: '18–20', what: `${r.locality} wages and local tax withheld`, amount: `${fmt.money(r.localWages)} · ${fmt.money(r.localTax)}` });
+  }
+  y = k.table({
+    y,
+    rows,
+    rowH: 14.5,
+    columns: [
+      { key: 'box', header: 'Box', width: 1.3, value: (r) => r.box, strong: true },
+      { key: 'what', header: 'What it is', width: 6.2, value: (r) => r.what },
+      { key: 'amount', header: 'Your amount', width: 2.5, align: 'right', value: (r) => r.amount },
+    ],
+  });
 
-  // e Employee name + f Address — stacked rows
-  cell(
-    doc,
-    36,
-    218,
-    540,
-    32,
-    'e  Employee\'s first name and initial    Last name',
-    `${data.employee.firstName} ${data.employee.lastName}`,
+  y = k.section('What to do with each copy', y);
+  const copies: Array<[string, string]> = [
+    ['Copy B', 'File with your federal tax return (attach it if you file on paper).'],
+    ['Copy C', 'Keep for your records — at least four years.'],
+    ['Copy 2', 'File with your state, city or local tax return if you have to file one. Two are included.'],
+  ];
+  for (const [c, t] of copies) {
+    k.text(c, k.L, y, { size: SIZE.body, weight: 'semibold', width: 70 });
+    k.text(t, k.L + 70, y, { size: SIZE.body, color: COLOR.ink2, width: k.width() - 70 });
+    y += 15;
+  }
+  y += 8;
+  // Corrections are also covered on the notice page; the note here only when it fits.
+  if (y + 64 > k.bottom()) return;
+  k.callout(
+    {
+      tone: 'info',
+      title: 'Something looks wrong?',
+      body: `If your name, Social Security number or any amount is wrong, contact ${er.name} payroll. They will issue a Form W-2c and correct the record with the Social Security Administration. For your protection the copies show only the last four digits of your SSN; your full number was reported to the IRS and SSA.`,
+    },
+    y,
   );
-  cell(
-    doc,
-    36,
-    250,
-    540,
-    44,
-    'f  Employee\'s address and ZIP code',
-    [
-      data.employee.addressLine1,
-      data.employee.addressLine2,
-      [data.employee.city, data.employee.state, data.employee.zip]
-        .filter(Boolean)
-        .join(', '),
-    ]
-      .filter((s) => s && s.length > 0)
-      .join('\n'),
-  );
 }
 
-function drawWageBoxes(doc: PDFKit.PDFDocument, boxes: W2Boxes): void {
-  // Six boxes (1-6) in two columns of three rows. Right column carries
-  // the matching tax-withheld figure. Standard IRS Form W-2 layout.
-  const top = 300;
-  const rowH = 32;
-  const left = 36;
-  const mid = 306;
-  const w = 270;
-
-  cell(doc, left, top + 0 * rowH, w, rowH, '1  Wages, tips, other compensation', usd(boxes.box1Wages));
-  cell(doc, mid,  top + 0 * rowH, w, rowH, '2  Federal income tax withheld',     usd(boxes.box2FitWithheld));
-  cell(doc, left, top + 1 * rowH, w, rowH, '3  Social security wages',           usd(boxes.box3SsWages));
-  cell(doc, mid,  top + 1 * rowH, w, rowH, '4  Social security tax withheld',    usd(boxes.box4SsTax));
-  cell(doc, left, top + 2 * rowH, w, rowH, '5  Medicare wages and tips',         usd(boxes.box5MedicareWages));
-  cell(doc, mid,  top + 2 * rowH, w, rowH, '6  Medicare tax withheld',           usd(boxes.box6MedicareTax));
-
-  // Boxes 7–14 in rows of 24pt. Box 8 (allocated tips), 9 and 11 are not
-  // produced by this payroll and stay blank. Box 12 carries up to four codes
-  // (a–d) — a fifth or more goes on an additional W-2 per the IRS
-  // instructions, so the extra codes are listed in 14a for the reviewer.
-  // Box 14 is split into 14a (other) and 14b (Treasury Tipped Occupation
-  // Code) from tax year 2026 (OBBBA §70201; IRS 2026 W-2 instructions).
-  const r = 24;
-  const y0 = top + 3 * rowH + 8;
-  const codes = boxes.box12 ?? [];
-  const code = (i: number) => (codes[i] ? `${codes[i]!.code}  ${usd(codes[i]!.amount)}` : '');
-  const overflow = codes.slice(4).map((c) => `${c.code} ${usd(c.amount)}`).join(' · ');
-  cell(doc, left, y0, w, r, '7  Social security tips', boxes.box7SsTips ? usd(boxes.box7SsTips) : '');
-  cell(doc, mid,  y0, w, r, '8  Allocated tips', '');
-  cell(doc, left, y0 + r, w, r, '10  Dependent care benefits', boxes.box10DependentCare ? usd(boxes.box10DependentCare) : '');
-  cell(doc, mid,  y0 + r, w, r, '11  Nonqualified plans', '');
-  cell(doc, left, y0 + 2 * r, w, r, '12a  See instructions for box 12', code(0));
-  cell(doc, mid,  y0 + 2 * r, w, r, '12b', code(1));
-  cell(doc, left, y0 + 3 * r, w, r, '12c', code(2));
-  cell(doc, mid,  y0 + 3 * r, w, r, '12d', code(3));
-  const box13 = boxes.box13ThirdPartySickPay ? '13: Third-party sick pay [X]' : '';
-  cell(doc, left, y0 + 4 * r, w, r, '14a  Other', [overflow ? `Box 12 cont.: ${overflow}` : '', box13].filter(Boolean).join(' · '));
-  cell(doc, mid,  y0 + 4 * r, w, r, '14b  Treasury tipped occupation code', (boxes.box14bTippedOccupationCodes ?? []).join('   '));
+function instructionsPage(k: Kit, d: W2PdfData): void {
+  k.doc.addPage();
+  let y = k.top;
+  k.text(`Notice to Employee · Form W-2 (${d.taxYear})`, k.L, y, { size: SIZE.heading, family: 'display', weight: 'semibold', color: BLACK });
+  y += 26;
+  const colW = (k.width() - 18) / 2;
+  let col = 0;
+  let cy = y;
+  const block = (title: string, body: string) => {
+    const h = k.para(body, 0, 0, colW, { size: 7.5 }, false) + 14;
+    if (cy + h > k.bottom()) {
+      if (col === 0) {
+        col = 1;
+        cy = y;
+      } else {
+        k.doc.addPage();
+        col = 0;
+        cy = k.top;
+        y = k.top;
+      }
+    }
+    const x = k.L + col * (colW + 18);
+    k.text(title, x, cy, { size: 8, weight: 'semibold', color: BLACK, width: colW });
+    cy += 11;
+    cy += k.para(body, x, cy, colW, { size: 7.5, color: BLACK }) + 6;
+  };
+  for (const n of W2_NOTICE_TO_EMPLOYEE) block(n.title, n.body);
+  block('Instructions for Employee', 'See also the Notice to Employee. Box explanations follow.');
+  for (const i of W2_BOX_INSTRUCTIONS) block(i.box, i.body);
+  const codes = [...new Set((d.boxes.box12 ?? []).map((c) => c.code))];
+  if (codes.length) block('Box 12 codes on your form', codes.map((c) => `${c} — ${BOX12_MEANING[c] ?? 'see the General Instructions for Forms W-2 and W-3'}.`).join(' '));
 }
 
-function drawStateLines(doc: PDFKit.PDFDocument, lines: W2StateLine[]): void {
-  // Box 15-17 — one row per state. Single-state is the common case;
-  // multi-state employees get one row each (up to 2 fit cleanly here).
-  const top = 544;
-  const rowH = 28;
-
-  // Header strip
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(7)
-    .text('15  State', 40, top - 12, { width: 60 })
-    .text('Employer\'s state ID', 96, top - 12, { width: 100 })
-    .text('16  State wages, tips, etc.', 230, top - 12, { width: 130 })
-    .text('17  State income tax', 380, top - 12, { width: 130 });
-  doc.font('Helvetica');
-
-  if (lines.length === 0) {
-    cell(doc, 36, top, 540, rowH, '', '— No state withholding —');
-    return;
+export async function renderW2Pdf(data: W2PdfData): Promise<Buffer> {
+  const copy = data.copyVariant ?? 'B';
+  const { k } = createDoc({
+    title: `Form W-2 ${data.taxYear} · ${data.employee.firstName} ${data.employee.lastName}`,
+    author: data.employer.name,
+    margin: MARGIN,
+    creationDate: new Date(data.meta.generatedAt),
+  });
+  if (copy === 'B') {
+    coverPage(k, data);
+    drawCopies(k, data, ['B', 'C'], false);
+    drawCopies(k, data, ['2', '2'], false);
+    instructionsPage(k, data);
+  } else {
+    drawCopies(k, data, [copy], true);
+    if (copy === 'C' || copy === '2') instructionsPage(k, data);
   }
+  return k.finish({ reference: `Form W-2 ${data.taxYear} · ${data.meta.formId.slice(0, 8)}`, note: data.employer.name });
+}
 
-  let y = top;
-  for (const line of lines.slice(0, 2)) {
-    doc
-      .rect(36, y, 540, rowH)
-      .strokeColor('#000')
-      .lineWidth(0.4)
-      .stroke();
-    doc
-      .font('Helvetica')
-      .fontSize(11)
-      .fillColor('#000')
-      .text(line.state, 44, y + 8, { width: 50 })
-      .text('—', 100, y + 8, { width: 100 })
-      .text(usd(line.stateWages), 230, y + 8, { width: 130 })
-      .text(usd(line.stateIncomeTax), 380, y + 8, { width: 130 });
-    y += rowH;
+/**
+ * 4-up sheet: B, C, 2, 2 in the vertical format, one per 4.25" × 5.5"
+ * quadrant, for perforated W-2 stock; the notice follows. A W-2 with too
+ * much to fit a quadrant prints the full-size copies instead.
+ */
+export async function renderW2Pdf4Up(data: W2PdfData): Promise<Buffer> {
+  const cd = copyData(data);
+  const qW = 306;
+  const qH = 396;
+  const pad = 10;
+  const fits = Math.max(w2NarrowHeight(data.boxes, 'B'), w2NarrowHeight(data.boxes, '2')) <= qH - pad * 2;
+  const { k } = createDoc({ title: `Form W-2 ${data.taxYear} (4-up)`, author: data.employer.name, margin: MARGIN, creationDate: new Date(data.meta.generatedAt) });
+  if (!fits) {
+    drawCopies(k, data, ['B', 'C', '2', '2'], true);
+  } else {
+    // The quadrants run edge to edge: drop the margins while drawing so the
+    // PDF library never treats a low line as a page overflow.
+    const saved = { ...k.doc.page.margins };
+    k.doc.page.margins = { top: 0, bottom: 0, left: 0, right: 0 };
+    k.doc.save().lineWidth(0.3).dash(2, { space: 2 }).strokeColor(GREY).moveTo(qW, 0).lineTo(qW, 792).stroke().moveTo(0, qH).lineTo(612, qH).stroke().undash().restore();
+    const quads: Array<{ x: number; y: number; copy: W2CopyVariant }> = [
+      { x: 0, y: 0, copy: 'B' },
+      { x: qW, y: 0, copy: 'C' },
+      { x: 0, y: qH, copy: '2' },
+      { x: qW, y: qH, copy: '2' },
+    ];
+    for (const q of quads) drawW2CopyNarrow(k, q.x, q.y + pad, qW, qH - pad * 2, cd, q.copy);
+    k.doc.page.margins = saved;
   }
+  instructionsPage(k, data);
+  return k.finish({ reference: `Form W-2 ${data.taxYear} · ${data.meta.formId.slice(0, 8)}`, note: data.employer.name, skipPages: fits ? [0] : [] });
 }
 
-function drawFooter(doc: PDFKit.PDFDocument, data: W2PdfData): void {
-  const variant = data.copyVariant ?? 'B';
-  doc
-    .font('Helvetica')
-    .fontSize(7)
-    .fillColor('#666')
-    .text(
-      `Form W-2 (${data.taxYear})  ·  Copy ${variant}  ·  ID ${data.meta.formId.slice(0, 8)}  ·  ` +
-        `Generated by Alto People at ${data.meta.generatedAt}`,
-      36,
-      702,
-      { width: 540, align: 'center' },
-    );
-  doc.fillColor('#000');
-}
-
-function cell(
-  doc: PDFKit.PDFDocument,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  label: string,
-  value: string,
-): void {
-  doc.rect(x, y, w, h).strokeColor('#000').lineWidth(0.4).stroke();
-  if (label) {
-    doc
-      .font('Helvetica')
-      .fontSize(6)
-      .fillColor('#444')
-      .text(label, x + 4, y + 3, { width: w - 8, lineBreak: false, ellipsis: true });
-  }
-  doc
-    .font('Helvetica')
-    .fontSize(11)
-    .fillColor('#000')
-    .text(value, x + 4, y + 13, { width: w - 8 });
-}
-
-function usd(n: number): string {
-  if (n === 0) return '';
-  // No leading $; W-2 boxes are unitless and the IRS form text already
-  // says wages/tax so the dollar sign would be redundant.
-  return n.toFixed(2);
-}
+export type { W2Boxes, W2StateLine };

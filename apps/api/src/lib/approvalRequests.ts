@@ -88,6 +88,7 @@ const KIND_LINK: Record<ApprovalRequestKind, (r: ApprovalRequest) => string> = {
   DAILY_PAY_POLICY: () => '/payroll/daily-pay',
   BILLING_ADJUSTMENT: () => '/finance/pay-bill?tab=adjustments',
   GARNISHMENT_PAYEE_BANK: () => '/payroll/garnishments?tab=orders',
+  PAY_BY_CHECK: (r) => `/payroll/runs/${(r.proposed as { runId?: string } | null)?.runId ?? ''}/checks`,
   PAYROLL_FUNDING_LIMIT: (r) => (r.subjectType === 'PayrollRun' ? `/payroll/banking?run=${r.subjectId}` : '/payroll/banking?tab=setup'),
 };
 

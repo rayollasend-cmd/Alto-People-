@@ -1,49 +1,13 @@
-// Gap 11 — Phase 8: Form 1099-MISC plain-paper renderer.
-//
-// Mirrors f1099NecPdf's layout/conventions but lays out 1099-MISC's
-// 14 numbered boxes + Box 7 checkbox + Boxes 15-17 state block.
-//
-//   Copy A — For Internal Revenue Service Center
-//   Copy 1 — For State Tax Department
-//   Copy B — For Recipient
-//   Copy 2 — To be filed with recipient's state income tax return
-//   Copy C — For Payer's records
-//
-// Box layout follows 2024 form:
-//   1   Rents
-//   2   Royalties
-//   3   Other income
-//   4   Federal income tax withheld
-//   5   Fishing boat proceeds
-//   6   Medical and health care payments
-//   7   Direct sales of $5,000+ (checkbox)
-//   8   Substitute payments in lieu of dividends or interest
-//   9   Crop insurance proceeds
-//   10  Gross proceeds paid to an attorney
-//   11  Fish purchased for resale
-//   12  Section 409A deferrals
-//   13  Excess golden parachute payments
-//   14  Nonqualified deferred compensation
-//   15  State tax withheld
-//   16  State / Payer's state no.
-//   17  State income
-//
-// Substitute-form approval (Pub 1141) is a separate process; this is a
-// starting point for finance to review.
+// Form 1099-MISC, Miscellaneous Information, for the recipient (IRS Pub 1179
+// substitute recipient statement). Copy B (the default) is the recipient's
+// whole statement: a short cover, Copy B and Copy 2 in black ink, and the
+// instructions for the recipient. Any other copy renders on its own.
 
-import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
 import type { Form1099MiscBoxes, Form1099MiscStateLine } from './f1099MiscAggregator.js';
+import { F1099_COMMON_INSTRUCTIONS, render1099Statement } from './taxFormKit.js';
 
 export type F1099MiscCopyVariant = 'A' | '1' | 'B' | '2' | 'C';
-
-const COPY_LABEL: Record<F1099MiscCopyVariant, string> = {
-  A: 'Copy A—For Internal Revenue Service Center. Send this entire page with Form 1096 to the IRS; photocopies are not acceptable.',
-  '1': 'Copy 1—For State Tax Department.',
-  B: 'Copy B—For Recipient.',
-  '2': "Copy 2—To be filed with recipient's state income tax return, when required.",
-  C: "Copy C—For Payer's records.",
-};
 
 export interface Form1099MiscPdfData {
   taxYear: number;
@@ -76,300 +40,55 @@ export interface Form1099MiscPdfData {
 }
 
 export async function renderForm1099MiscPdf(data: Form1099MiscPdfData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-    // Deterministic bytes: pdfkit stamps CreationDate=now by default, so
-    // every re-render hashed differently and the pdfHash immutability
-    // check warned on EVERY re-download � permanent log noise. Pin the
-    // date to the form's own timestamp (meta.generatedAt = TaxForm
-    // createdAt), making identical inputs produce identical bytes.
-      size: 'LETTER',
-      margin: 36,
-      info: { CreationDate: new Date(data.meta.generatedAt) },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    drawHeader(doc, data);
-    drawIdBlock(doc, data);
-    drawWageBoxes(doc, data.boxes);
-    drawStateLines(doc, data.boxes.stateLines);
-    drawFooter(doc, data);
-
-    doc.end();
+  const b = data.boxes;
+  return render1099Statement({
+    copy: data.copyVariant ?? 'B',
+    meta: data.meta,
+    spec: {
+      formNumber: '1099-MISC',
+      title: 'Miscellaneous Information',
+      omb: 'OMB No. 1545-0115',
+      taxYear: data.taxYear,
+      payer: data.payer,
+      recipient: data.recipient,
+      accountNumber: data.accountNumber,
+      boxes: [
+        { label: '1  Rents', value: b.box1Rents },
+        { label: '2  Royalties', value: b.box2Royalties },
+        { label: '3  Other income', value: b.box3OtherIncome },
+        { label: '4  Federal income tax withheld', value: b.box4FitWithheld },
+        { label: '5  Fishing boat proceeds', value: b.box5FishingBoatProceeds },
+        { label: '6  Medical and health care payments', value: b.box6MedicalHealthcarePayments },
+        { label: '7  Payer made direct sales totaling $5,000 or more of consumer products to recipient for resale', value: !!b.box7DirectSales },
+        { label: '8  Substitute payments in lieu of dividends or interest', value: b.box8SubstitutePayments },
+        { label: '9  Crop insurance proceeds', value: b.box9CropInsuranceProceeds },
+        { label: '10  Gross proceeds paid to an attorney', value: b.box10GrossProceedsAttorney },
+        { label: '11  Fish purchased for resale', value: b.box11FishForResale },
+        { label: '12  Section 409A deferrals', value: b.box12Section409ADeferrals },
+        { label: '13  Excess golden parachute payments', value: b.box13ExcessGoldenParachute },
+        { label: '14  Nonqualified deferred compensation', value: b.box14NonqualifiedDeferred },
+      ],
+      stateBoxes: { tax: '15  State tax withheld', id: "16  State/Payer's state no.", income: '17  State income' },
+      stateRows: b.stateLines.map((l: Form1099MiscStateLine) => ({ tax: l.stateTaxWithheld, state: l.state, income: l.stateIncome })),
+    },
+    summary: [
+      { label: 'Rents (box 1)', amount: b.box1Rents },
+      { label: 'Other income (box 3)', amount: b.box3OtherIncome },
+      { label: 'Federal tax withheld (box 4)', amount: b.box4FitWithheld },
+    ],
+    instructions: [
+      ...F1099_COMMON_INSTRUCTIONS.slice(0, 2),
+      { title: 'Box 1', body: 'Report rents from real estate on Schedule E (Form 1040). However, report rents on Schedule C (Form 1040) if you provided significant services to the tenant, sold real estate as a business, or rented personal property as a business.' },
+      { title: 'Box 2', body: 'Report royalties from oil, gas, or mineral properties; copyrights; and patents on Schedule E (Form 1040). However, report payments for a working interest as explained in the Schedule E (Form 1040) instructions.' },
+      { title: 'Box 3', body: 'Generally, report this amount on the "Other income" line of Schedule 1 (Form 1040) and identify the payment. The amount shown may be payments received as the beneficiary of a deceased employee, prizes, awards, taxable damages, Indian gaming profits, or other taxable income.' },
+      { title: 'Box 4', body: 'Shows backup withholding or withholding on Indian gaming profits. Generally, a payer must backup withhold if you did not furnish your TIN. See Form W-9 and Pub. 505 for more information. Report this amount on your income tax return as tax withheld.' },
+      { title: 'Boxes 5–14', body: 'See the Instructions for Recipient of Form 1099-MISC at www.irs.gov/Form1099MISC for each box that shows an amount on your form.' },
+      { title: 'Boxes 15–17', body: 'Show state income tax withheld, the payer\'s state number, and the income subject to that state.' },
+      ...F1099_COMMON_INSTRUCTIONS.slice(2),
+    ],
   });
 }
 
 export function hashForm1099MiscPdf(buf: Uint8Array): string {
   return createHash('sha256').update(buf).digest('hex');
-}
-
-function drawHeader(doc: PDFKit.PDFDocument, data: Form1099MiscPdfData): void {
-  const variant = data.copyVariant ?? 'B';
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(14)
-    .text(`Form 1099-MISC  Miscellaneous Information  ${data.taxYear}`, 36, 36, {
-      width: 540,
-      align: 'left',
-    });
-  doc
-    .font('Helvetica')
-    .fontSize(8)
-    .fillColor('#444')
-    .text(COPY_LABEL[variant], 36, 54, { width: 540 });
-  doc.fillColor('#000');
-  doc
-    .fontSize(7)
-    .fillColor('#666')
-    .text('Department of the Treasury — Internal Revenue Service', 36, 66, {
-      width: 540,
-    });
-  doc.fillColor('#000');
-
-  doc.rect(36, 84, 540, 660).strokeColor('#000').lineWidth(0.6).stroke();
-}
-
-function drawIdBlock(doc: PDFKit.PDFDocument, data: Form1099MiscPdfData): void {
-  const payerLines = [
-    data.payer.name,
-    data.payer.addressLine1,
-    data.payer.addressLine2,
-    [data.payer.city, data.payer.state, data.payer.zip].filter(Boolean).join(', '),
-    data.payer.phone ? `Phone: ${data.payer.phone}` : null,
-  ]
-    .filter((s) => s && s.length > 0)
-    .join('\n');
-  cell(
-    doc,
-    36,
-    90,
-    270,
-    100,
-    "PAYER'S name, street address, city, state, ZIP code, and telephone no.",
-    payerLines,
-  );
-  cell(doc, 306, 90, 270, 32, "PAYER'S TIN", data.payer.ein);
-  cell(doc, 306, 122, 270, 32, "RECIPIENT'S TIN", data.recipient.tin);
-  cell(doc, 306, 154, 270, 36, 'Account number (see instructions)', data.accountNumber);
-
-  cell(doc, 36, 190, 540, 28, "RECIPIENT'S name", data.recipient.name);
-  cell(
-    doc,
-    36,
-    218,
-    540,
-    44,
-    'Street address (including apt. no.) / City, state, ZIP',
-    [
-      data.recipient.addressLine1,
-      data.recipient.addressLine2,
-      [data.recipient.city, data.recipient.state, data.recipient.zip]
-        .filter(Boolean)
-        .join(', '),
-    ]
-      .filter((s) => s && s.length > 0)
-      .join('\n'),
-  );
-}
-
-function drawWageBoxes(doc: PDFKit.PDFDocument, boxes: Form1099MiscBoxes): void {
-  // Two-column grid, ~36 px row, fits all 14 boxes inside the 660 px
-  // border area. Box 7 is a checkbox; the rest are dollar values.
-  const top = 268;
-  const rowH = 32;
-  const left = 36;
-  const mid = 306;
-  const w = 270;
-
-  // Row 1
-  cell(doc, left, top + 0 * rowH, w, rowH, '1  Rents', usd(boxes.box1Rents));
-  cell(doc, mid, top + 0 * rowH, w, rowH, '2  Royalties', usd(boxes.box2Royalties));
-  // Row 2
-  cell(doc, left, top + 1 * rowH, w, rowH, '3  Other income', usd(boxes.box3OtherIncome));
-  cell(
-    doc,
-    mid,
-    top + 1 * rowH,
-    w,
-    rowH,
-    '4  Federal income tax withheld',
-    usd(boxes.box4FitWithheld),
-  );
-  // Row 3
-  cell(
-    doc,
-    left,
-    top + 2 * rowH,
-    w,
-    rowH,
-    '5  Fishing boat proceeds',
-    usd(boxes.box5FishingBoatProceeds),
-  );
-  cell(
-    doc,
-    mid,
-    top + 2 * rowH,
-    w,
-    rowH,
-    '6  Medical and health care payments',
-    usd(boxes.box6MedicalHealthcarePayments),
-  );
-  // Row 4
-  cell(
-    doc,
-    left,
-    top + 3 * rowH,
-    w,
-    rowH,
-    '7  Payer made direct sales totaling $5,000+ (checkbox)',
-    boxes.box7DirectSales ? '[ X ]' : '[   ]',
-  );
-  cell(
-    doc,
-    mid,
-    top + 3 * rowH,
-    w,
-    rowH,
-    '8  Substitute payments in lieu of dividends or interest',
-    usd(boxes.box8SubstitutePayments),
-  );
-  // Row 5
-  cell(
-    doc,
-    left,
-    top + 4 * rowH,
-    w,
-    rowH,
-    '9  Crop insurance proceeds',
-    usd(boxes.box9CropInsuranceProceeds),
-  );
-  cell(
-    doc,
-    mid,
-    top + 4 * rowH,
-    w,
-    rowH,
-    '10  Gross proceeds paid to an attorney',
-    usd(boxes.box10GrossProceedsAttorney),
-  );
-  // Row 6
-  cell(
-    doc,
-    left,
-    top + 5 * rowH,
-    w,
-    rowH,
-    '11  Fish purchased for resale',
-    usd(boxes.box11FishForResale),
-  );
-  cell(
-    doc,
-    mid,
-    top + 5 * rowH,
-    w,
-    rowH,
-    '12  Section 409A deferrals',
-    usd(boxes.box12Section409ADeferrals),
-  );
-  // Row 7
-  cell(
-    doc,
-    left,
-    top + 6 * rowH,
-    w,
-    rowH,
-    '13  Excess golden parachute payments',
-    usd(boxes.box13ExcessGoldenParachute),
-  );
-  cell(
-    doc,
-    mid,
-    top + 6 * rowH,
-    w,
-    rowH,
-    '14  Nonqualified deferred compensation',
-    usd(boxes.box14NonqualifiedDeferred),
-  );
-}
-
-function drawStateLines(
-  doc: PDFKit.PDFDocument,
-  lines: Form1099MiscStateLine[],
-): void {
-  const top = 510;
-  const rowH = 32;
-
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(7)
-    .text('15  State tax withheld', 40, top - 12, { width: 130 })
-    .text("16  State / Payer's state no.", 200, top - 12, { width: 160 })
-    .text('17  State income', 380, top - 12, { width: 130 });
-  doc.font('Helvetica');
-
-  if (lines.length === 0) {
-    cell(doc, 36, top, 540, rowH, '', '— No state withholding —');
-    return;
-  }
-
-  let y = top;
-  for (const line of lines.slice(0, 2)) {
-    doc.rect(36, y, 540, rowH).strokeColor('#000').lineWidth(0.4).stroke();
-    doc
-      .font('Helvetica')
-      .fontSize(11)
-      .fillColor('#000')
-      .text(usd(line.stateTaxWithheld), 44, y + 10, { width: 140 })
-      .text(line.state, 200, y + 10, { width: 80 })
-      .text(usd(line.stateIncome), 380, y + 10, { width: 130 });
-    y += rowH;
-  }
-}
-
-function drawFooter(doc: PDFKit.PDFDocument, data: Form1099MiscPdfData): void {
-  const variant = data.copyVariant ?? 'B';
-  doc
-    .font('Helvetica')
-    .fontSize(7)
-    .fillColor('#666')
-    .text(
-      `Form 1099-MISC (${data.taxYear})  ·  Copy ${variant}  ·  ID ${data.meta.formId.slice(0, 8)}  ·  ` +
-        `Generated by Alto People at ${data.meta.generatedAt}`,
-      36,
-      762,
-      { width: 540, align: 'center' },
-    );
-  doc.fillColor('#000');
-}
-
-function cell(
-  doc: PDFKit.PDFDocument,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  label: string,
-  value: string,
-): void {
-  doc.rect(x, y, w, h).strokeColor('#000').lineWidth(0.4).stroke();
-  if (label) {
-    doc
-      .font('Helvetica')
-      .fontSize(6)
-      .fillColor('#444')
-      .text(label, x + 4, y + 3, { width: w - 8, lineBreak: false, ellipsis: true });
-  }
-  doc
-    .font('Helvetica')
-    .fontSize(11)
-    .fillColor('#000')
-    .text(value, x + 4, y + 13, { width: w - 8 });
-}
-
-function usd(n: number): string {
-  if (n === 0) return '';
-  return n.toFixed(2);
 }

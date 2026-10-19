@@ -43,9 +43,38 @@ export interface EmployeePeriodInput {
   federalCycleWithholding: number;
   /** The state certificates on file, by state. */
   stateW4s: Record<string, StateW4Input>;
+  /**
+   * Wage bases that differ from `wages` because a deduction's tax treatment
+   * differs by tax and by state (lib/deductionTaxability.ts). Each figure is
+   * the WHOLE check's taxable wages under that rule, before allocation; the
+   * engine allocates it across work states by hours exactly as it does
+   * `wages`. Absent means "use `wages`".
+   */
+  bases?: {
+    /** State income tax base, per state (PA and NJ tax 401(k) deferrals, CA and NJ tax HSA …). */
+    stateIncome?: Record<string, number>;
+    /** Wages subject to a state disability / paid-leave program, per state (CA SDI, NJ TDI/FLI, NY DBL/PFL, WA PFML …). */
+    stateProgram?: Record<string, number>;
+    /** Wages subject to state unemployment insurance, per state. */
+    stateUi?: Record<string, number>;
+    /** Wages for local income taxes (PA EIT includes 401(k) deferrals …). */
+    local?: number;
+  };
+  /** Year-to-date wages already taxed by each state program code (e.g. "WA_PFML"), for wage-base caps. */
+  ytdProgramWages?: Record<string, number>;
+  /**
+   * Withhold the state disability / paid-leave / employee-UI programs
+   * (taxEngine/statePrograms.ts). Opt-in so a caller that doesn't yet
+   * subtract `programTotal` from net pay never shows a contribution it
+   * didn't take.
+   */
+  includePrograms?: boolean;
+  /** Covered employees on the employer's payroll, for headcount-tiered programs (WA, OR, MA, CO, DE). Unknown = large. */
+  employerSize?: number;
 }
 
-export type TaxLineKind = 'STATE' | 'LOCAL' | 'SCHOOL' | 'TRANSIT' | 'OLT' | 'EMPLOYER' | 'SUI';
+/** STATE_PROGRAM: a state disability or paid-leave contribution (CA SDI, NJ TDI/FLI, NY DBL/PFL, WA PFML / WA Cares, MA, OR, CO, CT, RI, HI, DE, MN …). */
+export type TaxLineKind = 'STATE' | 'LOCAL' | 'SCHOOL' | 'TRANSIT' | 'OLT' | 'EMPLOYER' | 'SUI' | 'STATE_PROGRAM';
 
 export interface TaxLine {
   code: string;
@@ -68,6 +97,10 @@ export interface EmployeePeriodResult {
   localTotal: number;
   /** Employer-paid local payroll taxes. */
   employerLocalTotal: number;
+  /** Withheld state program contributions (SDI, PFML, employee UI …): subtract from net pay. */
+  programTotal: number;
+  /** Employer-paid state program contributions. */
+  employerProgramTotal: number;
   /** Wages per work state (allocation by hours). */
   wagesByState: Record<string, number>;
   /** The state unemployment insurance is reported to, and why (four-factor test). */

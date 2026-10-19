@@ -33,6 +33,8 @@ export interface ReviewRow {
   medicare: number;
   stateTax: number;
   localTax: number;
+  /** State disability and paid-leave contributions withheld (CA SDI, NJ TDI/FLI, WA PFML …). */
+  stateProgram?: number;
   postTax: number;
   other: number;
   reimbursements: number;
@@ -88,6 +90,8 @@ export interface PayrollReviewReport {
   previous: { runId: string; periodStart: string; periodEnd: string; people: number; gross: number; net: number; employerTaxes: number } | null;
   flagCounts: Partial<Record<ReviewFlag, number>>;
   rows: ReviewRow[];
+  /** Paychecks set to pay by paper check this time. How, not how much: outside the fingerprint. */
+  payByCheck?: Array<{ itemId: string; name: string; reason: string; net: number }>;
 }
 
 export interface Signoff {

@@ -1,10 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { quoteGrossUp } from '@/lib/payExpApi';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Ban,
+  Banknote,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -61,6 +62,7 @@ import {
   type WcPremiumReport,
 } from '@/lib/payrollApi';
 import { getPayrollReviewStatus } from '@/lib/payrollReviewApi';
+import { clearPayByCheck, getRunChecks, setPayByCheck } from '@/lib/paperChecksApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { useConfirm, usePrompt } from '@/lib/confirm';
@@ -248,6 +250,43 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const [bulkBusy, setBulkBusy] = useState(false);
   const confirm = useConfirm();
   const prompt = usePrompt();
+  const queryClient = useQueryClient();
+  // Who is paid by paper check this time (lib/paperChecks), keyed by paycheck.
+  const runChecks = useQuery({
+    queryKey: ['payroll', 'checks', selected?.id],
+    queryFn: () => getRunChecks(selected!.id),
+    enabled: !!selected && canProcess,
+  });
+  const paperCheckByItem = useMemo(() => new Map((runChecks.data?.overrides ?? []).map((o) => [o.itemId, o])), [runChecks.data]);
+  const onPayByCheck = useCallback(
+    async (itemId: string, name: string | null, on: boolean) => {
+      if (on) {
+        const reason = await prompt({
+          title: `Pay ${name ?? 'this person'} by paper check this time?`,
+          description: 'Only this paycheck. Their direct deposit stays on file and resumes next payday. The check is numbered at payout and never goes into the bank file.',
+          confirmLabel: 'Pay by check',
+          reasonLabel: 'Why a check this time?',
+          reasonPlaceholder: 'Asked for a check this payday',
+        });
+        if (!reason) return;
+        try {
+          await setPayByCheck(itemId, reason);
+          toast.success(`${name ?? 'This paycheck'} will be paid by paper check.`);
+        } catch (err) {
+          toast.error(err instanceof ApiError ? err.message : 'Could not switch to a check.');
+        }
+      } else {
+        try {
+          await clearPayByCheck(itemId);
+          toast.success(`${name ?? 'This paycheck'} is back to the usual deposit.`);
+        } catch (err) {
+          toast.error(err instanceof ApiError ? err.message : 'Could not undo.');
+        }
+      }
+      void queryClient.invalidateQueries({ queryKey: ['payroll', 'checks'] });
+    },
+    [prompt, queryClient],
+  );
 
   const runsQuery = useQuery({
     queryKey: ['payroll', 'runs', filter],
@@ -1004,6 +1043,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                             item={it}
                             canProcess={canProcess}
                             onEnrollBranch={openEnrollBranch}
+                            paperCheckReason={paperCheckByItem.get(it.id)?.reason ?? null}
+                            canSwitchToCheck={canProcess && (selected.status === 'DRAFT' || selected.status === 'FINALIZED') && it.status === 'PENDING'}
+                            onPayByCheck={onPayByCheck}
                           />
                         ))}
                       </ul>
@@ -2406,11 +2448,18 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
   item,
   canProcess,
   onEnrollBranch,
+  paperCheckReason = null,
+  canSwitchToCheck = false,
+  onPayByCheck,
 }: {
   item: import('@alto-people/shared').PayrollItem;
   canProcess: boolean;
   /** Stable callback (item identity passed as args) so memo() holds. */
   onEnrollBranch: (associateId: string, associateName: string | null) => void;
+  /** Set when payroll switched this paycheck to a paper check for this payday. */
+  paperCheckReason?: string | null;
+  canSwitchToCheck?: boolean;
+  onPayByCheck?: (itemId: string, name: string | null, on: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const totalTax =
@@ -2447,6 +2496,11 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
             </div>
           </div>
           <StatusBadge status={item.status} className="text-2xs shrink-0" />
+          {(paperCheckReason || /^CHECK-/.test(item.disbursementRef ?? '')) && (
+            <Badge variant="info" className="text-2xs shrink-0" title={paperCheckReason ?? undefined}>
+              Check
+            </Badge>
+          )}
         </div>
         <div className="text-right shrink-0">
           <div className="text-2xs uppercase tracking-widest text-silver/70">Net</div>
@@ -2471,12 +2525,32 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
                 label={`State income tax${item.taxState ? ` (${item.taxState})` : ''}`}
                 value={`−${fmtMoney(item.stateWithholding)}`}
               />
-              {item.postTaxDeductions > 0 && (
-                <DrillRow
-                  label="Post-tax deductions"
-                  value={`−${fmtMoney(item.postTaxDeductions)}`}
-                  accent
-                />
+              {item.deductions && item.deductions.some((d) => d.category !== 'EMPLOYER') ? (
+                // Every deduction on the check, itemized: pre-tax first, then after tax.
+                [...item.deductions]
+                  .filter((d) => d.category !== 'EMPLOYER' && d.employeeAmount !== 0)
+                  .sort((a, b) => (a.category === b.category ? 0 : a.category === 'PRE_TAX' ? -1 : 1))
+                  .map((d) => (
+                    <DrillRow
+                      key={`${d.key}-${d.category}`}
+                      label={d.category === 'PRE_TAX' ? `${d.label} (pre-tax)` : d.label}
+                      value={`−${fmtMoney(d.employeeAmount)}`}
+                      accent={d.code === 'GARNISHMENT'}
+                    />
+                  ))
+              ) : (
+                <>
+                  {(item.preTaxDeductions ?? 0) > 0 && (
+                    <DrillRow label="Pre-tax deductions" value={`−${fmtMoney(item.preTaxDeductions ?? 0)}`} />
+                  )}
+                  {item.postTaxDeductions > 0 && (
+                    <DrillRow
+                      label="Post-tax deductions"
+                      value={`−${fmtMoney(item.postTaxDeductions)}`}
+                      accent
+                    />
+                  )}
+                </>
               )}
               <DrillRow
                 label="Total tax"
@@ -2509,13 +2583,19 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
                 value={fmtMoney(item.employerSuta)}
                 muted
               />
+              {(item.deductions ?? [])
+                .filter((d) => d.category === 'EMPLOYER' && d.employerAmount !== 0)
+                .map((d) => (
+                  <DrillRow key={`${d.key}-er`} label={d.label} value={fmtMoney(d.employerAmount)} muted />
+                ))}
               <DrillRow
                 label="Total"
                 value={fmtMoney(
                   item.employerFica +
                     item.employerMedicare +
                     item.employerFuta +
-                    item.employerSuta
+                    item.employerSuta +
+                    (item.deductions ?? []).reduce((sum, d) => (d.category === 'EMPLOYER' ? sum + d.employerAmount : sum), 0)
                 )}
                 bold
               />
@@ -2547,8 +2627,26 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
             </div>
           )}
 
+          {paperCheckReason && (
+            <div className="rounded border border-steel/40 bg-steel/10 px-2 py-1.5 text-silver">
+              Paid by paper check this time: {paperCheckReason}
+            </div>
+          )}
           {canProcess && (
-            <div className="pt-1 border-t border-silver/10">
+            <div className="pt-1 border-t border-silver/10 flex flex-wrap gap-x-4">
+              {canSwitchToCheck && onPayByCheck && (
+                <Button
+                  variant="link"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPayByCheck(item.id, item.associateName ?? null, !paperCheckReason);
+                  }}
+                  className="gap-1.5 text-xs font-normal text-silver/70 hover:text-gold"
+                >
+                  <Banknote className="h-3.5 w-3.5" />
+                  {paperCheckReason ? 'Undo paper check' : 'Pay by check this time'}
+                </Button>
+              )}
               <Button
                 variant="link"
                 onClick={(e) => {

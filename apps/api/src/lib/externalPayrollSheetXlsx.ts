@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { XL, XL_FMT } from './docKit/xlsx.js';
 import {
   EXTERNAL_PAYROLL_COLUMNS,
   type ExternalPayrollSheetResult,
@@ -20,19 +21,19 @@ import {
  *    file gets forwarded and printed and left in inboxes.
  */
 
-const BAND = 'FF1F2A37';
-const MUTED = 'FF6B7280';
-const INK = 'FF111827';
-const WARN = 'FFB5360F';
+const BAND = XL.band;
+const MUTED = XL.muted;
+const INK = XL.ink;
+const WARN = XL.bad;
 const TEXT_FMT = '@';
-const USD_FMT = '"$"#,##0.00';
-const HOURS_FMT = '0.00';
+const USD_FMT = XL_FMT.money;
+const HOURS_FMT = XL_FMT.hours;
 
 const THIN: Partial<ExcelJS.Borders> = {
-  top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
-  right: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+  top: { style: 'thin', color: { argb: XL.rule } },
+  left: { style: 'thin', color: { argb: XL.rule } },
+  bottom: { style: 'thin', color: { argb: XL.rule } },
+  right: { style: 'thin', color: { argb: XL.rule } },
 };
 
 /** Columns whose values must survive as literal digit strings. */

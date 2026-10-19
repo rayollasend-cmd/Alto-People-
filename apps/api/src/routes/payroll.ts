@@ -34,6 +34,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { deductionRows, line as deductionLine } from '../lib/deductionLines.js';
 import { assertRunReviewed, buildPayrollReview, currentFingerprint, notifyReviewers, reviewRequired, reviewState, runsAwaitingReview, signPayrollReview } from '../lib/payrollReview.js';
 import { renderPayrollReviewPdf } from '../lib/payrollReviewPdf.js';
 import { renderPayrollReviewXlsx } from '../lib/payrollReviewXlsx.js';
@@ -68,6 +69,8 @@ import {
 } from '../lib/paystubData.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
 import { checkAdapter, resolveAdapter, type DisbursementInput } from '../lib/disbursement.js';
+import { activeOverrides, closePendingCheckRequests, drawerAccount, overridesForRun } from '../lib/paperChecks.js';
+import { loadBrand } from '../lib/docKit/index.js';
 import { assertRunFunded } from '../lib/banking/funding.js';
 import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
 import { accrueDepositsForRun } from '../lib/taxDeposits.js';
@@ -144,7 +147,14 @@ function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function toItem(i: RawItem): PayrollItem {
+type RawDeduction = { code: string; category: string; label: string; sourceId: string | null; employeeAmount: Prisma.Decimal; employerAmount: Prisma.Decimal };
+
+/** The YTD key of an itemized deduction: the same plan, order or loan across checks. */
+function deductionKey(d: { code: string; sourceId: string | null }): string {
+  return `${d.code}|${d.sourceId ?? ''}`;
+}
+
+function toItem(i: RawItem & { deductions?: RawDeduction[]; taxLines?: Array<{ code: string; label: string; amount: Prisma.Decimal }> }): PayrollItem {
   return {
     id: i.id,
     payrollRunId: i.payrollRunId,
@@ -181,6 +191,21 @@ function toItem(i: RawItem): PayrollItem {
       isTaxable: e.isTaxable,
       notes: e.notes,
     })),
+    ...(i.taxLines && i.taxLines.some((l) => Number(l.amount) !== 0)
+      ? { stateProgramTaxes: i.taxLines.filter((l) => Number(l.amount) !== 0).map((l) => ({ code: l.code, label: l.label, amount: Number(l.amount) })) }
+      : {}),
+    ...(i.deductions && i.deductions.length > 0
+      ? {
+          deductions: i.deductions.map((d) => ({
+            key: deductionKey(d),
+            code: d.code,
+            category: d.category as 'PRE_TAX' | 'POST_TAX' | 'EMPLOYER',
+            label: d.label,
+            employeeAmount: Number(d.employeeAmount),
+            employerAmount: Number(d.employerAmount),
+          })),
+        }
+      : {}),
   };
 }
 
@@ -230,6 +255,8 @@ const RUN_INCLUDE = {
     include: {
       associate: { select: { firstName: true, lastName: true } },
       earnings: true,
+      deductions: { select: { code: true, category: true, label: true, sourceId: true, employeeAmount: true, employerAmount: true } },
+      taxLines: { where: { kind: 'STATE_PROGRAM', employer: false }, select: { code: true, label: true, amount: true } },
     },
   },
 } as const;
@@ -1054,6 +1081,21 @@ export async function aggregateAndPersistRun(
             rideChargeGuard: rides.guard as unknown as Prisma.InputJsonValue,
           },
         });
+        // Every deduction on this check, itemized (lib/deductionLines): the
+        // plans, orders and loans the calculation decided, plus what this
+        // step took after it (clawbacks, van rides, wage advances).
+        if (tx.payrollItemDeduction) {
+          const after = { workStates: [], residentState: null, localApplies: false };
+          const lines = [
+            ...p.deductionLines,
+            ...(consumed.totalApplied > 0 ? [deductionLine('AFTER_TAX_OTHER', { employee: consumed.totalApplied }, after, { label: 'Overpayment recovery', sourceType: 'PendingPayrollDeduction' })] : []),
+            ...(rides.totalApplied > 0 ? [deductionLine('RIDES', { employee: rides.totalApplied }, after, { sourceType: 'RideCharge' })] : []),
+            ...(ewa.totalApplied > 0 ? [deductionLine('EWA_RECOVERY', { employee: ewa.totalApplied }, after, { sourceType: 'EarnedWageAdvance' })] : []),
+          ];
+          await tx.payrollItemDeduction.deleteMany({ where: { payrollItemId: upserted.id } });
+          const rows = deductionRows(upserted.id, tenantIdForWrite(), lines);
+          if (rows.length > 0) await tx.payrollItemDeduction.createMany({ data: rows });
+        }
         // The retro pairs this check settles (lib/retroPay).
         if (p.retro.length > 0) {
           await persistRetroForItem(tx, p.retro, { runId: run.id, itemId: upserted.id });
@@ -1890,6 +1932,9 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
       })
     ).map((x) => x.id);
 
+    // The payday cut-off: associates' open paper-check requests close now.
+    await closePendingCheckRequests(prisma, run.id);
+
     const now = new Date();
     // Verify-before-pay. An account whose change Finance has not verified
     // is never paid into: the previous verified account is used, or the
@@ -1907,6 +1952,8 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
       [...new Set(items.map((i) => i.associateId))],
       payoutPolicy,
     );
+    // Paychecks payroll set to pay by paper check this time (lib/paperChecks).
+    const byCheck = await activeOverrides(prisma, items.map((i) => i.id));
 
     // PERF: bounded parallelism. Each item is independent (idempotencyKey
     // per item, per-item writes) — the old fully-serial walk blocked the
@@ -1941,7 +1988,8 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
 
       const resolution = payouts.get(item.associateId) ?? { method: null, decision: 'none' as const, changeId: null, pendingMethod: null };
       const associateName = `${item.associate.firstName} ${item.associate.lastName}`;
-      if (resolution.decision === 'hold') {
+      const paperCheck = byCheck.has(item.id);
+      if (resolution.decision === 'hold' && !paperCheck) {
         heldForVerification.push({ name: associateName, changeId: resolution.changeId });
         await prisma.payrollDisbursementAttempt.create({
           data: {
@@ -1959,10 +2007,10 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
         });
         return;
       }
-      if (resolution.decision === 'previous_verified') {
+      if (resolution.decision === 'previous_verified' && !paperCheck) {
         paidPrevious.push({ name: associateName, changeId: resolution.changeId });
       }
-      const primary = resolution.method;
+      const primary = paperCheck ? null : resolution.method;
       const disburseInput = {
         amount: netPayNum,
         currency: 'USD',
@@ -1970,8 +2018,10 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
         idempotencyKey: item.id,
         memo: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
       };
-      let result = await adapter.disburse(disburseInput).catch((err: unknown) => ({
-        provider: adapter.provider,
+      // A paper check this time goes to the check register whatever the rail: never into an ACH file.
+      const rail = paperCheck ? checkAdapter : adapter;
+      let result = await rail.disburse(disburseInput).catch((err: unknown) => ({
+        provider: rail.provider,
         externalRef: '',
         status: 'FAILED' as const,
         failureReason: err instanceof Error ? err.message : String(err),
@@ -1982,7 +2032,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
       if (
         result.status === 'FAILED' &&
         env.PAYROLL_CHECK_FALLBACK &&
-        adapter.provider !== 'CHECK' &&
+        rail.provider !== 'CHECK' &&
         (result.failureReason ?? '').startsWith('no_payout_rail')
       ) {
         result = await checkAdapter.disburse(disburseInput).catch((err: unknown) => ({
@@ -2217,6 +2267,11 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
     // The pre-payroll review: a sign-off on these exact numbers before payout.
     const review = await reviewState(prisma, run, await currentFingerprint(prisma, run.id), req.user!.id);
     const approvalRequired = review.required;
+    // Paid by paper check this time, and the run's checks once issued (lib/paperChecks).
+    const [payByCheck, checkRows] = await Promise.all([
+      overridesForRun(prisma, run.id),
+      prisma.payCheck.findMany({ where: { payrollItem: { payrollRunId: run.id } }, select: { voidedAt: true, printedAt: true } }),
+    ]);
     const reviewMissing = review.required && !review.current && run.status !== 'DISBURSED' && run.status !== 'CANCELLED';
     const reviewNote = review.stale
       ? `The numbers changed after ${review.stale.signedByName ?? 'the reviewer'} signed off. Review the report again.`
@@ -2317,6 +2372,8 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         qboSyncError: run.qboSyncError,
       },
       approvalRequired,
+      payByCheck: payByCheck.map((o) => ({ itemId: o.itemId, name: o.name, reason: o.reason, source: o.source })),
+      checks: { issued: checkRows.filter((c) => !c.voidedAt).length, printed: checkRows.filter((c) => !c.voidedAt && c.printedAt).length, voided: checkRows.filter((c) => c.voidedAt).length },
       review: {
         required: review.required,
         signedByName: review.current?.signedByName ?? null,
@@ -2393,13 +2450,12 @@ payrollRouter.get('/runs/:id/check-register.pdf', PROCESS, async (req, res, next
     if (checks.length === 0) {
       throw new HttpError(404, 'no_checks', 'No paper checks were issued for this run.');
     }
+    const numberById = new Map(checks.map((c) => [c.id, c.checkNumber]));
+    const acct = await drawerAccount(prisma).catch(() => null);
     const pdf = await renderCheckRegisterPdf({
-      company: { name: 'Alto HR' },
-      run: {
-        id: run.id,
-        periodStart: ymd(run.periodStart),
-        periodEnd: ymd(run.periodEnd),
-      },
+      company: await loadBrand(prisma as never, tenantIdForWrite()),
+      run: { id: run.id, periodStart: ymd(run.periodStart), periodEnd: ymd(run.periodEnd) },
+      account: acct ? { bankName: acct.bankName, last4: acct.last4 } : null,
       rows: checks.map((c) => ({
         checkNumber: c.checkNumber,
         issuedAt: c.issuedAt.toISOString(),
@@ -2407,6 +2463,10 @@ payrollRouter.get('/runs/:id/check-register.pdf', PROCESS, async (req, res, next
         memo: c.memo,
         amount: Number(c.amount),
         voided: c.voidedAt !== null,
+        voidReason: c.voidReason,
+        stopPayment: c.stopPaymentAt !== null,
+        printedAt: c.printedAt?.toISOString() ?? null,
+        replacesCheckNumber: c.reissuedFromId ? numberById.get(c.reissuedFromId) ?? null : null,
       })),
       generatedAt: new Date().toISOString(),
     });
@@ -2957,17 +3017,21 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, idempotent, async (req, 
         },
       },
     });
+    // Paychecks set to pay by paper check this time retry on the check rail.
+    const retryByCheck = await activeOverrides(prisma, held.map((h) => h.id));
     // PERF: bounded parallelism, same rationale as the disburse loop.
     await runWithConcurrency(held, 8, async (item) => {
-      const primary = item.associate.payoutMethods[0] ?? null;
-      const result = await adapter.disburse({
+      const paperCheck = retryByCheck.has(item.id);
+      const primary = paperCheck ? null : item.associate.payoutMethods[0] ?? null;
+      const rail = paperCheck ? checkAdapter : adapter;
+      const result = await rail.disburse({
         amount: Number(item.netPay),
         currency: 'USD',
         recipient: recipientFromPayoutMethod(item.associate, primary),
         idempotencyKey: item.id,
         memo: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
       }).catch((err: unknown) => ({
-        provider: adapter.provider,
+        provider: rail.provider,
         externalRef: '',
         status: 'FAILED' as const,
         failureReason: err instanceof Error ? err.message : String(err),
@@ -3732,6 +3796,8 @@ payrollRouter.get('/me/items', async (req, res, next) => {
       include: {
         associate: { select: { firstName: true, lastName: true } },
         earnings: true,
+        deductions: { select: { code: true, category: true, label: true, sourceId: true, employeeAmount: true, employerAmount: true } },
+        taxLines: { where: { kind: 'STATE_PROGRAM', employer: false }, select: { code: true, label: true, amount: true } },
       },
     });
     // Van rides taken from each check — their own paystub line.
@@ -3803,7 +3869,7 @@ payrollRouter.get('/me/items/:id/ytd', async (req, res, next) => {
       disbursedAt: { gte: yearStart, lt: yearEndExclusive, lte: asOf },
     };
 
-    const [agg, earnings, rides] = await Promise.all([
+    const [agg, earnings, rides, deductionRowsYtd, programYtd] = await Promise.all([
       prisma.payrollItem.aggregate({
         where,
         _sum: {
@@ -3835,6 +3901,16 @@ payrollRouter.get('/me/items/:id/ytd', async (req, res, next) => {
             _sum: { chargeCents: true },
           }),
         ),
+      prisma.payrollItemDeduction.groupBy({
+        by: ['code', 'sourceId'],
+        where: { payrollItem: where },
+        _sum: { employeeAmount: true, employerAmount: true },
+      }),
+      prisma.payrollItemTaxLine.groupBy({
+        by: ['code'],
+        where: { kind: 'STATE_PROGRAM', employer: false, payrollItem: where },
+        _sum: { amount: true },
+      }),
     ]);
 
     const n = (v: Prisma.Decimal | null | undefined) => (v ? Number(v) : 0);
@@ -3855,6 +3931,10 @@ payrollRouter.get('/me/items/:id/ytd', async (req, res, next) => {
       employerSuta: n(agg._sum.employerSuta),
       byKind: Object.fromEntries(earnings.map((e) => [e.kind, n(e._sum.amount)])),
       transport: (rides._sum.chargeCents ?? 0) / 100,
+      stateProgramTaxes: Object.fromEntries(programYtd.map((r) => [r.code, n(r._sum.amount)])),
+      deductions: Object.fromEntries(
+        deductionRowsYtd.map((d) => [deductionKey(d), { employee: n(d._sum.employeeAmount), employer: n(d._sum.employerAmount) }]),
+      ),
     });
     res.json(payload);
   } catch (err) {

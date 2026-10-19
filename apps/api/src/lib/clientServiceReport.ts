@@ -1,4 +1,4 @@
-import PDFDocument from 'pdfkit';
+import { COLOR, SIZE, createDoc, fmt } from './docKit/index.js';
 import type { PrismaClient } from '@prisma/client';
 import { computeStatementSnapshot, type StatementSnapshot } from './clientStatement.js';
 import { orgDateKey } from './timeAnomalies.js';
@@ -91,15 +91,7 @@ export interface ServiceReportData {
 }
 
 const DAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DAY_FULL = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-];
+const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function dayName(key: string, full = false): string {
   const d = new Date(`${key}T12:00:00.000Z`);
@@ -159,7 +151,12 @@ export async function buildClientServiceReport(
   }
   const rosterMap = new Map<
     string,
-    { name: string; positions: Set<string>; hours: number; photoS3Key: string | null }
+    {
+      name: string;
+      positions: Set<string>;
+      hours: number;
+      photoS3Key: string | null;
+    }
   >();
   let noShows = 0;
   for (const s of shifts) {
@@ -273,9 +270,7 @@ export async function buildClientServiceReport(
     select: { associate: { select: { firstName: true, lastName: true } } },
     take: 100,
   });
-  const onFloorNames = onFloorRows.map(
-    (e) => `${e.associate.firstName} ${e.associate.lastName}`,
-  );
+  const onFloorNames = onFloorRows.map((e) => `${e.associate.firstName} ${e.associate.lastName}`);
   const todayKey = orgDateKey(nowInstant);
   const tomorrowKey = orgDateKey(new Date(nowInstant.getTime() + 24 * 3_600_000));
   const nearShifts = await prisma.shift.findMany({
@@ -306,7 +301,10 @@ export async function buildClientServiceReport(
   const opsShifts = await prisma.opsShift.findMany({
     where: {
       clientId,
-      dateKey: { gte: startKey, lte: orgDateKey(new Date(start.getTime() + 6 * 24 * 3_600_000)) },
+      dateKey: {
+        gte: startKey,
+        lte: orgDateKey(new Date(start.getTime() + 6 * 24 * 3_600_000)),
+      },
     },
     select: {
       id: true,
@@ -330,7 +328,9 @@ export async function buildClientServiceReport(
         },
         _count: { _all: true },
       }),
-      prisma.opsHandoverItem.count({ where: { fromShiftId: { in: shiftIds } } }),
+      prisma.opsHandoverItem.count({
+        where: { fromShiftId: { in: shiftIds } },
+      }),
       prisma.opsTaskPhoto.findMany({
         where: { task: { is: { opsShiftId: { in: shiftIds } } } },
         orderBy: { createdAt: 'desc' },
@@ -396,7 +396,10 @@ export async function buildClientServiceReport(
   const statements = statementRows.map((r) => {
     const snap = r.snapshot as unknown as StatementSnapshot | null;
     return {
-      period: `${r.periodStart.toISOString().slice(0, 10)} – ${r.periodEnd.toISOString().slice(0, 10)}`,
+      period: fmt.dateRange(
+        r.periodStart.toISOString().slice(0, 10),
+        r.periodEnd.toISOString().slice(0, 10),
+      ),
       label:
         r.status === 'FINAL'
           ? `No. ${String(r.number ?? 0).padStart(4, '0')}${r.paidAt ? ' · PAID' : ' · issued'}`
@@ -411,7 +414,10 @@ export async function buildClientServiceReport(
     orgName,
     periodStart: startKey,
     periodEnd: orgDateKey(new Date(start.getTime() + 6 * 24 * 3_600_000)),
-    generatedAt: `${orgDateKey(nowInstant)} ${formatTimeInZone(nowInstant, DEFAULT_TIMEZONE)}`,
+    generatedAt: `${fmt.date(orgDateKey(nowInstant))}, ${formatTimeInZone(
+      nowInstant,
+      DEFAULT_TIMEZONE,
+    )}`,
     snapshot,
     now,
     days: [...dayMap.entries()].map(([key, d]) => ({
@@ -436,517 +442,501 @@ export async function buildClientServiceReport(
 
 /* ===== PDF ================================================================ */
 
-const NAVY = '#0B1832';
-const NAVY_SOFT = '#22355C';
-const GOLD = '#C9A227';
-const GREY = '#5B6472';
-const LIGHT = '#9AA3B2';
-const PANEL = '#F3F5F9';
-const GOOD = '#1A7F4B';
-const WARN = '#B45309';
-
+/**
+ * The report, drawn in the house style (lib/docKit): the store manager
+ * reads the week's headline in five figures, then coverage day by day,
+ * reliability and next week, the team, the full schedule, the store's
+ * operations evidence, and billing. Every number comes from the same
+ * computation as the client's statement.
+ */
 export function renderClientServiceReportPdf(data: ServiceReportData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-      size: 'LETTER',
-      margin: 54,
-      bufferPages: true,
-      info: {
-        Title: `Weekly Service Report — ${data.clientName} — ${data.periodStart} to ${data.periodEnd}`,
-        Author: data.orgName,
-      },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+  const { k, doc } = createDoc({
+    title: `Weekly service report — ${data.clientName}`,
+    author: data.orgName,
+    subject: `Service week ${data.periodStart} to ${data.periodEnd}`,
+  });
+  const L = k.L;
+  const Wd = k.width();
+  const pct = (v: number | null) => (v == null ? '—' : `${Math.round(v)}%`);
+  const sla = data.snapshot.sla;
 
-    const left = doc.page.margins.left;
-    const right = doc.page.width - doc.page.margins.right;
-    const width = right - left;
-    const bottom = () => doc.page.height - doc.page.margins.bottom - 26;
-    const ensure = (needed: number) => {
-      if (doc.y + needed > bottom()) doc.addPage();
-    };
-    const pct = (v: number | null) => (v == null ? '—' : `${Math.round(v)}%`);
-    const money = (v: number) =>
-      `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-    // ---- Hero letterhead ---------------------------------------------------
-    doc.rect(0, 0, doc.page.width, 118).fill(NAVY);
-    doc.rect(0, 118, doc.page.width, 3).fill(GOLD);
-    doc.font('Helvetica-Bold').fontSize(21).fillColor('#FFFFFF').text(data.orgName, left, 34);
-    doc
-      .font('Helvetica')
-      .fontSize(8.5)
-      .fillColor(GOLD)
-      .text('WEEKLY SERVICE REPORT', left, 60, { characterSpacing: 2 });
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(14)
-      .fillColor('#FFFFFF')
-      .text(data.clientName, left, 34, { width, align: 'right' });
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor('#C7CEDC')
-      .text(`Service week ${data.periodStart} — ${data.periodEnd}`, left, 56, {
-        width,
-        align: 'right',
-      })
-      .text(`Prepared ${data.generatedAt}`, left, 70, { width, align: 'right' });
-    doc
-      .font('Helvetica')
-      .fontSize(8)
-      .fillColor('#8E99AD')
-      .text('Prepared exclusively for our partner — workforce coverage, reliability and billing, one page truth.', left, 92, {
-        width: width * 0.7,
-      });
-    doc.y = 140;
-
-    // ---- KPI cards ---------------------------------------------------------
-    const sla = data.snapshot.sla;
-    const kpis: { label: string; value: string; tone?: string; sub?: string }[] = [
+  let y = k.masthead({
+    title: 'Weekly service report',
+    subtitle: `Prepared ${data.generatedAt}`,
+    brand: {
+      name: data.orgName,
+      lines: ['Workforce coverage, reliability and billing'],
+    },
+    meta: [
+      { label: 'Prepared for', value: data.clientName },
       {
-        label: 'FILL RATE',
+        label: 'Service week',
+        value: fmt.dateRange(data.periodStart, data.periodEnd),
+      },
+      {
+        label: 'Billed this week',
+        value: fmt.money(data.snapshot.totals.amount),
+      },
+    ],
+  });
+
+  // ---- The week in five figures -------------------------------------------
+  y = k.figures(
+    [
+      {
+        label: 'Fill rate',
         value: pct(sla.fillRatePct),
-        tone: (sla.fillRatePct ?? 100) >= 95 ? GOOD : WARN,
+        hint: `${sla.assignedShifts} of ${sla.publishedShifts} staffed`,
+        tone: sla.fillRatePct == null ? undefined : sla.fillRatePct >= 95 ? 'good' : 'warn',
       },
-      { label: 'HOURS DELIVERED', value: data.snapshot.totals.hours.toFixed(1) },
-      { label: 'SHIFTS COVERED', value: `${sla.assignedShifts}/${sla.publishedShifts}` },
-      { label: 'ON-TIME ARRIVALS', value: pct(sla.punctualPct) },
       {
-        label: 'NO-SHOWS',
-        value: String(data.reliability.noShows),
-        tone: data.reliability.noShows === 0 ? GOOD : WARN,
-        sub:
-          data.reliability.noShows > 0
-            ? 'no punch recorded'
-            : 'clean week',
+        label: 'On time',
+        value: pct(sla.punctualPct),
+        hint: sla.punctualPct == null ? 'no punches yet' : 'of arrivals',
+        tone: sla.punctualPct == null ? undefined : sla.punctualPct >= 95 ? 'good' : 'warn',
       },
-    ];
-    const gap = 8;
-    const cardW = (width - gap * (kpis.length - 1)) / kpis.length;
-    const cardH = 56;
-    kpis.forEach((k, i) => {
-      const x = left + i * (cardW + gap);
-      doc.roundedRect(x, doc.y, cardW, cardH, 5).fill(PANEL);
-      doc
-        .font('Helvetica')
-        .fontSize(6.5)
-        .fillColor(LIGHT)
-        .text(k.label, x + 8, doc.y + 8, { width: cardW - 16, characterSpacing: 0.7 });
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(17)
-        .fillColor(k.tone ?? NAVY)
-        .text(k.value, x + 8, doc.y + 20, { width: cardW - 16 });
-      if (k.sub) {
-        doc
-          .font('Helvetica')
-          .fontSize(7)
-          .fillColor(GREY)
-          .text(k.sub, x + 8, doc.y + 41, { width: cardW - 16 });
-      }
-    });
-    doc.y += cardH + 14;
+      {
+        label: 'No-shows',
+        value: String(data.reliability.noShows),
+        hint: data.reliability.noShows === 0 ? 'a clean week' : 'no punch recorded',
+        tone: data.reliability.noShows === 0 ? 'good' : 'bad',
+      },
+      {
+        label: 'Shifts covered',
+        value: `${sla.assignedShifts}/${sla.publishedShifts}`,
+        hint: `${data.reliability.pickupsApproved} picked up`,
+      },
+      {
+        label: 'Hours',
+        value: fmt.number(data.snapshot.totals.hours, 1),
+        hint: `${fmt.number(data.snapshot.totals.otHours, 1)} overtime`,
+        emphasis: true,
+      },
+    ],
+    y,
+  );
 
-    const section = (title: string) => {
-      ensure(46);
-      const y = doc.y + 8;
-      doc.rect(left, y + 1, 4, 11).fill(GOLD);
-      doc.font('Helvetica-Bold').fontSize(11.5).fillColor(NAVY).text(title, left + 10, y);
-      doc
-        .moveTo(left, y + 18)
-        .lineTo(right, y + 18)
-        .lineWidth(0.5)
-        .strokeColor('#E1E5EC')
-        .stroke();
-      doc.y = y + 24;
-    };
+  // ---- Right now ----------------------------------------------------------
+  y = k.section('Your store right now', y, `as of ${data.generatedAt}`);
+  y = k.figures(
+    [
+      {
+        label: 'On the floor',
+        value: String(data.now.onFloorCount),
+        hint:
+          data.now.onFloorCount > 0
+            ? data.now.onFloor.join(', ')
+            : 'Nobody clocked in at this moment',
+        tone: data.now.onFloorCount > 0 ? 'good' : undefined,
+      },
+      {
+        label: 'Today',
+        value: `${data.now.todayShifts} shifts`,
+        hint: `${data.now.todayConfirmed} personally confirmed`,
+      },
+      {
+        label: 'Tomorrow',
+        value: `${data.now.tomorrowShifts} shifts`,
+        hint: `${data.now.tomorrowStaffed} staffed · ${data.now.tomorrowConfirmed} confirmed`,
+      },
+    ],
+    y,
+  );
 
-    // ---- Live snapshot -----------------------------------------------------
-    section('Your store right now');
-    {
-      const panelY = doc.y;
-      const panelH = 64;
-      doc.roundedRect(left, panelY, width, panelH, 6).fill(PANEL);
-      const colW = width / 3;
-      const stat = (i: number, label: string, value: string, sub: string, tone = NAVY) => {
-        const x = left + i * colW + 12;
-        doc.font('Helvetica').fontSize(6.5).fillColor(LIGHT).text(label, x, panelY + 9, {
-          width: colW - 20,
-          characterSpacing: 0.7,
-        });
-        doc.font('Helvetica-Bold').fontSize(15).fillColor(tone).text(value, x, panelY + 20, {
-          width: colW - 20,
-        });
-        doc.font('Helvetica').fontSize(7.5).fillColor(GREY).text(sub, x, panelY + 40, {
-          width: colW - 20,
-          height: 20,
-          ellipsis: true,
-        });
-      };
-      stat(
-        0,
-        'ON THE FLOOR RIGHT NOW',
-        String(data.now.onFloorCount),
-        data.now.onFloorCount > 0 ? data.now.onFloor.join(', ') : 'Nobody clocked in at this moment.',
-        data.now.onFloorCount > 0 ? GOOD : NAVY,
-      );
-      stat(
-        1,
-        'TODAY',
-        `${data.now.todayShifts} shifts`,
-        `${data.now.todayConfirmed} personally confirmed ("I'll be there")`,
-      );
-      stat(
-        2,
-        'TOMORROW',
-        `${data.now.tomorrowShifts} shifts`,
-        `${data.now.tomorrowStaffed} staffed · ${data.now.tomorrowConfirmed} confirmed`,
-      );
-      doc.y = panelY + panelH + 10;
-    }
-
-    // ---- Day by day with fill bars ----------------------------------------
-    section('Coverage, day by day');
-    {
-      const rowH = 17;
-      const nameW = 78;
-      const numW = 40;
-      const barX = left + nameW + 6;
-      const barW = width - nameW - numW * 3 - 30;
-      doc.font('Helvetica').fontSize(6.5).fillColor(LIGHT);
-      doc.text('DAY', left, doc.y, { characterSpacing: 0.6 });
-      doc.text('STAFFED / OPEN', barX, doc.y, { characterSpacing: 0.6 });
-      doc.text('SHIFTS', barX + barW + 8, doc.y, { width: numW, align: 'right' });
-      doc.text('OPEN', barX + barW + 8 + numW, doc.y, { width: numW, align: 'right' });
-      doc.text('HOURS', barX + barW + 8 + numW * 2, doc.y, { width: numW, align: 'right' });
-      doc.y += 11;
-      const maxShifts = Math.max(1, ...data.days.map((d) => d.shifts));
-      for (const d of data.days) {
-        ensure(rowH + 2);
-        const y = doc.y;
-        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(NAVY).text(d.label, left, y + 3, {
-          width: nameW,
-          lineBreak: false,
-        });
-        // Track + stacked bar (green staffed, amber open), scaled to the
-        // busiest day so relative load reads at a glance.
-        doc.roundedRect(barX, y + 3, barW, 8, 4).fill('#E7EAF1');
-        const total = Math.max(d.shifts, 1);
-        const filledW = (barW * d.shifts) / maxShifts;
-        const staffedW = filledW * (d.assigned / total);
-        if (staffedW > 0) doc.roundedRect(barX, y + 3, Math.max(staffedW, 4), 8, 4).fill(GOOD);
-        if (d.open > 0) {
-          doc
-            .roundedRect(barX + staffedW, y + 3, Math.max(filledW - staffedW, 3), 8, 4)
-            .fill(WARN);
-        }
-        doc.font('Helvetica').fontSize(8.5).fillColor(NAVY);
-        doc.text(String(d.shifts), barX + barW + 8, y + 3, { width: numW, align: 'right' });
-        doc
-          .fillColor(d.open > 0 ? WARN : LIGHT)
-          .text(String(d.open), barX + barW + 8 + numW, y + 3, { width: numW, align: 'right' });
-        doc
-          .fillColor(NAVY)
-          .text(d.plannedHours.toFixed(1), barX + barW + 8 + numW * 2, y + 3, {
-            width: numW,
-            align: 'right',
-          });
-        doc.y = y + rowH;
-      }
-    }
-
-    // ---- Reliability -------------------------------------------------------
-    section('Reliability');
-    doc.font('Helvetica').fontSize(9).fillColor(GREY);
-    const rel = data.reliability;
-    doc.text(
-      rel.noShows === 0
-        ? 'No missed shifts this week.'
-        : `${rel.noShows} missed shift${rel.noShows === 1 ? '' : 's'} — nobody punched in against ${rel.noShows === 1 ? 'it' : 'them'}.`,
-      left,
-      doc.y,
-      { width },
-    );
-    doc.text(
-      `${rel.pickupsApproved} open shift${rel.pickupsApproved === 1 ? '' : 's'} filled by associates volunteering through the Alto shift marketplace.`,
-      { width },
-    );
-    if (sla.pendingEntries > 0) {
-      doc
-        .fillColor(WARN)
-        .text(
-          `${sla.pendingEntries} time entr${sla.pendingEntries === 1 ? 'y is' : 'ies are'} still in review — hour totals may tick up slightly.`,
-          { width },
-        );
-    }
-
-    // ---- Next week ---------------------------------------------------------
-    section('Next week readiness');
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor(GREY)
-      .text(
-        data.nextWeek.shifts === 0
-          ? 'Next week is not yet published.'
-          : `${data.nextWeek.shifts} shifts planned · ${data.nextWeek.assigned} already staffed · ${data.nextWeek.confirmed} personally confirmed by the associate.`,
-        left,
-        doc.y,
-        { width },
-      );
-
-    // ---- Team with photos --------------------------------------------------
-    section(
-      `Your team this week (${data.roster.length}${data.rosterTruncated > 0 ? ` of ${data.roster.length + data.rosterTruncated}` : ''})`,
-    );
-    {
-      const cols = 3;
-      const cardGap = 8;
-      const cw = (width - cardGap * (cols - 1)) / cols;
-      const ch = 44;
-      const avatar = 30;
-      data.roster.forEach((r, i) => {
-        const col = i % cols;
-        if (col === 0) ensure(ch + 6);
-        const x = left + col * (cw + cardGap);
-        const y = doc.y;
-        doc.roundedRect(x, y, cw, ch, 5).fill(PANEL);
-        const ax = x + 8;
-        const ay = y + (ch - avatar) / 2;
-        let drewPhoto = false;
-        if (r.photo) {
-          try {
-            doc.save();
-            doc.circle(ax + avatar / 2, ay + avatar / 2, avatar / 2).clip();
-            doc.image(r.photo, ax, ay, { width: avatar, height: avatar });
-            doc.restore();
-            drewPhoto = true;
-          } catch {
-            // Unreadable image (bad bytes, unsupported format): restore the
-            // clip state if it was left open, then fall back to initials.
-            try {
-              doc.restore();
-            } catch {
-              /* no dangling save — fine */
-            }
-          }
-        }
-        if (!drewPhoto) {
-          doc.circle(ax + avatar / 2, ay + avatar / 2, avatar / 2).fill(NAVY_SOFT);
-          doc
-            .font('Helvetica-Bold')
-            .fontSize(10)
-            .fillColor('#FFFFFF')
-            .text(r.initials, ax, ay + 9, { width: avatar, align: 'center' });
-        }
-        const tx = ax + avatar + 8;
-        const tw = cw - (tx - x) - 8;
-        doc
-          .font('Helvetica-Bold')
-          .fontSize(8)
-          .fillColor(NAVY)
-          .text(r.name, tx, y + 8, { width: tw, lineBreak: false, ellipsis: true });
-        doc
-          .font('Helvetica')
-          .fontSize(6.5)
-          .fillColor(GREY)
-          .text(r.positions, tx, y + 19, { width: tw, lineBreak: false, ellipsis: true });
-        doc
-          .font('Helvetica-Bold')
-          .fontSize(7.5)
-          .fillColor(GOLD)
-          .text(`${r.hours.toFixed(1)} h`, tx, y + 29, { width: tw });
-        if (col === cols - 1 || i === data.roster.length - 1) doc.y = y + ch + 6;
+  // ---- Coverage, day by day -----------------------------------------------
+  y = k.section('Coverage, day by day', y, 'staffed and open shifts, scaled to the busiest day');
+  {
+    const rowH = 20;
+    const dayW = 110;
+    const numW = 52;
+    const barX = L + dayW;
+    const barW = Wd - dayW - numW * 3 - 12;
+    const head = (yy: number) => {
+      k.text('Day', L, yy, { size: SIZE.label, caps: true, color: COLOR.ink3 });
+      k.text('Staffed / open', barX, yy, {
+        size: SIZE.label,
+        caps: true,
+        color: COLOR.ink3,
       });
-      if (data.rosterTruncated > 0) {
-        doc
-          .font('Helvetica')
-          .fontSize(8)
-          .fillColor(LIGHT)
-          .text(`+ ${data.rosterTruncated} more associates`, left, doc.y + 2);
-        doc.y += 14;
-      }
-    }
-
-    // ---- Full week schedule ------------------------------------------------
-    doc.addPage();
-    doc.y = 54;
-    section('The week, shift by shift');
-    doc
-      .font('Helvetica')
-      .fontSize(8)
-      .fillColor(LIGHT)
-      .text(
-        'Every scheduled shift in the service week — the answer to "can you send me this week\'s schedule?", permanently attached to this report.',
-        left,
-        doc.y,
-        { width },
+      ['Shifts', 'Open', 'Hours'].forEach((h, i) =>
+        k.text(h, barX + barW + 12 + numW * i, yy, {
+          size: SIZE.label,
+          caps: true,
+          color: COLOR.ink3,
+          width: numW,
+          align: 'right',
+        }),
       );
-    doc.y += 6;
-    for (const day of data.schedule) {
-      ensure(30);
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(9.5)
-        .fillColor(NAVY_SOFT)
-        .text(day.dayLabel, left, doc.y + 8);
-      doc.y += 22;
-      for (const row of day.rows) {
-        ensure(13);
-        const y = doc.y;
-        doc
-          .font('Helvetica')
-          .fontSize(8)
-          .fillColor(GREY)
-          .text(row.time, left, y, { width: 130, lineBreak: false });
-        doc
-          .fillColor(NAVY)
-          .text(row.position, left + 140, y, { width: 170, lineBreak: false, ellipsis: true });
-        if (row.who) {
-          doc.fillColor(GREY).text(row.who, left + 320, y, {
-            width: width - 320,
-            lineBreak: false,
-            ellipsis: true,
-          });
-        } else {
-          doc.font('Helvetica-Bold').fillColor(WARN).text('OPEN — being filled', left + 320, y, {
-            width: width - 320,
-            lineBreak: false,
-          });
-        }
-        doc.y = y + 12;
-      }
+      k.hr(yy + 13, L, Wd, COLOR.ruleStrong);
+      return yy + 19;
+    };
+    y = head(k.ensure(y, rowH * 4));
+    const maxShifts = Math.max(1, ...data.days.map((d) => d.shifts));
+    const empty = data.days.every((d) => d.shifts === 0);
+    if (empty) {
+      k.text('No shifts were published for this week.', L, y + 2, {
+        size: SIZE.small,
+        color: COLOR.ink3,
+      });
+      y += rowH;
     }
+    for (const d of empty ? [] : data.days) {
+      y = k.ensure(y, rowH, head);
+      const label = new Date(`${d.key}T12:00:00Z`).toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC',
+      });
+      k.text(label, L, y + 4, {
+        size: SIZE.small,
+        weight: 'medium',
+        width: dayW - 8,
+      });
+      k.box(barX, y + 5, barW, 8, COLOR.wash, 4);
+      const filled = (barW * d.shifts) / maxShifts;
+      const staffed = d.shifts > 0 ? filled * (d.assigned / d.shifts) : 0;
+      if (staffed > 0) k.box(barX, y + 5, Math.max(staffed, 4), 8, COLOR.good, 4);
+      if (d.open > 0) k.box(barX + staffed, y + 5, Math.max(filled - staffed, 4), 8, COLOR.warn, 4);
+      k.text(String(d.shifts), barX + barW + 12, y + 4, {
+        size: SIZE.small,
+        width: numW,
+        align: 'right',
+      });
+      k.text(String(d.open), barX + barW + 12 + numW, y + 4, {
+        size: SIZE.small,
+        width: numW,
+        align: 'right',
+        color: d.open > 0 ? COLOR.warn : COLOR.ink3,
+        weight: d.open > 0 ? 'semibold' : 'regular',
+      });
+      k.text(fmt.number(d.plannedHours, 1), barX + barW + 12 + numW * 2, y + 4, {
+        size: SIZE.small,
+        width: numW,
+        align: 'right',
+      });
+      k.hr(y + rowH - 1, L, Wd, COLOR.rule, 0.4);
+      y += rowH;
+    }
+    y += 4;
+    if (!empty) {
+      k.box(L, y + 3, 10, 6, COLOR.good, 2);
+      k.text('Staffed', L + 14, y, { size: SIZE.label, color: COLOR.ink3 });
+      k.box(L + 70, y + 3, 10, 6, COLOR.warn, 2);
+      k.text('Open, being filled', L + 84, y, {
+        size: SIZE.label,
+        color: COLOR.ink3,
+      });
+      y += 22;
+    }
+  }
 
-    // ---- Operational excellence (store-ops evidence) -----------------------
-    if (data.ops) {
-      section('Operational excellence');
-      doc
-        .font('Helvetica')
-        .fontSize(9)
-        .fillColor(GREY)
-        .text(
-          `${data.ops.shifts} supervised operational shift${data.ops.shifts === 1 ? '' : 's'} ran on documented SOP checklists this week` +
-            (data.ops.sopPct != null ? ` — SOP compliance ${data.ops.sopPct}%` : '') +
-            `. ${data.ops.tempChecks} logged temperature check${data.ops.tempChecks === 1 ? '' : 's'}` +
-            (data.ops.tempOutOfRange === 0
-              ? ', all in range'
-              : `, ${data.ops.tempOutOfRange} flagged and escalated the moment they were recorded`) +
-            `. ${data.ops.handoverItems} shift-to-shift handover item${data.ops.handoverItems === 1 ? '' : 's'} tracked to a decision — nothing left on paper.` +
-            (data.ops.incompleteCloses > 0
-              ? ` ${data.ops.incompleteCloses} shift${data.ops.incompleteCloses === 1 ? '' : 's'} closed with open items, visible to our operations team for follow-up.`
-              : ''),
-          left,
-          doc.y,
-          { width },
-        );
-      if (data.ops.metrics.length > 0) {
-        doc
-          .font('Helvetica-Bold')
-          .fontSize(9)
-          .fillColor(NAVY)
-          .text(
-            data.ops.metrics
-              .map(
-                (m) =>
-                  `${m.total.toLocaleString('en-US')} ${m.unit ?? ''} ${m.label.toLowerCase()}`.replace(/\s+/g, ' '),
-              )
-              .join('   ·   '),
-            left,
-            doc.y + 4,
-            { width },
-          );
-        doc.y += 4;
-      }
-      if (data.ops.photos.length > 0) {
-        doc.y += 6;
-        ensure(96);
-        const ph = 84;
-        const pw = (width - 16) / 3;
-        data.ops.photos.forEach((photo, i) => {
-          const x = left + i * (pw + 8);
+  // ---- Reliability and next week, side by side -----------------------------
+  {
+    const rel = data.reliability;
+    const relBody =
+      (rel.noShows === 0
+        ? 'No missed shifts this week. '
+        : `${rel.noShows} missed shift${rel.noShows === 1 ? '' : 's'}: nobody punched in against ${
+            rel.noShows === 1 ? 'it' : 'them'
+          }. `) +
+      `${rel.pickupsApproved} open shift${
+        rel.pickupsApproved === 1 ? ' was' : 's were'
+      } filled by associates volunteering through the shift marketplace.` +
+      (sla.pendingEntries > 0
+        ? ` ${sla.pendingEntries} time entr${
+            sla.pendingEntries === 1 ? 'y is' : 'ies are'
+          } still in review, so hour totals may rise slightly.`
+        : '');
+    const nextBody =
+      data.nextWeek.shifts === 0
+        ? 'Next week is not published yet.'
+        : `${data.nextWeek.shifts} shifts planned. ${data.nextWeek.assigned} already staffed, and ${data.nextWeek.confirmed} personally confirmed by the associate.`;
+    const half = (Wd - 12) / 2;
+    y = k.ensure(y, 90);
+    const y1 = k.callout(
+      {
+        tone: rel.noShows === 0 ? 'good' : 'warn',
+        title: 'Reliability',
+        body: relBody,
+      },
+      y,
+      L,
+      half,
+    );
+    const y2 = k.callout(
+      {
+        tone:
+          data.nextWeek.shifts > 0 && data.nextWeek.assigned >= data.nextWeek.shifts
+            ? 'good'
+            : 'info',
+        title: 'Next week',
+        body: nextBody,
+      },
+      y,
+      L + half + 12,
+      half,
+    );
+    y = Math.max(y1, y2);
+  }
+
+  // ---- The team -----------------------------------------------------------
+  y = k.section(
+    `Your team this week`,
+    y,
+    `${data.roster.length}${
+      data.rosterTruncated > 0 ? ` of ${data.roster.length + data.rosterTruncated}` : ''
+    } associates`,
+  );
+  {
+    const cols = 3;
+    const gap = 8;
+    const cw = (Wd - gap * (cols - 1)) / cols;
+    const ch = 46;
+    const av = 30;
+    if (data.roster.length === 0) {
+      k.text('No associates worked at this client this week.', L, y, {
+        size: SIZE.small,
+        color: COLOR.ink3,
+      });
+      y += 18;
+    }
+    data.roster.forEach((r, i) => {
+      const col = i % cols;
+      if (col === 0) y = k.ensure(y, ch + gap);
+      const x = L + col * (cw + gap);
+      k.outline(x, y, cw, ch, COLOR.rule, 6);
+      const ax = x + 8;
+      const ay = y + (ch - av) / 2;
+      let photo = false;
+      if (r.photo) {
+        try {
+          doc.save();
+          doc.circle(ax + av / 2, ay + av / 2, av / 2).clip();
+          doc.image(r.photo, ax, ay, { width: av, height: av });
+          doc.restore();
+          photo = true;
+        } catch {
           try {
-            doc.save();
-            doc.roundedRect(x, doc.y, pw, ph, 6).clip();
-            doc.image(photo, x, doc.y, { width: pw, height: ph });
             doc.restore();
           } catch {
-            try {
-              doc.restore();
-            } catch {
-              /* no dangling save */
-            }
+            /* nothing left open */
           }
+        }
+      }
+      if (!photo) {
+        doc
+          .save()
+          .circle(ax + av / 2, ay + av / 2, av / 2)
+          .fill(COLOR.band)
+          .restore();
+        k.text(r.initials, ax, ay + 10, {
+          size: SIZE.small,
+          weight: 'semibold',
+          color: COLOR.white,
+          width: av,
+          align: 'center',
         });
-        doc.y += ph + 8;
-        doc
-          .font('Helvetica')
-          .fontSize(7)
-          .fillColor(LIGHT)
-          .text('From the floor this week — captured by our shift supervisors.', left, doc.y);
-        doc.y += 12;
       }
+      const tx = ax + av + 8;
+      const tw = cw - (tx - x) - 8;
+      k.text(r.name, tx, y + 8, {
+        size: SIZE.small,
+        weight: 'semibold',
+        width: tw,
+      });
+      k.text(r.positions || '—', tx, y + 20, {
+        size: SIZE.label,
+        color: COLOR.ink3,
+        width: tw,
+      });
+      k.text(`${fmt.number(r.hours, 1)} h`, tx, y + 31, {
+        size: SIZE.label,
+        weight: 'semibold',
+        color: COLOR.brand,
+        width: tw,
+      });
+      if (col === cols - 1 || i === data.roster.length - 1) y += ch + gap;
+    });
+    if (data.rosterTruncated > 0) {
+      k.text(`and ${data.rosterTruncated} more associates`, L, y, {
+        size: SIZE.small,
+        color: COLOR.ink3,
+      });
+      y += 16;
     }
+  }
 
-    // ---- Billing -----------------------------------------------------------
-    section('Billing');
+  // ---- The schedule -------------------------------------------------------
+  doc.addPage();
+  y = k.section('The week, shift by shift', k.top, 'every scheduled shift');
+  y = k.callout(
     {
-      const y0 = doc.y;
-      doc.font('Helvetica').fontSize(6.5).fillColor(LIGHT);
-      doc.text('PERIOD', left, y0, { characterSpacing: 0.6 });
-      doc.text('STATEMENT', left + 200, y0, { characterSpacing: 0.6 });
-      doc.text('AMOUNT', left + 380, y0, { width: 124, align: 'right', characterSpacing: 0.6 });
-      doc.y = y0 + 11;
-      if (data.statements.length === 0) {
-        doc.font('Helvetica').fontSize(9).fillColor(LIGHT).text('No statements yet.', left, doc.y);
-      }
-      for (const s of data.statements) {
-        ensure(15);
-        const y = doc.y;
-        doc
-          .font('Helvetica')
-          .fontSize(8.5)
-          .fillColor(NAVY)
-          .text(s.period, left, y, { width: 190, lineBreak: false });
-        doc
-          .fillColor(s.paid ? GOOD : s.label === 'Draft' ? LIGHT : NAVY)
-          .text(s.label, left + 200, y, { width: 170, lineBreak: false });
-        doc
-          .fillColor(NAVY)
-          .text(s.amount != null ? money(s.amount) : '—', left + 380, y, {
-            width: 124,
+      body: 'Every scheduled shift in the service week, attached to this report so the schedule travels with it.',
+    },
+    y,
+  );
+  if (data.schedule.length === 0) {
+    k.text('No shifts were scheduled this week.', L, y, {
+      size: SIZE.small,
+      color: COLOR.ink3,
+    });
+    y += 18;
+  }
+  for (const day of data.schedule) {
+    y = k.ensure(y, 70);
+    k.text(day.dayLabel, L, y, { size: SIZE.body, weight: 'semibold' });
+    k.text(
+      `${day.rows.length} shift${day.rows.length === 1 ? '' : 's'} · ${
+        day.rows.filter((r) => !r.who).length
+      } open`,
+      L,
+      y + 1,
+      { size: SIZE.label, color: COLOR.ink3, width: Wd, align: 'right' },
+    );
+    y = k.table({
+      y: y + 16,
+      rows: day.rows,
+      rowH: 16,
+      columns: [
+        { key: 'time', header: 'Time', width: 1.4, value: (r) => r.time },
+        {
+          key: 'position',
+          header: 'Position',
+          width: 2,
+          value: (r) => r.position,
+        },
+        {
+          key: 'who',
+          header: 'Associate',
+          width: 2.6,
+          value: (r) => r.who ?? 'Open, being filled',
+          color: (r) => (r.who ? undefined : COLOR.warn),
+          strong: false,
+        },
+      ],
+    });
+  }
+
+  // ---- Operations evidence -----------------------------------------------
+  if (data.ops) {
+    const o = data.ops;
+    y = k.section('Operational excellence', k.ensure(y, 150), 'from the store-operations checklists');
+    y = k.figures(
+      [
+        {
+          label: 'Supervised shifts',
+          value: String(o.shifts),
+          hint: 'run on documented checklists',
+        },
+        {
+          label: 'SOP compliance',
+          value: o.sopPct == null ? '—' : `${o.sopPct}%`,
+          tone: o.sopPct == null ? undefined : o.sopPct >= 95 ? 'good' : 'warn',
+        },
+        {
+          label: 'Temperature checks',
+          value: String(o.tempChecks),
+          hint:
+            o.tempOutOfRange === 0 ? 'all in range' : `${o.tempOutOfRange} out of range, escalated`,
+          tone: o.tempOutOfRange === 0 ? 'good' : 'warn',
+        },
+        {
+          label: 'Handover items',
+          value: String(o.handoverItems),
+          hint:
+            o.incompleteCloses > 0
+              ? `${o.incompleteCloses} shift${o.incompleteCloses === 1 ? '' : 's'} closed with open items`
+              : 'each tracked to a decision',
+        },
+      ],
+      y,
+    );
+    if (o.metrics.length > 0) {
+      y = k.table({
+        y,
+        rows: o.metrics,
+        columns: [
+          {
+            key: 'label',
+            header: 'This week on the floor',
+            width: 4,
+            value: (m) => m.label,
+          },
+          {
+            key: 'total',
+            header: 'Total',
+            width: 1.4,
             align: 'right',
+            value: (m) => `${m.total.toLocaleString('en-US')}${m.unit ? ` ${m.unit}` : ''}`,
+            strong: true,
+          },
+        ],
+      });
+    }
+    if (o.photos.length > 0) {
+      const ph = 96;
+      const pw = (Wd - 16) / 3;
+      y = k.ensure(y, ph + 26);
+      o.photos.slice(0, 3).forEach((photo, i) => {
+        const x = L + i * (pw + 8);
+        try {
+          doc.save();
+          doc.roundedRect(x, y, pw, ph, 6).clip();
+          doc.image(photo, x, y, {
+            cover: [pw, ph],
+            align: 'center',
+            valign: 'center',
           });
-        doc.y = y + 13;
-      }
+          doc.restore();
+        } catch {
+          try {
+            doc.restore();
+          } catch {
+            /* nothing left open */
+          }
+        }
+      });
+      y += ph + 6;
+      k.text('From the floor this week, captured by our shift supervisors.', L, y, {
+        size: SIZE.label,
+        color: COLOR.ink3,
+      });
+      y += 18;
     }
+  }
 
-    // ---- Footer on every page ---------------------------------------------
-    const range = doc.bufferedPageRange();
-    for (let i = range.start; i < range.start + range.count; i++) {
-      doc.switchToPage(i);
-      doc
-        .moveTo(left, doc.page.height - 48)
-        .lineTo(right, doc.page.height - 48)
-        .lineWidth(0.5)
-        .strokeColor(GOLD)
-        .stroke();
-      doc
-        .font('Helvetica')
-        .fontSize(7.5)
-        .fillColor(LIGHT)
-        .text(
-          `${data.orgName} · Weekly Service Report · ${data.clientName} · ${data.periodStart} — ${data.periodEnd} · Confidential · page ${i - range.start + 1} of ${range.count}`,
-          left,
-          doc.page.height - 40,
-          { width, align: 'center', lineBreak: false },
-        );
-    }
+  // ---- Billing ------------------------------------------------------------
+  y = k.section('Billing', y, 'statements for this client');
+  y = k.table({
+    y,
+    rows: data.statements,
+    empty: 'No statements yet.',
+    columns: [
+      { key: 'period', header: 'Period', width: 2.4, value: (s) => s.period },
+      {
+        key: 'label',
+        header: 'Statement',
+        width: 2.2,
+        value: (s) => s.label,
+        color: (s) => (s.paid ? COLOR.good : s.label === 'Draft' ? COLOR.ink3 : undefined),
+      },
+      {
+        key: 'amount',
+        header: 'Amount',
+        width: 1.4,
+        align: 'right',
+        value: (s) => (s.amount != null ? fmt.money(s.amount) : '—'),
+        strong: true,
+      },
+    ],
+  });
 
-    doc.end();
+  return k.finish({
+    reference: `Weekly service report · ${data.clientName} · ${fmt.dateRange(
+      data.periodStart,
+      data.periodEnd,
+    )}`,
+    note: data.orgName,
   });
 }

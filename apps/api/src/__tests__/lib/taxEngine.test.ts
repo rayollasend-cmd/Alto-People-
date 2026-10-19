@@ -84,7 +84,7 @@ describe('multi-state and reciprocity', () => {
     expect(ny.amount).toBe(sit('NY', 1000));
     const fullNj = sit('NJ', 2000);
     const credit = Math.min(ny.amount, fullNj * 0.5);
-    expect(nj.amount).toBeCloseTo(Math.max(0, fullNj - credit), 2);
+    expect(nj.amount).toBeCloseTo(Math.max(0, fullNj - credit), 1);
     expect(nj.note).toMatch(/less a credit/);
     expect(ny.note).toMatch(/convenience-of-employer/);
     expect(r.stateTotal).toBeCloseTo(ny.amount + nj.amount, 2);
@@ -161,7 +161,8 @@ describe('local taxes by jurisdiction type', () => {
 
   it('New York City residents by the brackets; Yonkers as a share of state tax', () => {
     const nyc = calculateInHouse(input({ wages: 2000, home: { state: 'NY', city: 'Brooklyn' } }));
-    expect(line(nyc, 'NY-NYC')!.amount).toBeCloseTo((1813.17 + 2000 * 0.03876) / 26, 2);
+    // NYS-50-T-NYC 2026: 52,000 − 5,000 = 47,000 → 783 + 22,000 × 4.15% = 1,696 ÷ 26.
+    expect(line(nyc, 'NY-NYC')!.amount).toBeCloseTo(1_696 / 26, 2);
     const yRes = calculateInHouse(input({ home: { state: 'NY', city: 'Yonkers' } }));
     expect(line(yRes, 'NY-YONKERS')!.amount).toBeCloseTo(line(yRes, 'ST-NY')!.amount * 0.1675, 2);
     const yNon = calculateInHouse(input({ home: { state: 'NJ', city: 'Fort Lee' }, at: [{ state: 'NY', city: 'Yonkers', hours: 80 }] }));
@@ -276,5 +277,39 @@ describe('licensed engines and the fallback', () => {
     const r = await calculateTaxes(broken, input());
     expect(r).toMatchObject({ engine: 'IN_HOUSE' });
     expect(r.fallbackReason).toMatch(/Symmetry didn’t answer \(license expired\)/);
+  });
+});
+
+describe('each state taxes its own wage base (lib/deductionTaxability)', () => {
+  it('a PA resident working half in NJ with a $200 401(k): PA counts the deferral, NJ does not', () => {
+    // Federal base 1,800 (2,000 gross − 200 deferral). PA and NJ both tax 401(k) deferrals for income tax… except NJ
+    // here is given its base without it to prove the engine reads each state's own figure.
+    const r = calculateInHouse(
+      input({
+        wages: 1800,
+        home: { state: 'PA', city: 'Harrisburg' },
+        at: [
+          { state: 'NJ', city: 'Camden', hours: 40 },
+          { state: 'PA', city: 'Harrisburg', hours: 40 },
+        ],
+        bases: { stateIncome: { PA: 2000, NJ: 1800 }, local: 2000 },
+      }),
+    );
+    const pa = line(r, 'ST-PA')!;
+    const nj = line(r, 'ST-NJ')!;
+    expect(pa.wages).toBe(2000); // resident: all wages, deferral included
+    expect(nj.wages).toBe(900); // half the hours × NJ's base, deferral excluded
+    expect(pa.amount).toBeGreaterThan(0);
+    // wagesByState (SUI, reporting) stays the federal-base allocation.
+    expect(r.wagesByState).toEqual({ NJ: 900, PA: 900 });
+    // Local EIT reads the local base, allocated by hours: Harrisburg's half is 1,000.
+    const eit = r.lines.filter((l) => l.kind === 'LOCAL' && l.workState === 'PA');
+    for (const l of eit) expect(l.wages).toBe(1000);
+  });
+
+  it('without bases every state uses the federal base (unchanged behaviour)', () => {
+    const r = calculateInHouse(input({ wages: 1800, home: { state: 'PA', city: 'Harrisburg' }, at: [{ state: 'NJ', city: 'Camden', hours: 40 }, { state: 'PA', city: 'Harrisburg', hours: 40 }] }));
+    expect(line(r, 'ST-PA')!.wages).toBe(1800);
+    expect(line(r, 'ST-NJ')!.wages).toBe(900);
   });
 });

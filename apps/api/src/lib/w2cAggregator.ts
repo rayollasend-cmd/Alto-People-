@@ -7,7 +7,8 @@
 //
 // We don't re-derive `previous` — that's the snapshot stored on the
 // original TaxForm.amounts. `corrected` either comes from the caller
-// (manual correction) or is recomputed via aggregateW2Wages against the
+// (manual correction) or is recomputed via aggregateW2Wages — from the
+// same itemized deductions and tax-engine lines as the W-2 — against the
 // current state of payroll items (the common case after an AMENDMENT
 // run posts new wages to a year that's already been W-2'd).
 
@@ -37,6 +38,12 @@ export function hasW2cDelta(a: W2Boxes, b: W2Boxes): boolean {
   const codes = (x: W2Boxes) => (x.box12 ?? []).map((e) => `${e.code}:${e.amount}`).join('|');
   if (codes(a) !== codes(b)) return true;
   if ((a.box14bTippedOccupationCodes ?? []).join('|') !== (b.box14bTippedOccupationCodes ?? []).join('|')) return true;
+  // Boxes 13 (retirement plan), 14a and 18–20 (stored before these existed read as empty).
+  if (Boolean(a.box13RetirementPlan) !== Boolean(b.box13RetirementPlan)) return true;
+  const other = (x: W2Boxes) => (x.box14Other ?? []).map((e) => `${e.label}:${e.amount}`).sort().join('|');
+  if (other(a) !== other(b)) return true;
+  const locals = (x: W2Boxes) => (x.localLines ?? []).map((l) => `${l.state}|${l.code}:${l.localWages}:${l.localIncomeTax}`).sort().join('|');
+  if (locals(a) !== locals(b)) return true;
 
   // States: a different set of state codes counts as a delta even if
   // the per-state numbers happen to match.

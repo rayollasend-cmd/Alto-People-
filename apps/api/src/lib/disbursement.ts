@@ -173,10 +173,12 @@ class CheckAdapter implements DisbursementAdapter {
         failureReason: `unsupported_currency: checks are USD only, got ${input.currency}`,
       };
     }
-    const existing = await prisma.payCheck.findUnique({
-      where: { payrollItemId: input.idempotencyKey },
+    // One live check per paycheck: a repeat call returns it. A voided
+    // check stays in the register; the new one records what it replaces.
+    const existing = await prisma.payCheck.findFirst({
+      where: { payrollItemId: input.idempotencyKey, voidedAt: null },
     });
-    if (existing && !existing.voidedAt) {
+    if (existing) {
       return {
         provider: 'CHECK',
         externalRef: `CHECK-${existing.checkNumber}`,
@@ -184,17 +186,20 @@ class CheckAdapter implements DisbursementAdapter {
         failureReason: null,
       };
     }
-    if (existing?.voidedAt) {
-      // Reissue after a void: replace the row so the unique holds and the
-      // new check gets a fresh number.
-      await prisma.payCheck.delete({ where: { id: existing.id } });
-    }
+    const lastVoided = await prisma.payCheck.findFirst({
+      where: { payrollItemId: input.idempotencyKey, voidedAt: { not: null } },
+      orderBy: { voidedAt: 'desc' },
+      select: { id: true },
+    });
+    const r = input.recipient;
     const check = await prisma.payCheck.create({
       data: {
         payrollItemId: input.idempotencyKey,
-        payeeName: input.recipient.fullName,
+        payeeName: r.fullName,
         amount: input.amount,
         memo: input.memo ?? null,
+        payeeAddress: r.addressLine1 || r.city ? { line1: r.addressLine1 ?? null, city: r.city ?? null, state: r.state ?? null, zip: r.zip ?? null } : undefined,
+        reissuedFromId: lastVoided?.id ?? null,
       },
     });
     return {

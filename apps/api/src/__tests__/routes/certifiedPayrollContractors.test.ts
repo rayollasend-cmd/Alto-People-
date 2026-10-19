@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { inflateSync } from 'node:zlib';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
@@ -11,6 +10,7 @@ import { applyDueBackupWithholding, buildTinMatchRequestFile, parseTinMatchResul
 import { computeCertifiedWeek, splitOvertime } from '../../lib/certifiedPayroll.js';
 import { renderWh347Pdf } from '../../lib/wh347Pdf.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { pdfText } from '../../../test/pdfText.js';
 
 /**
  * Certified payroll (prevailing wage) and the contractors (1099) desk:
@@ -45,28 +45,6 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 async function payrollPerson() {
   const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
   return { user, agent: await loginAs(user.email) };
-}
-
-/** The text drawn on a pdfkit PDF: inflate each content stream and decode its TJ hex strings. */
-function pdfText(pdf: Buffer): string {
-  const raw = pdf.toString('latin1');
-  const out: string[] = [];
-  const re = /stream\r?\n/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) {
-    const start = m.index + m[0].length;
-    const end = raw.indexOf('endstream', start);
-    if (end < 0) break;
-    try {
-      const body = inflateSync(Buffer.from(raw.slice(start, end), 'latin1')).toString('latin1');
-      for (const tj of body.matchAll(/\[(.*?)\]\s*TJ/g)) {
-        out.push([...tj[1]!.matchAll(/<([0-9a-fA-F]*)>/g)].map((h) => Buffer.from(h[1]!, 'hex').toString('latin1')).join(''));
-      }
-    } catch {
-      // not a Flate stream (fonts, images)
-    }
-  }
-  return out.join('\n');
 }
 
 /** Tags open and close in order: a well-formedness check without an XML library. */

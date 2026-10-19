@@ -21,7 +21,8 @@
 //     `preTaxRetirement` sub-bucket on PayrollItem is added back below.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { readDeferrals } from './retirementDeferrals.js';
+import { ITEM_BASES_SELECT, basesOf, type ItemBases } from './wageBases.js';
+import { employerFor, stateAccountNumbers } from './payrollTaxLedger.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -43,42 +44,74 @@ export interface W2Boxes {
   /** Box 7 — Social security tips (cash tips reported to the employer). Box 3 + Box 7 ≤ the wage base. */
   box7SsTips?: number;
   /**
-   * Box 12 — coded amounts, in code order. 2026 adds TA (Trump account,
-   * IRC §128), TP (cash tips reported to the employer) and TT (qualified
-   * overtime: the FLSA premium portion). Source: IRS 2026 W-2/W-3 instructions.
+   * Box 12 — coded amounts, in the form's code order (A … Z, AA … II, then
+   * the 2026 codes TA, TP, TT). Source: IRS 2026 General Instructions for
+   * Forms W-2 and W-3.
    */
   box12?: W2Box12Entry[];
+  /** Box 13 — Retirement plan: an active participant this year (deferrals or employer contributions). */
+  box13RetirementPlan?: boolean;
+  /** Box 14a — Other: state disability / paid-leave withholding (CASDI, NJFLI, NYPFL, WA PFML …), union dues, after-tax items. */
+  box14Other?: W2Box14Entry[];
   /** Box 14b — Treasury Tipped Occupation Code(s) (TY2026+), at most two. */
   box14bTippedOccupationCodes?: string[];
   /** Box 13 — Third-party sick pay: checked when the employer reports insurer-paid sick pay (lib/manualChecks). */
   box13ThirdPartySickPay?: boolean;
-  /** Box 15-17 — One block per state with non-zero withholding. */
+  /** Box 15-17 — One block per state with wages or withholding (a two-state worker gets two). */
   stateLines: W2StateLine[];
+  /** Box 18-20 — One block per locality with wages or withholding (PA EIT/LST, Ohio city/school, NYC, Yonkers …). */
+  localLines?: W2LocalLine[];
   /** Source items, count only — for a sanity check on the UI. */
   sourceItemCount: number;
 }
 
-export type W2Box12Code = 'D' | 'E' | 'J' | 'W' | 'AA' | 'BB' | 'TA' | 'TP' | 'TT';
+export type W2Box12Code =
+  | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'J' | 'K' | 'L' | 'M' | 'N' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'V' | 'W' | 'Y' | 'Z'
+  | 'AA' | 'BB' | 'DD' | 'EE' | 'FF' | 'GG' | 'HH' | 'II'
+  | 'TA' | 'TP' | 'TT';
 export interface W2Box12Entry {
   code: W2Box12Code;
   amount: number;
 }
+export interface W2Box14Entry {
+  label: string;
+  amount: number;
+}
 /** IRS order of codes on the form. */
-const BOX12_ORDER: W2Box12Code[] = ['D', 'E', 'J', 'W', 'AA', 'BB', 'TA', 'TP', 'TT'];
+export const BOX12_ORDER: W2Box12Code[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y', 'Z', 'AA', 'BB', 'DD', 'EE', 'FF', 'GG', 'HH', 'II', 'TA', 'TP', 'TT'];
 
 export interface W2StateLine {
-  /** Two-letter USPS code from PayrollItem.taxState. */
+  /** Two-letter USPS code. */
   state: string;
-  /** Box 16 — State wages. Tracks Box 1 for now (per-state pre-tax math TODO). */
+  /** Box 16 — State wages under that state's rules (PA includes 401(k) deferrals; a resident line carries all wages). */
   stateWages: number;
   /** Box 17 — State income tax withheld. */
   stateIncomeTax: number;
+  /** The worker lived in this state (resident line). */
+  resident?: boolean;
+  /** Box 15 — the employer's state ID number for this state (its withholding account). */
+  employerStateId?: string | null;
+}
+
+export interface W2LocalLine {
+  /** The state the locality is in (Box 15 of the same row). */
+  state: string | null;
+  /** Box 20 — Locality name. */
+  locality: string;
+  /** Engine jurisdiction code (PSD, city code …). */
+  code: string;
+  /** LOCAL | SCHOOL | OLT | TRANSIT */
+  kind: string;
+  /** Box 18 — Local wages. */
+  localWages: number;
+  /** Box 19 — Local income tax. */
+  localIncomeTax: number;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Helper — pull SS wage base for any historical year. */
-async function getSsWageBaseForYear(tx: Tx, taxYear: number): Promise<number> {
+export async function getSsWageBaseForYear(tx: Tx, taxYear: number): Promise<number> {
   const row = await tx.payrollConfig.findUnique({
     where: { year: taxYear },
     select: { ssWageBase: true },
@@ -116,38 +149,75 @@ export async function aggregateW2Wages(
   // disbursedAt timestamp to land on the IRS pay-date rule. CANCELLED runs
   // and VOIDED items are out; AMENDMENT items count and naturally produce
   // signed deltas because their grossPay / tax columns are already signed.
-  const items = await tx.payrollItem.findMany({
-    where: {
-      associateId,
-      status: { not: 'VOIDED' },
-      payrollRun: {
-        status: { not: 'CANCELLED' },
-        disbursedAt: { gte: yearStart, lt: yearEndExclusive },
-        // Brief 2-1b: a client employer = that client's runs; the tenant's own
-        // employer = the client-less runs and the runs of clients with no employer row of their own.
-        ...(employerClientId === undefined
-          ? {}
-          : employerClientId !== null && typeof employerClientId === 'object'
-            ? { OR: [{ clientId: null }, { client: { employerOrganization: null } }] }
-            : { clientId: employerClientId }),
+  const items = (
+    await tx.payrollItem.findMany({
+      where: {
+        associateId,
+        status: { not: 'VOIDED' },
+        payrollRun: {
+          status: { not: 'CANCELLED' },
+          disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+          // Brief 2-1b: a client employer = that client's runs; the tenant's own
+          // employer = the client-less runs and the runs of clients with no employer row of their own.
+          ...(employerClientId === undefined
+            ? {}
+            : employerClientId !== null && typeof employerClientId === 'object'
+              ? { OR: [{ clientId: null }, { client: { employerOrganization: null } }] }
+              : { clientId: employerClientId }),
+        },
       },
-    },
-    select: {
-      grossPay: true,
-      preTaxDeductions: true,
-      preTaxRetirement: true,
-      federalWithholding: true,
-      fica: true,
-      medicare: true,
-      stateWithholding: true,
-      taxState: true,
-      qualifiedTips: true,
-      qualifiedOvertime: true,
-      tippedOccupationCode: true,
-      deferrals: true,
-    },
-  });
+      select: ITEM_BASES_SELECT,
+    })
+  ).map(basesOf);
 
+  // Insurer-paid sick pay the employer reports (PAYEXP §3): the taxable
+  // part is wages in Boxes 1/3/5 with the insurer's withholding; the part
+  // bought with the employee's after-tax premiums is Box 12 J. Not tied to
+  // a client's EIN — it follows the tenant's own W-2.
+  const sickPay: ThirdPartySickPayLine[] = [];
+  if (employerClientId === undefined || (employerClientId !== null && typeof employerClientId === 'object')) {
+    const sick = await tx.thirdPartySickPay.findMany({
+      where: { associateId, voidedAt: null, w2ReportedBy: 'EMPLOYER', payDate: { gte: yearStart, lt: yearEndExclusive } },
+      select: { grossAmount: true, nontaxableAmount: true, federalWithheld: true, socialSecurityWithheld: true, medicareWithheld: true, stateWithheld: true, associate: { select: { state: true } } },
+    });
+    for (const r of sick) {
+      sickPay.push({
+        taxable: Number(r.grossAmount) - Number(r.nontaxableAmount),
+        nontaxable: Number(r.nontaxableAmount),
+        federalWithheld: Number(r.federalWithheld),
+        socialSecurityWithheld: Number(r.socialSecurityWithheld),
+        medicareWithheld: Number(r.medicareWithheld),
+        stateWithheld: Number(r.stateWithheld),
+        state: r.associate.state?.toUpperCase() ?? null,
+      });
+    }
+  }
+
+  const boxes = boxesFromBases(items, await getSsWageBaseForYear(tx, taxYear), taxYear, sickPay);
+  // Box 15's state ID: this employer's withholding account in each state.
+  if (boxes.stateLines.length) {
+    const ids = await stateAccountNumbers(tx, await employerFor(tx, typeof employerClientId === 'string' ? employerClientId : null)).catch(() => ({}) as Record<string, string>);
+    boxes.stateLines = boxes.stateLines.map((l) => (ids[l.state] ? { ...l, employerStateId: ids[l.state] } : l));
+  }
+  return boxes;
+}
+
+/** Insurer-paid sick pay the employer puts on its W-2. */
+export interface ThirdPartySickPayLine {
+  taxable: number;
+  nontaxable: number;
+  federalWithheld: number;
+  socialSecurityWithheld: number;
+  medicareWithheld: number;
+  stateWithheld: number;
+  state: string | null;
+}
+
+/**
+ * The W-2 boxes from a person's paid checks (lib/wageBases) — pure, so the
+ * W-2, the year-end reconciliation and previews compute boxes one way.
+ */
+export function boxesFromBases(items: ItemBases[], ssWageBase: number, taxYear: number, sickPay: ThirdPartySickPayLine[] = []): W2Boxes {
   let box1Wages = 0;
   let box2FitWithheld = 0;
   let box5MedicareWages = 0;
@@ -156,82 +226,65 @@ export async function aggregateW2Wages(
   let box4SsTax = 0;
   let tipsTotal = 0;
   let dependentCare = 0;
-  const codes = new Map<W2Box12Code, number>();
+  let retirementPlan = false;
+  const codes = new Map<string, number>();
   const occupationCodes = new Set<string>();
-  const addCode = (c: W2Box12Code, n: number) => codes.set(c, (codes.get(c) ?? 0) + n);
-  const stateBuckets = new Map<string, { wages: number; tax: number }>();
+  const addCode = (c: string, n: number) => codes.set(c, (codes.get(c) ?? 0) + n);
+  const stateBuckets = new Map<string, { wages: number; tax: number; resident: boolean }>();
+  const localBuckets = new Map<string, W2LocalLine>();
+  const box14 = new Map<string, number>();
 
-  for (const item of items) {
-    const gross = Number(item.grossPay);
-    const preTax = Number(item.preTaxDeductions);
-    const retirement = Number(item.preTaxRetirement);
-    // Box 1 (FIT base) subtracts ALL pre-tax — Section 125 + 401(k).
-    const box1Slice = gross - preTax;
-    // Box 3/5 (FICA / Medicare base) only subtracts Section 125,
-    // i.e. add back the retirement slice that Box 1 just removed.
-    const box35Slice = gross - (preTax - retirement);
-
-    box1Wages += box1Slice;
-    box2FitWithheld += Number(item.federalWithholding);
-    box5MedicareWages += box35Slice;
-    box6MedicareTax += Number(item.medicare);
-    preCapSsWages += box35Slice;
-    box4SsTax += Number(item.fica);
-    const tips = Number(item.qualifiedTips);
-    tipsTotal += tips;
-    const d = readDeferrals(item.deferrals, retirement);
-    dependentCare += d.dcap;
-    addCode('D', d.pre401k);
-    addCode('E', d.pre403b);
-    addCode('W', d.hsa);
-    addCode('AA', d.roth401k);
-    addCode('BB', d.roth403b);
-    addCode('TA', d.trumpAccountEmployer);
-    addCode('TP', tips);
-    addCode('TT', Number(item.qualifiedOvertime));
-    if (item.tippedOccupationCode && tips > 0) occupationCodes.add(item.tippedOccupationCode);
-
-    if (item.taxState) {
-      const b = stateBuckets.get(item.taxState) ?? { wages: 0, tax: 0 };
-      // State wages mirror Box 1 — most states piggy-back on FIT base.
-      // Per-state retirement-conformity is on the long-tail TODO list.
-      b.wages += box1Slice;
-      b.tax += Number(item.stateWithholding);
-      stateBuckets.set(item.taxState, b);
+  // Each check's bases (lib/wageBases): itemized deduction lines and the tax
+  // engine's per-jurisdiction lines when the check has them; the lump
+  // columns (§125 lowers every base, 401(k) only Box 1) when it doesn't.
+  for (const b of items) {
+    box1Wages += b.fitWages;
+    box2FitWithheld += b.fit;
+    box5MedicareWages += b.medicareWages;
+    box6MedicareTax += b.medicareEmployee;
+    preCapSsWages += b.ssWages;
+    box4SsTax += b.ssEmployee;
+    tipsTotal += b.tips;
+    dependentCare += b.box10;
+    retirementPlan ||= b.retirementPlan;
+    for (const [c, n] of Object.entries(b.box12)) addCode(c, n);
+    if (b.tippedOccupationCode && b.tips > 0) occupationCodes.add(b.tippedOccupationCode);
+    for (const e of b.box14) box14.set(e.label, (box14.get(e.label) ?? 0) + e.amount);
+    for (const st of b.states) {
+      const s = stateBuckets.get(st.state) ?? { wages: 0, tax: 0, resident: false };
+      s.wages += st.wages;
+      s.tax += st.withheld;
+      s.resident ||= st.resident;
+      stateBuckets.set(st.state, s);
+    }
+    for (const l of b.locals) {
+      if (l.employer) continue; // employer-paid local taxes are not the worker's W-2
+      const key = `${l.state ?? ''}|${l.code}`;
+      const x = localBuckets.get(key) ?? { state: l.state, locality: l.label, code: l.code, kind: l.kind, localWages: 0, localIncomeTax: 0 };
+      x.localWages += l.wages;
+      x.localIncomeTax += l.withheld;
+      localBuckets.set(key, x);
     }
   }
 
-  // Insurer-paid sick pay the employer reports (PAYEXP §3): the taxable
-  // part is wages in Boxes 1/3/5 with the insurer's withholding; the part
-  // bought with the employee's after-tax premiums is Box 12 J. Not tied to
-  // a client's EIN — it follows the tenant's own W-2.
   let thirdPartySick = false;
-  if (employerClientId === undefined || (employerClientId !== null && typeof employerClientId === 'object')) {
-    const sick = await tx.thirdPartySickPay.findMany({
-      where: { associateId, voidedAt: null, w2ReportedBy: 'EMPLOYER', payDate: { gte: yearStart, lt: yearEndExclusive } },
-      select: { grossAmount: true, nontaxableAmount: true, federalWithheld: true, socialSecurityWithheld: true, medicareWithheld: true, stateWithheld: true, associate: { select: { state: true } } },
-    });
-    for (const r of sick) {
-      thirdPartySick = true;
-      const taxable = Number(r.grossAmount) - Number(r.nontaxableAmount);
-      box1Wages += taxable;
-      box2FitWithheld += Number(r.federalWithheld);
-      preCapSsWages += taxable;
-      box4SsTax += Number(r.socialSecurityWithheld);
-      box5MedicareWages += taxable;
-      box6MedicareTax += Number(r.medicareWithheld);
-      addCode('J', Number(r.nontaxableAmount));
-      const st = r.associate.state?.toUpperCase();
-      if (st && (Number(r.stateWithheld) > 0 || taxable > 0)) {
-        const b = stateBuckets.get(st) ?? { wages: 0, tax: 0 };
-        b.wages += taxable;
-        b.tax += Number(r.stateWithheld);
-        stateBuckets.set(st, b);
-      }
+  for (const r of sickPay) {
+    thirdPartySick = true;
+    box1Wages += r.taxable;
+    box2FitWithheld += r.federalWithheld;
+    preCapSsWages += r.taxable;
+    box4SsTax += r.socialSecurityWithheld;
+    box5MedicareWages += r.taxable;
+    box6MedicareTax += r.medicareWithheld;
+    addCode('J', r.nontaxable);
+    if (r.state && (r.stateWithheld > 0 || r.taxable > 0)) {
+      const b = stateBuckets.get(r.state) ?? { wages: 0, tax: 0, resident: false };
+      b.wages += r.taxable;
+      b.tax += r.stateWithheld;
+      stateBuckets.set(r.state, b);
     }
   }
 
-  const ssWageBase = await getSsWageBaseForYear(tx, taxYear);
   // Box 3 cannot exceed the SS wage base, even if the running total of
   // signed amendment deltas pushed past it. min() handles both directions.
   // Tips are social security tips (Box 7), not Box 3 wages; together they stop at the base.
@@ -243,6 +296,7 @@ export async function aggregateW2Wages(
       state,
       stateWages: round2(b.wages),
       stateIncomeTax: round2(b.tax),
+      ...(b.resident ? { resident: true } : {}),
     }))
     .filter((l) => l.stateWages !== 0 || l.stateIncomeTax !== 0)
     .sort((a, b) => a.state.localeCompare(b.state));
@@ -257,9 +311,15 @@ export async function aggregateW2Wages(
     box7SsTips: round2(box7SsTips),
     box10DependentCare: round2(dependentCare),
     box12: BOX12_ORDER.filter((c) => round2(codes.get(c) ?? 0) !== 0).map((c) => ({ code: c, amount: round2(codes.get(c)!) })),
+    box13RetirementPlan: retirementPlan,
+    box14Other: [...box14.entries()].filter(([, n]) => round2(n) !== 0).map(([label, amount]) => ({ label, amount: round2(amount) })).sort((a, b) => a.label.localeCompare(b.label)),
     box14bTippedOccupationCodes: taxYear >= 2026 ? [...occupationCodes].sort().slice(0, 2) : [],
     box13ThirdPartySickPay: thirdPartySick,
     stateLines,
+    localLines: [...localBuckets.values()]
+      .map((l) => ({ ...l, localWages: round2(l.localWages), localIncomeTax: round2(l.localIncomeTax) }))
+      .filter((l) => l.localWages !== 0 || l.localIncomeTax !== 0)
+      .sort((a, b) => `${a.state}${a.locality}`.localeCompare(`${b.state}${b.locality}`)),
     sourceItemCount: items.length,
   };
 }

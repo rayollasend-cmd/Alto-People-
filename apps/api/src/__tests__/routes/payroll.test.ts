@@ -126,8 +126,8 @@ describe('POST /payroll/runs', () => {
     expect(item.federalWithholding).toBe(0);
     expect(item.fica).toBeCloseTo(6.2, 2);
     expect(item.medicare).toBeCloseTo(1.45, 2);
-    // KY's flat 4% (no guessed fallback any more).
-    expect(item.stateWithholding).toBeCloseTo(4, 2);
+    // KY 2026: 3.5% after the $3,360 standard deduction — $100 of pay annualizes under it.
+    expect(item.stateWithholding).toBe(0);
     const totalTaxItem = item.federalWithholding + item.fica + item.medicare + item.stateWithholding;
     expect(item.netPay).toBeCloseTo(100 - totalTaxItem, 2);
 

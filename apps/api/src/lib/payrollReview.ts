@@ -62,6 +62,8 @@ export interface ReviewRow {
   medicare: number;
   stateTax: number;
   localTax: number;
+  /** State disability and paid-leave contributions withheld (CA SDI, NJ TDI/FLI, NY PFL, WA PFML …). */
+  stateProgram: number;
   postTax: number;
   other: number;
   reimbursements: number;
@@ -117,6 +119,8 @@ export interface PayrollReviewReport {
   previous: { runId: string; periodStart: string; periodEnd: string; people: number; gross: number; net: number; employerTaxes: number } | null;
   flagCounts: Partial<Record<ReviewFlag, number>>;
   rows: ReviewRow[];
+  /** Paychecks set to pay by paper check this time (lib/paperChecks). How they're paid, not how much: outside the fingerprint. */
+  payByCheck?: Array<{ itemId: string; name: string; reason: string; net: number }>;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -145,6 +149,8 @@ const ITEM_SELECT = {
   employerSuta: true,
   preTaxRetirement: true,
   taxState: true,
+  // State disability / paid-leave contributions (CA SDI, NJ TDI/FLI, WA PFML …) live on the engine's lines.
+  taxLines: { where: { kind: 'STATE_PROGRAM' }, select: { amount: true, employer: true } },
 } satisfies Prisma.PayrollItemSelect;
 
 type ItemRow = Prisma.PayrollItemGetPayload<{ select: typeof ITEM_SELECT }>;
@@ -233,11 +239,13 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
     const postTax = num(i.postTaxDeductions);
     const reimbursements = num(i.reimbursementsTotal);
     const net = num(i.netPay);
+    const stateProgram = round2(i.taxLines.filter((l) => !l.employer).reduce((a, l) => a + num(l.amount), 0));
+    const employerProgram = round2(i.taxLines.filter((l) => l.employer).reduce((a, l) => a + num(l.amount), 0));
     // Whatever else came out of the check (garnishments, ride charges, an
     // advance recovered) so each row adds up exactly: gross + reimbursements
     // − taxes − deductions − other = net.
-    const other = round2(Math.max(0, gross + reimbursements - federal - ss - medicare - stateTax - localTax - preTax - postTax - net));
-    const employerTaxes = round2(num(i.employerFica) + num(i.employerMedicare) + num(i.employerFuta) + num(i.employerSuta));
+    const other = round2(Math.max(0, gross + reimbursements - federal - ss - medicare - stateTax - localTax - stateProgram - preTax - postTax - net));
+    const employerTaxes = round2(num(i.employerFica) + num(i.employerMedicare) + num(i.employerFuta) + num(i.employerSuta) + employerProgram);
     const p = prior.get(i.associateId);
     const priorNet = p ? num(p.netPay) : null;
     const priorGross = p ? num(p.grossPay) : null;
@@ -270,6 +278,7 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
       medicare,
       stateTax,
       localTax,
+      stateProgram,
       postTax,
       other,
       reimbursements,
@@ -298,12 +307,14 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
   const med = sum((r) => r.medicare);
   const st = sum((r) => r.stateTax);
   const loc = sum((r) => r.localTax);
+  const pgm = sum((r) => r.stateProgram);
+  const erPgm = round2(live.reduce((s, i) => s + i.taxLines.filter((l) => l.employer).reduce((a, l) => a + num(l.amount), 0), 0));
   const erFica = round2(live.reduce((s, i) => s + num(i.employerFica), 0));
   const erMed = round2(live.reduce((s, i) => s + num(i.employerMedicare), 0));
   const erFuta = round2(live.reduce((s, i) => s + num(i.employerFuta), 0));
   const erSuta = round2(live.reduce((s, i) => s + num(i.employerSuta), 0));
-  const employeeTaxes = round2(fed + ss + med + st + loc);
-  const employerTaxes = round2(erFica + erMed + erFuta + erSuta);
+  const employeeTaxes = round2(fed + ss + med + st + loc + pgm);
+  const employerTaxes = round2(erFica + erMed + erFuta + erSuta + erPgm);
   const gross = sum((r) => r.gross);
   const net = sum((r) => r.net);
 
@@ -340,6 +351,12 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
     orderBy: { periodEnd: 'desc' },
     select: { id: true, periodStart: true, periodEnd: true, totalGross: true, totalNet: true, totalEmployerTax: true, _count: { select: { items: { where: { status: { not: 'VOIDED' } } } } } },
   });
+
+  const overrides = await db.payrollItemPayoutOverride.findMany({ where: { clearedAt: null, payrollItem: { payrollRunId: run.id } }, select: { payrollItemId: true, reason: true } });
+  const rowByItem = new Map(rows.map((r) => [r.itemId, r]));
+  const payByCheck = overrides
+    .filter((o) => rowByItem.has(o.payrollItemId))
+    .map((o) => ({ itemId: o.payrollItemId, name: rowByItem.get(o.payrollItemId)!.name, reason: o.reason, net: rowByItem.get(o.payrollItemId)!.net }));
 
   const flagCounts: Partial<Record<ReviewFlag, number>> = {};
   for (const r of rows) for (const f of r.flags) flagCounts[f] = (flagCounts[f] ?? 0) + 1;
@@ -381,12 +398,14 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
         { key: 'medicare', label: 'Medicare', amount: med },
         { key: 'state', label: 'State income tax', amount: st },
         ...(loc > 0 ? [{ key: 'local', label: 'Local income tax', amount: loc }] : []),
+        ...(pgm > 0 ? [{ key: 'stateProgram', label: 'State disability & paid leave', amount: pgm }] : []),
       ],
       employer: [
         { key: 'socialSecurity', label: 'Social Security (employer)', amount: erFica },
         { key: 'medicare', label: 'Medicare (employer)', amount: erMed },
         { key: 'futa', label: 'Federal unemployment (FUTA)', amount: erFuta },
         { key: 'suta', label: 'State unemployment (SUTA)', amount: erSuta },
+        ...(erPgm > 0 ? [{ key: 'stateProgram', label: 'State paid leave (employer share)', amount: erPgm }] : []),
       ],
       total: round2(employeeTaxes + employerTaxes),
     },
@@ -405,6 +424,7 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
       : null,
     flagCounts,
     rows,
+    payByCheck,
   };
 }
 

@@ -15,6 +15,10 @@ export interface StateCoverageRow {
   notes: string | null;
   form: string | null;
   acknowledgment: { taxYear: number; at: string; by: string | null; note: string | null; current: boolean } | null;
+  /** Disability, paid-leave and employee-UI contributions withheld for work in this state. */
+  programs?: Array<{ code: string; label: string; employeeRate: number; employerRate: number; wageCap: number | null; weeklyEmployeeMax: number | null; verified: boolean; source: string }>;
+  /** Programs enacted but not collecting yet (Maryland FAMLI, 2027). */
+  programsComing?: Array<{ label: string; startsOn: string; source: string }>;
 }
 
 export interface StateCoverageResponse {

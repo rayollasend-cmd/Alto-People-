@@ -166,6 +166,9 @@ export class AchRailAdapter implements DisbursementAdapter {
 
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
     const itemId = itemIdOf(input.idempotencyKey);
+    // Payroll set this paycheck to pay by paper check this time: it never goes into an ACH file.
+    const override = await this.db.payrollItemPayoutOverride.findUnique({ where: { payrollItemId: itemId }, select: { clearedAt: true } });
+    if (override && !override.clearedAt) return { provider: 'ACH', externalRef: '', status: 'FAILED', failureReason: 'pay_by_check: this paycheck is set to pay by paper check' };
     const credits = await creditsFor(this.db, input, itemId);
     if ('error' in credits) return { provider: 'ACH', externalRef: '', status: 'FAILED', failureReason: credits.error };
     if (this.batch) {

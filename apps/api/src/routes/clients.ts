@@ -34,7 +34,7 @@ import {
   buildClientServiceReport,
   renderClientServiceReportPdf,
 } from '../lib/clientServiceReport.js';
-import { renderStatementPdf } from '../lib/statementPdf.js';
+import { renderStatementPdf, statementContext } from '../lib/statementPdf.js';
 import { finalizationTerms } from '../lib/statementDunning.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 
@@ -1256,6 +1256,7 @@ clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS_READ, async (req, res, 
       finalizedByEmail: row.finalizedBy?.email ?? null,
       orgName: branding.orgName,
       billTo: client,
+      ...(await statementContext(prisma, { statementId: row.id, clientId: row.clientId, tenantId: row.tenantId ?? tenantIdForWrite() })),
     });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(

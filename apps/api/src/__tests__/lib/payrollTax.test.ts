@@ -62,7 +62,7 @@ beforeAll(() => {
         { over: 656_150, flat: 191_171, rate: 0.37 },
       ],
     },
-    ssWageBase: 176_100,
+    ssWageBase: 184_500,
     medicareSurchargeThreshold: 200_000,
   });
 });
@@ -77,16 +77,45 @@ describe('computeFederalIncomeTax (IRS Pub 15-T 2026 percentage method)', () => 
     expect(w).toBe(0);
   });
 
-  it('mid-bracket single biweekly: $2000 biweekly ≈ annualized $52000', () => {
-    // Annual $52000 → 2026 SINGLE bracket "over 19900 flat $1240 + 12% of overage".
-    // Excess: 52000 - 19900 = 32100; 32100*0.12 = 3852; +1240 = 5092 annual.
-    // Per cycle: 5092/26 ≈ 195.85.
-    const w = computeFederalIncomeTax({
-      grossPay: 2000,
-      filingStatus: 'SINGLE',
-      payFrequency: 'BIWEEKLY',
-    });
-    expect(close(w, 195.85, 0.05)).toBe(true);
+  it('Worksheet 1A: $2,000 biweekly Single = annual $52,000 less line 1g $8,600 → $156.15', () => {
+    // 52,000 − 8,600 = 43,400; 1,240 + (43,400 − 19,900) × 12% = 4,060; ÷ 26 = 156.15.
+    const w = computeFederalIncomeTax({ grossPay: 2000, filingStatus: 'SINGLE', payFrequency: 'BIWEEKLY' });
+    expect(w).toBe(156.15);
+  });
+
+  // Pub 15-T (2026) §2 Wage Bracket table, BIWEEKLY, row "$1,985 – $2,005":
+  // MFJ $76 / checkbox $156 · HOH $114 / checkbox $200 · Single $156 / checkbox $269.
+  // The percentage method at the row's midpoint ($1,995) rounds to the same dollars.
+  it.each([
+    ['MARRIED_FILING_JOINTLY', false, 76],
+    ['MARRIED_FILING_JOINTLY', true, 156],
+    ['HEAD_OF_HOUSEHOLD', false, 114],
+    ['HEAD_OF_HOUSEHOLD', true, 200],
+    ['SINGLE', false, 156],
+    ['SINGLE', true, 269],
+  ] as const)('matches the published wage bracket table: %s, Step 2 checked = %s → $%i', (status, multipleJobs, dollars) => {
+    const w = computeFederalIncomeTax({ grossPay: 1995, filingStatus: status, payFrequency: 'BIWEEKLY', multipleJobs });
+    expect(Math.round(w)).toBe(dollars);
+  });
+
+  it('a 2019-or-earlier W-4 subtracts $4,300 per allowance and has no head-of-household table', () => {
+    // $1,000 biweekly, 2 allowances: 26,000 − 8,600 = 17,400 → (17,400 − 7,500) × 10% = 990 ÷ 26 = 38.08.
+    expect(computeFederalIncomeTax({ grossPay: 1000, filingStatus: 'SINGLE', payFrequency: 'BIWEEKLY', pre2020Allowances: 2 })).toBe(38.08);
+    expect(computeFederalIncomeTax({ grossPay: 1000, filingStatus: 'HEAD_OF_HOUSEHOLD', payFrequency: 'BIWEEKLY', pre2020Allowances: 2 })).toBe(38.08);
+  });
+
+  it('nonresident alien: the Pub 15-T example ($300 weekly, 2019 W-4 Single, 1 allowance) withholds $31', () => {
+    // Pub 15-T (2026) p. 6: $300 + Table 1 $226.90 = $526.90; the wage bracket table gives $31.
+    const w = computeFederalIncomeTax({ grossPay: 300, filingStatus: 'SINGLE', payFrequency: 'WEEKLY', pre2020Allowances: 1, nonresidentAlien: true });
+    expect(Math.round(w)).toBe(31);
+    // A 2020+ W-4 adds Table 2 ($309.60 weekly) instead.
+    const w2020 = computeFederalIncomeTax({ grossPay: 300, filingStatus: 'SINGLE', payFrequency: 'WEEKLY', nonresidentAlien: true });
+    // (300 + 309.60) × 52 = 31,699.20 − 8,600 = 23,099.20 → 1,240 + 3,199.20 × 12% = 1,623.90 ÷ 52 = 31.23.
+    expect(w2020).toBe(31.23);
+  });
+
+  it('an exempt W-4 withholds nothing, even the 4(c) extra', () => {
+    expect(computeFederalIncomeTax({ grossPay: 5000, filingStatus: 'SINGLE', payFrequency: 'BIWEEKLY', extraWithholding: 50, exempt: true })).toBe(0);
   });
 
   it('MFJ pays less than SINGLE on the same paycheck', () => {
@@ -149,7 +178,7 @@ describe('computeSocialSecurity (FICA)', () => {
     expect(close(ss, 5000 * SS_RATE)).toBe(true);
   });
 
-  it('caps at the SS wage base ($176,100 in 2026)', () => {
+  it('caps at the SS wage base ($184,500 in 2026)', () => {
     // Already at the cap → no FICA owed on this paycheck.
     const ss = computeSocialSecurity({ grossPay: 5000, ytdWages: SS_WAGE_BASE() });
     expect(ss).toBe(0);
@@ -197,20 +226,14 @@ describe('computeStateIncomeTax', () => {
     }
   });
 
-  it('uses real CA brackets — $4000 biweekly ≈ annualized $104k', () => {
-    const t = computeStateIncomeTax({ grossPay: 4000, state: 'CA', payFrequency: 'BIWEEKLY' });
-    // CA bracket at $104k for single: over 70606 flat 3419.57 + 10.23%.
-    // Excess: 104000 - 70606 = 33394; *.1023 = 3416.21; +3419.57 = 6835.78 annual.
-    // Per cycle: 6835.78/26 ≈ 262.91.
-    expect(close(t, 262.91, 0.5)).toBe(true);
+  it('CA 2026 (DE 44 Method B): $4,000 biweekly single, no allowances → $236.08', () => {
+    // 104,000 − 5,706 = 98,294 → 3,522.17 + 25,570 × 10.23% = 6,137.98 ÷ 26.
+    expect(computeStateIncomeTax({ grossPay: 4000, state: 'CA', payFrequency: 'BIWEEKLY' })).toBe(236.08);
   });
 
-  it('uses real NY brackets — $2000 biweekly ≈ annualized $52k', () => {
-    const t = computeStateIncomeTax({ grossPay: 2000, state: 'NY', payFrequency: 'BIWEEKLY' });
-    // NY bracket at $52k for single: over 13900 flat 599.5 + 5.5%.
-    // Excess: 52000 - 13900 = 38100; *.055 = 2095.5; +599.5 = 2695 annual.
-    // Per cycle: 2695/26 ≈ 103.65.
-    expect(close(t, 103.65, 0.2)).toBe(true);
+  it('NY 2026 (NYS-50-T-NYS): $2,000 biweekly single → $86.30', () => {
+    // 52,000 − 7,400 = 44,600 → 586 + 30,700 × 5.4% = 2,243.80 ÷ 26.
+    expect(computeStateIncomeTax({ grossPay: 2000, state: 'NY', payFrequency: 'BIWEEKLY' })).toBe(86.3);
   });
 
   it('withholds nothing for an unsupported state — the run is blocked upstream, never guessed at 4%', () => {
@@ -288,40 +311,31 @@ describe('computePaycheckTaxes (aggregate)', () => {
 });
 
 describe('Wave 2 — additional bracket states (NJ/GA/OH/VA/MN)', () => {
-  it('NJ uses progressive brackets — $2000 biweekly ≈ annualized $52k', () => {
+  it('NJ withholds at the NJ-WT Rate A table (single), not the tax rates: $2,000 biweekly → $58.73', () => {
+    // 52,000: 20,000 × 1.5% + 15,000 × 2% + 5,000 × 3.9% + 12,000 × 6.1% = 1,527 ÷ 26.
     const t = computeStateIncomeTax({ grossPay: 2000, state: 'NJ', payFrequency: 'BIWEEKLY' });
-    // Annual $52000 → bracket "over 40000 flat 717.5 + 5.525%".
-    // Excess: 52000 - 40000 = 12000; *.05525 = 663; +717.5 = 1380.5 annual.
-    // Per cycle: 1380.5/26 ≈ 53.10.
-    expect(close(t, 53.10, 0.5)).toBe(true);
+    expect(t).toBe(58.73);
   });
 
-  it('GA applies a flat top rate of 5.39% (HB 1437 phased reduction)', () => {
+  it('GA 2026: 4.99% after the $15,000 standard deduction (HB 463 / HB 1199)', () => {
+    // (52,000 − 15,000) × 4.99% = 1,846.30 ÷ 26 = 71.01.
     const t = computeStateIncomeTax({ grossPay: 2000, state: 'GA', payFrequency: 'BIWEEKLY' });
-    // Annual $52000 × 5.39% = 2802.80; per cycle 2802.80/26 ≈ 107.80.
-    expect(close(t, 107.80, 0.5)).toBe(true);
+    expect(t).toBe(71.01);
   });
 
-  it('OH zero-tax bracket below $26,050 annualized', () => {
-    const t = computeStateIncomeTax({ grossPay: 800, state: 'OH', payFrequency: 'BIWEEKLY' });
-    // Annual $20800 < 26050 standard exemption → 0 tax.
-    expect(t).toBe(0);
+  it('OH from August 1, 2026 withholds 1.6% below $26,050: $800 biweekly → $12.80', () => {
+    expect(computeStateIncomeTax({ grossPay: 800, state: 'OH', payFrequency: 'BIWEEKLY' })).toBe(12.8);
   });
 
-  it('VA progressive brackets — $1500 biweekly ≈ annualized $39k', () => {
+  it('VA 2026: $8,750 standard deduction, then 2/3/5/5.75%: $1,500 biweekly → $57.00', () => {
+    // 39,000 − 8,750 = 30,250 → 60 + 60 + 600 + 13,250 × 5.75% = 1,481.88 ÷ 26.
     const t = computeStateIncomeTax({ grossPay: 1500, state: 'VA', payFrequency: 'BIWEEKLY' });
-    // Annual $39000 → bracket "over 17000 flat 720 + 5.75%".
-    // Excess: 39000 - 17000 = 22000; *.0575 = 1265; +720 = 1985 annual.
-    // Per cycle: 1985/26 ≈ 76.35.
-    expect(close(t, 76.35, 0.5)).toBe(true);
+    expect(t).toBe(57);
   });
 
-  it('MN progressive brackets — $2500 biweekly ≈ annualized $65k', () => {
-    const t = computeStateIncomeTax({ grossPay: 2500, state: 'MN', payFrequency: 'BIWEEKLY' });
-    // Annual $65000 → bracket "over 31690 flat 1695.42 + 6.8%".
-    // Excess: 65000 - 31690 = 33310; *.068 = 2265.08; +1695.42 = 3960.50 annual.
-    // Per cycle: 3960.50/26 ≈ 152.33.
-    expect(close(t, 152.33, 0.5)).toBe(true);
+  it('MN 2026 computer formula: $2,500 biweekly, no allowances → $139.13', () => {
+    // 65,000 → 1,782.09 + 26,990 × 6.8% = 3,617.41 ÷ 26.
+    expect(computeStateIncomeTax({ grossPay: 2500, state: 'MN', payFrequency: 'BIWEEKLY' })).toBe(139.13);
   });
 });
 
@@ -336,15 +350,31 @@ describe('Wave 2 — flat-rate states', () => {
     expect(close(t, 30.70)).toBe(true);
   });
 
-  it('AZ applies 2.5% (post-2023 flat rate)', () => {
-    const t = computeStateIncomeTax({ grossPay: 1000, state: 'AZ', payFrequency: 'BIWEEKLY' });
-    expect(close(t, 25.00)).toBe(true);
+  it('AZ withholds the A-4 default 2.0% with no election on file, the elected rate otherwise', () => {
+    expect(computeStateIncomeTax({ grossPay: 1000, state: 'AZ', payFrequency: 'BIWEEKLY' })).toBe(20);
+    const elected = computeStateIncomeTax({ grossPay: 1000, state: 'AZ', payFrequency: 'BIWEEKLY', stateW4: { filingStatus: 'SINGLE', allowances: 35, dependents: 0, additionalWithholding: 0, exempt: false } });
+    expect(elected).toBe(35);
   });
 
-  it('flat-rate states ignore payFrequency (no annualization needed)', () => {
-    const biweekly = computeStateIncomeTax({ grossPay: 1000, state: 'CO', payFrequency: 'BIWEEKLY' });
-    const monthly = computeStateIncomeTax({ grossPay: 1000, state: 'CO', payFrequency: 'MONTHLY' });
-    expect(biweekly).toBe(monthly);
+  it('CO 2026 subtracts its annual allowance before 4.4% (DR 1098): $1,000 biweekly → $34.69', () => {
+    // (26,000 − 5,500) × 4.4% = 902 ÷ 26.
+    expect(computeStateIncomeTax({ grossPay: 1000, state: 'CO', payFrequency: 'BIWEEKLY' })).toBe(34.69);
+  });
+
+  it('KY 2026 worked example from the DOR formula: $3,270 monthly → $104.65', () => {
+    expect(computeStateIncomeTax({ grossPay: 3270, state: 'KY', payFrequency: 'MONTHLY' })).toBe(104.65);
+  });
+
+  it('IL 2026: 4.95% after $2,925 per Line 1 allowance and $1,000 per Line 2', () => {
+    // 2,000 × 26 = 52,000 − 2,925 − 1,000 = 48,075 × 4.95% = 2,379.71 ÷ 26 = 91.53.
+    const t = computeStateIncomeTax({ grossPay: 2000, state: 'IL', payFrequency: 'BIWEEKLY', stateW4: { filingStatus: 'SINGLE', allowances: 1, dependents: 1, additionalWithholding: 0, exempt: false } });
+    expect(t).toBe(91.53);
+  });
+
+  it('MI 2026: 4.25% after $5,900 per exemption; PA flat 3.07%', () => {
+    const mi = computeStateIncomeTax({ grossPay: 2000, state: 'MI', payFrequency: 'BIWEEKLY', stateW4: { filingStatus: 'SINGLE', allowances: 1, dependents: 0, additionalWithholding: 0, exempt: false } });
+    expect(mi).toBe(75.36); // (52,000 − 5,900) × 4.25% = 1,959.25 ÷ 26
+    expect(computeStateIncomeTax({ grossPay: 2000, state: 'PA', payFrequency: 'BIWEEKLY' })).toBe(61.4);
   });
 });
 
@@ -372,9 +402,9 @@ describe('isStateTaxSupported', () => {
     expect(isStateTaxSupported('NC')).toBe(true);
   });
 
-  it('returns false for the long tail (AR, HI, MS, MT, etc.)', () => {
+  it('returns false for the states still awaiting review (AR, WI, MS, MT, etc.)', () => {
     expect(isStateTaxSupported('AR')).toBe(false);
-    expect(isStateTaxSupported('HI')).toBe(false);
+    expect(isStateTaxSupported('WI')).toBe(false);
     expect(isStateTaxSupported('MS')).toBe(false);
     expect(isStateTaxSupported('MT')).toBe(false);
   });
@@ -447,5 +477,43 @@ describe('zeroTaxBreakdown — 1099 contractors', () => {
     expect(z.employer.medicare).toBe(0);
     expect(z.employer.futa).toBe(0);
     expect(z.employer.suta).toBe(0);
+  });
+});
+
+describe('federal W-4 rules and supplemental wages (Pub 15 §7, §9)', () => {
+  it('supplemental wages: 22% up to $1M in the year, 37% on the part over', async () => {
+    const { supplementalFederalWithholding } = await import('../../lib/payrollTax.js');
+    expect(supplementalFederalWithholding(10_000, 0)).toBe(2200);
+    // $990,000 already paid this year: $10,000 at 22% and $15,000 at 37%.
+    expect(supplementalFederalWithholding(25_000, 990_000)).toBe(2200 + 5550);
+  });
+
+  it('an Exempt W-4 lapses after February 15 of the next year: Single, no adjustments', async () => {
+    const { federalW4Fields } = await import('../../lib/payrollTax.js');
+    const w4 = { filingStatus: 'MARRIED_FILING_JOINTLY' as const, exempt: true, exemptTaxYear: 2025, dependentsAmount: 4000, extraWithholding: 20 };
+    expect(federalW4Fields(w4, new Date('2026-02-13T12:00:00Z'))!.exempt).toBe(true);
+    const lapsed = federalW4Fields(w4, new Date('2026-02-20T12:00:00Z'))!;
+    expect(lapsed).toMatchObject({ exempt: false, filingStatus: 'SINGLE', dependentsAmount: 0, extraWithholding: 0 });
+    expect(lapsed.flags).toContain('EXEMPT_EXPIRED');
+  });
+
+  it('an IRS lock-in letter sets the status and ignores reductions; increases still apply', async () => {
+    const { federalW4Fields } = await import('../../lib/payrollTax.js');
+    const w4 = { filingStatus: 'MARRIED_FILING_JOINTLY' as const, dependentsAmount: 4000, deductions: 10_000, extraWithholding: 25, lockInFilingStatus: 'SINGLE' as const, lockInMultipleJobs: false, lockInEffectiveDate: '2026-03-01' };
+    expect(federalW4Fields(w4, new Date('2026-02-15T12:00:00Z'))!.filingStatus).toBe('MARRIED_FILING_JOINTLY');
+    const locked = federalW4Fields(w4, new Date('2026-03-06T12:00:00Z'))!;
+    expect(locked).toMatchObject({ filingStatus: 'SINGLE', dependentsAmount: 0, deductions: 0, extraWithholding: 25 });
+    expect(locked.flags).toContain('LOCK_IN_LETTER');
+  });
+
+  it('FUTA: 0.6% plus the credit reduction where one applies (CA, 2026 potential 1.5%)', async () => {
+    const { futaCreditReduction } = await import('../../lib/payrollTax.js');
+    expect(futaCreditReduction('CA', 2025)).toBe(0.012);
+    expect(futaCreditReduction('CA', 2026)).toBe(0.015);
+    expect(futaCreditReduction('FL', 2026)).toBe(0);
+    const fl = computeEmployerTaxes({ grossPay: 1000, ytdWages: 0, ytdMedicareWages: 0, state: 'FL' });
+    const ca = computeEmployerTaxes({ grossPay: 1000, ytdWages: 0, ytdMedicareWages: 0, state: 'CA' });
+    expect(fl.futa).toBe(6);
+    expect(ca.futa).toBe(21);
   });
 });

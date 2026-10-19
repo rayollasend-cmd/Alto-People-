@@ -408,3 +408,38 @@ describe('agency accounts and notices', () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe('year-end reconciliation', () => {
+  it('compares paychecks, 941s, deposits and W-2s; drills to people; exports a workbook; site-bound accounts are refused', async () => {
+    const { a } = await payrollAdmin();
+    const run = await paidRun('2026-10-16');
+    await postLiabilitiesForRun(prisma, run.id);
+    const res = await a.get('/payroll-taxes/year-end/2026');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const fed = res.body.sections.find((s: { key: string }) => s.key === 'federal');
+    expect(fed.rows.find((r: { key: string }) => r.key === 'wages')).toMatchObject({ ok: true, values: { paychecks: 3000, f941: 3000, w2: 3000 } });
+    expect(res.body.summary.rows).toBeGreaterThan(0);
+
+    const people = await a.get('/payroll-taxes/year-end/2026/people?metric=box1');
+    expect(people.status).toBe(200);
+    expect(people.body.people).toHaveLength(3);
+    expect((await a.get('/payroll-taxes/year-end/2026/people?metric=box9')).status).toBe(400);
+
+    const xlsx = await a.get('/payroll-taxes/year-end/2026/export.xlsx').buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on('data', (c: Buffer) => chunks.push(c));
+      r.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(xlsx.status).toBe(200);
+    expect(xlsx.headers['content-type']).toContain('spreadsheetml');
+    expect((xlsx.body as Buffer).subarray(0, 2).toString()).toBe('PK');
+
+    const { user: narrowed } = await createUser({ role: 'HR_ADMINISTRATOR', email: 'narrow@example.com' });
+    const site = await prisma.site.findFirst({ select: { id: true } });
+    if (site) {
+      await prisma.user.update({ where: { id: narrowed.id }, data: { scopeSiteIds: [site.id] } });
+      const n = await loginAs(agent(), 'narrow@example.com');
+      expect((await n.get('/payroll-taxes/year-end/2026')).status).toBe(403);
+    }
+  });
+});

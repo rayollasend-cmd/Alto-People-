@@ -187,27 +187,30 @@ describe('daily pay true-up (one item)', () => {
 describe('W-4 estimator', () => {
   const single = { filingStatus: 'SINGLE' as const, payFrequency: 'BIWEEKLY' as const, payPerPeriod: 2000, ytdWages: 0, ytdFederalWithheld: 0 };
 
-  it('one job, whole year ahead: the tables withhold the year’s tax (~$5,092 on $52,000)', () => {
+  it('one job, whole year ahead: the tables withhold the year’s tax ($4,060 on $52,000 — 2026 standard deduction $16,100)', () => {
     const r = estimateW4({ ...single, periodsRemaining: 26 });
     expect(r.yearWages).toBe(52_000);
-    expect(r.estimatedTax).toBeCloseTo(5092, 0);
-    expect(r.withSuggested.perCheck).toBe(195.85);
+    // 52,000 − 16,100 = 35,900 → 1,240 + 23,500 × 12% = 4,060 (Pub 15-T line 1g + the STANDARD schedule).
+    expect(r.estimatedTax).toBeCloseTo(4060, 0);
+    expect(r.withSuggested.perCheck).toBe(156.15);
     expect(Math.abs(r.withSuggested.refund)).toBeLessThan(1);
     expect(r.suggested.extraWithholding).toBe(0);
   });
 
   it('a second job goes in Step 4(a) so this job withholds for both', () => {
     const r = estimateW4({ ...single, periodsRemaining: 26, otherJobsAnnual: 30_000, current: { filingStatus: 'SINGLE', dependentsAmount: 0, otherIncome: 0, deductions: 0, extraWithholding: 0 } });
-    expect(r.estimatedTax).toBeCloseTo(11_102, 0);
+    // 82,000 − 8,600 = 73,400 → 5,800 + 15,500 × 22% = 9,210.
+    expect(r.estimatedTax).toBeCloseTo(9_210, 0);
     expect(r.suggested.otherIncome).toBe(30_000);
     expect(Math.abs(r.withSuggested.refund)).toBeLessThan(1);
-    // As things stand (W-4 without the other job): about $6,010 owed.
-    expect(r.asIs!.refund).toBeLessThan(-6000);
+    // As things stand (W-4 without the other job): about $5,150 owed.
+    expect(r.asIs!.refund).toBeLessThan(-5000);
   });
 
   it('behind on withholding mid-year: an extra per check catches up, rounded up to the dollar', () => {
     const r = estimateW4({ ...single, ytdWages: 26_000, ytdFederalWithheld: 0, periodsRemaining: 13 });
-    expect(r.suggested.extraWithholding).toBe(196);
+    // 4,060 owed; 13 × 156.15 = 2,029.95 withheld → 2,030.05 short ÷ 13 = 156.16 → $157.
+    expect(r.suggested.extraWithholding).toBe(157);
     expect(r.withSuggested.refund).toBeGreaterThanOrEqual(0);
     expect(r.withSuggested.refund).toBeLessThan(13);
   });
@@ -216,7 +219,8 @@ describe('W-4 estimator', () => {
     const r = estimateW4({ ...single, periodsRemaining: 26, childrenUnder17: 2 });
     expect(r.credits).toBe(2 * CHILD_CREDIT);
     expect(r.suggested.dependentsAmount).toBe(4400);
-    expect(r.estimatedTax).toBeCloseTo(5092 - 4400, 0);
+    // $4,060 of tax less $4,400 of credits: nothing owed.
+    expect(r.estimatedTax).toBe(0);
   });
 });
 

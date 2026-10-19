@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient, W4FilingStatus } from '@prisma/client';
 import { round2 } from './payroll.js';
 import { STATE_SPECS, stateCycleWithholding, type StateW4Input } from './stateWithholding.js';
+import { VERIFIED_STATE_SPECS } from './stateWithholding2026.js';
 import { currentTenantId } from './tenant.js';
 
 /**
@@ -166,6 +167,83 @@ function pickBracket(table: Bracket[], annualGross: number): Bracket {
   return chosen;
 }
 
+/**
+ * Pub 15-T figures that live outside payroll_config, by tax year: the
+ * Worksheet 1A line 1g amounts, the 2019-or-earlier allowance value, the
+ * Step 2 checkbox rate schedules, the nonresident-alien add-ons (Tables 1
+ * and 2), and the supplemental rates. A year without its own row uses the
+ * latest earlier one.
+ */
+export interface FederalYearFigures {
+  year: number;
+  source: string;
+  /** Worksheet 1A line 1g: subtracted when the Step 2 box is NOT checked. */
+  line1g: { marriedFilingJointly: number; other: number };
+  /** Worksheet 1A line 1k: per allowance on a 2019-or-earlier W-4. */
+  allowance: number;
+  /** Form W-4, Step 2, Checkbox, Withholding Rate Schedules. */
+  checkbox: Record<W4FilingStatus, Bracket[]>;
+  /** Nonresident alien add-on per pay period — Table 2 (2020+ W-4) and Table 1 (2019 or earlier). */
+  nraAdd2020: Record<PayFrequency, number>;
+  nraAddPre2020: Record<PayFrequency, number>;
+  /** Optional flat rate on supplemental wages; mandatory rate on supplemental wages over $1M in the year. */
+  supplementalRate: number;
+  supplementalMandatoryRate: number;
+  supplementalMandatoryOver: number;
+}
+
+export const FEDERAL_FIGURES: Record<number, FederalYearFigures> = {
+  2026: {
+    year: 2026,
+    source: 'IRS Publication 15-T (2026): Worksheet 1A, 2026 Percentage Method Tables for Automated Payroll Systems, Tables 1 and 2; Publication 15 (2026) §7 supplemental wages',
+    line1g: { marriedFilingJointly: 12_900, other: 8_600 },
+    allowance: 4_300,
+    checkbox: {
+      MARRIED_FILING_JOINTLY: [
+        { over: 0, flat: 0, rate: 0 },
+        { over: 16_100, flat: 0, rate: 0.1 },
+        { over: 28_500, flat: 1_240, rate: 0.12 },
+        { over: 66_500, flat: 5_800, rate: 0.22 },
+        { over: 121_800, flat: 17_966, rate: 0.24 },
+        { over: 217_875, flat: 41_024, rate: 0.32 },
+        { over: 272_325, flat: 58_448, rate: 0.35 },
+        { over: 400_450, flat: 103_291.75, rate: 0.37 },
+      ],
+      SINGLE: [
+        { over: 0, flat: 0, rate: 0 },
+        { over: 8_050, flat: 0, rate: 0.1 },
+        { over: 14_250, flat: 620, rate: 0.12 },
+        { over: 33_250, flat: 2_900, rate: 0.22 },
+        { over: 60_900, flat: 8_983, rate: 0.24 },
+        { over: 108_938, flat: 20_512, rate: 0.32 },
+        { over: 136_163, flat: 29_224, rate: 0.35 },
+        { over: 328_350, flat: 96_489.63, rate: 0.37 },
+      ],
+      HEAD_OF_HOUSEHOLD: [
+        { over: 0, flat: 0, rate: 0 },
+        { over: 12_075, flat: 0, rate: 0.1 },
+        { over: 20_925, flat: 885, rate: 0.12 },
+        { over: 45_800, flat: 3_870, rate: 0.22 },
+        { over: 64_925, flat: 8_077.5, rate: 0.24 },
+        { over: 112_950, flat: 19_603.5, rate: 0.32 },
+        { over: 140_175, flat: 28_315.5, rate: 0.35 },
+        { over: 332_375, flat: 95_585.5, rate: 0.37 },
+      ],
+    },
+    nraAdd2020: { WEEKLY: 309.6, BIWEEKLY: 619.2, SEMIMONTHLY: 670.8, MONTHLY: 1_341.7, DAILY: 61.9 },
+    nraAddPre2020: { WEEKLY: 226.9, BIWEEKLY: 453.8, SEMIMONTHLY: 491.7, MONTHLY: 983.3, DAILY: 45.4 },
+    supplementalRate: 0.22,
+    supplementalMandatoryRate: 0.37,
+    supplementalMandatoryOver: 1_000_000,
+  },
+};
+
+export function federalFiguresFor(year: number = CONFIG_CACHE?.year ?? new Date().getUTCFullYear()): FederalYearFigures {
+  const years = Object.keys(FEDERAL_FIGURES).map(Number).sort((a, b) => a - b);
+  const pick = [...years].reverse().find((y) => y <= year) ?? years[0]!;
+  return FEDERAL_FIGURES[pick]!;
+}
+
 export interface FederalInput {
   grossPay: number;
   filingStatus: W4FilingStatus | null;
@@ -178,25 +256,146 @@ export interface FederalInput {
   otherIncome?: number;
   /** W-4 step 3 — annual dependents tax credit. Reduces final withholding. */
   dependentsAmount?: number;
+  /** W-4 step 2(c) checkbox (two jobs): the checkbox schedules, no line 1g subtraction. */
+  multipleJobs?: boolean;
+  /** Allowances on a 2019-or-earlier W-4; null/undefined means a 2020-or-later W-4. */
+  pre2020Allowances?: number | null;
+  /** A nonresident alien employee (Pub 15-T Tables 1 and 2 add-on). */
+  nonresidentAlien?: boolean;
+  /** A valid "Exempt" W-4: nothing is withheld. */
+  exempt?: boolean;
 }
 
+/**
+ * Federal income tax for one paycheck — Pub 15-T Worksheet 1A (percentage
+ * method for automated payroll systems), line for line.
+ */
 export function computeFederalIncomeTax(input: FederalInput): number {
-  const status = input.filingStatus ?? 'SINGLE';
+  if (input.exempt) return 0;
+  const figures = federalFiguresFor();
   const periods = PERIODS_PER_YEAR[input.payFrequency];
+  const pre2020 = input.pre2020Allowances !== undefined && input.pre2020Allowances !== null;
+  // Nonresident aliens: the Table 1/2 amount is added to wages for the calculation only.
+  const nraAdd = input.nonresidentAlien ? (pre2020 ? figures.nraAddPre2020 : figures.nraAdd2020)[input.payFrequency] : 0;
+  // 1a–1c: annualize this period's taxable wages.
+  const annualWages = (Math.max(0, input.grossPay) + nraAdd) * periods;
 
-  // Annualize this cycle's gross, layer the W-4 modifiers.
-  const annualGross =
-    input.grossPay * periods + Math.max(0, input.otherIncome ?? 0);
-  const annualTaxable = Math.max(0, annualGross - Math.max(0, input.deductions ?? 0));
+  let status: W4FilingStatus = input.filingStatus ?? 'SINGLE';
+  let adjusted: number;
+  let table: Bracket[];
+  if (pre2020) {
+    // 1j–1l: less $4,300 (2026) per allowance. A 2019 W-4 has no head-of-household table.
+    if (status === 'HEAD_OF_HOUSEHOLD') status = 'SINGLE';
+    adjusted = Math.max(0, annualWages - Math.max(0, input.pre2020Allowances ?? 0) * figures.allowance);
+    table = getCachedConfig().fedBrackets[status];
+  } else {
+    // 1d–1i: plus Step 4(a), less Step 4(b) and (box not checked) line 1g.
+    const line1g = input.multipleJobs ? 0 : status === 'MARRIED_FILING_JOINTLY' ? figures.line1g.marriedFilingJointly : figures.line1g.other;
+    adjusted = Math.max(0, annualWages + Math.max(0, input.otherIncome ?? 0) - (Math.max(0, input.deductions ?? 0) + line1g));
+    table = input.multipleJobs ? figures.checkbox[status] : getCachedConfig().fedBrackets[status];
+  }
+  // 2a–2h: the tentative withholding per period.
+  const bracket = pickBracket(table, adjusted);
+  const tentative = (bracket.flat + (adjusted - bracket.over) * bracket.rate) / periods;
+  // 3a–3c: Step 3 credits, per period.
+  const credits = pre2020 ? 0 : Math.max(0, input.dependentsAmount ?? 0) / periods;
+  const afterCredits = Math.max(0, round2(tentative) - round2(credits));
+  // 4a–4b: plus Step 4(c).
+  return round2(afterCredits + Math.max(0, input.extraWithholding ?? 0));
+}
 
-  const bracket = pickBracket(getCachedConfig().fedBrackets[status], annualTaxable);
-  const annualTax = bracket.flat + (annualTaxable - bracket.over) * bracket.rate;
-  const annualCredits = Math.max(0, input.dependentsAmount ?? 0);
-  const annualWithholding = Math.max(0, annualTax - annualCredits);
+/**
+ * Federal tax on supplemental wages identified separately from regular
+ * wages (Pub 15 §7): 22% optional flat rate, and the mandatory 37% on the
+ * part that takes the year's supplemental wages over $1,000,000.
+ */
+export function supplementalFederalWithholding(amount: number, ytdSupplementalBefore: number, year?: number): number {
+  const f = federalFiguresFor(year);
+  const pay = Math.max(0, amount);
+  const roomBelow = Math.max(0, f.supplementalMandatoryOver - Math.max(0, ytdSupplementalBefore));
+  const atFlat = Math.min(pay, roomBelow);
+  return round2(atFlat * f.supplementalRate + (pay - atFlat) * f.supplementalMandatoryRate);
+}
 
-  const cycleWithholding = annualWithholding / periods;
-  const extra = Math.max(0, input.extraWithholding ?? 0);
-  return round2(cycleWithholding + extra);
+/** The W-4 columns federal withholding reads (W4Submission), plus the pay date. */
+export interface FederalW4Row {
+  filingStatus: W4FilingStatus;
+  multipleJobs?: boolean | null;
+  dependentsAmount?: unknown;
+  otherIncome?: unknown;
+  deductions?: unknown;
+  extraWithholding?: unknown;
+  exempt?: boolean | null;
+  exemptTaxYear?: number | null;
+  nonresidentAlien?: boolean | null;
+  pre2020Allowances?: number | null;
+  lockInFilingStatus?: W4FilingStatus | null;
+  lockInMultipleJobs?: boolean | null;
+  lockInEffectiveDate?: Date | string | null;
+}
+
+export interface FederalW4Fields {
+  filingStatus: W4FilingStatus;
+  multipleJobs: boolean;
+  dependentsAmount: number;
+  otherIncome: number;
+  deductions: number;
+  extraWithholding: number;
+  pre2020Allowances: number | null;
+  nonresidentAlien: boolean;
+  exempt: boolean;
+  /** What changed the employee's own W-4, for the paystub note and the readiness page. */
+  flags: Array<'EXEMPT_EXPIRED' | 'LOCK_IN_LETTER'>;
+}
+
+/**
+ * Read a W-4 the way withholding must on `payDate`:
+ *  - An "Exempt" W-4 is good for its year and until February 15 of the
+ *    next; after that, withhold as Single with no adjustments until a new
+ *    one is furnished (Pub 15 §9).
+ *  - An IRS lock-in letter in effect sets the filing status (and Step 2)
+ *    and ignores the employee's Step 3 and 4(b) reductions; amounts that
+ *    increase withholding (4(a), 4(c)) still apply (Pub 15 §9, Treas.
+ *    Reg. §31.3402(f)(2)-1(g)).
+ */
+export function federalW4Fields(w4: FederalW4Row | null | undefined, payDate: Date = new Date()): FederalW4Fields | null {
+  if (!w4) return null;
+  const num = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+  const flags: FederalW4Fields['flags'] = [];
+  let out: FederalW4Fields = {
+    filingStatus: w4.filingStatus,
+    multipleJobs: !!w4.multipleJobs,
+    dependentsAmount: num(w4.dependentsAmount),
+    otherIncome: num(w4.otherIncome),
+    deductions: num(w4.deductions),
+    extraWithholding: num(w4.extraWithholding),
+    pre2020Allowances: w4.pre2020Allowances ?? null,
+    nonresidentAlien: !!w4.nonresidentAlien,
+    exempt: !!w4.exempt,
+    flags,
+  };
+  if (out.exempt) {
+    const year = w4.exemptTaxYear ?? payDate.getUTCFullYear();
+    const expires = Date.UTC(year + 1, 1, 16); // through February 15 of the next year
+    if (payDate.getTime() >= expires) {
+      out = { ...out, filingStatus: 'SINGLE', multipleJobs: false, dependentsAmount: 0, otherIncome: 0, deductions: 0, extraWithholding: 0, pre2020Allowances: null, exempt: false };
+      flags.push('EXEMPT_EXPIRED');
+    }
+  }
+  const lockFrom = w4.lockInEffectiveDate ? new Date(w4.lockInEffectiveDate) : null;
+  if (w4.lockInFilingStatus && lockFrom && lockFrom.getTime() <= payDate.getTime()) {
+    out = {
+      ...out,
+      filingStatus: w4.lockInFilingStatus,
+      multipleJobs: w4.lockInMultipleJobs ?? out.multipleJobs,
+      dependentsAmount: 0,
+      deductions: 0,
+      pre2020Allowances: null,
+      exempt: false,
+    };
+    flags.push('LOCK_IN_LETTER');
+  }
+  return out;
 }
 
 // ---------- FICA: Social Security ------------------------------------------
@@ -246,107 +445,20 @@ export const NO_SIT_STATES = new Set([
   'FL', 'TX', 'NV', 'WA', 'AK', 'SD', 'WY', 'TN', 'NH',
 ]);
 
-const CA_BRACKETS_SINGLE_2024: Bracket[] = [
-  { over: 0, flat: 0, rate: 0.011 },
-  { over: 10_756, flat: 118.32, rate: 0.022 },
-  { over: 25_499, flat: 442.65, rate: 0.044 },
-  { over: 40_245, flat: 1_091.47, rate: 0.066 },
-  { over: 55_866, flat: 2_122.45, rate: 0.088 },
-  { over: 70_606, flat: 3_419.57, rate: 0.1023 },
-  { over: 360_659, flat: 33_077.18, rate: 0.1133 },
-  { over: 432_787, flat: 41_252.74, rate: 0.1243 },
-  { over: 721_314, flat: 77_117.32, rate: 0.1353 },
-  { over: 1_000_000, flat: 114_811.85, rate: 0.1453 }, // 1% mental-health surtax kicks in
-];
 
-const NY_BRACKETS_SINGLE_2024: Bracket[] = [
-  { over: 0, flat: 0, rate: 0.04 },
-  { over: 8_500, flat: 340, rate: 0.045 },
-  { over: 11_700, flat: 484, rate: 0.0525 },
-  { over: 13_900, flat: 599.5, rate: 0.055 },
-  { over: 80_650, flat: 4_270.6, rate: 0.06 },
-  { over: 215_400, flat: 12_355.6, rate: 0.0685 },
-  { over: 1_077_550, flat: 71_413.88, rate: 0.0965 },
-  { over: 5_000_000, flat: 449_799, rate: 0.103 },
-  { over: 25_000_000, flat: 2_509_799, rate: 0.109 },
-];
-
-// Wave 2.1 — bracketed tables for the next-largest progressive-rate states.
-// All "single filer" since we don't yet split by W-4 state filing status.
-
-const NJ_BRACKETS_SINGLE_2024: Bracket[] = [
-  { over: 0, flat: 0, rate: 0.014 },
-  { over: 20_000, flat: 280, rate: 0.0175 },
-  { over: 35_000, flat: 542.5, rate: 0.035 },
-  { over: 40_000, flat: 717.5, rate: 0.05525 },
-  { over: 75_000, flat: 2_651.25, rate: 0.0637 },
-  { over: 500_000, flat: 29_723.75, rate: 0.0897 },
-  { over: 1_000_000, flat: 74_573.75, rate: 0.1075 },
-];
-
-const GA_BRACKETS_SINGLE_2024: Bracket[] = [
-  // GA flattened to 5.39% effective 2024 (HB 1437 phased reduction);
-  // brackets remain in statute but the top rate applies to nearly all wages.
-  { over: 0, flat: 0, rate: 0.0539 },
-];
-
-const OH_BRACKETS_SINGLE_2024: Bracket[] = [
-  // OH 2024 reduced to 2 brackets above the standard exemption of $26,050.
-  { over: 0, flat: 0, rate: 0 },
-  { over: 26_050, flat: 0, rate: 0.0275 },
-  { over: 100_000, flat: 2_033.6, rate: 0.035 },
-];
-
-const VA_BRACKETS_SINGLE_2024: Bracket[] = [
-  { over: 0, flat: 0, rate: 0.02 },
-  { over: 3_000, flat: 60, rate: 0.03 },
-  { over: 5_000, flat: 120, rate: 0.05 },
-  { over: 17_000, flat: 720, rate: 0.0575 },
-];
-
-const MN_BRACKETS_SINGLE_2024: Bracket[] = [
-  { over: 0, flat: 0, rate: 0.0535 },
-  { over: 31_690, flat: 1_695.42, rate: 0.068 },
-  { over: 104_090, flat: 6_618.62, rate: 0.0785 },
-  { over: 193_240, flat: 13_617.0, rate: 0.0985 },
-];
 
 /**
- * Wave 2.1 — flat-rate states. Single number applied to grossPay. We keep
- * these in a map (rather than per-state functions) because they're trivial
- * and the data is easy to audit at a glance.
- *
- * Source: each state's Department of Revenue 2024 withholding tables.
- * Rates rounded to the percent the agency publishes — no annualization
- * needed because the rate is constant.
+ * Flat-rate states with no deduction or allowance. Empty since the 2026
+ * methods (lib/stateWithholding2026.ts) replaced IL, PA, MI, MA, CO, AZ,
+ * KY, IN, NC, UT and ID; kept as the shape for any future one-number state.
  */
-const FLAT_STATE_RATES_2024: Record<string, number> = {
-  IL: 0.0495, // Illinois
-  PA: 0.0307, // Pennsylvania
-  MI: 0.0425, // Michigan
-  MA: 0.05,   // Massachusetts (5% on income, +4% surtax over $1M handled at filing)
-  CO: 0.044,  // Colorado (HB 24-1311 retro-active rate cut to 4.4%)
-  AZ: 0.025,  // Arizona (flat-rate effective 2023)
-  KY: 0.04,   // Kentucky (HB 8 phased reduction; 4.0% in 2024)
-  IN: 0.0305, // Indiana (excludes county add-ons)
-  NC: 0.045,  // North Carolina (phased to 4.5% in 2024)
-  UT: 0.0485, // Utah
-  ID: 0.058,  // Idaho (flat-rate effective 2023)
-};
+const FLAT_STATE_RATES_2024: Record<string, number> = {};
 
 /**
  * Map of supported bracketed-state tables. Adding a new state = drop a
  * Bracket[] above and add it here.
  */
-const BRACKET_STATES_2024: Record<string, Bracket[]> = {
-  CA: CA_BRACKETS_SINGLE_2024,
-  NY: NY_BRACKETS_SINGLE_2024,
-  NJ: NJ_BRACKETS_SINGLE_2024,
-  GA: GA_BRACKETS_SINGLE_2024,
-  OH: OH_BRACKETS_SINGLE_2024,
-  VA: VA_BRACKETS_SINGLE_2024,
-  MN: MN_BRACKETS_SINGLE_2024,
-};
+const BRACKET_STATES_2024: Record<string, Bracket[]> = {};
 
 /**
  * There is no flat-rate fallback any more. A state with no table here and
@@ -375,6 +487,18 @@ export function computeStateIncomeTax(input: StateInput): number {
   if (state && NO_SIT_STATES.has(state)) return 0;
 
   if (state) {
+    // 2026 methods for the always-covered states (lib/stateWithholding2026.ts).
+    const verified = VERIFIED_STATE_SPECS[state];
+    if (verified) {
+      return stateCycleWithholding(verified, {
+        cycleWages: input.grossPay,
+        periods: PERIODS_PER_YEAR[input.payFrequency],
+        federalFilingStatus: input.federalFilingStatus ?? null,
+        federalCycleWithholding: input.federalCycleWithholding ?? 0,
+        stateW4: input.stateW4 ?? null,
+      });
+    }
+
     const flat = FLAT_STATE_RATES_2024[state];
     if (flat !== undefined) return round2(input.grossPay * flat);
 
@@ -447,6 +571,7 @@ export function stateAwaitingReview(state: string | null): { state: string; name
 function isVerifiedState(s: string): boolean {
   return (
     NO_SIT_STATES.has(s) ||
+    s in VERIFIED_STATE_SPECS ||
     s in FLAT_STATE_RATES_2024 ||
     s in BRACKET_STATES_2024 ||
     typeof CONFIG_CACHE?.stateFlatRates?.[s] === 'number'
@@ -459,7 +584,7 @@ export function supportedStates(): string[] {
     .filter(([, v]) => typeof v === 'number')
     .map(([k]) => k.toUpperCase());
   const acknowledged = Object.keys(STATE_SPECS).filter((s) => !stateAwaitingReview(s));
-  return [...new Set([...NO_SIT_STATES, ...Object.keys(FLAT_STATE_RATES_2024), ...Object.keys(BRACKET_STATES_2024), ...configured, ...acknowledged])].sort();
+  return [...new Set([...NO_SIT_STATES, ...Object.keys(VERIFIED_STATE_SPECS), ...Object.keys(FLAT_STATE_RATES_2024), ...Object.keys(BRACKET_STATES_2024), ...configured, ...acknowledged])].sort();
 }
 
 /** True if `state` has a real (non-fallback) tax model this tenant may withhold
@@ -491,6 +616,35 @@ function annualToCycle(table: Bracket[], annualGross: number, periods: number): 
 /** FUTA: 6.0% on first $7000/yr, with a 5.4% credit if state UI is current → effective 0.6%. */
 export const FUTA_RATE_NET = 0.006;
 export const FUTA_WAGE_BASE = 7_000;
+
+/**
+ * FUTA credit reductions: a state that hasn't repaid its federal UI loan
+ * loses part of the 5.4% credit, so FUTA on wages there costs more. The
+ * Department of Labor sets the year's list on November 10 (final) after a
+ * potential list in January. Applied to the employer FUTA accrual and the
+ * Form 940 Schedule A.
+ */
+export const FUTA_CREDIT_REDUCTION: Record<number, { states: Record<string, number>; final: boolean; source: string }> = {
+  2025: {
+    states: { CA: 0.012, VI: 0.045 },
+    final: true,
+    source: 'U.S. DOL, FUTA credit reductions for 2025 (determined November 10, 2025): California 1.2%, U.S. Virgin Islands 4.5%; CT and NY repaid (0.0%)',
+  },
+  2026: {
+    // CONFIRM WITH U.S. DOL: the 2026 list is final after November 10, 2026.
+    // The potential list names California at 1.5% (3.8% more if its BCR
+    // add-on waiver is refused) and the U.S. Virgin Islands; California is
+    // accrued at 1.5% now so the year-end 940 isn't a surprise.
+    states: { CA: 0.015 },
+    final: false,
+    source: 'U.S. DOL, potential FUTA credit reduction states for 2026 (California 1.5%, U.S. Virgin Islands), APA news 2026-04-07; CONFIRM after the November 10, 2026 determination',
+  },
+};
+
+export function futaCreditReduction(state: string | null | undefined, year: number = CONFIG_CACHE?.year ?? new Date().getUTCFullYear()): number {
+  const key = (state ?? '').toUpperCase().trim();
+  return FUTA_CREDIT_REDUCTION[year]?.states[key] ?? 0;
+}
 
 /**
  * Wave 2.3 — Per-state SUTA wage bases and new-employer rates for 2024.
@@ -596,9 +750,10 @@ export function computeEmployerTaxes(input: EmployerInput): EmployerBreakdown {
 
   const futaRemaining = Math.max(0, FUTA_WAGE_BASE - input.ytdWages);
   const futaTaxable = Math.min(input.grossPay, futaRemaining);
-  const futa = round2(futaTaxable * FUTA_RATE_NET);
-
   const stateKey = input.state?.toUpperCase().trim();
+  // Credit-reduction states pay more FUTA on wages there.
+  const futa = round2(futaTaxable * (FUTA_RATE_NET + futaCreditReduction(stateKey)));
+
   const stateCfg =
     stateKey && SUTA_2024[stateKey]
       ? SUTA_2024[stateKey]
@@ -656,6 +811,11 @@ export interface PaycheckTaxInput {
   sutaOverride?: { rate: number; wageBase: number | null } | null;
   /** TAXCOMP — the state withholding certificate for `state`, when on file. */
   stateW4?: StateW4Input | null;
+  /** W-4 Step 2 checkbox; a 2019-or-earlier W-4's allowances; NRA; exempt (see federalW4Fields). */
+  multipleJobs?: boolean;
+  pre2020Allowances?: number | null;
+  nonresidentAlien?: boolean;
+  exempt?: boolean;
 }
 
 export interface PaycheckTaxBreakdown {

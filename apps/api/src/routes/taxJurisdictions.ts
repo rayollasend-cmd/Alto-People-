@@ -485,7 +485,9 @@ taxJurisdictionsRouter.get('/payroll/runs/:id/tax-lines', PAYROLL, async (req, r
     jurisdictions,
     totals: {
       state: r2(jurisdictions.filter((j) => j.kind === 'STATE').reduce((s, j) => s + j.amount, 0)),
-      local: r2(jurisdictions.filter((j) => j.kind !== 'STATE' && !j.employer).reduce((s, j) => s + j.amount, 0)),
+      local: r2(jurisdictions.filter((j) => j.kind !== 'STATE' && j.kind !== 'STATE_PROGRAM' && !j.employer).reduce((s, j) => s + j.amount, 0)),
+      // State disability, paid-leave and employee unemployment contributions withheld (employer shares are in `employer`).
+      programs: r2(jurisdictions.filter((j) => j.kind === 'STATE_PROGRAM' && !j.employer).reduce((s, j) => s + j.amount, 0)),
       employer: r2(jurisdictions.filter((j) => j.employer).reduce((s, j) => s + j.amount, 0)),
     },
   });

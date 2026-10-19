@@ -2966,6 +2966,25 @@ export const PayrollItemSchema = /* @__PURE__ */ (() => z.object({
   failureReason: z.string().nullable(),
   // Wave 1.2 — per-kind breakdown that sums to grossPay.
   earnings: z.array(PayrollItemEarningSchema),
+  /** Every deduction on the check, itemized (PayrollItemDeduction): the
+   *  pre-tax lines sum to preTaxDeductions, the post-tax to postTaxDeductions;
+   *  EMPLOYER lines are paid on top and never reduce net. Absent on checks
+   *  from before itemizing. `key` matches the YTD map on /me/items/:id/ytd. */
+  deductions: z
+    .array(
+      z.object({
+        key: z.string(),
+        code: z.string(),
+        category: z.enum(['PRE_TAX', 'POST_TAX', 'EMPLOYER']),
+        label: z.string(),
+        employeeAmount: z.number(),
+        employerAmount: z.number(),
+      }),
+    )
+    .optional(),
+  /** State disability / paid-leave / employee UI contributions withheld (CA SDI, NJ TDI/FLI, WA PFML …):
+   *  taxes with no column of their own, out of net. Absent when none. */
+  stateProgramTaxes: z.array(z.object({ code: z.string(), label: z.string(), amount: z.number() })).optional(),
   /** Van rides taken from this check (part of postTaxDeductions) — the
    *  paystub's own "Transportation" line. Associate-facing reads only.
    *  Brief 1A-3: `deferred` is what was owed but held back by the
@@ -3183,6 +3202,10 @@ export const PayrollItemYtdResponseSchema = /* @__PURE__ */ (() => z.object({
   byKind: z.record(PayrollEarningKindSchema, z.number()),
   /** Van ride charges inside postTaxDeductions, YTD. */
   transport: z.number().optional(),
+  /** State program code → YTD withheld (CA_SDI, NJ_TDI …). */
+  stateProgramTaxes: z.record(z.string(), z.number()).optional(),
+  /** Itemized deduction key (code|source) → YTD employee and employer amounts. */
+  deductions: z.record(z.string(), z.object({ employee: z.number(), employer: z.number() })).optional(),
 }))();
 export type PayrollItemYtdResponse = z.infer<typeof PayrollItemYtdResponseSchema>;
 
@@ -6177,6 +6200,7 @@ export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
   'DAILY_PAY_POLICY',
   'BILLING_ADJUSTMENT',
   'GARNISHMENT_PAYEE_BANK',
+  'PAY_BY_CHECK',
 ]))();
 export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
 
@@ -6195,6 +6219,7 @@ export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> =
   DAILY_PAY_POLICY: 'Daily pay policy',
   BILLING_ADJUSTMENT: 'Billing adjustment',
   GARNISHMENT_PAYEE_BANK: 'Garnishment payee bank',
+  PAY_BY_CHECK: 'Paper check this payday',
 };
 
 export const ApprovalRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']))();

@@ -121,13 +121,16 @@ import { clientNpsRouter } from './routes/clientNps.js';
 import { marketRatesRouter } from './routes/marketRates.js';
 import { credentialsRouter } from './routes/credentials.js';
 import { payrollTax91Router } from './routes/payrollTax91.js';
+import { federalW4Router } from './routes/federalW4.js';
 import { payExpRouter } from './routes/payExp.js';
 import { garnishmentDeskRouter } from './routes/garnishmentDesk.js';
+import { paperChecksRouter } from './routes/paperChecks.js';
 import { retirementRouter } from './routes/retirement.js';
 import { benefitCarriersRouter } from './routes/benefitCarriers.js';
 import { certifiedPayrollRouter } from './routes/certifiedPayroll.js';
 import { contractorSelfRouter, contractorsRouter } from './routes/contractors.js';
 import { stateTaxRouter } from './routes/stateTax.js';
+import { deductionTreatmentRouter } from './routes/deductionTreatment.js';
 import { taxJurisdictionsRouter } from './routes/taxJurisdictions.js';
 import { wotcRouter } from './routes/wotc.js';
 import { acaRouter } from './routes/aca.js';
@@ -531,6 +534,7 @@ export function createApp() {
   app.use('/pay-bill', requireAuth, payBillRouter);
   // Payroll banking: funding, employer accounts, NACHA files, returns, the payroll calendar.
   app.use('/payroll-banking', requireCapability('view:payroll'), bankingRouter);
+  app.use('/payroll/federal-w4', requireCapability('process:payroll'), federalW4Router);
   app.use('/payroll', requireCapability('view:payroll'), payrollRouter);
   // W-4 SSN re-collection campaign (2026-06-11 key-rotation remediation).
   // Same capability as the SSN reveal endpoint — this surface names who
@@ -711,12 +715,15 @@ export function createApp() {
   app.use('/', payExpRouter);
   // DEDUCT — the garnishment desk: e-IWO, state rules, levy tables, electronic remittance (self-gates process:payroll).
   app.use('/', garnishmentDeskRouter);
+  // CHECKS — pay by paper check this time, printing, void/reissue/stop, positive pay (self-gates).
+  app.use('/', paperChecksRouter);
   // DEDUCT — 401(k) plans, elections, loans and recordkeeper files (self-gates process:payroll).
   app.use('/', retirementRouter);
   // DEDUCT — benefit carrier connections and EDI 834 enrollment files (self-gates process:payroll).
   app.use('/', benefitCarriersRouter);
   // TAXCOMP — state withholding coverage, acknowledgments and certificates.
   app.use('/', stateTaxRouter);
+  app.use('/', deductionTreatmentRouter);
   // Local and multi-state taxes: jurisdictions, review, a person's tax setup (lib/taxEngine).
   app.use('/', taxJurisdictionsRouter);
   // TAXCOMP — WOTC screening, filing tracker and credit.

@@ -172,13 +172,16 @@ describe('EFW2 refuses what its layout cannot carry', () => {
     const b = boxes({ box12: [{ code: 'TP', amount: 4_000 }, { code: 'TT', amount: 600 }], box14bTippedOccupationCodes: ['101'], box7SsTips: 4_000 });
     const gaps = efw2Unsupported(efw2Input(b));
     expect(gaps).toHaveLength(1);
-    expect(gaps[0]!.missing).toEqual(['Box 12 TP (TY2026 position not confirmed)', 'Box 12 TT (TY2026 position not confirmed)', 'Box 14b (TY2026 position not confirmed)', 'Box 7']);
+    // Box 7 social security tips have a confirmed RW position and file; only the 2026 additions are held back.
+    expect(gaps[0]!.missing).toEqual(['Box 12 TP (TY2026 position not confirmed)', 'Box 12 TT (TY2026 position not confirmed)', 'Box 14b (TY2026 position not confirmed)']);
     expect(gaps[0]!.ssnLast4).toBe('6789');
     expect(() => buildEfw2File(efw2Input(b))).toThrow(Efw2UnsupportedError);
   });
 
-  it('refuses a 401(k) deferral too rather than file a zero in its place', () => {
-    expect(efw2Unsupported(efw2Input(boxes({ box12: [{ code: 'D', amount: 6_000 }] })))[0]!.missing).toEqual(['Box 12 D']);
+  it('files a 401(k) deferral (Box 12 D) in its RW position instead of refusing it', () => {
+    const input = efw2Input(boxes({ box12: [{ code: 'D', amount: 6_000 }] }));
+    expect(efw2Unsupported(input)).toEqual([]);
+    expect(buildEfw2File(input)).toContain('00000600000');
   });
 
   it('a W-2c sees a change in Box 12 or 14b', () => {

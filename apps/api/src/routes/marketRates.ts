@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import PDFDocument from 'pdfkit';
+import { COLOR, createDoc, fmt } from '../lib/docKit/index.js';
+import { pinDocument } from '../lib/docKit/biz.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -280,78 +281,67 @@ marketRatesRouter.post('/market-rates/import', MANAGE, async (req, res, next) =>
 
 /* ----- The negotiation brief -------------------------------------------------- */
 
-const money = (x: number | null | undefined) => (x === null || x === undefined ? '—' : `$${x.toFixed(2)}`);
 
+/**
+ * The negotiation brief for one client, as the account lead hands it
+ * across the table: landscape, the headline (how many roles sit below the
+ * local 25th percentile, how far under the median, and the fill that
+ * follows), then every store-role priced against its metro, with the pay
+ * the desk suggests and the bill rate that keeps the margin. Below-market
+ * pay reads in the judgement colours. Source: BLS OEWS hourly wages.
+ */
 export async function renderMarketBrief(input: { orgName: string; clientName: string; rows: MarketRow[]; at: Date }): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 44, info: { Title: `${input.clientName} — market rates`, Author: input.orgName, CreationDate: input.at } });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+  const { k, doc } = createDoc({ title: `${input.clientName} — market rates`, author: input.orgName, layout: 'landscape', margin: 36 });
+  pinDocument(doc, input.at);
+  const priced = input.rows.filter((r) => r.market);
+  const below25 = priced.filter((r) => r.market!.p25 != null && r.payRate < r.market!.p25!);
+  const belowMedian = priced.filter((r) => r.market!.median != null && r.payRate < r.market!.median!);
+  const gaps = priced.filter((r) => r.gapToMedian != null).map((r) => r.gapToMedian!);
+  const avgGap = gaps.length ? gaps.reduce((t, g) => t + g, 0) / gaps.length : null;
+  const fills = input.rows.filter((r) => r.fill.fillRate != null).map((r) => r.fill.fillRate!);
+  const avgFill = fills.length ? fills.reduce((t, f) => t + f, 0) / fills.length : null;
 
-    doc.font('Helvetica-Bold').fontSize(18).fillColor('#111').text(`${input.clientName}: pay against the local market`);
-    doc.moveDown(0.3);
-    doc.font('Helvetica').fontSize(9).fillColor('#555').text(`${input.orgName} · ${input.at.toISOString().slice(0, 10)} · Market figures: U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics (hourly, by metro area).`);
-    doc.moveDown(1);
-
-    const cols = [
-      { h: 'Store', w: 130 },
-      { h: 'Role', w: 110 },
-      { h: 'Metro', w: 130 },
-      { h: 'Pay now', w: 55 },
-      { h: '25th', w: 45 },
-      { h: 'Median', w: 50 },
-      { h: '75th', w: 45 },
-      { h: 'Fill (90 days)', w: 65 },
-      { h: 'Suggested pay', w: 65 },
-      { h: 'Bill to match', w: 65 },
-    ];
-    const header = () => {
-      let x = doc.page.margins.left;
-      const y = doc.y;
-      doc.font('Helvetica-Bold').fontSize(8).fillColor('#333');
-      for (const c of cols) {
-        doc.text(c.h, x, y, { width: c.w - 6 });
-        x += c.w;
-      }
-      doc.moveTo(doc.page.margins.left, doc.y + 3).lineTo(doc.page.width - doc.page.margins.right, doc.y + 3).strokeColor('#ccc').stroke();
-      doc.moveDown(0.6);
-    };
-    header();
-    doc.font('Helvetica').fontSize(8).fillColor('#111');
-    for (const r of input.rows) {
-      if (doc.y > doc.page.height - doc.page.margins.bottom - 40) {
-        doc.addPage();
-        header();
-        doc.font('Helvetica').fontSize(8).fillColor('#111');
-      }
-      const cells = [
-        r.siteName,
-        r.position,
-        r.area?.name ?? 'Metro not set',
-        money(r.payRate),
-        money(r.market?.p25),
-        money(r.market?.median),
-        money(r.market?.p75),
-        r.fill.fillRate === null ? '—' : `${Math.round(r.fill.fillRate * 100)}%`,
-        money(r.recommendation?.payRate),
-        money(r.recommendation?.billRate),
-      ];
-      let x = doc.page.margins.left;
-      const y = doc.y;
-      let maxY = y;
-      cells.forEach((cell, i) => {
-        doc.text(cell, x, y, { width: cols[i]!.w - 6 });
-        maxY = Math.max(maxY, doc.y);
-        x += cols[i]!.w;
-      });
-      doc.y = maxY + 4;
-    }
-    doc.moveDown(1);
-    doc.font('Helvetica').fontSize(8).fillColor('#555').text('“Bill to match” keeps the margin at the suggested pay. Fill is the share of this store’s scheduled shifts for the role that had someone on them over the last 90 days.', doc.page.margins.left, doc.y, { width: doc.page.width - doc.page.margins.left - doc.page.margins.right });
-    doc.end();
+  let y = k.masthead({
+    title: 'Market rate brief',
+    subtitle: `As of ${fmt.date(input.at)}`,
+    brand: { name: input.orgName },
+    meta: [
+      { label: 'Prepared for', value: input.clientName },
+      { label: 'Roles priced', value: `${priced.length} of ${input.rows.length}` },
+      { label: 'Source', value: 'BLS OEWS, hourly by metro' },
+    ],
   });
+  y = k.figures(
+    [
+      { label: 'Below the 25th percentile', value: String(below25.length), hint: 'roles paying under most of the market', tone: below25.length ? 'bad' : 'good' },
+      { label: 'Below the median', value: String(belowMedian.length), hint: `of ${priced.length} roles priced`, tone: belowMedian.length ? 'warn' : 'good' },
+      // gapToMedian is the median minus pay: positive means the role pays under the local median.
+      { label: avgGap != null && avgGap < 0 ? 'Over the median, on average' : 'Under the median, on average', value: avgGap == null ? '—' : `${fmt.money(Math.abs(avgGap))}/h`, hint: 'local median compared with pay now', tone: avgGap != null && avgGap > 0 ? 'warn' : undefined },
+      { label: 'Fill, last 90 days', value: avgFill == null ? '—' : fmt.percent(avgFill, 0), hint: 'scheduled shifts with someone on them', emphasis: true },
+    ],
+    y,
+  );
+  const tone = (r: MarketRow) => (r.market?.p25 != null && r.payRate < r.market.p25 ? COLOR.bad : r.market?.median != null && r.payRate < r.market.median ? COLOR.warn : undefined);
+  y = k.table({
+    y,
+    rows: input.rows,
+    rowH: 18,
+    empty: 'No store-roles to price for this client yet.',
+    columns: [
+      { key: 'store', header: 'Store', width: 2, value: (r) => r.siteName },
+      { key: 'role', header: 'Role', width: 1.8, value: (r) => r.position },
+      { key: 'metro', header: 'Metro', width: 1.9, value: (r) => r.area?.name ?? 'Metro not set', color: (r) => (r.area ? undefined : COLOR.ink3) },
+      { key: 'pay', header: 'Pay now', width: 0.9, align: 'right', value: (r) => fmt.money(r.payRate), strong: true, color: tone },
+      { key: 'p25', header: '25th', width: 0.8, align: 'right', value: (r) => fmt.money(r.market?.p25 ?? null) },
+      { key: 'med', header: 'Median', width: 0.8, align: 'right', value: (r) => fmt.money(r.market?.median ?? null) },
+      { key: 'p75', header: '75th', width: 0.8, align: 'right', value: (r) => fmt.money(r.market?.p75 ?? null) },
+      { key: 'fill', header: 'Fill', width: 0.7, align: 'right', value: (r) => (r.fill.fillRate == null ? '—' : fmt.percent(r.fill.fillRate, 0)), color: (r) => (r.fill.fillRate != null && r.fill.fillRate < 0.9 ? COLOR.warn : undefined) },
+      { key: 'sug', header: 'Suggested pay', width: 1.35, align: 'right', value: (r) => fmt.money(r.recommendation?.payRate ?? null), strong: true },
+      { key: 'bill', header: 'Bill to match', width: 1.3, align: 'right', value: (r) => fmt.money(r.recommendation?.billRate ?? null) },
+    ],
+  });
+  k.callout({ body: '“Bill to match” keeps the margin at the suggested pay. Fill is the share of this store’s scheduled shifts for the role that had someone on them over the last 90 days. Market figures: U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics (hourly, by metro area).' }, y);
+  return k.finish({ reference: `Market rate brief · ${input.clientName} · ${fmt.date(input.at)}`, note: input.orgName });
 }
 
 marketRatesRouter.get('/market-rates/clients/:clientId/brief.pdf', VIEW, async (req, res, next) => {

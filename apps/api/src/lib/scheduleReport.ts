@@ -1,5 +1,8 @@
-import PDFDocument from 'pdfkit';
+import { COLOR, SIZE, createDoc, fmt, type Column } from './docKit/index.js';
+import { loadCurrentBrand } from './docKit/biz.js';
 import {
+  DEFAULT_TIMEZONE,
+  localDateKey,
   formatDateInZone,
   formatDateTimeInZone,
   formatTimeInZone,
@@ -8,10 +11,11 @@ import {
 /**
  * Phase 54.4 — schedule PDF renderer.
  *
- * Renders a chronological table of shifts for a date range. Output is a
- * Buffer so the route can hash / log it before streaming. Uses pdfkit's
- * built-in Helvetica family (no font files in the repo). Page is letter
- * landscape so the wide table doesn't wrap nine columns into the gutter.
+ * The schedule as a manager prints it for the back office wall: letter
+ * landscape, the range and its totals up top (shifts, hours, staffed,
+ * open), then one table per day in time order. Open shifts read in the
+ * warning colour so a gap is visible from across the room. Output is a
+ * Buffer so the route can hash / log it before streaming.
  *
  * Every shift time is rendered in its work-site timezone (`shift.timezone`)
  * — the server runs in UTC, so the old bare toLocale* calls printed every
@@ -48,228 +52,80 @@ export interface ScheduleReportData {
   showRate?: boolean;
 }
 
-const COLS = [
-  { key: 'date',     label: 'Date',     width: 70 },
-  { key: 'time',     label: 'Time',     width: 80 },
-  { key: 'hours',    label: 'Hrs',      width: 32, align: 'right' as const },
-  { key: 'position', label: 'Position', width: 100 },
-  { key: 'client',   label: 'Client',   width: 90 },
-  { key: 'loc',      label: 'Location', width: 80 },
-  { key: 'assoc',    label: 'Associate', width: 110 },
-  { key: 'status',   label: 'Status',   width: 60 },
-  { key: 'rate',     label: 'Rate',     width: 50, align: 'right' as const },
-];
-
-const ROW_HEIGHT = 16;
-const HEADER_PT = 9;
-const ROW_PT = 9;
-const PAGE_MARGIN = 36;
+const STATUS_LABEL: Record<string, string> = { OPEN: 'Open', ASSIGNED: 'Staffed', COMPLETED: 'Completed', DRAFT: 'Draft', CANCELLED: 'Cancelled' };
+const statusColor = (st: string): string | undefined =>
+  st === 'OPEN' ? COLOR.warn : st === 'ASSIGNED' || st === 'COMPLETED' ? COLOR.good : st === 'CANCELLED' ? COLOR.bad : st === 'DRAFT' ? COLOR.ink3 : undefined;
 
 export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffer> {
-  const COLS_SHOWN = data.showRate === false ? COLS.filter((c) => c.key !== 'rate') : COLS;
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: PAGE_MARGIN });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+  const brand = await loadCurrentBrand();
+  const { k } = createDoc({ title: `Schedule — ${rangeLabel(data.rangeFrom, data.rangeTo, data.timezone)}`, author: brand.name, layout: 'landscape', margin: 36 });
+  const shifts = [...data.shifts].sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  const live = shifts.filter((s) => s.status !== 'CANCELLED');
+  const hours = live.reduce((t, s) => t + s.scheduledMinutes, 0) / 60;
+  const open = live.filter((s) => s.status === 'OPEN').length;
+  const staffed = live.length - open - live.filter((s) => s.status === 'DRAFT').length;
 
-    const drawHeader = () => {
-      doc.fontSize(16).font('Helvetica-Bold').text('SCHEDULE', PAGE_MARGIN, PAGE_MARGIN);
-      doc
-        .fontSize(10)
-        .font('Helvetica')
-        .fillColor('#444')
-        .text(formatRange(data.rangeFrom, data.rangeTo), PAGE_MARGIN, PAGE_MARGIN + 22);
-      const filterLine = data.filters.clientName ? `Client: ${data.filters.clientName}` : '';
-      if (filterLine) doc.text(filterLine, PAGE_MARGIN, PAGE_MARGIN + 36);
-      doc
-        .fontSize(8)
-        .fillColor('#888')
-        .text(
-          `Generated ${formatDateTimeInZone(data.generatedAt, data.timezone)} · Alto People`,
-          PAGE_MARGIN,
-          PAGE_MARGIN + (filterLine ? 50 : 36)
-        );
-      doc.fillColor('#000');
-    };
-
-    const drawTableHeader = (top: number) => {
-      doc.font('Helvetica-Bold').fontSize(HEADER_PT).fillColor('#000');
-      let x = PAGE_MARGIN;
-      for (const c of COLS_SHOWN) {
-        doc.text(c.label, x + 2, top + 4, {
-          width: c.width - 4,
-          align: c.align ?? 'left',
-        });
-        x += c.width;
-      }
-      // Underline
-      doc
-        .moveTo(PAGE_MARGIN, top + ROW_HEIGHT - 1)
-        .lineTo(x, top + ROW_HEIGHT - 1)
-        .lineWidth(0.5)
-        .strokeColor('#888')
-        .stroke();
-      doc.strokeColor('#000');
-    };
-
-    drawHeader();
-
-    let y = PAGE_MARGIN + 78;
-    drawTableHeader(y);
-    y += ROW_HEIGHT;
-
-    // Page-bottom guard so we know when to start a new page.
-    const pageBottom = doc.page.height - PAGE_MARGIN - ROW_HEIGHT;
-
-    if (data.shifts.length === 0) {
-      doc
-        .font('Helvetica-Oblique')
-        .fontSize(11)
-        .fillColor('#666')
-        .text('No shifts in this range.', PAGE_MARGIN, y + 12);
-      doc.end();
-      return;
-    }
-
-    // Sort chronologically defensively (route should already do this).
-    const sorted = [...data.shifts].sort(
-      (a, b) => a.startsAt.getTime() - b.startsAt.getTime()
-    );
-
-    let prevDate = '';
-    doc.font('Helvetica').fontSize(ROW_PT).fillColor('#000');
-
-    for (const s of sorted) {
-      // Page break + repeat header.
-      if (y > pageBottom) {
-        doc.addPage();
-        drawHeader();
-        y = PAGE_MARGIN + 78;
-        drawTableHeader(y);
-        y += ROW_HEIGHT;
-        prevDate = '';
-        doc.font('Helvetica').fontSize(ROW_PT).fillColor('#000');
-      }
-
-      const dateStr = formatDateInZone(s.startsAt, s.timezone);
-      const showDate = dateStr !== prevDate;
-      prevDate = dateStr;
-
-      // Light grey divider when the date rolls over — nicer scan on paper.
-      if (showDate && y > PAGE_MARGIN + 78 + ROW_HEIGHT) {
-        doc
-          .moveTo(PAGE_MARGIN, y - 1)
-          .lineTo(PAGE_MARGIN + COLS_SHOWN.reduce((a, c) => a + c.width, 0), y - 1)
-          .lineWidth(0.25)
-          .strokeColor('#ddd')
-          .stroke();
-      }
-
-      const cells: Record<string, string> = {
-        date: showDate ? dateStr : '',
-        time: `${formatTimeInZone(s.startsAt, s.timezone)}–${formatTimeInZone(s.endsAt, s.timezone)}`,
-        hours: (s.scheduledMinutes / 60).toFixed(2),
-        position: s.position,
-        client: s.clientName ?? '—',
-        loc: s.location ?? '',
-        assoc: s.assignedAssociateName ?? '—',
-        status: s.status,
-        rate: s.hourlyRate !== null ? `$${s.hourlyRate.toFixed(2)}` : '',
-      };
-
-      // Status color bar on the left of the row.
-      const statusColor = colorForStatus(s.status);
-      doc
-        .save()
-        .fillColor(statusColor)
-        .rect(PAGE_MARGIN - 2, y + 2, 1.5, ROW_HEIGHT - 4)
-        .fill()
-        .restore();
-
-      let x = PAGE_MARGIN;
-      doc.font('Helvetica').fontSize(ROW_PT).fillColor('#111');
-      for (const c of COLS_SHOWN) {
-        const text = cells[c.key] ?? '';
-        doc.text(text, x + 2, y + 4, {
-          width: c.width - 4,
-          align: c.align ?? 'left',
-          ellipsis: true,
-        });
-        x += c.width;
-      }
-      y += ROW_HEIGHT;
-    }
-
-    // Footer summary on the last page.
-    const totalMinutes = sorted.reduce((acc, s) => acc + s.scheduledMinutes, 0);
-    const totalHours = totalMinutes / 60;
-    const counts = sorted.reduce<Record<string, number>>((acc, s) => {
-      acc[s.status] = (acc[s.status] ?? 0) + 1;
-      return acc;
-    }, {});
-    const summary = `Total: ${sorted.length} shifts · ${totalHours.toFixed(1)} scheduled hours · ${
-      Object.entries(counts)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(' · ')
-    }`;
-    if (y + 24 > doc.page.height - PAGE_MARGIN) {
-      doc.addPage();
-      y = PAGE_MARGIN;
-    } else {
-      y += 8;
-    }
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(9)
-      .fillColor('#000')
-      .text(summary, PAGE_MARGIN, y);
-
-    doc.end();
+  let y = k.masthead({
+    title: 'Schedule',
+    subtitle: `Generated ${formatDateTimeInZone(data.generatedAt, data.timezone)}`,
+    brand,
+    meta: [
+      { label: 'Dates', value: rangeLabel(data.rangeFrom, data.rangeTo, data.timezone) },
+      { label: 'Client', value: data.filters.clientName ?? 'All clients' },
+      { label: 'Shifts', value: String(live.length) },
+      { label: 'Scheduled hours', value: fmt.number(hours, 1) },
+    ],
   });
+  y = k.figures(
+    [
+      { label: 'Shifts', value: String(live.length), hint: `${shifts.length - live.length} cancelled` },
+      { label: 'Staffed', value: String(staffed), hint: live.length ? `${Math.round((staffed / live.length) * 100)}% of shifts` : 'no shifts', tone: open === 0 && live.length > 0 ? 'good' : undefined },
+      { label: 'Open', value: String(open), hint: open ? 'still to fill' : 'nothing open', tone: open ? 'warn' : 'good' },
+      { label: 'Hours', value: fmt.number(hours, 1), hint: 'scheduled, all shifts', emphasis: true },
+    ],
+    y,
+  );
+
+  const columns: Column<ScheduleReportShift>[] = [
+    { key: 'time', header: 'Time', width: 1.7, value: (s) => `${formatTimeInZone(s.startsAt, s.timezone)} – ${formatTimeInZone(s.endsAt, s.timezone)}` },
+    { key: 'hours', header: 'Hours', width: 0.7, align: 'right', value: (s) => fmt.number(s.scheduledMinutes / 60, 1) },
+    { key: 'position', header: 'Position', width: 1.8, value: (s) => s.position },
+    { key: 'client', header: 'Client', width: 1.7, value: (s) => s.clientName ?? '—' },
+    { key: 'loc', header: 'Location', width: 1.7, value: (s) => s.location ?? '—' },
+    { key: 'assoc', header: 'Associate', width: 2.2, value: (s) => s.assignedAssociateName ?? 'Open', color: (s) => (s.assignedAssociateName ? undefined : COLOR.warn), strong: false },
+    { key: 'status', header: 'Status', width: 1.1, value: (s) => STATUS_LABEL[s.status] ?? s.status, color: (s) => statusColor(s.status) },
+    ...(data.showRate === false ? [] : [{ key: 'rate', header: 'Rate', width: 0.9, align: 'right' as const, value: (s: ScheduleReportShift) => (s.hourlyRate != null ? fmt.money(s.hourlyRate) : '—') }]),
+  ];
+
+  if (shifts.length === 0) {
+    y = k.callout({ title: 'No shifts', body: 'No shifts are scheduled in this range for the filters chosen.' }, y);
+  }
+  // One table per day, in each shift's own work-site time zone.
+  const days = new Map<string, ScheduleReportShift[]>();
+  for (const s of shifts) {
+    const key = formatDateInZone(s.startsAt, s.timezone);
+    const list = days.get(key) ?? [];
+    list.push(s);
+    days.set(key, list);
+  }
+  for (const [day, rows] of days) {
+    y = k.ensure(y, 80);
+    const dayOpen = rows.filter((r) => r.status === 'OPEN').length;
+    const dayHours = rows.filter((r) => r.status !== 'CANCELLED').reduce((t, r) => t + r.scheduledMinutes, 0) / 60;
+    k.text(day, k.L, y, { size: SIZE.lead, weight: 'semibold' });
+    k.text(`${rows.length} shift${rows.length === 1 ? '' : 's'} · ${fmt.number(dayHours, 1)} h${dayOpen ? ` · ${dayOpen} open` : ''}`, k.L, y + 2, { size: SIZE.small, color: dayOpen ? COLOR.warn : COLOR.ink3, width: k.width(), align: 'right' });
+    y = k.table({ y: y + 18, rows, columns, rowH: 17 });
+  }
+
+  return k.finish({ reference: `Schedule · ${rangeLabel(data.rangeFrom, data.rangeTo, data.timezone)}${data.filters.clientName ? ` · ${data.filters.clientName}` : ''}`, note: brand.name });
 }
 
-function formatRange(from: Date, toExclusive: Date): string {
-  // Display the inclusive end (1 ms before toExclusive) so the title reads naturally.
+/** "Oct 10 – Oct 16, 2026" for an end-exclusive range. */
+function rangeLabel(from: Date, toExclusive: Date, tz = DEFAULT_TIMEZONE): string {
   const last = new Date(toExclusive.getTime() - 1);
-  if (
-    from.getFullYear() === last.getFullYear() &&
-    from.getMonth() === last.getMonth() &&
-    from.getDate() === 1
-  ) {
-    const lastDay = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
-    if (last.getDate() === lastDay) {
-      return from.toLocaleDateString([], { month: 'long', year: 'numeric' });
-    }
-  }
-  if (
-    from.getFullYear() === last.getFullYear() &&
-    from.getMonth() === last.getMonth() &&
-    from.getDate() === last.getDate()
-  ) {
-    return from.toLocaleDateString([], {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  }
-  return `${from.toLocaleDateString()} – ${last.toLocaleDateString()}`;
-}
-
-function colorForStatus(status: string): string {
-  switch (status) {
-    case 'OPEN':
-      return '#EDB23C';
-    case 'ASSIGNED':
-    case 'COMPLETED':
-      return '#34A874';
-    case 'DRAFT':
-      return '#888888';
-    case 'CANCELLED':
-      return '#E85244';
-    default:
-      return '#999999';
-  }
+  const a = localDateKey(from, tz);
+  const b = localDateKey(last, tz);
+  if (a === b) return fmt.date(a);
+  if (a.slice(0, 4) === b.slice(0, 4)) return `${new Date(`${a}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })} – ${fmt.date(b)}`;
+  return fmt.dateRange(a, b);
 }

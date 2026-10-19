@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { ShieldCheck } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtPercent } from '@/lib/format';
 import {
   acknowledgeState,
   calculateStateTax,
@@ -16,6 +16,7 @@ import {
   type StateCoverageRow,
 } from '@/lib/taxcompApi';
 import { ListTemplate } from '@/components/templates';
+import { DeductionTreatmentCard } from './DeductionTreatmentCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -83,6 +84,17 @@ export function StateTaxCoverage() {
     },
     { key: 'year', header: 'Tables', accessor: (r) => r.taxYear ?? '', cell: (r) => (r.taxYear ? `${r.taxYear}` : '—'), defaultHidden: true },
     {
+      key: 'programs',
+      header: 'Disability & leave',
+      accessor: (r) => (r.programs ?? []).map((p) => p.label).join(', '),
+      cell: (r) =>
+        r.programs?.length ? (
+          <span className="text-xs text-ink">{r.programs.map((p) => p.label.replace(/\s*\(.*\)$/, '')).join(' · ')}</span>
+        ) : (
+          <span className="text-ink-muted">—</span>
+        ),
+    },
+    {
       key: 'reviewed',
       header: 'Reviewed',
       accessor: (r) => r.acknowledgment?.at ?? '',
@@ -104,7 +116,7 @@ export function StateTaxCoverage() {
   return (
     <ListTemplate
       title="State tax coverage"
-      subtitle="Where payroll can withhold state income tax — and the states waiting on a review with your tax adviser before it can."
+      subtitle="Where payroll withholds state income tax and the state disability, paid-leave and unemployment contributions, and the states waiting on a review with your tax adviser before it can."
       breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'State tax coverage' }]}
       summary={
         counts ? (
@@ -156,6 +168,7 @@ export function StateTaxCoverage() {
           description: filter === 'attention' ? 'Every state where people work is covered or reviewed.' : 'Switch to Every state to see the whole list.',
         }}
       />
+      <DeductionTreatmentCard />
       <StateDrawer row={open} onClose={() => setOpen(null)} />
     </ListTemplate>
   );
@@ -199,7 +212,28 @@ function StateDrawer({ row, onClose }: { row: StateCoverageRow | null; onClose: 
             </DrawerDescription>
           </DrawerHeader>
           <DrawerBody className="space-y-5">
-            {row.coverage === 'verified' && <p className="text-sm text-ink">Payroll withholds here from the engine’s own tables — nothing to review.</p>}
+            {row.coverage === 'verified' && (
+              <>
+                <p className="text-sm text-ink">Payroll withholds here from the engine’s own tables — nothing to review.</p>
+                {row.source && (
+                  <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2 text-sm">
+                    <dt className="text-ink-muted">Tables</dt>
+                    <dd className="text-ink">{row.taxYear}</dd>
+                    <dt className="text-ink-muted">Method</dt>
+                    <dd className="text-ink">{row.source}</dd>
+                    {row.form && (
+                      <>
+                        <dt className="text-ink-muted">State certificate</dt>
+                        <dd className="text-ink">{row.form}</dd>
+                      </>
+                    )}
+                  </dl>
+                )}
+                {row.notes && <p className="rounded-md bg-surface-raised p-3 text-sm text-ink">{row.notes}</p>}
+                {row.taxYear && <Calculator state={row.state} />}
+              </>
+            )}
+            <ProgramsSection row={row} />
             {row.coverage === 'none' && <p className="text-sm text-ink">There is no withholding table for this state yet; anyone working here blocks payroll until there is.</p>}
             {reviewable && (
               <>
@@ -261,6 +295,52 @@ function StateDrawer({ row, onClose }: { row: StateCoverageRow | null; onClose: 
         </>
       )}
     </Drawer>
+  );
+}
+
+/** The state's disability, paid-leave and employee-UI contributions, with their rates and sources. */
+function ProgramsSection({ row }: { row: StateCoverageRow }) {
+  const programs = row.programs ?? [];
+  const coming = row.programsComing ?? [];
+  if (!programs.length && !coming.length) return null;
+  const pct = (n: number) => fmtPercent(n, { fromFraction: true, decimals: 3 });
+  return (
+    <section aria-labelledby={`programs-${row.state}`} className="space-y-3">
+      <h3 id={`programs-${row.state}`} className="text-sm font-medium text-ink">
+        Disability, leave and unemployment contributions
+      </h3>
+      <p className="text-xs text-ink-muted">Withheld for work localized in {row.name} (the state its unemployment insurance goes to).</p>
+      <ul className="divide-y divide-line rounded-md border border-line">
+        {programs.map((p) => (
+          <li key={p.code} className="space-y-1 p-3 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-medium text-ink">{p.label}</span>
+              <Badge variant={p.verified ? 'success' : 'pending'} size="sm" withDot={false}>
+                {p.verified ? 'Verified 2026' : 'Awaiting review'}
+              </Badge>
+            </div>
+            <p className="tabular-nums text-ink">
+              {p.employeeRate > 0 ? `Worker ${pct(p.employeeRate)}` : 'Nothing from the worker'}
+              {p.employerRate > 0 ? ` · employer ${pct(p.employerRate)}` : ''}
+              {p.weeklyEmployeeMax !== null ? ` · up to ${fmtMoney(p.weeklyEmployeeMax)} a week` : ''}
+              {p.wageCap !== null ? ` · wages up to ${fmtMoney(p.wageCap)}` : ' · no wage cap'}
+            </p>
+            <p className="text-xs text-ink-muted">{p.source}</p>
+          </li>
+        ))}
+        {coming.map((c) => (
+          <li key={c.label} className="space-y-1 p-3 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-medium text-ink">{c.label}</span>
+              <Badge variant="default" size="sm" withDot={false}>
+                Starts {fmtDate(c.startsOn)}
+              </Badge>
+            </div>
+            <p className="text-xs text-ink-muted">{c.source}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -47,9 +47,10 @@ const ITEM_INCLUDE = {
     },
   },
   associate: {
-    include: { payoutMethods: { where: { isPrimary: true }, take: 1 } },
+    include: { payoutMethods: { where: { isPrimary: true }, take: 1 }, user: { select: { language: true } } },
   },
   earnings: true,
+  deductions: true,
 } satisfies Prisma.PayrollItemInclude;
 
 export type PaystubItem = Prisma.PayrollItemGetPayload<{ include: typeof ITEM_INCLUDE }>;
@@ -187,6 +188,15 @@ function payDistribution(item: PaystubItem): PaystubData['payDistribution'] {
     };
   }
   const pm = item.associate.payoutMethods[0];
+  // Paid by paper check (the company pays by check, payroll chose a check
+  // for this payday, or the person has no account): the stub names the check.
+  const checkNo = /^CHECK-(\d+)$/.exec(item.disbursementRef ?? '')?.[1];
+  if (checkNo) {
+    return {
+      label: `Paper check #${checkNo}`,
+      detail: pm && (pm.branchCardId || pm.accountNumberEnc) ? 'Paid by paper check this payday instead of your usual deposit' : 'Paid by paper check',
+    };
+  }
   if (!pm) return undefined;
   if (pm.branchCardId) return { label: 'Branch card', detail: 'Loaded to your Branch card' };
   if (pm.accountNumberEnc) {
@@ -205,8 +215,13 @@ function payDistribution(item: PaystubItem): PaystubData['payDistribution'] {
   return undefined;
 }
 
-/** Per-jurisdiction state and local rows with YTD, or null when the check has none that reconcile. */
-async function jurisdictionTaxLines(prisma: PrismaLike, item: PaystubItem): Promise<PaystubLine[] | null> {
+/**
+ * Per-jurisdiction state and local rows with YTD (null when they don't
+ * reconcile with the check's withholding), and the state program
+ * contributions withheld (CA SDI, NJ TDI/FLI, WA PFML …) as their own named
+ * rows — always shown, since no PayrollItem column carries them.
+ */
+async function jurisdictionTaxLines(prisma: PrismaLike, item: PaystubItem): Promise<{ jurisdictions: PaystubLine[] | null; programs: PaystubLine[] }> {
   const year = item.payrollRun.periodStart.getUTCFullYear();
   const rows = await prisma.payrollItem.findMany({
     where: {
@@ -221,47 +236,32 @@ async function jurisdictionTaxLines(prisma: PrismaLike, item: PaystubItem): Prom
     },
     select: { id: true, taxLines: { where: { employer: false, kind: { not: 'SUI' } }, select: { code: true, kind: true, label: true, amount: true } } },
   });
-  const mine = rows.find((r) => r.id === item.id)?.taxLines ?? [];
-  if (mine.length === 0) return null;
-  const sum = (ls: typeof mine, state: boolean) => round2(ls.filter((l) => (l.kind === 'STATE') === state).reduce((a, l) => a + Number(l.amount), 0));
-  if (Math.abs(sum(mine, true) - Number(item.stateWithholding)) > 0.01 || Math.abs(sum(mine, false) - Number(item.localWithholding)) > 0.01) return null;
   const ytdBy = new Map<string, number>();
   for (const r of rows) for (const l of r.taxLines) ytdBy.set(l.code, round2((ytdBy.get(l.code) ?? 0) + Number(l.amount)));
-  return mine
+  const all = rows.find((r) => r.id === item.id)?.taxLines ?? [];
+  const programs = all
+    .filter((l) => l.kind === 'STATE_PROGRAM' && Number(l.amount) !== 0)
+    .map((l) => ({ label: l.label, current: Number(l.amount), ytd: ytdBy.get(l.code) ?? Number(l.amount) }));
+  const mine = all.filter((l) => l.kind !== 'STATE_PROGRAM');
+  if (mine.length === 0) return { jurisdictions: null, programs };
+  const sum = (ls: typeof mine, state: boolean) => round2(ls.filter((l) => (l.kind === 'STATE') === state).reduce((a, l) => a + Number(l.amount), 0));
+  if (Math.abs(sum(mine, true) - Number(item.stateWithholding)) > 0.01 || Math.abs(sum(mine, false) - Number(item.localWithholding)) > 0.01) return { jurisdictions: null, programs };
+  const jurisdictions = mine
     .filter((l) => Number(l.amount) !== 0 || l.kind === 'STATE')
     .sort((a, b) => (a.kind === 'STATE' ? 0 : 1) - (b.kind === 'STATE' ? 0 : 1))
     .map((l) => ({ label: l.label, current: Number(l.amount), ytd: ytdBy.get(l.code) ?? Number(l.amount) }));
+  return { jurisdictions, programs };
 }
 
-export async function buildPaystubDataFromItem(
-  prisma: PrismaLike,
+/** The grouped lines of a check from before itemized deductions (no PayrollItemDeduction rows). */
+async function legacyDeductionLines(
   item: PaystubItem,
-  issuedAt: Date = new Date(),
-): Promise<PaystubData> {
-  const ytd = await computePaystubYtd(prisma, item);
-  const client = item.payrollRun.client;
-  const stateLabel = item.taxState ? `${item.taxState} state income tax` : 'State income tax';
-
-  const taxes: PaystubLine[] = [
-    { label: 'Federal income tax', current: Number(item.federalWithholding), ytd: ytd.fit },
-    { label: 'Social Security', current: Number(item.fica), ytd: ytd.ss },
-    { label: 'Medicare', current: Number(item.medicare), ytd: ytd.medicare },
-    { label: stateLabel, current: Number(item.stateWithholding), ytd: ytd.state },
-  ];
-  if (Number(item.localWithholding) > 0) {
-    taxes.push({ label: 'Local income tax', current: Number(item.localWithholding), ytd: ytd.local });
-  }
-  // The tax engine's lines (lib/taxEngine): each state and local jurisdiction
-  // on its own row — when they add up to the check's withholding (an
-  // amendment or a pre-engine check keeps the two summary rows).
-  const byJurisdiction = await jurisdictionTaxLines(prisma, item);
-  if (byJurisdiction) taxes.splice(3, taxes.length - 3, ...byJurisdiction);
-  const taxesCurrent = round2(taxes.reduce((a, t) => a + t.current, 0));
-
+  ytd: Record<string, number>,
+  cur: DeferralRecord,
+  dy: { deferrals: DeferralRecord },
+): Promise<{ preTaxDeductions: PaystubLine[]; postTaxDeductions: PaystubLine[] }> {
   // Pre-tax deductions by kind: retirement, HSA and FSAs from the check's
   // deferral record; everything else under §125 stays "Health & benefits".
-  const cur = readDeferrals(item.deferrals, Number(item.preTaxRetirement));
-  const dy = await computeDeferralYtd(prisma, item);
   const preTaxDeductions: PaystubLine[] = [];
   const named: Array<[string, keyof DeferralRecord]> = [
     ['401(k)', 'pre401k'],
@@ -322,6 +322,118 @@ export async function buildPaystubDataFromItem(
     postTaxDeductions.push({ label: 'Post-tax deductions', current: remainingPostTax, ytd: round2(ytd.postTax - ytd.rides - ewaCurrent - rothYtd) });
   }
 
+
+  return { preTaxDeductions, postTaxDeductions };
+}
+
+const PRE_ORDER = ['RET_401K', 'RET_403B', 'RET_457B', 'MEDICAL', 'DENTAL', 'VISION', 'HSA', 'HEALTH_FSA', 'DCAP', 'LIFE', 'DISABILITY'];
+const POST_ORDER = ['ROTH_401K', 'ROTH_403B', 'RET_LOAN', 'GARNISHMENT', 'GARNISHMENT_FEE', 'UNION_DUES', 'RIDES', 'EWA_RECOVERY', 'AFTER_TAX_OTHER'];
+const ER_ORDER = ['ER_401K_MATCH', 'ER_HEALTH', 'ER_HSA'];
+
+/**
+ * The check's deduction lines with year-to-date per line: the same plan,
+ * order or loan (code + source) summed over this year's paid checks, the
+ * same inclusion rule as computePaystubYtd. Run the backfill
+ * (scripts/backfill-deduction-lines.ts) so earlier checks count too.
+ */
+async function itemizedDeductions(prisma: PrismaLike, item: PaystubItem): Promise<{ preTaxDeductions: PaystubLine[]; postTaxDeductions: PaystubLine[]; employer: PaystubLine[] }> {
+  const year = item.payrollRun.periodStart.getUTCFullYear();
+  const prior = await prisma.payrollItem.findMany({
+    where: {
+      associateId: item.associateId,
+      status: 'DISBURSED',
+      id: { not: item.id },
+      payrollRun: { status: { not: 'CANCELLED' }, periodStart: { gte: new Date(Date.UTC(year, 0, 1)), lt: item.payrollRun.periodStart } },
+    },
+    select: { deductions: { select: { code: true, sourceId: true, employeeAmount: true, employerAmount: true } } },
+  });
+  const key = (l: { code: string; sourceId: string | null }) => `${l.code}|${l.sourceId ?? ''}`;
+  const ytdBy = new Map<string, { employee: number; employer: number }>();
+  for (const row of prior) {
+    for (const l of row.deductions) {
+      const k = key(l);
+      const v = ytdBy.get(k) ?? { employee: 0, employer: 0 };
+      ytdBy.set(k, { employee: round2(v.employee + Number(l.employeeAmount)), employer: round2(v.employer + Number(l.employerAmount)) });
+    }
+  }
+  // Two lines of the same plan or order on one check fold into one row.
+  const merged = new Map<string, { code: string; category: string; label: string; employee: number; employer: number; k: string }>();
+  for (const l of item.deductions) {
+    const k = key(l);
+    const m = merged.get(k);
+    if (m) {
+      m.employee = round2(m.employee + Number(l.employeeAmount));
+      m.employer = round2(m.employer + Number(l.employerAmount));
+    } else merged.set(k, { code: l.code, category: l.category, label: l.label, employee: Number(l.employeeAmount), employer: Number(l.employerAmount), k });
+  }
+  const rows = [...merged.values()];
+  const rank = (order: string[], code: string) => {
+    const i = order.indexOf(code);
+    return i === -1 ? order.length : i;
+  };
+  const rideDeferred = round2(item.rideChargesDeferredCents / 100);
+  const guard = (item.rideChargeGuard ?? null) as { minimumWageCents?: number; state?: string } | null;
+  const rideNote =
+    rideDeferred > 0 && guard?.minimumWageCents
+      ? ` — $${rideDeferred.toFixed(2)} carried to a later check so pay stays at the ${guard.state && guard.state !== 'FEDERAL' ? guard.state + ' ' : ''}minimum wage of $${(guard.minimumWageCents / 100).toFixed(2)}/h`
+      : '';
+  const toLine = (r: (typeof rows)[number], employerSide: boolean): PaystubLine => {
+    const prev = ytdBy.get(r.k) ?? { employee: 0, employer: 0 };
+    const current = employerSide ? r.employer : r.employee;
+    return {
+      label: r.code === 'RIDES' ? `${r.label}${rideNote}` : r.label,
+      current,
+      ytd: round2((employerSide ? prev.employer : prev.employee) + current),
+    };
+  };
+  const pick = (category: string, order: string[]) =>
+    rows
+      .filter((r) => r.category === category && r.code !== 'ER_TRUMP_ACCOUNT')
+      .sort((a, b) => rank(order, a.code) - rank(order, b.code) || a.label.localeCompare(b.label));
+  return {
+    preTaxDeductions: pick('PRE_TAX', PRE_ORDER).filter((r) => r.employee !== 0).map((r) => toLine(r, false)),
+    postTaxDeductions: pick('POST_TAX', POST_ORDER).filter((r) => r.employee !== 0).map((r) => toLine(r, false)),
+    // The Trump account contribution is already shown for the record (Box 12 TA).
+    employer: pick('EMPLOYER', ER_ORDER).filter((r) => r.employer !== 0).map((r) => toLine(r, true)),
+  };
+}
+
+export async function buildPaystubDataFromItem(
+  prisma: PrismaLike,
+  item: PaystubItem,
+  issuedAt: Date = new Date(),
+): Promise<PaystubData> {
+  const ytd = await computePaystubYtd(prisma, item);
+  const client = item.payrollRun.client;
+  const stateLabel = item.taxState ? `${item.taxState} state income tax` : 'State income tax';
+
+  const taxes: PaystubLine[] = [
+    { label: 'Federal income tax', current: Number(item.federalWithholding), ytd: ytd.fit },
+    { label: 'Social Security', current: Number(item.fica), ytd: ytd.ss },
+    { label: 'Medicare', current: Number(item.medicare), ytd: ytd.medicare },
+    { label: stateLabel, current: Number(item.stateWithholding), ytd: ytd.state },
+  ];
+  if (Number(item.localWithholding) > 0) {
+    taxes.push({ label: 'Local income tax', current: Number(item.localWithholding), ytd: ytd.local });
+  }
+  // The tax engine's lines (lib/taxEngine): each state and local jurisdiction
+  // on its own row — when they add up to the check's withholding (an
+  // amendment or a pre-engine check keeps the two summary rows).
+  const { jurisdictions: byJurisdiction, programs } = await jurisdictionTaxLines(prisma, item);
+  if (byJurisdiction) taxes.splice(3, taxes.length - 3, ...byJurisdiction);
+  // State disability / paid leave / employee UI: withheld, so a tax row.
+  taxes.push(...programs);
+  const taxesCurrent = round2(taxes.reduce((a, t) => a + t.current, 0));
+
+  const cur = readDeferrals(item.deferrals, Number(item.preTaxRetirement));
+  const dy = await computeDeferralYtd(prisma, item);
+  // Itemized (PayrollItemDeduction): every plan, order and loan on its own
+  // line with its own year-to-date. A check from before itemizing keeps the
+  // grouped lines it always had.
+  const itemized = item.deductions.length > 0 ? await itemizedDeductions(prisma, item) : null;
+  const { preTaxDeductions, postTaxDeductions } = itemized ?? (await legacyDeductionLines(item, ytd, cur, dy));
+  const employerContributions = itemized?.employer ?? [];
+
   // For the record: the 2026 W-2 Box 12 amounts (OBBBA §§70201, 70202, 70204).
   const informational: PaystubLine[] = [];
   const payYear = item.payrollRun.periodStart.getUTCFullYear();
@@ -372,6 +484,7 @@ export async function buildPaystubDataFromItem(
     taxesTotal: { current: taxesCurrent, ytd: round2(taxes.reduce((a, t) => a + t.ytd, 0)) },
     preTaxDeductions,
     postTaxDeductions,
+    ...(employerContributions.length > 0 ? { employerContributions } : {}),
     ...(Number(item.reimbursementsTotal) > 0
       ? { reimbursements: { current: Number(item.reimbursementsTotal), ytd: ytd.reimb } }
       : {}),
@@ -383,6 +496,8 @@ export async function buildPaystubDataFromItem(
       suta: Number(item.employerSuta),
     },
     payDistribution: payDistribution(item),
+    // The statement reads in the person's own language when the renderer has it (English otherwise).
+    ...(item.associate.user?.language === 'es' ? { language: 'es' as const } : {}),
     hoursTotal,
     ...(informational.length > 0 ? { informational } : {}),
     ...(sick ? { sickLeave: { availableHours: round2(sick.balanceMinutes / 60) } } : {}),
@@ -419,3 +534,4 @@ export async function buildPaystubDataById(
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
+

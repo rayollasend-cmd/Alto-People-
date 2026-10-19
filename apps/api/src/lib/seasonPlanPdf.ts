@@ -1,6 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { RECRUITING_CHANNEL_LABELS, type SeasonPlanComputed, type SeasonPlanSiteComputed } from '@alto-people/shared';
-import { C, CONTENT_BOTTOM, CONTENT_TOP, GAP, M, PAD, PAGE_W, T, W, colW, pdfHelpers, pdfSafe } from './pdfDesign.js';
+import { C, CONTENT_BOTTOM, CONTENT_TOP, GAP, M, PAD, PAGE_W, T, W, colW, pdfHelpers, pdfSafe } from './docKit/biz.js';
 import { stamp } from './opsPacket.js';
 
 /**

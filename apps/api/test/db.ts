@@ -190,6 +190,7 @@ const TABLES = [
   'EmailChangeRequest',
   'MfaRecoveryCode',
   'OrgSetting',
+  'CheckSettings',
   'PerformanceReview',
   'Candidate',
   'InviteToken',

@@ -74,6 +74,9 @@ export interface PayrollClose {
   deposit: { id: string; status: 'PENDING' | 'PAID'; dueDate: string; amount: number; confirmationNumber: string | null } | null;
   remittances: Array<{ id: string; status: string; payeeName: string; amount: number }>;
   quickbooks: { connected: boolean; glByCostCenter: boolean };
+  /** Paid by paper check this time, and the run's checks once issued (lib/paperChecks). */
+  payByCheck?: Array<{ itemId: string; name: string; reason: string; source: 'PAYROLL' | 'ASSOCIATE' }>;
+  checks?: { issued: number; printed: number; voided: number };
   payPreview?: { people: number; confirmed: number; flagged: number; openFlags: number; unanswered: number; confirmationRate: number } | null;
   steps: CloseStep[];
 }
@@ -303,6 +306,19 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
                 </li>
               ))}
             </ul>
+          )}
+          {(data.payByCheck?.length ?? 0) > 0 && (
+            <p className="mt-1">
+              Paid by paper check this time: <List items={data.payByCheck!.map((p) => p.name)} />
+            </p>
+          )}
+          {((data.checks?.issued ?? 0) > 0 || (data.payByCheck?.length ?? 0) > 0) && (
+            <Link to={`/payroll/runs/${r.id}/checks`} className="mt-1 inline-flex items-center gap-1 text-accent underline underline-offset-2">
+              {data.checks && data.checks.issued > 0
+                ? `Paper checks: ${data.checks.issued} issued, ${data.checks.printed} printed`
+                : 'Paper checks'}
+              <ArrowRight className="h-3 w-3" aria-hidden="true" />
+            </Link>
           )}
           {(data.paidItems?.length ?? 0) > 0 && <RecordReturn runId={r.id} items={data.paidItems!} />}
         </div>

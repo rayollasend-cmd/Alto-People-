@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import PDFDocument from 'pdfkit';
+import { COLOR, SIZE, createDoc, fmt } from './docKit/index.js';
 import type { Prisma, PrismaClient, WagePayNotice } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { employerFor } from './employment.js';
@@ -372,36 +372,54 @@ export function noticeLines(facts: NoticeFacts, lang: NoticeLanguage): Array<{ l
 export async function renderPayNoticePdf(n: WagePayNotice): Promise<Buffer> {
   const facts = n.facts as unknown as NoticeFacts;
   const langs: NoticeLanguage[] = n.language !== 'en' ? [n.language as NoticeLanguage, 'en'] : ['en'];
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-    langs.forEach((lang, i) => {
-      if (i > 0) doc.addPage();
-      const t = NOTICE_TEXT[lang];
-      doc.font('Helvetica-Bold').fontSize(16).fillColor('#0f2a4a').text(t.heading);
-      doc.font('Helvetica').fontSize(8).fillColor('#5b6472').text(`${FORM_TITLE[n.form as NoticeForm] ?? n.form} · ${NOTICE_RULES[n.state]?.citation ?? ''}`);
-      doc.moveDown(0.6);
-      doc.font('Helvetica').fontSize(10).fillColor('#1a2233').text(t.intro(n.state));
-      doc.moveDown(0.8);
-      for (const l of noticeLines(facts, lang)) {
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#5b6472').text(l.label.toUpperCase());
-        doc.font('Helvetica').fontSize(11).fillColor('#1a2233').text(l.value);
-        doc.moveDown(0.4);
-      }
-      doc.moveDown(0.8);
-      doc.font('Helvetica').fontSize(9).fillColor('#1a2233').text(t.ack);
-      doc.moveDown(0.6);
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(10)
-        .text(n.acknowledgedAt ? `${t.signedBy} ${n.signedName ?? ''} · ${n.acknowledgedAt.toISOString().slice(0, 19).replace('T', ' ')} UTC` : t.notSigned);
-      if (n.documentHash) doc.font('Helvetica').fontSize(7).fillColor('#8a91a0').text(`SHA-256 ${n.documentHash}`);
+  const first = langs[0];
+  const { k } = createDoc({ title: `${NOTICE_TEXT[first].heading} · ${facts.employee.name}`, author: facts.employer.legalName });
+  const FOOT: Record<NoticeLanguage, { conf: string; page: (a: number, b: number) => string }> = {
+    en: { conf: 'Confidential', page: (a, b) => `Page ${a} of ${b}` },
+    es: { conf: 'Confidencial', page: (a, b) => `Página ${a} de ${b}` },
+    ht: { conf: 'Konfidansyèl', page: (a, b) => `Paj ${a} sou ${b}` },
+  };
+  langs.forEach((lang, i) => {
+    if (i > 0) k.doc.addPage();
+    const t = NOTICE_TEXT[lang];
+    const e = facts.employer;
+    let y = k.masthead({
+      title: t.heading,
+      subtitle: `${FORM_TITLE[n.form as NoticeForm] ?? n.form} · ${NOTICE_RULES[n.state]?.citation ?? ''}`,
+      brand: { name: e.legalName, lines: [[e.addressLine1, [[e.city, e.state].filter(Boolean).join(', '), e.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '), e.phone ?? ''].filter(Boolean) },
     });
-    doc.end();
+    y += k.para(t.intro(n.state), k.L, y, k.width(), { size: SIZE.lead, color: COLOR.ink2 }) + 14;
+    // Each fact on its own line, values allowed to wrap: a legal notice never truncates.
+    for (const l of noticeLines(facts, lang)) {
+      const value = /^\d{4}-\d{2}-\d{2}$/.test(l.value) ? fmt.date(l.value) : l.value;
+      const lw = k.width() * 0.32;
+      const vw = k.width() * 0.64;
+      const lh = k.para(l.label, 0, 0, lw, { size: SIZE.label, caps: true }, false);
+      const vh = k.para(value, 0, 0, vw, { size: SIZE.body }, false);
+      const h = Math.max(lh, vh, 12);
+      y = k.ensure(y, h + 14);
+      k.para(l.label, k.L, y + 1.5, lw, { size: SIZE.label, caps: true, color: COLOR.ink3 });
+      k.para(value, k.L + k.width() * 0.36, y, vw, { size: SIZE.body, weight: 'medium' });
+      y += h + 8;
+      k.hr(y - 4);
+    }
+    y += 10;
+    // The acknowledgment.
+    const ackH = k.para(t.ack, 0, 0, k.width() - 28, { size: SIZE.body }, false);
+    y = k.ensure(y, ackH + 90);
+    k.box(k.L, y, k.width(), ackH + 24, COLOR.wash, 4);
+    k.para(t.ack, k.L + 14, y + 12, k.width() - 28, { size: SIZE.body, color: COLOR.ink });
+    y += ackH + 40;
+    if (n.acknowledgedAt) {
+      k.callout({ tone: 'good', title: `${t.signedBy} ${n.signedName ?? ''}`.trim(), body: `${fmt.dateTime(n.acknowledgedAt)}${n.documentHash ? `  ·  SHA-256 ${n.documentHash.slice(0, 16)}…` : ''}` }, y);
+    } else {
+      y += 18;
+      k.signatureLine(k.L, y, 260, t.signedBy);
+      k.signatureLine(k.L + 290, y, 150, ({ en: 'Date', es: 'Fecha', ht: 'Dat' } as const)[lang]);
+      k.text(t.notSigned, k.L, y + 22, { size: SIZE.small, color: COLOR.ink3 });
+    }
   });
+  return k.finish({ reference: n.documentHash ? `SHA-256 ${n.documentHash}` : 'Pay notice', confidentialLabel: FOOT[first].conf, pageLabel: FOOT[first].page });
 }
 
 /** The worker signs: typed name, the document's hash, where it was signed from. */

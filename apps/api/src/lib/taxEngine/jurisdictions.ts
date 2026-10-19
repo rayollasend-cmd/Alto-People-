@@ -40,6 +40,8 @@ export interface LocalJurisdiction {
   lowIncomeExemptBelow?: number;
   /** Graduated resident brackets on annualized wages (NYC). */
   residentBrackets?: Array<{ over: number; rate: number; base: number }>;
+  /** Subtracted from annual wages before residentBrackets (NYC Table A). */
+  residentDeduction?: { single: number; married: number; perExemption: number };
   /** Yonkers: share of the state withholding. */
   shareOfState?: number;
   /** Ohio school districts: which wages the district taxes. */
@@ -311,17 +313,22 @@ export const LOCAL_JURISDICTIONS: readonly LocalJurisdiction[] = [
     name: 'New York City resident income tax',
     kind: 'LOCAL',
     basis: 'RESIDENT_ONLY',
+    // Annual tax rate schedule (Method II), applied to wages after the deduction and exemptions below.
     residentBrackets: [
-      { over: 0, rate: 0.03078, base: 0 },
-      { over: 12_000, rate: 0.03762, base: 369.36 },
-      { over: 25_000, rate: 0.03819, base: 858.42 },
-      { over: 50_000, rate: 0.03876, base: 1813.17 },
+      { over: 0, rate: 0.0205, base: 0 },
+      { over: 8_000, rate: 0.028, base: 164 },
+      { over: 8_700, rate: 0.0325, base: 184 },
+      { over: 15_000, rate: 0.0395, base: 388 },
+      { over: 25_000, rate: 0.0415, base: 783 },
+      { over: 60_000, rate: 0.0425, base: 2_236 },
     ],
+    /** NYS-50-T-NYC Table A: $5,000 single / $5,500 married, plus $1,000 per exemption. */
+    residentDeduction: { single: 5_000, married: 5_500, perExemption: 1_000 },
     cities: ['new york', 'new york city', 'brooklyn', 'bronx', 'queens', 'staten island', 'manhattan'],
     administeredBy: 'NYS Department of Taxation and Finance (with the state return)',
     taxYear: 2026,
-    source: 'NYS Publication NYS-50-T-NYC — New York City withholding; resident tax rate schedule',
-    confidence: 'medium',
+    source: 'NYS Publication NYS-50-T-NYC (1/26), effective January 1 – December 31, 2026: Table A deduction and exemption allowances and the annual tax rate schedule; https://www.tax.ny.gov/pdf/publications/withholding/nys50_t_nyc.pdf',
+    confidence: 'high',
     note: 'Withheld for residents only; nonresidents owe no city income tax. Brackets are the resident rate schedule (single); NYS-50-T-NYC tables to confirm.',
   },
   {
@@ -335,8 +342,8 @@ export const LOCAL_JURISDICTIONS: readonly LocalJurisdiction[] = [
     cities: ['yonkers'],
     administeredBy: 'NYS Department of Taxation and Finance',
     taxYear: 2026,
-    source: 'NYS Publication NYS-50-T-Y — resident surcharge 16.75% of NYS tax; nonresident earnings tax 0.5%',
-    confidence: 'medium',
+    source: 'NYS Publication NYS-50-T-Y (1/26), effective January 1 – December 31, 2026: resident 16.75% of the New York State withholding computed from the 2026 tables; nonresident earnings tax 0.50% (unchanged); https://www.tax.ny.gov/pdf/publications/withholding/nys50_t_y.pdf',
+    confidence: 'high',
   },
   // ----- Michigan cities --------------------------------------------------
   ...(

@@ -1,4 +1,5 @@
-import PDFDocument from 'pdfkit';
+import { createDoc, fmt } from './docKit/index.js';
+import { BLACK, GREY, checkbox, formBox } from './taxFormKit.js';
 
 /**
  * IRS Form 8850 (Pre-Screening Notice and Certification Request for the
@@ -24,12 +25,6 @@ export interface F8850Data {
   generatedAt: string;
 }
 
-const INK = '#1a2233';
-const MUTED = '#5b6472';
-const HAIR = '#b9c0cc';
-const L = 48;
-const R = 564;
-
 /** Form 8850 lines 1–7 mapped to the screening's questions. */
 const LINES: Array<{ n: string; text: string; keys: string[] }> = [
   { n: '1', text: 'Check here if you received a conditional certification from the state workforce agency or a participating local agency.', keys: [] },
@@ -41,75 +36,81 @@ const LINES: Array<{ n: string; text: string; keys: string[] }> = [
   { n: '7', text: 'Check here if you are unemployed for a period of at least 27 consecutive weeks and received unemployment compensation during some or all of the period.', keys: ['longTermUnemployed'] },
 ];
 
-function line(doc: PDFKit.PDFDocument, y: number) {
-  doc.moveTo(L, y).lineTo(R, y).strokeColor(HAIR).lineWidth(0.6).stroke();
-}
-
-function field(doc: PDFKit.PDFDocument, x: number, y: number, w: number, label: string, value: string) {
-  doc.font('Helvetica').fontSize(7).fillColor(MUTED).text(label, x, y, { width: w });
-  doc.font('Helvetica').fontSize(10).fillColor(INK).text(value || '—', x, y + 10, { width: w });
-}
-
 export async function render8850Pdf(d: F8850Data): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: L, info: { CreationDate: new Date(d.generatedAt), Title: 'Form 8850' } });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+  const { k } = createDoc({ title: `Form 8850 · ${d.applicant.name}`, author: d.employer.name, margin: 40, creationDate: new Date(d.generatedAt) });
+  const L = 40;
+  const W = 532;
+  const ink = BLACK;
+  const date = (v: string | null) => (v ? fmt.date(v.slice(0, 10)) : '');
+  const title = (y: number, page: 1 | 2): number => {
+    k.text('Form', L, y + 6, { size: 7, color: ink });
+    k.text('8850', L + 20, y, { size: 18, weight: 'bold', color: ink });
+    k.text('Pre-Screening Notice and Certification Request for the Work Opportunity Credit', L + 72, y + 2, { size: 9.5, weight: 'semibold', color: ink, width: W - 180 });
+    k.text('Department of the Treasury · Internal Revenue Service', L + 72, y + 15, { size: 6.5, color: GREY });
+    k.text('OMB No. 1545-1500', L + W - 110, y + 2, { size: 6.5, color: GREY, width: 110, align: 'right' });
+    k.text(`Page ${page}`, L + W - 110, y + 12, { size: 6.5, color: GREY, width: 110, align: 'right' });
+    k.hr(y + 30, L, W, ink, 1.2);
+    return y + 40;
+  };
 
-    doc.font('Helvetica-Bold').fontSize(15).fillColor(INK).text('Form 8850', L, 44);
-    doc.font('Helvetica').fontSize(9).fillColor(MUTED).text('Pre-Screening Notice and Certification Request for the Work Opportunity Credit', L, 63);
-    doc.font('Helvetica').fontSize(7).fillColor(MUTED).text('Department of the Treasury — Internal Revenue Service. Prepared by the employer’s HR system; file with the state workforce agency within 28 days of the start date.', L, 76, { width: R - L });
-    line(doc, 98);
+  let y = title(40, 1);
+  k.text('Job applicant: Fill in the lines below and check any boxes that apply. Complete only this side.', L, y, { size: 8, weight: 'semibold', color: ink, width: W });
+  y += 14;
+  const a = d.applicant;
+  formBox(k, L, y, W * 0.5, 26, 'Your name', a.name);
+  formBox(k, L + W * 0.5, y, W * 0.25, 26, 'Social security number', a.ssnLast4 ? `XXX-XX-${a.ssnLast4}` : '');
+  formBox(k, L + W * 0.75, y, W * 0.25, 26, 'Date of birth (if under age 40)', date(a.dob));
+  y += 26;
+  formBox(k, L, y, W * 0.5, 26, 'Street address where you live', a.addressLine1 ?? '');
+  formBox(k, L + W * 0.5, y, W * 0.5, 26, 'City or town, state, and ZIP code', [[a.city, a.state].filter(Boolean).join(', '), a.zip].filter(Boolean).join(' '));
+  y += 26;
+  formBox(k, L, y, W * 0.5, 26, 'Telephone number', a.phone ?? '');
+  y += 36;
 
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(INK).text('Job applicant', L, 108);
-    const a = d.applicant;
-    field(doc, L, 124, 250, 'Your name', a.name);
-    field(doc, L + 260, 124, 120, 'Social security number', a.ssnLast4 ? `XXX-XX-${a.ssnLast4}` : '');
-    field(doc, L + 390, 124, 120, 'Date of birth', a.dob ?? '');
-    field(doc, L, 152, 250, 'Street address', a.addressLine1 ?? '');
-    field(doc, L + 260, 152, 250, 'City, state and ZIP', [a.city, a.state, a.zip].filter(Boolean).join(', '));
-    field(doc, L, 180, 250, 'Telephone', a.phone ?? '');
-    line(doc, 206);
-
-    let y = 214;
-    if (d.declined) {
-      doc.font('Helvetica-Bold').fontSize(10).fillColor(INK).text('The applicant chose not to answer the screening questions.', L, y);
-      y += 24;
-    } else {
-      for (const ln of LINES) {
-        const checked = ln.keys.length > 0 && ln.keys.some((k) => d.answers[k] === 'yes') && (ln.n !== '3' || (d.answers.veteran === 'yes' && d.answers.snap === 'yes'));
-        doc.rect(L, y + 1, 9, 9).strokeColor(INK).lineWidth(0.8).stroke();
-        if (checked) doc.font('Helvetica-Bold').fontSize(9).fillColor(INK).text('X', L + 1.5, y + 1);
-        doc.font('Helvetica-Bold').fontSize(8).fillColor(INK).text(ln.n, L + 16, y + 1);
-        doc.font('Helvetica').fontSize(8).fillColor(INK).text(ln.text, L + 28, y + 1, { width: R - L - 28 });
-        y += Math.max(24, doc.heightOfString(ln.text, { width: R - L - 28 }) + 10);
-      }
+  if (d.declined) {
+    y = k.callout({ tone: 'neutral', body: 'The applicant chose not to answer the screening questions.' }, y);
+  } else {
+    for (const ln of LINES) {
+      const checked = ln.keys.length > 0 && ln.keys.some((key) => d.answers[key] === 'yes') && (ln.n !== '3' || (d.answers.veteran === 'yes' && d.answers.snap === 'yes'));
+      const h = k.para(ln.text, 0, 0, W - 32, { size: 8 }, false);
+      checkbox(k, L, y + 1, '', checked, 8);
+      k.text(ln.n, L + 15, y + 0.5, { size: 8, weight: 'bold', color: ink });
+      k.para(ln.text, L + 28, y, W - 32, { size: 8, color: ink });
+      y += Math.max(18, h + 8);
     }
-    doc.font('Helvetica').fontSize(7).fillColor(MUTED).text('Under penalties of perjury, I declare that I gave the above information to the employer on or before the day I was offered a job, and it is, to the best of my knowledge, true, correct, and complete.', L, y, { width: R - L });
-    y += 26;
-    field(doc, L, y, 300, 'Job applicant’s signature (typed)', d.signedName ?? '');
-    field(doc, L + 320, y, 190, 'Date signed', d.signedAt ? d.signedAt.slice(0, 10) : '');
+  }
+  y += 6;
+  y += k.para('Under penalties of perjury, I declare that I gave the above information to the employer on or before the day I was offered a job, and it is, to the best of my knowledge, true, correct, and complete.', L, y, W, { size: 7.5, color: ink }) + 8;
+  formBox(k, L, y, W * 0.66, 30, "Job applicant's signature", d.signedName ? `${d.signedName} (signed electronically)` : '');
+  formBox(k, L + W * 0.66, y, W * 0.34, 30, 'Date', date(d.signedAt));
 
-    doc.addPage();
-    doc.font('Helvetica-Bold').fontSize(12).fillColor(INK).text('For employer’s use only', L, 48);
-    line(doc, 68);
-    const e = d.employer;
-    field(doc, L, 78, 300, 'Employer’s name', e.name);
-    field(doc, L + 320, 78, 190, 'Employer identification number (EIN)', e.ein ? `${e.ein.slice(0, 2)}-${e.ein.slice(2)}` : '');
-    field(doc, L, 106, 300, 'Street address', e.addressLine1 ?? '');
-    field(doc, L + 320, 106, 190, 'Telephone', e.phone ?? '');
-    field(doc, L, 134, 300, 'City, state and ZIP', [e.city, e.state, e.zip].filter(Boolean).join(', '));
-    line(doc, 162);
-    field(doc, L, 172, 120, 'Gave information', d.signedAt ? d.signedAt.slice(0, 10) : '');
-    field(doc, L + 130, 172, 120, 'Offered job', d.offerDate ?? '');
-    field(doc, L + 260, 172, 120, 'Was hired', d.hireDate ?? '');
-    field(doc, L + 390, 172, 120, 'Started job', d.startDate ?? '');
-    field(doc, L, 200, 250, 'Position', d.position ?? '');
-    field(doc, L + 260, 200, 250, 'Starting wage', d.startingWage !== null ? `$${d.startingWage.toFixed(2)} per hour` : '');
-    field(doc, L, 228, R - L, 'Target groups indicated (ETA Form 9061)', d.targetGroups.join(', '));
-    doc.font('Helvetica').fontSize(7).fillColor(MUTED).text('Under penalties of perjury, I declare that the applicant provided the information on this form on or before the day a job was offered to the applicant and that the information I have furnished is, to the best of my knowledge, true, correct, and complete.', L, 266, { width: R - L });
-    doc.end();
-  });
+  k.doc.addPage();
+  y = title(40, 2);
+  k.text("For Employer's Use Only", L, y, { size: 10, weight: 'bold', color: ink });
+  y += 16;
+  const e = d.employer;
+  formBox(k, L, y, W * 0.6, 26, "Employer's name", e.name);
+  formBox(k, L + W * 0.6, y, W * 0.4, 26, 'Employer identification number (EIN)', e.ein ? fmt.ein(e.ein) : '');
+  y += 26;
+  formBox(k, L, y, W * 0.6, 26, 'Street address', e.addressLine1 ?? '');
+  formBox(k, L + W * 0.6, y, W * 0.4, 26, 'Telephone number', e.phone ?? '');
+  y += 26;
+  formBox(k, L, y, W, 26, 'City or town, state, and ZIP code', [[e.city, e.state].filter(Boolean).join(', '), e.zip].filter(Boolean).join(' '));
+  y += 36;
+  const dates: Array<[string, string]> = [['Gave information', date(d.signedAt)], ['Was offered job', date(d.offerDate)], ['Was hired', date(d.hireDate)], ['Started job', date(d.startDate)]];
+  dates.forEach(([label, v], i) => formBox(k, L + (W / 4) * i, y, W / 4, 26, label, v));
+  y += 26;
+  formBox(k, L, y, W * 0.5, 26, 'Position', d.position ?? '');
+  formBox(k, L + W * 0.5, y, W * 0.5, 26, 'Starting wage', d.startingWage !== null ? `${fmt.money(d.startingWage)} per hour` : '');
+  y += 26;
+  formBox(k, L, y, W, 26, 'Target groups indicated (ETA Form 9061)', d.targetGroups.join(', '));
+  y += 36;
+  k.para('Under penalties of perjury, I declare that the applicant provided the information on this form on or before the day a job was offered to the applicant and that the information I have furnished is, to the best of my knowledge, true, correct, and complete. Based on the information the job applicant furnished on page 1, I believe the individual is a member of a targeted group. I hereby request a certification that the individual is a member of a targeted group.', L, y, W, { size: 7.5, color: ink });
+  y += 52;
+  formBox(k, L, y, W * 0.5, 30, "Employer's signature", '');
+  formBox(k, L + W * 0.5, y, W * 0.3, 30, 'Title', '');
+  formBox(k, L + W * 0.8, y, W * 0.2, 30, 'Date', '');
+  y += 44;
+  k.callout({ tone: 'info', title: 'Filing', body: 'File this form with your state workforce agency within 28 calendar days of the date the employee started work, with ETA Form 9061 (or 9062 for a conditional certification).' }, y, L, W);
+  return k.finish({ reference: `Form 8850 · ${d.applicant.name}`, note: d.employer.name });
 }

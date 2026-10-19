@@ -50,7 +50,21 @@ export interface DeferralRecord {
   trumpAccountEmployer: number;
 }
 
+/** One plan's share of this check, for the itemized deduction lines (PayrollItemDeduction). */
+export interface PlanDeduction {
+  planKind: BenefitsPlanKind;
+  /** The part taken after tax (a Roth deferral). */
+  roth: boolean;
+  /** Withheld from the worker this check. */
+  amount: number;
+  /** Paid by the employer this check (the plan's per-period contribution). */
+  employerAmount: number;
+  sourceId: string | null;
+}
+
 export interface CheckDeductions {
+  /** Every deduction by plan: what the itemized lines are built from. */
+  perPlan: PlanDeduction[];
   /** Every pre-tax deduction (reduces the FIT base). */
   preTax: number;
   /** Of preTax, traditional retirement (FIT-only — not the FICA base). */
@@ -64,6 +78,8 @@ export interface EnrollmentFacts {
   electedAmountCentsPerPeriod: number;
   rothElection: boolean;
   plan: { kind: BenefitsPlanKind; allowsDeemedRoth: boolean; employerContributionCentsPerPeriod: number };
+  /** The enrollment this came from. */
+  sourceId?: string;
 }
 
 /** A person's Roth catch-up position for a year — the person record and the compliance page. */
@@ -174,6 +190,16 @@ export function computeCheckDeductions(enrollments: EnrollmentFacts[], ctx: Pers
   let preTax = 0;
   let preTaxRetirement = 0;
   let roth = 0;
+  const perPlan: PlanDeduction[] = [];
+  // Employer money counts once per enrollment, not once per pre-tax/Roth split of a rate.
+  const employerSeen = new Set<string>();
+  const add = (e: EnrollmentFacts, amount: number, isRoth: boolean) => {
+    const key = e.sourceId ?? `${e.plan.kind}:${perPlan.length}`;
+    const employerAmount = employerSeen.has(key) || e.plan.kind === 'RETIREMENT_401K' || e.plan.kind === 'RETIREMENT_403B' ? 0 : r2(e.plan.employerContributionCentsPerPeriod / 100);
+    employerSeen.add(key);
+    if (r2(amount) === 0 && employerAmount === 0) return;
+    perPlan.push({ planKind: e.plan.kind, roth: isRoth, amount: r2(amount), employerAmount, sourceId: e.sourceId ?? null });
+  };
   // Retirement deferrals share one 402(g) limit across plans: track the running total.
   let retirementSoFar = r2(ytd.pre401k + ytd.pre403b + ytd.roth401k + ytd.roth403b);
   const allowance = catchUpAllowance(dob, year);
@@ -211,6 +237,8 @@ export function computeCheckDeductions(enrollments: EnrollmentFacts[], ctx: Pers
         preTax += pre;
         preTaxRetirement += pre;
         roth += rothPart;
+        if (pre > 0) add(e, pre, false);
+        if (rothPart > 0) add(e, rothPart, true);
         break;
       }
       case 'HSA': {
@@ -219,6 +247,7 @@ export function computeCheckDeductions(enrollments: EnrollmentFacts[], ctx: Pers
         d.hsa = r2(d.hsa + take);
         d.limitStopped = r2(d.limitStopped + elected - take);
         preTax += take;
+        add(e, take, false);
         break;
       }
       case 'FSA_HEALTHCARE': {
@@ -226,6 +255,7 @@ export function computeCheckDeductions(enrollments: EnrollmentFacts[], ctx: Pers
         d.fsa = r2(d.fsa + take);
         d.limitStopped = r2(d.limitStopped + elected - take);
         preTax += take;
+        add(e, take, false);
         break;
       }
       case 'FSA_DEPENDENT_CARE': {
@@ -233,15 +263,18 @@ export function computeCheckDeductions(enrollments: EnrollmentFacts[], ctx: Pers
         d.dcap = r2(d.dcap + take);
         d.limitStopped = r2(d.limitStopped + elected - take);
         preTax += take;
+        add(e, take, false);
         break;
       }
       case 'TRUMP_ACCOUNT':
         // Employer-funded: nothing is withheld; the contribution is reported in Box 12 TA.
         d.trumpAccountEmployer = r2(d.trumpAccountEmployer + e.plan.employerContributionCentsPerPeriod / 100);
+        add(e, 0, false);
         break;
       default:
         preTax += elected;
+        add(e, elected, false);
     }
   }
-  return { preTax: r2(preTax), preTaxRetirement: r2(preTaxRetirement), roth: r2(roth), deferrals: d };
+  return { perPlan, preTax: r2(preTax), preTaxRetirement: r2(preTaxRetirement), roth: r2(roth), deferrals: d };
 }

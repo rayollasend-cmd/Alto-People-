@@ -106,8 +106,10 @@ describe('POST /payroll/runs aggregation with new tax engine', () => {
     expect(item.taxState).toBe('CA');
     expect(item.ytdWages).toBe(0);
     expect(item.ytdMedicareWages).toBe(0);
-    // Net = gross - (fed+fica+med+sit). Allow rounding fuzz.
-    const sum = item.federalWithholding + item.fica + item.medicare + item.stateWithholding;
+    // Net = gross - (fed+fica+med+sit+state programs, e.g. CA SDI). Allow rounding fuzz.
+    const programs = ((item as { stateProgramTaxes?: Array<{ amount: number }> }).stateProgramTaxes ?? []).reduce((t, p) => t + p.amount, 0);
+    expect(programs).toBeGreaterThan(0);
+    const sum = item.federalWithholding + item.fica + item.medicare + item.stateWithholding + programs;
     expect(Math.abs(item.grossPay - sum - item.netPay)).toBeLessThan(0.05);
     // Employer side present.
     expect(item.employerFica).toBeGreaterThan(0);
