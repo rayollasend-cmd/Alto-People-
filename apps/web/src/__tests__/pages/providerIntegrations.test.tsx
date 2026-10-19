@@ -114,10 +114,24 @@ describe('Integrations → Screening, filing and payouts', () => {
     renderAs('HR_ADMINISTRATOR', <ProvidersSection canManage />, '/integrations');
     const list = await screen.findByRole('list', { name: 'Provider kinds' });
     expect(within(list).getByText(/opened on the government site/)).toBeInTheDocument();
-    expect(within(list).getByRole('button', { name: 'Set up e-verify' })).toBeInTheDocument();
+    expect(within(list).getByRole('button', { name: 'Set up E-Verify' })).toBeInTheDocument();
     expect(within(list).getByText('Wise · Live')).toBeInTheDocument();
     expect(within(list).getByText('Needs attention')).toBeInTheDocument();
     expect(within(list).getByText(/Failing since .*: Bad token/)).toBeInTheDocument();
+  });
+
+  it('the bank (ACH) card shows, and a kind this screen doesn’t know yet reads as a plain card instead of breaking the page', async () => {
+    api.listProviderConnections.mockResolvedValue({
+      kinds: [
+        { kind: 'ORIGINATION', label: 'Bank (ACH)', active: null, connections: [] },
+        { kind: 'SOMETHING_NEW', label: 'Something new', active: null, connections: [] },
+      ],
+    });
+    renderAs('HR_ADMINISTRATOR', <ProvidersSection canManage />, '/integrations');
+    const list = await screen.findByRole('list', { name: 'Provider kinds' });
+    expect(within(list).getByRole('heading', { name: 'Your bank (ACH)' })).toBeInTheDocument();
+    expect(within(list).getByRole('button', { name: 'Set up your bank (ACH)' })).toBeInTheDocument();
+    expect(within(list).getByRole('heading', { name: 'Something new' })).toBeInTheDocument();
   });
 
   it('a non-admin sees the state but not the setup', async () => {

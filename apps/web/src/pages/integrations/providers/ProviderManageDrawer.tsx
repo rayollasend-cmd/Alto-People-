@@ -23,7 +23,7 @@ import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Activity } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { CopyValue, HEALTH_BADGE, KIND_COPY, WHAT_TO_DO, environmentLabel, healthLine, useSafeConfirm } from './providerShared';
+import { CopyValue, HEALTH_BADGE, WHAT_TO_DO, kindLook, environmentLabel, healthLine, useSafeConfirm } from './providerShared';
 
 /**
  * One connection: how it is doing (and what to do when it isn't), a test
@@ -111,7 +111,7 @@ export function ProviderManageDrawer({
 
   if (!c) return <Drawer open={false} onOpenChange={() => undefined}>{null}</Drawer>;
   const badge = HEALTH_BADGE[c.health];
-  const copy = KIND_COPY[c.kind];
+  const copy = kindLook(c.kind).copy;
   const dirty = Object.values(values).some((v) => v.trim());
 
   return (

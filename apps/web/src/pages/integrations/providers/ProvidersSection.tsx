@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { ProviderSetupDrawer } from './ProviderSetupDrawer';
 import { ProviderManageDrawer } from './ProviderManageDrawer';
-import { HEALTH_BADGE, KIND_COPY, KIND_ICON, environmentLabel, healthLine } from './providerShared';
+import { HEALTH_BADGE, environmentLabel, healthLine, kindLook, titleInSentence } from './providerShared';
 
 /**
  * Settings & trust → Integrations → Screening, filing and payouts: one card
@@ -77,8 +77,7 @@ export function ProvidersSection({ canManage }: { canManage: boolean }) {
 }
 
 function KindCard({ k, canManage, onSetup, onManage }: { k: ProviderKindSummary; canManage: boolean; onSetup: () => void; onManage: (id: string) => void }) {
-  const Icon = KIND_ICON[k.kind];
-  const copy = KIND_COPY[k.kind];
+  const { Icon, copy } = kindLook(k.kind);
   const c = k.active;
   const badge = c ? HEALTH_BADGE[c.health] : null;
   return (
@@ -107,7 +106,7 @@ function KindCard({ k, canManage, onSetup, onManage }: { k: ProviderKindSummary;
               </Button>
             ) : canManage ? (
               <Button size="sm" onClick={onSetup}>
-                Set up {copy.title.toLowerCase()}
+                Set up {titleInSentence(copy.title)}
               </Button>
             ) : (
               <span className="text-xs text-ink-muted">An integrations admin can connect this.</span>

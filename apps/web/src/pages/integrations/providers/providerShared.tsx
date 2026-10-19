@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Banknote, Calculator, CalendarCheck2, Check, Copy, FlaskConical, Landmark, ShieldCheck, UserSearch, type LucideIcon } from 'lucide-react';
+import { Banknote, Building2, Calculator, CalendarCheck2, Check, Copy, FlaskConical, Landmark, Plug, ShieldCheck, UserSearch, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ProviderConnection, ProviderHealth, ProviderKind } from '@/lib/providersApi';
 import { fmtDateTime, fmtRelativeDate } from '@/lib/format';
@@ -16,6 +16,7 @@ export const KIND_ICON: Record<ProviderKind, LucideIcon> = {
   PAYOUT: Banknote,
   TAX_ENGINE: Calculator,
   EMBEDDED_PAYROLL: CalendarCheck2,
+  ORIGINATION: Building2,
 };
 
 /** What each kind does when nothing is connected, and what connecting changes — plain words. */
@@ -55,7 +56,30 @@ export const KIND_COPY: Record<ProviderKind, { title: string; manual: string; co
     manual: 'You pay each tax deposit and file each return yourself, then record the confirmation on the Payroll taxes desk.',
     connected: 'Your provider pays deposits and files returns from what payroll posts, under its penalty guarantee if your agreement has one.',
   },
+  ORIGINATION: {
+    title: 'Your bank (ACH)',
+    manual: 'With payroll on your own ACH, deposits go out in a NACHA file you upload to your bank.',
+    connected: 'Deposits and the funding debit go to your bank as ACH payment orders, and settlements and returns come back on their own.',
+  },
 };
+
+/** A kind's title mid-sentence ("Set up tax filing"), names kept as written ("E-Verify", "ACH"). */
+export function titleInSentence(title: string): string {
+  return /^[A-Z][a-z]/.test(title) ? title.charAt(0).toLowerCase() + title.slice(1) : title;
+}
+
+/**
+ * The icon and words for a kind — a kind the server knows and this screen
+ * doesn't yet (a newer API) reads as a plain connection instead of
+ * breaking the page.
+ */
+export function kindLook(kind: string): { Icon: LucideIcon; copy: { title: string; manual: string; connected: string } } {
+  const k = kind as ProviderKind;
+  return {
+    Icon: KIND_ICON[k] ?? Plug,
+    copy: KIND_COPY[k] ?? { title: kind.charAt(0) + kind.slice(1).toLowerCase().replace(/_/g, ' '), manual: 'Recorded here by hand until a provider is connected.', connected: 'Connected.' },
+  };
+}
 
 export const HEALTH_BADGE: Record<ProviderHealth, { label: string; variant: 'success' | 'destructive' | 'outline' | 'pending' }> = {
   healthy: { label: 'Working', variant: 'success' },

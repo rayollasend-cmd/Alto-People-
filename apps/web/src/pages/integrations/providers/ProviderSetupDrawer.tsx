@@ -11,7 +11,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
-import { CopyValue, KIND_COPY } from './providerShared';
+import { CopyValue, kindLook, titleInSentence } from './providerShared';
 
 /**
  * Connect a provider for one kind, in three steps on one panel:
@@ -65,12 +65,12 @@ export function ProviderSetupDrawer({
   });
 
   const open = kind !== null;
-  const copy = kind ? KIND_COPY[kind] : null;
+  const copy = kind ? kindLook(kind).copy : null;
 
   return (
     <Drawer open={open} onOpenChange={(o) => !o && (result ? onSaved(result.id) : onClose())} width="max-w-lg" confirmDiscard={!result && Object.values(values).some((v) => v.trim())}>
       <DrawerHeader>
-        <DrawerTitle>Set up {copy?.title.toLowerCase()}</DrawerTitle>
+        <DrawerTitle>Set up {copy ? titleInSentence(copy.title) : ''}</DrawerTitle>
         <DrawerDescription>{copy?.connected}</DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="space-y-5">
