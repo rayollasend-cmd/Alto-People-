@@ -70,7 +70,7 @@ import { Select } from '@/components/ui/Select';
 import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { RunPayrollWizard, type RunPayrollSeed } from './RunPayrollWizard';
-import { PaySchedulesView } from './PaySchedulesView';
+import { listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type PayrollUpcomingWithSchedules, type UpcomingBySchedule } from '@/lib/payScheduleFlowApi';
 import { GarnishmentsView } from './GarnishmentsView';
 import { WebhookHealthTile } from './WebhookHealthTile';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
@@ -203,7 +203,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     refetchInterval: 120_000,
   });
   const openChanges = financialChanges.data?.open ?? 0;
-  const [tab, setTab] = useState<'runs' | 'schedules' | 'garnishments'>('runs');
+  const [tab, setTab] = useState<'runs' | 'garnishments'>('runs');
   const [filter, setFilter] = useState<PayrollRunStatus | 'ALL'>('DRAFT');
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -373,7 +373,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // failed read renders the hero empty rather than toasting on the landing
   // page — the runs list is still useful when /upcoming 500s.
   const upcomingQuery = useQuery({ queryKey: ['payroll', 'upcoming'], queryFn: () => getPayrollUpcoming() });
-  const upcoming: PayrollUpcomingSummary | null = upcomingQuery.isError
+  const upcoming: PayrollUpcomingWithSchedules | null = upcomingQuery.isError
     ? { nextRun: null, lastRun: null }
     : (upcomingQuery.data ?? null);
   const upcomingLoading = upcomingQuery.isPending;
@@ -783,19 +783,20 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             upcoming={upcoming}
             loading={upcomingLoading}
             canProcess={canProcess}
-            onStartRun={() => {
+            onStartRun={(seed) => {
               // Seed the wizard with what the hero already knows — schedule and
               // period — so step 1 never re-asks; a clean preview then collapses
               // the whole flow to one review screen.
               const nr = upcoming?.nextRun;
               setWizardSeed(
-                nr
-                  ? {
-                      scheduleId: nr.scheduleId,
-                      periodStart: nr.periodStart,
-                      periodEnd: nr.periodEnd,
-                    }
-                  : null
+                seed ??
+                  (nr
+                    ? {
+                        scheduleId: nr.scheduleId,
+                        periodStart: nr.periodStart,
+                        periodEnd: nr.periodEnd,
+                      }
+                    : null),
               );
               setShowCreate(true);
             }}
@@ -829,6 +830,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     <span className="ml-2 text-xs">
                       {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
                     </span>
+                    {selected.payrollScheduleName && (
+                      <span className="ml-2 text-xs">
+                        · Pay schedule:{' '}
+                        {selected.payrollScheduleId ? (
+                          <Link to={`/payroll/schedules/${selected.payrollScheduleId}`} className="text-gold hover:underline">
+                            {selected.payrollScheduleName}
+                          </Link>
+                        ) : (
+                          selected.payrollScheduleName
+                        )}
+                      </span>
+                    )}
                   </DrawerDescription>
                 </DrawerHeader>
                 <DrawerBody>
@@ -1211,15 +1224,17 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
         }
       >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs' | 'schedules' | 'garnishments')} className="mb-5">
-        <TabsList>
-          <TabsTrigger value="runs">{t('payrollHome.tabRuns')}</TabsTrigger>
-          <TabsTrigger value="schedules">{t('payrollHome.tabSchedules')}</TabsTrigger>
-          <TabsTrigger value="garnishments">{t('payrollHome.tabGarnishments')}</TabsTrigger>
-        </TabsList>
-        <TabsContent value="schedules" className="mt-5">
-          <PaySchedulesView canProcess={canProcess} />
-        </TabsContent>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs' | 'garnishments')} className="mb-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <TabsList>
+            <TabsTrigger value="runs">{t('payrollHome.tabRuns')}</TabsTrigger>
+            <TabsTrigger value="garnishments">{t('payrollHome.tabGarnishments')}</TabsTrigger>
+          </TabsList>
+          {/* Pay schedules grew into their own page — who is paid when, by client and by face. */}
+          <Link to="/payroll/schedules" className="text-sm text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+            {t('payrollHome.tabSchedules')} →
+          </Link>
+        </div>
         <TabsContent value="garnishments" className="mt-5">
           <GarnishmentsView canProcess={canProcess} />
         </TabsContent>
@@ -1348,10 +1363,15 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   cell: (r) => (
                     <>
                       <div className="text-white tabular-nums">{fmtPeriod(r.periodStart, r.periodEnd)}</div>
-                      {r.clientName && <div className="text-xs2 text-silver/70 mt-0.5">{r.clientName}</div>}
+                      {(r.payrollScheduleName || r.clientName) && (
+                        <div className="text-xs2 text-silver/70 mt-0.5">
+                          {[r.payrollScheduleName, r.clientName].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
                     </>
                   ),
                 },
+                { key: 'schedule', header: 'Pay schedule', accessor: (r) => r.payrollScheduleName ?? '', sortable: true, defaultHidden: true, cell: (r) => r.payrollScheduleName ?? '—' },
                 {
                   key: 'status',
                   header: 'Status',
@@ -1659,22 +1679,40 @@ function PayrollHero({
   onResumeRun,
   onOpenLastRun,
 }: {
-  upcoming: PayrollUpcomingSummary | null;
+  upcoming: PayrollUpcomingWithSchedules | null;
   loading: boolean;
   canProcess: boolean;
-  onStartRun: () => void;
+  onStartRun: (seed: RunPayrollSeed | null) => void;
   onResumeRun: (id: string) => void;
   onOpenLastRun: (id: string) => void;
 }) {
+  // The schedules' plain-words patterns ("Every other Friday") — the
+  // upcoming summary carries only the frequency.
+  const hasSchedules = (upcoming?.bySchedule?.length ?? 0) > 0;
+  const schedulesQuery = useQuery({
+    queryKey: PAY_SCHEDULES_FLOW_KEY,
+    queryFn: listPaySchedulesForFlow,
+    enabled: hasSchedules,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const patternOf = (id: string): string | null =>
+    schedulesQuery.data?.schedules.find((s) => s.id === id)?.pattern ?? null;
   if (loading) {
     return <PayrollHeroSkeleton />;
   }
   if (!upcoming) return null;
   const nr = upcoming.nextRun;
   const lr = upcoming.lastRun;
+  const bySchedule = upcoming.bySchedule ?? [];
   // Hide the hero outright when there is nothing to show — keeps the page
   // clean for fresh installs that haven't created a schedule yet.
-  if (!nr && !lr) return null;
+  if (!nr && !lr && bySchedule.length === 0) return null;
+  // Several schedules: every one's next payday, soonest first, each runnable.
+  if (bySchedule.length > 1) {
+    return <SchedulesHero rows={bySchedule} patternOf={patternOf} lastRun={lr} canProcess={canProcess} onStartRun={onStartRun} onResumeRun={onResumeRun} onOpenLastRun={onOpenLastRun} />;
+  }
+  const only = bySchedule[0] ?? null;
 
   const isResume = !!nr?.draftRunId;
 
@@ -1698,15 +1736,16 @@ function PayrollHero({
                 {fmtDate(parseYmd(nr.payDate))}
               </div>
               <div className="text-xs text-silver/70 mt-1">
-                {nr.scheduleName} · {nr.frequency.toLowerCase()} ·{' '}
+                {nr.scheduleName}
+                {` · ${patternOf(nr.scheduleId) ?? FREQ_WORDS[nr.frequency] ?? nr.frequency.toLowerCase()}`} ·{' '}
                 {fmtPeriod(nr.periodStart, nr.periodEnd)}
                 {nr.clientName ? ` · ${nr.clientName}` : ''}
               </div>
               <div className="mt-4 grid grid-cols-1 min-[420px]:grid-cols-3 gap-2 sm:gap-3 text-xs">
                 <HeroStat
                   icon={<Users className="h-3.5 w-3.5" />}
-                  label="Paystubs"
-                  value={String(nr.employeeCount)}
+                  label={only ? 'People' : 'Paystubs'}
+                  value={only ? `${only.people} on schedule` : String(nr.employeeCount)}
                 />
                 <HeroStat
                   label="Projected gross"
@@ -1736,7 +1775,7 @@ function PayrollHero({
             </div>
             {canProcess && (
               <Button
-                onClick={() => (isResume ? onResumeRun(nr.draftRunId!) : onStartRun())}
+                onClick={() => (isResume ? onResumeRun(nr.draftRunId!) : onStartRun(null))}
                 className="shrink-0"
               >
                 <Play className="h-4 w-4" />
@@ -1747,7 +1786,11 @@ function PayrollHero({
         ) : (
           <div className="flex items-center gap-3 text-silver/70 text-sm">
             <CalendarDays className="h-5 w-5 text-silver/70" />
-            No active pay schedule. Create one in the <strong>Pay schedules</strong> tab to project the next run.
+            No active pay schedule yet.{' '}
+            <Link to="/payroll/schedules" className="text-gold underline underline-offset-2">
+              Set one up
+            </Link>{' '}
+            to project the next run.
           </div>
         )}
       </div>
@@ -1784,6 +1827,109 @@ function PayrollHero({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Payroll home with several pay schedules: each schedule's next run in one
+ * compact row — the schedule, the period, the payday, who is on it — and
+ * its own Run / Resume, soonest payday first.
+ */
+const FREQ_WORDS: Record<string, string> = {
+  WEEKLY: 'Weekly',
+  BIWEEKLY: 'Every two weeks',
+  SEMIMONTHLY: 'Twice a month',
+  MONTHLY: 'Monthly',
+  DAILY: 'Daily',
+};
+
+function SchedulesHero({
+  rows,
+  patternOf,
+  lastRun,
+  canProcess,
+  onStartRun,
+  onResumeRun,
+  onOpenLastRun,
+}: {
+  rows: UpcomingBySchedule[];
+  patternOf: (scheduleId: string) => string | null;
+  lastRun: PayrollUpcomingSummary['lastRun'];
+  canProcess: boolean;
+  onStartRun: (seed: RunPayrollSeed | null) => void;
+  onResumeRun: (id: string) => void;
+  onOpenLastRun: (id: string) => void;
+}) {
+  const sorted = [...rows].sort((a, b) => a.payDate.localeCompare(b.payDate));
+  return (
+    <div className="mb-5 space-y-3">
+      <section aria-label="Next paydays" className="rounded-lg border border-gold/30 bg-gradient-to-br from-gold/8 to-transparent">
+        <div className="flex items-center justify-between gap-2 px-5 pt-4">
+          <div className="flex items-center gap-2 text-xs2 uppercase tracking-widest text-gold">
+            <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+            Next paydays
+          </div>
+          <Link to="/payroll/schedules" className="text-xs text-gold hover:underline">
+            Pay schedules
+          </Link>
+        </div>
+        <ul className="mt-2 divide-y divide-navy-secondary">
+          {sorted.map((r) => (
+            <li key={r.scheduleId} className="flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-lg font-medium tabular-nums text-ink">{fmtDate(parseYmd(r.payDate))}</span>
+                  <span className="truncate text-sm text-ink">{r.scheduleName}</span>
+                </div>
+                <div className="mt-0.5 text-xs text-silver/80">
+                  {`${patternOf(r.scheduleId) ?? FREQ_WORDS[r.frequency] ?? r.frequency.toLowerCase()} · `}
+                  {fmtPeriod(r.periodStart, r.periodEnd)}
+                </div>
+              </div>
+              <div className="flex items-center gap-5 text-xs sm:w-56 sm:justify-end">
+                <span className="tabular-nums">
+                  <span className="block text-2xs uppercase tracking-widest text-silver/70">People</span>
+                  <span className={cn('text-sm', r.people === 0 ? 'text-warning' : 'text-ink')}>{r.people}</span>
+                </span>
+                {canProcess && (
+                  <Button
+                    size="sm"
+                    variant={r.draftRunId ? 'secondary' : 'primary'}
+                    className="ml-auto sm:ml-0"
+                    onClick={() =>
+                      r.draftRunId
+                        ? onResumeRun(r.draftRunId)
+                        : onStartRun({ scheduleId: r.scheduleId, periodStart: r.periodStart, periodEnd: r.periodEnd })
+                    }
+                    aria-label={`${r.draftRunId ? 'Resume draft' : 'Run payroll'} for ${r.scheduleName}`}
+                  >
+                    {r.draftRunId ? 'Resume draft' : (
+                      <>
+                        <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                        Run
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+      {lastRun && (
+        <button
+          type="button"
+          onClick={() => onOpenLastRun(lastRun.id)}
+          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-silver/15 bg-black/30 px-4 py-2.5 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <FileText className="h-4 w-4 text-silver/70" aria-hidden="true" />
+          <span className="text-silver/80">Last run</span>
+          <span className="tabular-nums text-ink">{fmtPeriod(lastRun.periodStart, lastRun.periodEnd)}</span>
+          <StatusBadge status={lastRun.status} overrides={RUN_STATUS_TONES} />
+          <span className="ml-auto tabular-nums text-gold">{fmtMoney(lastRun.totalNet)} net</span>
+        </button>
+      )}
     </div>
   );
 }

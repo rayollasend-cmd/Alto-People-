@@ -36,6 +36,7 @@ import { unbilledGapCached } from '../lib/payBillRecon.js';
 import { certifiedWeeksDue } from '../lib/certifiedPayroll.js';
 import { contractorsNeedingYou } from '../lib/contractors.js';
 import { payrollFundingNeedingYou } from '../lib/banking/funding.js';
+import { countMovesThisWeek, countUnassigned } from './paySchedules.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -662,6 +663,22 @@ const SOURCES: SourceDef[] = [
     path: '/payroll/review',
     visible: (u) => can(u, 'process:payroll') && !internalSites(u),
     count: async (u) => (await runsAwaitingReview(prisma, u.id, { AND: [{ tenantId: tenantIdForWrite() }, scopePayrollRuns(u)] })).length,
+  },
+  {
+    key: 'pay-schedule-unassigned',
+    label: 'People on no pay schedule',
+    description: 'Hired people no pay schedule covers. No payroll run will pay them until a rule, the company default or a person puts them on one.',
+    path: '/payroll/schedules?view=unassigned',
+    visible: (u) => can(u, 'process:payroll'),
+    count: (u) => countUnassigned(u),
+  },
+  {
+    key: 'pay-schedule-moves',
+    label: 'Pay schedule moves starting this week',
+    description: 'People whose pay schedule changes in the next seven days — a transfer, a hire or a rule change. Their last check on the old schedule covers through the day before.',
+    path: '/payroll/schedules',
+    visible: (u) => can(u, 'process:payroll'),
+    count: (u) => countMovesThisWeek(u),
   },
   {
     key: 'financial-changes',

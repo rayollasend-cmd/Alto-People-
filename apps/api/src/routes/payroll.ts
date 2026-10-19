@@ -42,6 +42,8 @@ import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
 import { getNextPayday, getPeriodAfter } from '../lib/payrollSchedule.js';
+import { membershipWindows, scheduleFilterFor, tenantUsesScheduleRules } from '../lib/payScheduleMembership.js';
+import { assignPeople } from './paySchedules.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
 import { applyRideCharges, planRideCharges, releaseRideCharges } from '../lib/transport.js';
 import { round2 } from '../lib/payroll.js';
@@ -126,6 +128,7 @@ const RUN_LIST_PAGE_SIZE = 100;
 type RawRun = Prisma.PayrollRunGetPayload<{
   include: {
     client: { select: { name: true } };
+    payrollSchedule: { select: { name: true } };
     approvedBy: { select: { email: true } };
     items: {
       include: {
@@ -238,6 +241,8 @@ function toSummary(r: RawRun): PayrollRunSummary {
     voidJournalEntryId: r.voidJournalEntryId,
     approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
     approverEmail: r.approvedBy?.email ?? null,
+    payrollScheduleId: r.payrollScheduleId ?? null,
+    payrollScheduleName: r.payrollSchedule?.name ?? null,
   };
 }
 
@@ -250,6 +255,7 @@ function toDetail(r: RawRun): PayrollRunDetail {
 
 const RUN_INCLUDE = {
   client: { select: { name: true } },
+  payrollSchedule: { select: { name: true } },
   approvedBy: { select: { email: true } },
   items: {
     include: {
@@ -260,6 +266,13 @@ const RUN_INCLUDE = {
     },
   },
 } as const;
+
+/** A pay schedule the caller can run, or 404. */
+async function assertScheduleInReach(user: NonNullable<Express.Request['user']>, id: string) {
+  const s = await prisma.payrollSchedule.findFirst({ where: { id, ...scopePayrollSchedules(user) }, select: { id: true, name: true, isActive: true } });
+  if (!s) throw new HttpError(404, 'schedule_not_found', 'Pay schedule not found');
+  return s;
+}
 
 /* ===== HR/Finance reads ================================================= */
 
@@ -461,12 +474,16 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
 
     // Use the top-level prisma client (no transaction); aggregator does
     // reads only, so we don't need transactional consistency here.
+    const scheduleFilter = input.payrollScheduleId
+      ? await scheduleFilterFor(prisma, (await assertScheduleInReach(req.user!, input.payrollScheduleId)).id, periodStart, new Date(`${input.periodEnd}T00:00:00.000Z`))
+      : undefined;
     const projection = await aggregatePayrollProjection(prisma, {
       periodStart,
       periodEndExclusive,
       clientId: input.clientId ?? null,
       defaultRate,
       taxEngine: await taxEngineFor(prisma),
+      ...(scheduleFilter ? { scheduleFilter } : {}),
     });
     // Daily pay already sent comes off the preview the same way the run takes it off.
     await reconcileDailySettlements(prisma, projection, { runId: null, periodStart, periodEndExclusive, clientId: input.clientId ?? null, persist: false });
@@ -557,6 +574,7 @@ payrollRouter.post('/runs/exceptions', PROCESS, async (req, res, next) => {
       periodStart,
       periodEndExclusive,
       clientId: input.clientId ?? null,
+      payrollScheduleId: input.payrollScheduleId ? (await assertScheduleInReach(req.user!, input.payrollScheduleId)).id : null,
     });
 
     const body: PayrollExceptionsResponse = PayrollExceptionsResponseSchema.parse({
@@ -624,26 +642,35 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
         ),
       ]),
     );
-    const runProbes = schedules.map((s) => ({
-      // Client-scoped schedules match their client's run; org-wide
-      // schedules matched ANY run at that periodStart before this
-      // batching, so the probe keeps only the periodStart filter.
-      ...(s.clientId ? { clientId: s.clientId } : {}),
-      periodStart: new Date(`${currentBySchedule.get(s.id)!.periodStart}T00:00:00.000Z`),
-    }));
+    const runProbes = schedules.flatMap((s) => [
+      {
+        // Client-scoped schedules match their client's run; org-wide
+        // schedules matched ANY run at that periodStart before this
+        // batching, so the probe keeps only the periodStart filter.
+        ...(s.clientId ? { clientId: s.clientId } : {}),
+        periodStart: new Date(`${currentBySchedule.get(s.id)!.periodStart}T00:00:00.000Z`),
+      },
+      // A run made for this very schedule.
+      { payrollScheduleId: s.id, periodStart: new Date(`${currentBySchedule.get(s.id)!.periodStart}T00:00:00.000Z`) },
+    ]);
     const existingRuns =
       runProbes.length > 0
         ? await prisma.payrollRun.findMany({
             where: { OR: runProbes },
-            select: { id: true, status: true, clientId: true, periodStart: true },
+            select: { id: true, status: true, clientId: true, periodStart: true, payrollScheduleId: true },
           })
         : [];
-    const findExistingRun = (clientId: string | null, periodStartMs: number) =>
+    // This schedule's own run first; otherwise a run not tied to any
+    // schedule for the same client (how runs were made before schedules).
+    const findExistingRun = (clientId: string | null, periodStartMs: number, scheduleId?: string) =>
+      (scheduleId ? existingRuns.find((r) => r.periodStart.getTime() === periodStartMs && r.payrollScheduleId === scheduleId) : undefined) ??
       existingRuns.find(
         (r) =>
           r.periodStart.getTime() === periodStartMs &&
+          r.payrollScheduleId === null &&
           (clientId === null || r.clientId === clientId),
-      ) ?? null;
+      ) ??
+      null;
 
     for (const s of schedules) {
       const cur = currentBySchedule.get(s.id)!;
@@ -652,7 +679,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       // started the run but didn't approve yet — that's the *resumable*
       // path the landing CTA points at.
       const periodStartDate = new Date(`${cur.periodStart}T00:00:00.000Z`);
-      const existingRun = findExistingRun(s.clientId, periodStartDate.getTime());
+      const existingRun = findExistingRun(s.clientId, periodStartDate.getTime(), s.id);
       const isCompleted =
         existingRun &&
         (existingRun.status === 'FINALIZED' ||
@@ -694,11 +721,17 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
           periodEndExclusive,
           clientId: chosenSchedule.clientId,
           defaultRate: 15,
+          // The schedule's people only, for their days on it.
+          // (Tenants still on the old per-person picker keep the client-wide projection.)
+          ...((await tenantUsesScheduleRules(prisma))
+            ? { scheduleFilter: await scheduleFilterFor(prisma, chosenSchedule.id, periodStart, new Date(`${chosenWindow.periodEnd}T00:00:00.000Z`)) }
+            : {}),
         }),
         computePayrollExceptions(prisma, {
           periodStart,
           periodEndExclusive,
           clientId: chosenSchedule.clientId,
+          payrollScheduleId: chosenSchedule.id,
         }),
       ]);
 
@@ -747,9 +780,31 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
         }
       : null;
 
+    // Every schedule's next due period, with how many people it pays.
+    const bySchedule: NonNullable<PayrollUpcomingSummary['bySchedule']> = [];
+    for (const s of schedules) {
+      const cur = currentBySchedule.get(s.id)!;
+      const existing = findExistingRun(s.clientId, new Date(`${cur.periodStart}T00:00:00.000Z`).getTime(), s.id);
+      const done = existing && (existing.status === 'FINALIZED' || existing.status === 'DISBURSED');
+      const w = done ? getPeriodAfter({ frequency: s.frequency, anchorDate: s.anchorDate, payDateOffsetDays: s.payDateOffsetDays }, cur) : cur;
+      const people = (await membershipWindows(prisma, s.id, w.periodStart, w.periodEnd)).size;
+      bySchedule.push({
+        scheduleId: s.id,
+        scheduleName: s.name,
+        frequency: s.frequency,
+        periodStart: w.periodStart,
+        periodEnd: w.periodEnd,
+        payDate: w.payDate,
+        people,
+        draftRunId: existing && existing.status === 'DRAFT' && !done ? existing.id : null,
+      });
+    }
+    bySchedule.sort((a, b) => a.payDate.localeCompare(b.payDate));
+
     const body: PayrollUpcomingSummary = PayrollUpcomingSummarySchema.parse({
       nextRun,
       lastRun,
+      bySchedule,
     });
     res.json(body);
   } catch (err) {
@@ -782,9 +837,13 @@ payrollRouter.post('/runs', PROCESS, idempotent, async (req, res, next) => {
     // aggregate-and-persist helper (also used by the add-on routes to
     // re-aggregate a DRAFT run). POST /runs/preview calls the aggregator
     // without creating a run row.
+    // A run for one pay schedule pays only its people, for their days on it.
+    const schedule = input.payrollScheduleId ? await assertScheduleInReach(req.user!, input.payrollScheduleId) : null;
+
     const result = await prisma.$transaction(async (tx) => {
       const run = await tx.payrollRun.create({
         data: {
+          payrollScheduleId: schedule?.id ?? null,
           clientId: input.clientId ?? null,
           periodStart,
           periodEnd: new Date(`${input.periodEnd}T00:00:00.000Z`),
@@ -906,7 +965,11 @@ export async function aggregateAndPersistRun(
     }
   }
 
+  // A run for one pay schedule: only its people, their days on it, its frequency.
+  const runSchedule = (await tx.payrollRun.findUnique({ where: { id: run.id }, select: { payrollScheduleId: true } }))?.payrollScheduleId ?? null;
+  const scheduleFilter = runSchedule ? await scheduleFilterFor(tx, runSchedule, run.periodStart, run.periodEnd) : undefined;
   const projection = await aggregatePayrollProjection(tx, {
+    ...(scheduleFilter ? { scheduleFilter } : {}),
     periodStart,
     periodEndExclusive,
     clientId: run.clientId,
@@ -2232,7 +2295,7 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         select: { id: true, associateId: true, status: true, netPay: true, failureReason: true, taxState: true, reroutedAt: true, associate: { select: { firstName: true, lastName: true, employmentType: true, w4Submission: { select: { id: true } }, payoutMethods: { where: { isPrimary: true, retiredAt: null }, select: { id: true, verifiedAt: true } } } } },
       }),
       run.status === 'DRAFT'
-        ? computePayrollExceptions(prisma, { periodStart: run.periodStart, periodEndExclusive, clientId: run.clientId })
+        ? computePayrollExceptions(prisma, { periodStart: run.periodStart, periodEndExclusive, clientId: run.clientId, payrollScheduleId: run.payrollScheduleId })
         : Promise.resolve(null),
       prisma.taxDeposit.findUnique({ where: { payrollRunId: run.id }, select: { id: true, status: true, dueDate: true, amount: true, confirmationNumber: true } }),
       prisma.garnishmentRemittance.findMany({ where: { payrollRunId: run.id }, select: { id: true, status: true, payeeName: true, amount: true } }),
@@ -4023,6 +4086,16 @@ payrollRouter.post('/schedules', PROCESS, async (req, res, next) => {
         anchorDate: new Date(input.anchorDate),
         payDateOffsetDays: input.payDateOffsetDays ?? 5,
         notes: input.notes ?? null,
+        // The pattern's history starts with it (lib/payScheduleMembership reads versions).
+        versions: {
+          create: {
+            tenantId: tenantIdForWrite(),
+            effectiveFrom: new Date(Math.min(new Date(input.anchorDate).getTime(), new Date(`${ymd(new Date())}T00:00:00.000Z`).getTime())),
+            frequency: input.frequency,
+            anchorDate: new Date(input.anchorDate),
+            payDateOffsetDays: input.payDateOffsetDays ?? 5,
+          },
+        },
       },
       include: SCHEDULE_INCLUDE,
     });
@@ -4056,10 +4129,24 @@ payrollRouter.patch('/schedules/:id', PROCESS, async (req, res, next) => {
     if (input.payDateOffsetDays !== undefined) data.payDateOffsetDays = input.payDateOffsetDays;
     if (input.isActive !== undefined) data.isActive = input.isActive;
     if (input.notes !== undefined) data.notes = input.notes;
-    const updated = await prisma.payrollSchedule.update({
-      where: { id: existing.id },
-      data,
-      include: SCHEDULE_INCLUDE,
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.payrollSchedule.update({ where: { id: existing.id }, data, include: SCHEDULE_INCLUDE });
+      // This older editor changes the pattern outright (no effective date):
+      // its history becomes the one new pattern, so the versioned readers agree.
+      if (input.frequency !== undefined || input.anchorDate !== undefined || input.payDateOffsetDays !== undefined) {
+        await tx.payrollScheduleVersion.deleteMany({ where: { scheduleId: existing.id } });
+        await tx.payrollScheduleVersion.create({
+          data: {
+            tenantId: tenantIdForWrite(),
+            scheduleId: existing.id,
+            effectiveFrom: new Date(Math.min(u.anchorDate.getTime(), u.createdAt.getTime() - (u.createdAt.getTime() % 86_400_000))),
+            frequency: u.frequency,
+            anchorDate: u.anchorDate,
+            payDateOffsetDays: u.payDateOffsetDays,
+          },
+        });
+      }
+      return u;
     });
     enqueueAudit(
       {
@@ -4131,18 +4218,20 @@ payrollRouter.post('/schedules/:id/assign', PROCESS, async (req, res, next) => {
     // correct rule: only pull associates whose latest application's clientId
     // matches. For Wave 1.1 we don't enforce this — HR can override — but
     // we do need to make sure the IDs exist.
+    const ids = [...new Set(input.associateIds)];
     const found = await prisma.associate.findMany({
       take: 1000,
-      where: { id: { in: input.associateIds }, deletedAt: null },
+      where: { id: { in: ids }, deletedAt: null, tenantId: tenantIdForWrite(), AND: [scopeAssociates(req.user!)] },
       select: { id: true },
     });
-    if (found.length !== input.associateIds.length) {
+    if (found.length !== ids.length) {
       throw new HttpError(404, 'associate_not_found', 'One or more associates not found');
     }
-    const result = await prisma.associate.updateMany({
-      where: { id: { in: input.associateIds } },
-      data: { payrollScheduleId: schedule.id },
-    });
+    // Through the membership engine: an INDIVIDUAL rule each, from today
+    // (from the running period for someone on no schedule yet), their other
+    // individual rules ended — so the assignment history and the mirror agree.
+    await assignPeople(req.user!, ids, schedule.id, ymd(new Date()));
+    const result = { count: ids.length };
     enqueueAudit(
       {
         actorUserId: req.user!.id,

@@ -34,6 +34,7 @@ import { earnedWageRouter } from './routes/earnedWage.js';
 import { schedulingRouter } from './routes/scheduling.js';
 import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
+import { associatePayScheduleRouter, paySchedulesRouter } from './routes/paySchedules.js';
 import { bankingRouter } from './routes/banking.js';
 import { payBillRouter } from './routes/payBill.js';
 import { financialChangesRouter } from './routes/financialChanges.js';
@@ -535,6 +536,10 @@ export function createApp() {
   // Payroll banking: funding, employer accounts, NACHA files, returns, the payroll calendar.
   app.use('/payroll-banking', requireCapability('view:payroll'), bankingRouter);
   app.use('/payroll/federal-w4', requireCapability('process:payroll'), federalW4Router);
+  // Pay schedules and who is on them (rules, effective-dated moves) — before /payroll so its /:id routes don't shadow these.
+  app.use('/payroll/pay-schedules', requireCapability('view:payroll'), paySchedulesRouter);
+  // One person's pay schedule: payroll, or the onboarding desk setting a new hire's (gated inside).
+  app.use('/associates', requireAuth, associatePayScheduleRouter);
   app.use('/payroll', requireCapability('view:payroll'), payrollRouter);
   // W-4 SSN re-collection campaign (2026-06-11 key-rotation remediation).
   // Same capability as the SSN reveal endpoint — this surface names who

@@ -64,6 +64,7 @@ export type ModuleKey =
   | 'carrier-feeds'
   | 'contractors'
   | 'payroll-banking'
+  | 'pay-schedules'
   | 'payroll-compliance'
   | 'cash-forecast'
   | 'pay-bill'
@@ -293,6 +294,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'carrier-feeds',
   'contractors',
   'payroll-banking',
+  'pay-schedules',
   'payroll-compliance',
   'cash-forecast',
   'pay-bill',
@@ -1492,6 +1494,17 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'pay-schedules',
+    path: '/payroll/schedules',
+    label: 'Pay schedules',
+    description:
+      'Who is paid when: each schedule, the clients, sites and people on it, the pay calendar with holiday moves, and everyone not yet on one.',
+    descriptionNoClients:
+      'Who is paid when: each schedule, the sites and people on it, the pay calendar with holiday moves, and everyone not yet on one.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
     key: 'payroll-banking',
     path: '/payroll/banking',
     label: 'Payroll banking',
@@ -2010,7 +2023,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   pay: {
     key: 'pay',
     label: 'Pay & finance',
-    children: ['payroll', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'tax-jurisdictions', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
+    children: ['payroll', 'pay-schedules', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'tax-jurisdictions', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
   },
   compliance: {
     key: 'compliance',

@@ -3004,6 +3004,9 @@ export type PayrollItem = z.infer<typeof PayrollItemSchema>;
 
 export const PayrollRunSummarySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
+  /** The pay schedule the run pays (null: a legacy or off-cycle run). */
+  payrollScheduleId: UuidSchema.nullable().optional(),
+  payrollScheduleName: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
   periodStart: z.string(),  // YYYY-MM-DD
@@ -3103,6 +3106,8 @@ export const PayrollRunCreateInputSchema = /* @__PURE__ */ (() => z
     /** OFF_CYCLE = bonus/terminal-pay run: no time aggregation, paychecks
      *  come entirely from add-on earning lines. Default REGULAR. */
     kind: z.enum(['REGULAR', 'OFF_CYCLE']).optional(),
+    /** The pay schedule this run pays: only people on it, for the days they were on it (paySchedules.ts). */
+    payrollScheduleId: UuidSchema.nullable().optional(),
   })
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',
@@ -3323,6 +3328,7 @@ export const PayrollExceptionKindSchema = /* @__PURE__ */ (() => z.enum([
   'WAGE_STATEMENT_INCOMPLETE', // WARNING — the work state's paystub rule needs data not on file (employer address/phone, sick balance)
   'ROTH_CATCH_UP',       // WARNING  — a higher earner's catch-up stops: the plan has no deemed Roth (SECURE 2.0 §603)
   'DEFERRAL_LIMIT',      // INFO     — an annual limit (402(g), catch-up, HSA, FSA) stops part of an election this check
+  'UNASSIGNED_SCHEDULE', // WARNING  — approved time in the period but on no pay schedule: not paid by a schedule's run
 ]))();
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
@@ -3356,6 +3362,8 @@ export const PayrollExceptionsInputSchema = /* @__PURE__ */ (() => z.object({
   clientId: UuidSchema.nullable().optional(),
   periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** A run for one pay schedule: exceptions for its people only (paySchedules.ts). */
+  payrollScheduleId: UuidSchema.nullable().optional(),
 }))();
 export type PayrollExceptionsInput = z.infer<typeof PayrollExceptionsInputSchema>;
 
@@ -3389,6 +3397,22 @@ export const PayrollUpcomingSummarySchema = /* @__PURE__ */ (() => z.object({
       draftRunId: UuidSchema.nullable(),
     })
     .nullable(),
+  /** The next due period for EVERY schedule the caller can run (the per-schedule list on payroll home). */
+  bySchedule: z
+    .array(
+      z.object({
+        scheduleId: UuidSchema,
+        scheduleName: z.string(),
+        frequency: PayrollFrequencySchema,
+        periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        payDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        /** People on the schedule for some of the period. */
+        people: z.number().int().nonnegative(),
+        draftRunId: UuidSchema.nullable(),
+      }),
+    )
+    .optional(),
   lastRun: z
     .object({
       id: UuidSchema,

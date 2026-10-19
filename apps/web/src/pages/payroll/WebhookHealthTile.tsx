@@ -1,13 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, CircleDashed, Info, ServerCrash, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, CircleDashed, Info, ServerCrash, ShieldAlert } from 'lucide-react';
 import {
   getDisbursementWebhookStatus,
   type DisbursementWebhookStatus,
   type WebhookHealth,
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
-import { fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -38,17 +38,19 @@ const STYLE: Record<
   stub: { label: 'Simulated', badge: 'default', iconBox: 'bg-info/15 text-info', ring: 'ring-info/30', Icon: Info },
 };
 
+const PROVIDER_NAME: Record<DisbursementWebhookStatus['provider'], string> = { STUB: 'Simulated', WISE: 'Wise', BRANCH: 'Branch' };
+
 /**
  * The disbursement rail's health.
  *
  * On the Payroll page (`surface="payroll"`) it speaks only when the payroll
- * person has something to do: a stale or erroring webhook is the tile, a
- * simulated provider is one calm line pointing at Integrations, and a
- * healthy, idle or not-applicable rail says nothing at all — that state
- * lives on Settings & Trust › Integrations (`surface="integrations"`),
- * where the whole tile always renders.
+ * person has something to do, and then in one slim line that points at
+ * Payroll banking: the full detail (the provider's error, the event counts)
+ * lives there (`surface="banking"`, shown whenever something is wrong) and
+ * on Settings & Trust › Integrations (`surface="integrations"`), where the
+ * whole tile always renders. A simulated provider is one calm line.
  */
-export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'integrations' }) {
+export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'banking' | 'integrations' }) {
   const statusQuery = useQuery({
     queryKey: ['WebhookHealthTile', 'status'],
     queryFn: () => getDisbursementWebhookStatus(),
@@ -71,7 +73,7 @@ export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'integrati
     return <ErrorBanner severity="warning">{error}</ErrorBanner>;
   }
   if (!data) {
-    if (surface === 'payroll') return null;
+    if (surface !== 'integrations') return null;
     return (
       <div className="rounded-lg border border-navy-secondary bg-navy elev-1 p-3 flex items-start gap-3">
         <Skeleton className="h-8 w-8 rounded-full shrink-0" />
@@ -83,8 +85,38 @@ export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'integrati
     );
   }
 
+  if (surface === 'banking' && (data.health === 'healthy' || data.health === 'idle' || data.health === 'unconfigured' || data.health === 'stub')) return null;
   if (surface === 'payroll') {
     if (data.health === 'healthy' || data.health === 'idle' || data.health === 'unconfigured') return null;
+    if (data.health === 'erroring' || data.health === 'stale') {
+      const failing = data.health === 'erroring';
+      const when = failing ? data.latestError?.at : data.lastEventAt;
+      return (
+        <p
+          role="status"
+          className={cn(
+            'flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-sm',
+            failing ? 'border-alert/30 bg-alert/[0.05]' : 'border-warning/30 bg-warning/[0.05]',
+          )}
+        >
+          {failing ? <ServerCrash className="h-4 w-4 shrink-0 text-alert" aria-hidden="true" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />}
+          <span className="text-ink">
+            Payouts: {PROVIDER_NAME[data.provider] ?? data.provider} —{' '}
+            {failing ? 'failing' : 'no word from the provider'}
+            {when ? ` since ${fmtDate(when)}` : ''}
+          </span>
+          {data.pendingFinalizedItems > 0 && (
+            <span className="text-silver">
+              · {data.pendingFinalizedItems} {data.pendingFinalizedItems === 1 ? 'paycheck' : 'paychecks'} waiting
+            </span>
+          )}
+          <Link to="/payroll/banking" className="inline-flex items-center gap-1 font-medium text-gold hover:underline">
+            Fix in Payroll banking
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </Link>
+        </p>
+      );
+    }
     if (data.health === 'stub') {
       return (
         <p

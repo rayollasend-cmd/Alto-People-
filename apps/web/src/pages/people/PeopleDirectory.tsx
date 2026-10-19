@@ -96,6 +96,7 @@ import type {
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
+import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { PhotoStorageBanner } from '@/components/PhotoStorageBanner';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
@@ -2361,6 +2362,8 @@ const REASON_LABEL: Record<CompChangeReason, string> = {
  */
 export function EmploymentTab({ associateId }: { associateId: string }) {
   const term = useTerm();
+  const { can } = useAuth();
+  const canSeePaySchedule = can('process:payroll') || can('view:hr-admin');
   const { data, error, isPending } = useQuery({
     queryKey: ['employment-history', associateId],
     queryFn: () => getEmploymentHistory(associateId),
@@ -2372,17 +2375,28 @@ export function EmploymentTab({ associateId }: { associateId: string }) {
     return <p className="text-sm text-alert">{error instanceof ApiError ? error.message : 'Failed to load.'}</p>;
   }
   if (isPending) return <SkeletonRows count={3} />;
+  const paySchedule = canSeePaySchedule ? (
+    <Card>
+      <CardContent className="py-3">
+        <PayScheduleAssignment associateId={associateId} variant="record" />
+      </CardContent>
+    </Card>
+  ) : null;
   if (spells.length === 0) {
     return (
-      <EmptyState
-        icon={Briefcase}
-        title="No employment record yet"
-        description="A record opens when the hire is approved and closes at separation."
-      />
+      <div className="space-y-3">
+        {paySchedule}
+        <EmptyState
+          icon={Briefcase}
+          title="No employment record yet"
+          description="A record opens when the hire is approved and closes at separation."
+        />
+      </div>
     );
   }
   return (
     <div className="space-y-3">
+      {paySchedule}
       {spells.map((sp) => (
         <Card key={sp.id}>
           <CardContent className="py-3">

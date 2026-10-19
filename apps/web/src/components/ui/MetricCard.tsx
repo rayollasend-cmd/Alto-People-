@@ -88,7 +88,10 @@ export function CountUpValue({ value }: { value: React.ReactNode }) {
   const [display, setDisplay] = React.useState<string | null>(
     initial ? formatFrame(0, initial) : null
   );
-  const doneRef = React.useRef(initial === null);
+  // State, not a ref: finishing must re-render. With a target of 0 every frame
+  // reads "0", React skips the identical last frame, and a value that changed
+  // mid-animation (0 → 10 once data arrives) would stay hidden behind "0".
+  const [done, setDone] = React.useState(initial === null);
 
   React.useEffect(() => {
     if (!initial) return;
@@ -101,7 +104,7 @@ export function CountUpValue({ value }: { value: React.ReactNode }) {
       if (progress < 1) {
         raf = requestAnimationFrame(tick);
       } else {
-        doneRef.current = true;
+        setDone(true);
       }
     };
     raf = requestAnimationFrame(tick);
@@ -112,7 +115,7 @@ export function CountUpValue({ value }: { value: React.ReactNode }) {
 
   // A changed value after the mount animation (or a non-numeric one)
   // renders as-is; mid-animation we show the animated frame.
-  if (doneRef.current || display === null) return <>{value}</>;
+  if (done || display === null) return <>{value}</>;
   return <>{display}</>;
 }
 

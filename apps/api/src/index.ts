@@ -90,6 +90,7 @@ import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
 import { KeyringError, verifyKeyring } from './lib/keyring.js';
+import { sweepTenantSchedules } from './lib/payScheduleMembership.js';
 
 const app = createApp();
 
@@ -230,6 +231,13 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
     runForEachTenant('backup-withholding', () => applyDueBackupWithholding(prisma)).catch((err) => logger.warn({ err }, 'backup withholding sweep failed'));
   void sweepBackupWithholding();
   setInterval(sweepBackupWithholding, 60 * 60_000).unref();
+  // Pay schedules: everyone against the membership rules (moves start at the
+  // new schedule's next period, with a notice to payroll), and the
+  // Associate.payrollScheduleId mirror flipped for moves that start today.
+  const sweepPaySchedules = () =>
+    runForEachTenant('pay-schedules', () => sweepTenantSchedules(prisma)).catch((err) => logger.warn({ err }, 'pay schedule sweep failed'));
+  setTimeout(() => void sweepPaySchedules(), 5 * 60_000).unref();
+  setInterval(sweepPaySchedules, 3 * 60 * 60_000).unref();
   startAgentDriftCron();
   // Brief 3-5: the HR and VMS connections sync on their schedule (every five
   // minutes the clock is checked per tenant) and on the domain events the

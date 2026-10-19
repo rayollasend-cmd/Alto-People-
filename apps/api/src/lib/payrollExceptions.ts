@@ -29,9 +29,12 @@ export interface ExceptionsInput {
   periodStart: Date;
   periodEndExclusive: Date;
   clientId: string | null;
+  /** A run for one pay schedule: exceptions for its people only, plus who has time but no schedule. */
+  payrollScheduleId?: string | null;
 }
 
 export type ExceptionKind =
+  | 'UNASSIGNED_SCHEDULE'
   | 'MISSING_W4'
   | 'MISSING_BANK_ACCOUNT'
   | 'TERMINATED_IN_RUN'
@@ -77,6 +80,7 @@ const SEVERITY: Record<ExceptionKind, ExceptionSeverity> = {
   WAGE_STATEMENT_INCOMPLETE: 'WARNING',
   ROTH_CATCH_UP: 'WARNING',
   DEFERRAL_LIMIT: 'INFO',
+  UNASSIGNED_SCHEDULE: 'WARNING',
 };
 
 export interface ExceptionsResult {
@@ -97,7 +101,7 @@ export async function computePayrollExceptions(
   // Unapproved (clocked-out but not yet reviewed) time in the same window.
   // These hours will NOT be paid — historically the #1 cause of a silent
   // short paycheck, because the associate simply wasn't in the run.
-  const unapproved = await tx.timeEntry.findMany({
+  let unapproved = await tx.timeEntry.findMany({
     where: {
       status: 'COMPLETED',
       clockInAt: { gte: periodStart, lt: periodEndExclusive },
@@ -108,7 +112,7 @@ export async function computePayrollExceptions(
     },
   });
 
-  const entries = await tx.timeEntry.findMany({
+  let entries = await tx.timeEntry.findMany({
     where: {
       status: 'APPROVED',
       clockInAt: { gte: periodStart, lt: periodEndExclusive },
@@ -144,6 +148,28 @@ export async function computePayrollExceptions(
     },
   });
 
+  // A run for one pay schedule: only its people's time (lib/payScheduleMembership),
+  // and a warning for anyone with approved time who is on no schedule at all.
+  const scheduleWarnings: PayrollExceptionRow[] = [];
+  if (input.payrollScheduleId) {
+    const { membershipWindows, unscheduledWithTime, ymd } = await import('./payScheduleMembership.js');
+    const from = ymd(periodStart);
+    const to = ymd(new Date(periodEndExclusive.getTime() - 86_400_000));
+    const windows = await membershipWindows(tx, input.payrollScheduleId, from, to);
+    entries = entries.filter((e) => windows.has(e.associateId));
+    unapproved = unapproved.filter((e) => windows.has(e.associateId));
+    for (const u of await unscheduledWithTime(tx, from, to, clientId)) {
+      scheduleWarnings.push({
+        associateId: u.associateId,
+        associateName: u.name,
+        kind: 'UNASSIGNED_SCHEDULE',
+        severity: SEVERITY.UNASSIGNED_SCHEDULE,
+        message: 'Has approved time in this period but is on no pay schedule — not paid in this run. Add them to a schedule.',
+        detail: {},
+      });
+    }
+  }
+
   const byAssociate = new Map<string, typeof entries>();
   for (const e of entries) {
     const arr = byAssociate.get(e.associateId) ?? [];
@@ -151,7 +177,7 @@ export async function computePayrollExceptions(
     byAssociate.set(e.associateId, arr);
   }
 
-  const exceptions: PayrollExceptionRow[] = [];
+  const exceptions: PayrollExceptionRow[] = [...scheduleWarnings];
   // Which added states this tenant's payroll admin has reviewed.
   await primeStateAcknowledgments(tx);
   // …and which local jurisdictions.

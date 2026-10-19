@@ -103,6 +103,7 @@ import { Input } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
 import { listClientLocations } from '@/lib/clientsApi';
+import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
 import { ReadyToWorkLine } from '@/components/ReadyToWorkLine';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
@@ -684,6 +685,21 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
           </section>
         )}
 
+      {/* Which pay schedule the hire lands on — what the rules choose, or a
+          nudge to choose one. Never blocks approval. */}
+      {canManage && (
+        <section className="mb-6">
+          <Card>
+            <CardContent className="py-4">
+              <PayScheduleAssignment
+                associateId={detail.associateId}
+                variant={detail.status === 'APPROVED' ? 'record' : 'hire'}
+              />
+            </CardContent>
+          </Card>
+        </section>
+      )}
+
       {/* I-9 Section 1 data and the uploaded identity documents behind it are
           HR-only — invite-scoped roles (SHIFT_SUPERVISOR) see checklist
           progress, never the documents. The API enforces the same boundary in
@@ -746,6 +762,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
           if (!o) setApproveWarnings(null);
         }}
         defaultDate={detail.startDate ? detail.startDate.slice(0, 10) : null}
+        associateId={detail.associateId}
         clientId={detail.clientId}
         locationId={detail.locationId ?? null}
         warnings={approveWarnings}
@@ -1041,6 +1058,7 @@ function ApproveDialog({
   open,
   onOpenChange,
   defaultDate,
+  associateId,
   warnings,
   clientId,
   locationId,
@@ -1049,6 +1067,7 @@ function ApproveDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultDate: string | null;
+  associateId: string;
   /** Non-null after a 409 `approval_warnings` — switches the dialog into
    *  "Approve anyway" mode. */
   warnings: string[] | null;
@@ -1138,6 +1157,7 @@ function ApproveDialog({
               )}
             </Field>
           )}
+          <PayScheduleAssignment associateId={associateId} variant="hire" />
           {warnings && (
             <div
               role="alert"

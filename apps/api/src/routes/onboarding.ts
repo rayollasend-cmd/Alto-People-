@@ -134,6 +134,7 @@ import { AGREEMENT_BODY, AGREEMENT_TITLE } from '../lib/altoHrContent.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
+import { queueScheduleRecompute } from '../lib/payScheduleTriggers.js';
 
 export const onboardingRouter = Router();
 
@@ -1255,6 +1256,9 @@ async function approveOneApplication(
   // The hire's state pay notice (NY §195(1), CA §2810.5 …) and its new-hire report row.
   issuePayNoticeInBackground({ associateId: app.associateId, trigger: 'HIRE', effectiveDate: hireDateValue, actorUserId: req.user!.id });
   void ensureNewHireReport(prisma, app.associateId).catch((err) => console.warn('[onboarding] new-hire report row failed:', err));
+  // The hire's pay schedule, by the rules (a client/site rule or the company
+  // default), from the period that's running — payroll gets a notice.
+  queueScheduleRecompute([app.associateId], 'HIRE');
   void emitWebhookEvent(
     'associate.hired',
     {

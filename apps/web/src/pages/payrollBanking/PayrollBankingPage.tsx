@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import { FundingBadge, FundingBreakdownList } from './FundingCard';
+import { WebhookHealthTile } from '@/pages/payroll/WebhookHealthTile';
 import { AccountsTab } from './AccountsTab';
 import { DepositsTab } from './DepositsTab';
 import { FilesTab } from './FilesTab';
@@ -71,7 +72,13 @@ export function PayrollBankingPage() {
       title="Payroll banking"
       subtitle="The money behind each payroll: what to fund and by when, the account it comes from, and every file sent to the bank."
       breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Payroll banking' }]}
-      summary={summary.data ? <StatusBanner s={summary.data} onSetup={() => setTab('setup')} /> : null}
+      summary={
+        <div className="space-y-3">
+          {/* The payout provider's health in full (the Payroll page shows one line pointing here). */}
+          <WebhookHealthTile surface="banking" />
+          {summary.data ? <StatusBanner s={summary.data} onSetup={() => setTab('setup')} /> : null}
+        </div>
+      }
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <div className="-mx-1 overflow-x-auto px-1">

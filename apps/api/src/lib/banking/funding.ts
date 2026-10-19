@@ -84,8 +84,10 @@ export async function computeFunding(db: Db, runId: string, profile: PayrollBank
  * day before a weekend or holiday.
  */
 export async function payDateFor(db: Db, runId: string): Promise<string> {
-  const run = await db.payrollRun.findFirstOrThrow({ where: { id: runId, tenantId: tenantIdForWrite() }, select: { periodEnd: true, clientId: true } });
+  const run = await db.payrollRun.findFirstOrThrow({ where: { id: runId, tenantId: tenantIdForWrite() }, select: { periodEnd: true, clientId: true, payrollScheduleId: true } });
   const schedule =
+    // A run made for one pay schedule is paid on that schedule's day.
+    (run.payrollScheduleId ? await db.payrollSchedule.findFirst({ where: { id: run.payrollScheduleId }, select: { payDateOffsetDays: true } }) : null) ??
     (run.clientId ? await db.payrollSchedule.findFirst({ where: { clientId: run.clientId, isActive: true, deletedAt: null }, select: { payDateOffsetDays: true } }) : null) ??
     (await db.payrollSchedule.findFirst({ where: { tenantId: tenantIdForWrite(), clientId: null, isActive: true, deletedAt: null }, select: { payDateOffsetDays: true } }));
   const offset = schedule?.payDateOffsetDays ?? 7;

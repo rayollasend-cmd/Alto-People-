@@ -2268,6 +2268,7 @@ model Associate {
   costCenter               CostCenter?               @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
   orgUnit                  OrgUnit?                  @relation("OrgUnitAssociates", fields: [orgUnitId], references: [id], onDelete: SetNull)
   jobProfile               JobProfile?               @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  payScheduleAssignments   PayrollScheduleAssignment[]
   payrollSchedule          PayrollSchedule?          @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
   // Phase 77 — effective-dated history of tracked fields.
   history                  AssociateHistory[]
@@ -4029,12 +4030,16 @@ model PayrollRun {
   updatedAt                   DateTime                  @updatedAt @db.Timestamptz(6)
   laborShadowRun              LaborShadowRun?
   reviews                     PayrollRunReview[]
+  /// The pay schedule this run pays (lib/payScheduleMembership): only its people, for their days on it.
+  payrollScheduleId           String?                   @db.Uuid
+  payrollSchedule             PayrollSchedule?          @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
 
   @@index([clientId, periodStart])
   @@index([status, disbursedAt])
   @@index([kind])
   @@index([amendsRunId])
   @@index([tenantId])
+  @@index([payrollScheduleId, periodStart])
 }
 
 model PayrollItem {
@@ -4649,6 +4654,8 @@ model PayrollSchedule {
   // (Friday-after-Sun cutoff = 5). Allow 0 if a client cuts cheques same-day.
   payDateOffsetDays Int              @default(5)
   isActive          Boolean          @default(true)
+  /// The company default: anyone no rule covers lands here (at most one per tenant).
+  isDefault         Boolean          @default(false)
   notes             String?
   createdAt         DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
@@ -4656,6 +4663,10 @@ model PayrollSchedule {
 
   client     Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
   associates Associate[]
+  rules       PayrollScheduleRule[]
+  assignments PayrollScheduleAssignment[]
+  versions    PayrollScheduleVersion[]
+  runs        PayrollRun[]
 
   @@index([clientId, isActive])
   @@index([deletedAt])
@@ -15827,4 +15838,68 @@ model PayrollItemDeduction {
   @@index([payrollItemId])
   @@index([tenantId, code])
   @@index([sourceType, sourceId])
+}
+
+/// Who belongs on a pay schedule, from a date: a whole client, a site, a department, a pay type, an individual, or an exclusion.
+model PayrollScheduleRule {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  scheduleId    String          @db.Uuid
+  /// INDIVIDUAL | SITE | DEPARTMENT | CLIENT | PAY_TYPE | EXCLUDE
+  kind          String          @db.VarChar(16)
+  clientId      String?         @db.Uuid
+  siteId        String?         @db.Uuid
+  departmentId  String?         @db.Uuid
+  /// HOURLY | SALARY
+  payType       String?         @db.VarChar(8)
+  associateId   String?         @db.Uuid
+  effectiveFrom DateTime        @db.Date
+  effectiveTo   DateTime?       @db.Date
+  note          String?         @db.VarChar(500)
+  createdById   String?         @db.Uuid
+  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
+  schedule      PayrollSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId])
+  @@index([tenantId, kind])
+  @@index([associateId])
+}
+
+/// One person on one pay schedule over a date range. Never overlapping per person (an exclusion constraint holds it).
+model PayrollScheduleAssignment {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?         @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId   String          @db.Uuid
+  scheduleId    String          @db.Uuid
+  effectiveFrom DateTime        @db.Date
+  effectiveTo   DateTime?       @db.Date
+  /// RULE | INDIVIDUAL | TRANSFER | DEFAULT | MIGRATION | MOVE
+  source        String          @db.VarChar(16)
+  ruleId        String?         @db.Uuid
+  reason        String?         @db.VarChar(300)
+  createdById   String?         @db.Uuid
+  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
+  associate     Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  schedule      PayrollSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([associateId, effectiveFrom])
+  @@index([scheduleId])
+  @@index([tenantId])
+}
+
+/// A pay schedule's pattern from a date: a change starts with a future period and never reframes past ones.
+model PayrollScheduleVersion {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?          @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  scheduleId        String           @db.Uuid
+  effectiveFrom     DateTime         @db.Date
+  frequency         PayrollFrequency
+  anchorDate        DateTime         @db.Date
+  payDateOffsetDays Int
+  createdById       String?          @db.Uuid
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  schedule          PayrollSchedule  @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, effectiveFrom])
+  @@index([tenantId])
 }

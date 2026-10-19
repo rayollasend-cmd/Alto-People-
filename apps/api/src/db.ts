@@ -2,6 +2,7 @@ import { PrismaClient, type Prisma } from '@prisma/client';
 import { adoptFromResult, guardTenantQuery } from './lib/tenantGuard.js';
 import { auditRequestStore, markRequestAudited, trackSideAudit } from './lib/auditRequestContext.js';
 import { AUDITED_MODELS, auditDiff, updatedFields } from './lib/auditDiff.js';
+import { queueScheduleRecompute } from './lib/payScheduleTriggers.js';
 
 // Singleton across `tsx watch` reloads — without this, dev mode opens a new
 // Prisma connection pool on every file change and exhausts Postgres slots.
@@ -42,8 +43,56 @@ function makeClient(): PrismaClient {
     if (workerId !== undefined) data.workerId = workerId;
   };
 
+  // Pay schedules (lib/payScheduleMembership): a person's schedule follows
+  // their client, site, department and pay type. Any write that moves one of
+  // those queues the person for a recompute, wherever it happens.
+  const idOf = (v: unknown): string | null => {
+    if (typeof v === 'string') return v;
+    if (v && typeof v === 'object' && 'equals' in (v as object) && typeof (v as { equals: unknown }).equals === 'string') return (v as { equals: string }).equals;
+    return null;
+  };
+  const assocFrom = (args: { where?: unknown; data?: unknown; create?: unknown }, result?: unknown): string[] => {
+    const ids: Array<string | null> = [];
+    for (const src of [args.data, args.create, args.where, result]) {
+      if (src && typeof src === 'object' && 'associateId' in (src as object)) ids.push(idOf((src as { associateId: unknown }).associateId));
+    }
+    return ids.filter((x): x is string => !!x);
+  };
+
   return base.$extends({
     query: {
+      associateAssignment: {
+        async create({ args, query }) {
+          const r = await query(args);
+          queueScheduleRecompute(assocFrom(args, r), 'TRANSFER');
+          return r;
+        },
+        async update({ args, query }) {
+          const r = await query(args);
+          queueScheduleRecompute(assocFrom(args, r), 'TRANSFER');
+          return r;
+        },
+        async updateMany({ args, query }) {
+          const r = await query(args);
+          queueScheduleRecompute(assocFrom(args), 'TRANSFER');
+          return r;
+        },
+      },
+      compensationRecord: {
+        async create({ args, query }) {
+          const r = await query(args);
+          queueScheduleRecompute(assocFrom(args, r), 'PAY_TYPE');
+          return r;
+        },
+      },
+      associate: {
+        async update({ args, query }) {
+          const r = await query(args);
+          const data = args.data as Record<string, unknown> | undefined;
+          if (data && ('departmentId' in data || 'department' in data)) queueScheduleRecompute([idOf((args.where as { id?: unknown })?.id)], 'DEPARTMENT');
+          return r;
+        },
+      },
       shift: {
         async create({ args, query }) {
           await syncShiftData(args.data as Record<string, unknown>);

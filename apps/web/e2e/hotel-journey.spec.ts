@@ -141,6 +141,8 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
   const seedStores: Array<{ id: string; clientId: string | null }> = [];
   // A site's type is set in Sites, a client's store included (its name and address edit through the client).
   const siteRoute = (s: { id: string }) => `/admin/sites/${s.id}`;
+  // What the walk creates, retired at the end so the shared dev database doesn't grow a new hotel each run.
+  const created: { regionId?: string; siteId?: string; associateId?: string } = {};
 
   // The rule's boundaries, proven before the walk: a word inside another is not a hit.
   expect(forbiddenHits('x', 'admin@altohr.com relevant advance restore')).toEqual([]);
@@ -157,12 +159,14 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
     await call(api, 'PATCH', '/admin/org/settings', { orgName: 'The Grand Hotel' });
 
     const region = await call<{ unit: { id: string } }>(api, 'POST', '/admin/org-units', { type: 'REGION', name: 'Gulf Coast' });
+    created.regionId = region.unit.id;
     const site = await call<{ site: { id: string } }>(api, 'POST', '/admin/sites', {
       name: 'The Grand Hotel',
       timezone: 'America/Chicago',
       state: 'FL',
       orgUnitId: region.unit.id,
     });
+    created.siteId = site.site.id;
 
 
     // An org-wide onboarding template, found or made.
@@ -188,6 +192,7 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
       position: 'Housekeeper',
     });
     const detail = await call<{ associateId: string; tasks: Array<{ id: string; status: string }> }>(api, 'GET', `/onboarding/applications/${invite.id}`);
+    created.associateId = detail.associateId;
     for (const task of detail.tasks) {
       if (task.status === 'DONE' || task.status === 'SKIPPED') continue;
       await call(api, 'POST', `/onboarding/applications/${invite.id}/tasks/${task.id}/skip`); // 204, no body
@@ -256,6 +261,9 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
     await api.fetch('/api/admin/tenant/profile', { method: 'PUT', data: { businessModel: 'WORKFORCE_PROVIDER', resetToDefaults: true }, timeout: 30_000 });
     for (const s of seedStores) await api.fetch(`/api${siteRoute(s)}`, { method: 'PATCH', data: { type: 'STORE' }, timeout: 30_000 });
     await api.fetch('/api/admin/org/settings', { method: 'PATCH', data: { orgName: 'Alto HR' }, timeout: 30_000 });
+    if (created.associateId) await api.fetch(`/api/org/associates/${created.associateId}/deactivate`, { method: 'POST', data: { reason: 'Hotel journey test hire' }, timeout: 30_000 });
+    if (created.siteId) await api.fetch(`/api/admin/sites/${created.siteId}`, { method: 'PATCH', data: { isActive: false }, timeout: 30_000 });
+    if (created.regionId) await api.fetch(`/api/admin/org-units/${created.regionId}`, { method: 'PATCH', data: { isActive: false }, timeout: 30_000 });
   }
 
   expect(hits, `forbidden words on the hotel's screens:\n${hits.join('\n')}`).toEqual([]);

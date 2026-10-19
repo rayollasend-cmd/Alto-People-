@@ -112,6 +112,13 @@ export interface AggregatorInput {
    * Omitted, the day after the period ends.
    */
   payDate?: Date;
+  /**
+   * A run for one pay schedule (lib/payScheduleMembership): only these
+   * people, and only their days on the schedule (inclusive YYYY-MM-DD
+   * windows). A person who moved schedules mid-period is paid here for the
+   * days they were on it. `frequency` is the schedule's pattern in force.
+   */
+  scheduleFilter?: { windows: Map<string, Array<{ start: string; end: string }>>; frequency: PayFrequency };
 }
 
 export type AddOnKind =
@@ -392,7 +399,18 @@ export async function aggregatePayrollProjection(
   });
 
   const byAssociate = new Map<string, typeof entries>();
+  // A run for one pay schedule pays its people for their days on it.
+  const sf = input.scheduleFilter;
+  const dayOf = (d: Date, tz: string | null | undefined): string => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    } catch {
+      return d.toISOString().slice(0, 10);
+    }
+  };
+  const inWindow = (associateId: string, day: string) => (sf?.windows.get(associateId) ?? []).some((w) => w.start <= day && day <= w.end);
   for (const e of entries) {
+    if (sf && !inWindow(e.associateId, dayOf(e.clockInAt, e.location?.timezone))) continue;
     const arr = byAssociate.get(e.associateId) ?? [];
     arr.push(e);
     byAssociate.set(e.associateId, arr);
@@ -521,6 +539,20 @@ export async function aggregatePayrollProjection(
     ...addOnsByAssociate.keys(),
     ...tipsByAssociate.keys(),
   ]);
+  // On a schedule's run, only its people; a salary is paid for the share of the period they were on it.
+  const salaryShare = new Map<string, number>();
+  if (sf) {
+    const periodDays = Math.round((periodEndExclusive.getTime() - periodStart.getTime()) / 86_400_000);
+    for (const id of [...universe]) {
+      const ws = sf.windows.get(id);
+      if (!ws || ws.length === 0) {
+        universe.delete(id);
+        continue;
+      }
+      const days = ws.reduce((n, w) => n + Math.round((Date.parse(`${w.end}T00:00:00Z`) - Date.parse(`${w.start}T00:00:00Z`)) / 86_400_000) + 1, 0);
+      if (periodDays > 0 && days < periodDays) salaryShare.set(id, days / periodDays);
+    }
+  }
 
   // Retroactive pay from back-dated rate changes, for everyone in the
   // universe — settled as one RETRO line per person on a REGULAR run.
@@ -832,7 +864,7 @@ export async function aggregatePayrollProjection(
 
     // A DAILY schedule is paid each day by daily settlements (lib/dailyPay);
     // the run that reaches here is its weekly true-up, withheld as weekly.
-    const scheduleFrequency = meta.payrollSchedule?.frequency ?? 'BIWEEKLY';
+    const scheduleFrequency = sf?.frequency ?? meta.payrollSchedule?.frequency ?? 'BIWEEKLY';
     const payFrequency: PayFrequency = scheduleFrequency === 'DAILY' ? 'WEEKLY' : scheduleFrequency;
 
     // Hourly earnings — skipped for salaried associates (exempt).
@@ -1002,7 +1034,7 @@ export async function aggregatePayrollProjection(
 
     const salaryPay =
       annualSalary !== undefined
-        ? round2(annualSalary / PERIODS_PER_YEAR[payFrequency])
+        ? round2((annualSalary / PERIODS_PER_YEAR[payFrequency]) * (salaryShare.get(associateId) ?? 1))
         : 0;
 
     let supplementalGross = 0;

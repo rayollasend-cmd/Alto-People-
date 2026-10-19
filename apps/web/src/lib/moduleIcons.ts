@@ -154,7 +154,7 @@ import {
   Wallet as MyPayIcon,
   FolderOpen as MyRecordsIcon,
 } from 'lucide-react';
-import { CalendarSync as DailyPayIcon, NotebookPen as ManualChecksIcon } from 'lucide-react';
+import { CalendarSync as DailyPayIcon, NotebookPen as ManualChecksIcon, CalendarCog as PaySchedulesIcon } from 'lucide-react';
 import type { DoorKey } from './modules';
 import type { ModuleKey } from './modules';
 
@@ -274,6 +274,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'carrier-feeds': CarrierFeedsIcon,
   contractors: ContractorsIcon,
   'payroll-banking': PayrollBankingIcon,
+  'pay-schedules': PaySchedulesIcon,
   'cash-forecast': CashForecastIcon,
   'pay-bill': PayBillIcon,
   'market-rates': MarketRatesIcon,

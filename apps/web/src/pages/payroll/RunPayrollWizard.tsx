@@ -33,10 +33,14 @@ import {
   Info,
   Loader2,
   ShieldAlert,
+  UserPlus,
+  Users,
 } from 'lucide-react';
 import type {
   PayrollException,
+  PayrollExceptionsInput,
   PayrollExceptionsResponse,
+  SchedulePeriod,
   PayrollRunDetail,
   PayrollRunPreviewItem,
   PayrollRunPreviewResponse,
@@ -48,6 +52,7 @@ import {
   listPayrollSchedules,
   previewPayrollRun,
 } from '@/lib/payrollApi';
+import { getPayScheduleCalendarForFlow, listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type FlowSchedule } from '@/lib/payScheduleFlowApi';
 import { ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -61,12 +66,11 @@ import {
 } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
 import { Stepper } from '@/components/ui/Stepper';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { useTerm } from '@/lib/auth';
-import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDayShort, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 
 /** "May 13, 2026 → May 26, 2026" — a YMD period, parsed as local days. */
 const fmtPeriod = (startYmd: string, endYmd: string) =>
@@ -166,6 +170,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     setPeriodStart(seed?.periodStart ?? '');
     setPeriodEnd(seed?.periodEnd ?? '');
     seededPeriodRef.current = !!seed;
+    periodDefaultedForRef.current = '';
     setQuickReview(!!seed);
     setQuickPending(!!seed);
     // seedKey is the value-compare proxy for `seed`.
@@ -176,6 +181,71 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     () => schedules?.find((s) => s.id === scheduleId) ?? null,
     [schedules, scheduleId]
   );
+
+  // The pay-schedule engine's view of each schedule: its plain-words
+  // pattern, who is on it, and its pay calendar (paySchedules.ts). An older
+  // API without it falls back to the legacy schedule list.
+  const flowQuery = useQuery({
+    queryKey: PAY_SCHEDULES_FLOW_KEY,
+    queryFn: listPaySchedulesForFlow,
+    enabled: open,
+    retry: false,
+  });
+  const flowById = useMemo(
+    () => new Map((flowQuery.data?.schedules ?? []).map((s) => [s.id, s])),
+    [flowQuery.data],
+  );
+  const activeSchedules = useMemo(() => (schedules ?? []).filter((s) => s.isActive), [schedules]);
+  const flow = scheduleId ? (flowById.get(scheduleId) ?? null) : null;
+  const peopleOnSchedule: number | null = !scheduleId ? null : flow ? flow.people : (activeSchedule?.associateCount ?? null);
+  const calendarQuery = useQuery({
+    queryKey: ['RunPayrollWizard', 'calendar', scheduleId, flowById.get(scheduleId)?.anchorDate ?? null],
+    // From five weeks back (never before the schedule began), so a period
+    // whose payday passed without a run shows up, marked late.
+    queryFn: () => {
+      const d = new Date();
+      d.setDate(d.getDate() - 35);
+      const back = ymdLocal(d);
+      const anchor = flowById.get(scheduleId)?.anchorDate ?? back;
+      return getPayScheduleCalendarForFlow(scheduleId, 3, anchor > back ? anchor : back);
+    },
+    enabled: open && !!scheduleId && runKind === 'REGULAR',
+    retry: false,
+  });
+  // Periods still to run (none yet, or a draft to resume), soonest first.
+  const periodOptions: SchedulePeriod[] = useMemo(
+    () => (calendarQuery.data?.periods ?? []).filter((p) => !p.run || p.run.status === 'DRAFT').slice(0, 8),
+    [calendarQuery.data],
+  );
+  // Default to the next period still to run (its payday not yet passed)
+  // once the calendar is in; earlier un-run periods stay listed, marked late. Once per schedule
+  // pick, and never over a seeded period.
+  const periodDefaultedForRef = useRef('');
+  useEffect(() => {
+    if (runKind !== 'REGULAR' || !scheduleId || periodOptions.length === 0) return;
+    if (periodDefaultedForRef.current === scheduleId) return;
+    periodDefaultedForRef.current = scheduleId;
+    if (seed && seed.scheduleId === scheduleId) return;
+    const today = ymdLocal();
+    const next = periodOptions.find((p) => p.payDate >= today) ?? periodOptions[0]!;
+    setPeriodStart(next.periodStart);
+    setPeriodEnd(next.periodEnd);
+    // seed is read only to skip a seeded open; seedKey tracks it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKind, scheduleId, periodOptions]);
+  const selectedPeriod =
+    periodOptions.find((p) => p.periodStart === periodStart && p.periodEnd === periodEnd) ??
+    (flow && flow.nextPeriod.periodStart === periodStart && flow.nextPeriod.periodEnd === periodEnd ? flow.nextPeriod : null);
+  const payDate: string | null =
+    selectedPeriod?.payDate ??
+    (activeSchedule && activeSchedule.nextPeriodStart === periodStart && activeSchedule.nextPeriodEnd === periodEnd ? activeSchedule.nextPayDate : null);
+  const truth: RunTruth = {
+    scheduleId: scheduleId || null,
+    scheduleName: flow?.name ?? activeSchedule?.name ?? null,
+    pattern: flow?.pattern ?? null,
+    people: peopleOnSchedule,
+    payDate,
+  };
 
   // When a schedule is picked, default the period to its computed "next"
   // window. The user can override. Off-cycle runs keep their arbitrary
@@ -207,11 +277,25 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     }
   };
 
-  const blockingCount = exceptions?.counts.blocking ?? 0;
-  const canSubmit = blockingCount === 0 || overrideBlocking;
+  // The pre-flight scan describes the people in this run; people who worked
+  // but are on no pay schedule are told apart (they won't be paid by it).
+  const { runExceptions, unassigned } = useMemo(() => splitUnassigned(exceptions), [exceptions]);
+  const blockingCount = runExceptions?.counts.blocking ?? 0;
+  const scheduleEmpty = runKind === 'REGULAR' && !!scheduleId && peopleOnSchedule === 0;
+  const nothingToPay = runKind === 'REGULAR' && !!preview && preview.items.length === 0;
+  const canSubmit = (blockingCount === 0 || overrideBlocking) && !scheduleEmpty && !nothingToPay;
+  const blockReason = scheduleEmpty
+    ? `${EMPTY_SCHEDULE} — add people to it first.`
+    : nothingToPay
+      ? 'Nothing to pay: no approved time in this period.'
+      : blockingCount > 0 && !overrideBlocking
+        ? 'Resolve or acknowledge blocking exceptions first.'
+        : undefined;
+  // A regular run pays one schedule's people: pick the schedule when any exist.
+  const needsSchedule = runKind === 'REGULAR' && activeSchedules.length > 0 && !scheduleId;
 
   const canAdvance: Record<Step, boolean> = {
-    1: !!periodStart && !!periodEnd && periodEnd >= periodStart && !previewLoading,
+    1: !needsSchedule && !!periodStart && !!periodEnd && periodEnd >= periodStart && !previewLoading,
     2: true,
     3: true,
     4: canSubmit,
@@ -225,6 +309,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     setExceptions(null);
     setOverrideBlocking(false);
     const clientId = activeSchedule?.clientId ?? null;
+    const payrollScheduleId = scheduleId || null;
+    const exceptionsInput: PayrollExceptionsInput = { clientId, periodStart, periodEnd, payrollScheduleId };
     try {
       // Run preview + exceptions in parallel — exceptions don't need
       // defaultHourlyRate; they reuse the same set of associates.
@@ -233,9 +319,10 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
           clientId,
           periodStart,
           periodEnd,
+          payrollScheduleId,
           defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined,
         }),
-        listPayrollExceptions({ clientId, periodStart, periodEnd }).catch(() => ({
+        listPayrollExceptions(exceptionsInput).catch(() => ({
           exceptions: [],
           counts: { blocking: 0, warning: 0, info: 0 },
         })),
@@ -278,8 +365,9 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     if (exceptionsLoading) return;
     setExceptionsLoading(true);
     const clientId = activeSchedule?.clientId ?? null;
+    const exceptionsInput: PayrollExceptionsInput = { clientId, periodStart, periodEnd, payrollScheduleId: scheduleId || null };
     try {
-      const res = await listPayrollExceptions({ clientId, periodStart, periodEnd });
+      const res = await listPayrollExceptions(exceptionsInput);
       setExceptions(res);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Exception re-check failed.');
@@ -326,6 +414,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
         clientId: activeSchedule?.clientId ?? null,
         periodStart,
         periodEnd,
+        payrollScheduleId: scheduleId || null,
         defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined,
         notes: notes || undefined,
         ...(runKind === 'OFF_CYCLE' ? { kind: 'OFF_CYCLE' as const } : {}),
@@ -345,7 +434,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      {/* Phones: a full-screen sheet (the review is too dense for a half sheet). */}
+      <DialogContent className="sm:max-w-3xl max-sm:top-0 max-sm:max-h-none max-sm:h-[100dvh] max-sm:rounded-none max-sm:border-t-0">
         <DialogHeader>
           <DialogTitle>Run payroll</DialogTitle>
           <DialogDescription>
@@ -373,12 +463,13 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
             <QuickReview
               periodStart={periodStart}
               periodEnd={periodEnd}
-              schedule={activeSchedule}
+              truth={truth}
+              unassigned={unassigned}
               preview={preview}
               loading={previewLoading || quickPending}
               error={previewError}
               onRetry={fetchPreview}
-              exceptions={exceptions}
+              exceptions={runExceptions}
               exceptionsLoading={exceptionsLoading}
               onRecheck={recheckExceptions}
               notes={notes}
@@ -389,7 +480,11 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
             <Step1
               runKind={runKind}
               onRunKindChange={chooseRunKind}
-              schedules={schedules}
+              schedules={activeSchedules}
+              loadingSchedules={!schedules}
+              flowById={flowById}
+              periodOptions={periodOptions}
+              periodsLoading={calendarQuery.isLoading && !!scheduleId}
               scheduleId={scheduleId}
               setScheduleId={setScheduleId}
               periodStart={periodStart}
@@ -405,12 +500,13 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
               periodEnd={periodEnd}
-              schedule={activeSchedule}
+              truth={truth}
+              unassigned={unassigned}
               preview={preview}
               loading={previewLoading}
               error={previewError}
               onRetry={fetchPreview}
-              exceptions={exceptions}
+              exceptions={runExceptions}
               exceptionsLoading={exceptionsLoading}
               onRecheck={recheckExceptions}
             />
@@ -420,12 +516,13 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
               periodEnd={periodEnd}
-              schedule={activeSchedule}
+              truth={truth}
+              unassigned={unassigned}
               preview={preview}
               loading={previewLoading}
               error={previewError}
               onRetry={fetchPreview}
-              exceptions={exceptions}
+              exceptions={runExceptions}
               exceptionsLoading={exceptionsLoading}
               onRecheck={recheckExceptions}
             />
@@ -435,18 +532,25 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
               periodEnd={periodEnd}
-              schedule={activeSchedule}
+              truth={truth}
+              unassigned={unassigned}
               notes={notes}
               setNotes={setNotes}
               preview={preview}
-              exceptions={exceptions}
+              exceptions={runExceptions}
               overrideBlocking={overrideBlocking}
               setOverrideBlocking={setOverrideBlocking}
             />
           )}
         </div>
 
-        <DialogFooter className="justify-between gap-2">
+        {(quickReview || step === 4) && blockReason && !previewLoading && (
+          <p role="status" className="-mb-1 text-xs text-warning">
+            {blockReason}
+          </p>
+        )}
+
+        <DialogFooter sticky className="justify-between gap-2">
           <Button
             type="button"
             variant="secondary"
@@ -461,10 +565,10 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
             )}
           </Button>
           {quickReview ? (
-            <div className="flex items-center gap-3">
+            <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
               <button
                 type="button"
-                className="text-xs text-gold hover:underline"
+                className="py-1.5 text-xs text-gold hover:underline"
                 onClick={() => {
                   // Expand into the full 4-step path with the loaded data.
                   setQuickReview(false);
@@ -480,6 +584,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
                 disabled={
                   previewLoading || quickPending || !!previewError || !canSubmit
                 }
+                title={blockReason}
               >
                 <CheckCircle2 className="mr-1.5 h-4 w-4" />
                 Create run
@@ -501,7 +606,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               onClick={submit}
               loading={submitting}
               disabled={!canSubmit}
-              title={!canSubmit ? 'Resolve or acknowledge blocking exceptions first.' : undefined}
+              title={blockReason}
             >
               <CheckCircle2 className="mr-1.5 h-4 w-4" />
               Approve &amp; create run
@@ -516,7 +621,11 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
 function Step1(props: {
   runKind: 'REGULAR' | 'OFF_CYCLE';
   onRunKindChange: (k: 'REGULAR' | 'OFF_CYCLE') => void;
-  schedules: PayrollSchedule[] | null;
+  schedules: PayrollSchedule[];
+  loadingSchedules: boolean;
+  flowById: Map<string, FlowSchedule>;
+  periodOptions: SchedulePeriod[];
+  periodsLoading: boolean;
   scheduleId: string;
   setScheduleId: (v: string) => void;
   periodStart: string;
@@ -528,91 +637,149 @@ function Step1(props: {
 }) {
   const offCycle = props.runKind === 'OFF_CYCLE';
   const term = useTerm();
+  const today = ymdLocal();
+  const [customDates, setCustomDates] = useState(false);
+  const periodKey = `${props.periodStart}|${props.periodEnd}`;
+  const showDateInputs = offCycle || !props.scheduleId || customDates || (!props.periodsLoading && props.periodOptions.length === 0);
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <fieldset>
-        <legend className="mb-1.5 text-sm font-medium text-silver">Run type</legend>
-        <div className="space-y-1.5">
-          <label className="flex cursor-pointer items-start gap-2 text-xs text-silver/80">
-            <input
-              type="radio"
-              name="run-kind"
-              className="mt-0.5"
-              checked={!offCycle}
-              onChange={() => props.onRunKindChange('REGULAR')}
-            />
-            <span>
-              <span className="text-white">Regular</span> — from approved time in the period
-            </span>
-          </label>
-          <label className="flex cursor-pointer items-start gap-2 text-xs text-silver/80">
-            <input
-              type="radio"
-              name="run-kind"
-              className="mt-0.5"
-              checked={offCycle}
-              onChange={() => props.onRunKindChange('OFF_CYCLE')}
-            />
-            <span>
-              <span className="text-white">Off-cycle</span> — bonus / terminal pay; starts empty,
-              add earnings after creating
-            </span>
-          </label>
+        <legend className="mb-1.5 text-sm font-medium text-ink">Run type</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {([
+            ['REGULAR', 'Regular', 'Pays one schedule’s people from their approved time.'],
+            ['OFF_CYCLE', 'Off-cycle', 'Bonus or final pay: starts empty, you add the earnings.'],
+          ] as const).map(([k, label, hint]) => (
+            <label
+              key={k}
+              className={cn(
+                'flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-sm transition-colors',
+                props.runKind === k ? 'border-gold bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
+              )}
+            >
+              <input type="radio" name="run-kind" className="mt-1 accent-gold" checked={props.runKind === k} onChange={() => props.onRunKindChange(k)} />
+              <span>
+                <span className="block font-medium text-ink">{label}</span>
+                <span className="block text-xs text-silver/80">{hint}</span>
+              </span>
+            </label>
+          ))}
         </div>
       </fieldset>
-      {offCycle && (
-        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-silver/80">
-          Off-cycle runs skip time aggregation and are created with no paychecks. After creating,
-          open the run page and add add-on earning lines (bonus, severance, retro pay) — those
-          lines become the paychecks. Period dates are up to you and default to today.
-        </div>
-      )}
-      <Field
-        label="Pay schedule"
-        hint={
-          props.schedules && props.schedules.length === 0
-            ? 'No pay schedules defined yet. Create one in the Schedules tab to auto-derive the next period.'
-            : undefined
-        }
-      >
-        {(p) => (
-          <Select
-            value={props.scheduleId}
-            onChange={(e) => props.setScheduleId(e.target.value)}
-            {...p}
-          >
-            <option value="">— No schedule (custom dates) —</option>
-            {props.schedules?.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} · {s.frequency.toLowerCase()}
-                {s.clientName ? ` · ${s.clientName}` : ' · all clients'}
-              </option>
-            ))}
-          </Select>
+
+      <fieldset>
+        <legend className="mb-1.5 text-sm font-medium text-ink">Pay schedule</legend>
+        {props.loadingSchedules ? (
+          <div className="space-y-2">
+            <div className="h-16 animate-pulse rounded-lg bg-navy-secondary/40" />
+            <div className="h-16 animate-pulse rounded-lg bg-navy-secondary/40" />
+          </div>
+        ) : props.schedules.length === 0 ? (
+          <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-silver">
+            No pay schedules yet. A regular run pays the people on a schedule —{' '}
+            <Link to="/payroll/schedules" className="text-gold underline underline-offset-2">set one up</Link>.
+          </div>
+        ) : (
+          <div role="radiogroup" aria-label="Pay schedule" className="space-y-2">
+            {offCycle && (
+              <ScheduleChoice
+                selected={!props.scheduleId}
+                onSelect={() => props.setScheduleId('')}
+                title="No schedule"
+                lines={['Pick any dates; the run is for the people you add earnings for.']}
+              />
+            )}
+            {props.schedules.map((s) => {
+              const f = props.flowById.get(s.id);
+              const people = f ? f.people : s.associateCount;
+              const next = f?.nextPeriod ?? { periodStart: s.nextPeriodStart, periodEnd: s.nextPeriodEnd, payDate: s.nextPayDate };
+              return (
+                <ScheduleChoice
+                  key={s.id}
+                  selected={props.scheduleId === s.id}
+                  onSelect={() => {
+                    setCustomDates(false);
+                    props.setScheduleId(s.id);
+                  }}
+                  title={s.name}
+                  lines={[
+                    f?.pattern ?? `${s.frequency.charAt(0)}${s.frequency.slice(1).toLowerCase()}${s.clientName ? ` · ${s.clientName}` : ''}`,
+                    `Next: ${fmtPeriod(next.periodStart, next.periodEnd)} · paid ${fmtPayday(next.payDate)}`,
+                  ]}
+                  people={people}
+                  blocked={f?.blocked ?? 0}
+                />
+              );
+            })}
+          </div>
         )}
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Period start" required>
-          {(p) => (
-            <Input
-              type="date"
-              value={props.periodStart}
-              onChange={(e) => props.setPeriodStart(e.target.value)}
-              {...p}
-            />
+      </fieldset>
+
+      {(!!props.scheduleId || offCycle) && (
+        <fieldset>
+          <legend className="mb-1.5 text-sm font-medium text-ink">Pay period</legend>
+          {!offCycle && props.scheduleId && props.periodOptions.length > 0 && !customDates && (
+            <div role="radiogroup" aria-label="Pay period" className="space-y-1.5">
+              {props.periodOptions.map((p) => {
+                // Late: its payday has passed and nobody ran it.
+                const late = p.payDate < today && !p.run;
+                const key = `${p.periodStart}|${p.periodEnd}`;
+                return (
+                  <label
+                    key={key}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm transition-colors',
+                      key === periodKey ? 'border-gold bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="run-period"
+                      className="accent-gold"
+                      checked={key === periodKey}
+                      onChange={() => {
+                        props.setPeriodStart(p.periodStart);
+                        props.setPeriodEnd(p.periodEnd);
+                      }}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block tabular-nums text-ink">{fmtPeriod(p.periodStart, p.periodEnd)}</span>
+                      <span className="block text-xs text-silver/80">
+                        Paid {fmtPayday(p.payDate)}
+                        {p.adjustedFor && ` (moved earlier for ${p.adjustedFor})`}
+                      </span>
+                    </span>
+                    {late && <Badge variant="destructive" className="text-2xs">Late</Badge>}
+                    {p.run?.status === 'DRAFT' && <Badge variant="pending" className="text-2xs">Draft started</Badge>}
+                  </label>
+                );
+              })}
+              <button type="button" className="text-xs text-gold underline underline-offset-2" onClick={() => setCustomDates(true)}>
+                Use other dates
+              </button>
+            </div>
           )}
-        </Field>
-        <Field label="Period end" required>
-          {(p) => (
-            <Input
-              type="date"
-              value={props.periodEnd}
-              onChange={(e) => props.setPeriodEnd(e.target.value)}
-              {...p}
-            />
+          {!offCycle && props.scheduleId && props.periodsLoading && (
+            <div className="h-24 animate-pulse rounded-lg bg-navy-secondary/40" />
           )}
-        </Field>
-      </div>
+          {showDateInputs && !(!offCycle && props.periodsLoading) && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Period start" required>
+                {(p) => <Input type="date" value={props.periodStart} onChange={(e) => props.setPeriodStart(e.target.value)} {...p} />}
+              </Field>
+              <Field label="Period end" required>
+                {(p) => <Input type="date" value={props.periodEnd} onChange={(e) => props.setPeriodEnd(e.target.value)} {...p} />}
+              </Field>
+            </div>
+          )}
+          {customDates && props.periodOptions.length > 0 && (
+            <button type="button" className="mt-1 text-xs text-gold underline underline-offset-2" onClick={() => setCustomDates(false)}>
+              Back to the schedule’s periods
+            </button>
+          )}
+        </fieldset>
+      )}
+
       {!offCycle && (
         <Field
           label="Default hourly rate"
@@ -634,11 +801,185 @@ function Step1(props: {
   );
 }
 
+/** "Fri, Oct 30, 2026" — the weekday is the point of a payday. */
+function fmtPayday(ymd: string | null | undefined): string {
+  const d = ymd ? parseYmd(ymd) : null;
+  return d ? fmtDayShort(d, { year: true, anchored: true }) : '—';
+}
+
+function ScheduleChoice({
+  selected,
+  onSelect,
+  title,
+  lines,
+  people,
+  blocked = 0,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  lines: string[];
+  people?: number;
+  blocked?: number;
+}) {
+  return (
+    <label
+      className={cn(
+        'flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors',
+        selected ? 'border-gold bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
+      )}
+    >
+      <input type="radio" name="run-schedule" className="mt-1 accent-gold" checked={selected} onChange={onSelect} aria-label={title} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-ink">{title}</span>
+        {lines.map((l) => (
+          <span key={l} className="block text-xs text-silver/80">
+            {l}
+          </span>
+        ))}
+      </span>
+      {people !== undefined && (
+        <span className="shrink-0 text-right">
+          <span className={cn('inline-flex items-center gap-1 text-sm tabular-nums', people === 0 ? 'text-warning' : 'text-ink')}>
+            <Users className="h-3.5 w-3.5" aria-hidden="true" />
+            {people}
+          </span>
+          <span className="block text-2xs text-silver/70">{people === 1 ? 'person' : 'people'}</span>
+          {blocked > 0 && <span className="block text-2xs text-alert">{blocked} blocked</span>}
+        </span>
+      )}
+    </label>
+  );
+}
+
+/** What the run will pay, stated plainly: schedule, period, payday and people. */
+interface RunTruth {
+  scheduleId: string | null;
+  scheduleName: string | null;
+  pattern: string | null;
+  /** People on the schedule (null: no schedule chosen). */
+  people: number | null;
+  payDate: string | null;
+}
+
+/** People who worked but are on no pay schedule are a separate notice, not a paycheck exception. */
+function splitUnassigned(ex: PayrollExceptionsResponse | null): { runExceptions: PayrollExceptionsResponse | null; unassigned: number } {
+  if (!ex) return { runExceptions: null, unassigned: 0 };
+  const isUnassigned = (e: PayrollException) => (e.kind as string) === 'UNASSIGNED_SCHEDULE';
+  const unassigned = new Set(ex.exceptions.filter(isUnassigned).map((e) => e.associateId)).size;
+  if (unassigned === 0) return { runExceptions: ex, unassigned: 0 };
+  const rest = ex.exceptions.filter((e) => !isUnassigned(e));
+  return {
+    runExceptions: {
+      ...ex,
+      exceptions: rest,
+      counts: {
+        blocking: rest.filter((e) => e.severity === 'BLOCKING').length,
+        warning: rest.filter((e) => e.severity === 'WARNING').length,
+        info: rest.filter((e) => e.severity === 'INFO').length,
+      },
+    },
+    unassigned,
+  };
+}
+
+/**
+ * The top of every review step: the schedule, the period, the payday, who
+ * is on the schedule and how many have approved time — and, when that comes
+ * to nothing, exactly why, with the way to fix it.
+ */
+/** A warning, not an empty list: a regular run of a schedule no one is on pays no one. */
+const EMPTY_SCHEDULE = 'No one is on this schedule yet';
+
+function RunTruthPanel({
+  truth,
+  preview,
+  periodStart,
+  periodEnd,
+  unassigned,
+}: {
+  truth: RunTruth;
+  preview: PayrollRunPreviewResponse | null;
+  periodStart: string;
+  periodEnd: string;
+  unassigned: number;
+}) {
+  const withTime = preview ? preview.items.length : null;
+  return (
+    <div className="space-y-2.5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Fact label="Schedule" value={truth.scheduleName ?? 'No schedule'} hint={truth.pattern ?? undefined} />
+        <Fact label="Pay period" value={fmtPeriod(periodStart, periodEnd)} />
+        <Fact label="Payday" value={truth.payDate ? fmtPayday(truth.payDate) : '—'} />
+        <Fact
+          label="People"
+          value={truth.people === null ? (withTime === null ? '—' : String(withTime)) : `${truth.people} on this schedule`}
+          hint={withTime === null ? undefined : `${withTime} with approved time`}
+        />
+      </div>
+      {truth.people === 0 && truth.scheduleId && (
+        <div role="alert" className="flex flex-wrap items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium text-ink">{EMPTY_SCHEDULE}</span>
+            <span className="block text-xs text-silver/80">A run pays only the people on its schedule. Add people to {truth.scheduleName ?? 'it'}, then run payroll.</span>
+          </span>
+          <Link to={`/payroll/schedules/${truth.scheduleId}`} className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2">
+            <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+            Add people
+          </Link>
+        </div>
+      )}
+      {!!truth.people && preview && preview.items.length === 0 && (
+        <div role="status" className="flex flex-wrap items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium text-ink">
+              {truth.people} {truth.people === 1 ? 'person is' : 'people are'} on this schedule, but none has approved time in this period
+            </span>
+            <span className="block text-xs text-silver/80">Approve their time for {fmtPeriod(periodStart, periodEnd)}, or check the period.</span>
+          </span>
+          <Link to={`/time-attendance?tab=queue&from=${periodStart}&to=${periodEnd}`} className="text-xs text-gold underline underline-offset-2">
+            Approve time
+          </Link>
+        </div>
+      )}
+      {truth.people === null && preview && preview.items.length === 0 && (
+        <div className="rounded-lg border border-silver/15 bg-black/30 p-3 text-xs text-silver/80">
+          No approved time falls in this period, so there is nothing to pay.
+        </div>
+      )}
+      {unassigned > 0 && (
+        <div role="status" className="flex flex-wrap items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-ink">
+            {unassigned} {unassigned === 1 ? 'person' : 'people'} worked this period but {unassigned === 1 ? 'is' : 'are'} on no pay schedule — they won’t be paid by this run.
+          </span>
+          <Link to="/payroll/schedules" className="text-xs text-gold underline underline-offset-2">
+            Assign them
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-navy-secondary px-3 py-2">
+      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
+      <div className="mt-0.5 break-words text-sm text-ink tabular-nums">{value}</div>
+      {hint && <div className="break-words text-2xs text-silver/70">{hint}</div>}
+    </div>
+  );
+}
+
 interface PreviewProps {
   offCycle: boolean;
   periodStart: string;
   periodEnd: string;
-  schedule: PayrollSchedule | null;
+  truth: RunTruth;
+  unassigned: number;
   preview: PayrollRunPreviewResponse | null;
   loading: boolean;
   error: string | null;
@@ -703,7 +1044,7 @@ function PreviewStateBanner({
  *  preventing run submission until blockers are dismissed/resolved.
  * -------------------------------------------------------------------------- */
 
-const EXCEPTION_COPY: Record<PayrollException['kind'], { label: string }> = {
+const EXCEPTION_COPY: Partial<Record<string, { label: string }>> = {
   MISSING_W4: { label: 'Missing W-4' },
   MISSING_BANK_ACCOUNT: { label: 'No payout method' },
   TERMINATED_IN_RUN: { label: 'Terminated in period' },
@@ -742,10 +1083,13 @@ function ExceptionStrip({
   exceptions,
   loading,
   onRecheck,
+  paychecks,
 }: {
   exceptions: PayrollExceptionsResponse | null;
   loading: boolean;
   onRecheck?: () => void;
+  /** People with a paycheck in this run: the all-clear is only said about real people. */
+  paychecks: number;
 }) {
   const [open, setOpen] = useState(false);
   if (loading) {
@@ -757,11 +1101,12 @@ function ExceptionStrip({
     );
   }
   if (!exceptions || exceptions.exceptions.length === 0) {
+    if (paychecks === 0) return null;
     return (
       <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-xs2 text-success">
         <CheckCircle2 className="h-3.5 w-3.5" />
         <span className="flex-1">
-          No exceptions — every associate has a W-4, a payout method, and a supported state.
+          No exceptions for the {paychecks} {paychecks === 1 ? 'person' : 'people'} in this run — each has a W-4, a payout method and a supported state.
         </span>
         {onRecheck && exceptions && (
           <button
@@ -838,7 +1183,7 @@ function ExceptionStrip({
                   }
                   className="text-2xs"
                 >
-                  {EXCEPTION_COPY[ex.kind].label}
+                  {EXCEPTION_COPY[ex.kind]?.label ?? ex.kind}
                 </Badge>
                 <Link
                   to={fixHref(ex)}
@@ -1007,7 +1352,7 @@ function PaycheckCard({
                   >
                     <SeverityDot severity={e.severity} />
                     <div>
-                      <span className="text-silver">{EXCEPTION_COPY[e.kind].label}</span>
+                      <span className="text-silver">{EXCEPTION_COPY[e.kind]?.label ?? e.kind}</span>
                       <span className="text-silver/70"> — {e.message}</span>
                     </div>
                   </li>
@@ -1262,7 +1607,8 @@ function Step2({
   offCycle,
   periodStart,
   periodEnd,
-  schedule,
+  truth,
+  unassigned,
   preview,
   loading,
   error,
@@ -1289,11 +1635,9 @@ function Step2({
   }
   return (
     <div className="space-y-3 text-sm">
-      <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
-        {fmtPeriod(periodStart, periodEnd)}{schedule ? ` · ${schedule.name}` : ''}
-      </Pill>
+      <RunTruthPanel truth={truth} preview={preview} periodStart={periodStart} periodEnd={periodEnd} unassigned={unassigned} />
 
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} />
 
       <p className="text-silver/70 text-xs">
         Hours come from <strong>APPROVED</strong> time entries in this period.
@@ -1301,13 +1645,6 @@ function Step2({
       </p>
 
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
-
-      {preview && preview.items.length === 0 && (
-        <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/70">
-          No approved time entries fell inside this period. Either the period
-          is wrong or no one's time is approved yet.
-        </div>
-      )}
 
       {preview && preview.items.length > 0 && (
         <>
@@ -1337,7 +1674,8 @@ function Step3({
   offCycle,
   periodStart,
   periodEnd,
-  schedule,
+  truth,
+  unassigned,
   preview,
   loading,
   error,
@@ -1348,6 +1686,7 @@ function Step3({
 }: PreviewProps) {
   void periodStart;
   void periodEnd;
+  void unassigned;
   const exMap = exceptionsByAssociate(exceptions);
   if (offCycle) {
     return (
@@ -1362,7 +1701,7 @@ function Step3({
   }
   return (
     <div className="space-y-3 text-sm">
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} />
 
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
 
@@ -1403,18 +1742,14 @@ function Step3({
           </div>
 
           <p className="text-2xs text-silver/70">
-            Withholding tables: IRS Pub 15-T 2024. State tables include CA, NY,
-            NJ, GA, OH, VA, MN (bracketed) and 11 flat-rate states. Long-tail
-            states use a 4% conservative fallback.
+            Withholding follows IRS Pub 15-T 2026 and each state’s 2026 method; a state without a reviewed method blocks the run instead of guessing.
           </p>
         </>
       )}
 
-      {schedule && (
+      {truth.payDate && (
         <p className="text-xs text-silver/70">
-          Pay date will land on{' '}
-          <strong className="text-silver/80">{fmtDate(parseYmd(schedule.nextPayDate))}</strong>{' '}
-          ({schedule.payDateOffsetDays} day offset from period end).
+          Paid on <strong className="text-silver/80">{fmtPayday(truth.payDate)}</strong>.
         </p>
       )}
     </div>
@@ -1434,7 +1769,8 @@ function Step3({
 function QuickReview({
   periodStart,
   periodEnd,
-  schedule,
+  truth,
+  unassigned,
   preview,
   loading,
   error,
@@ -1447,7 +1783,8 @@ function QuickReview({
 }: {
   periodStart: string;
   periodEnd: string;
-  schedule: PayrollSchedule | null;
+  truth: RunTruth;
+  unassigned: number;
   preview: PayrollRunPreviewResponse | null;
   loading: boolean;
   error: string | null;
@@ -1461,24 +1798,16 @@ function QuickReview({
   const exMap = exceptionsByAssociate(exceptions);
   return (
     <div className="space-y-3 text-sm">
-      <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
-        {fmtPeriod(periodStart, periodEnd)}{schedule ? ` · ${schedule.name}` : ''}
-      </Pill>
+      <RunTruthPanel truth={truth} preview={preview} periodStart={periodStart} periodEnd={periodEnd} unassigned={unassigned} />
 
       <ExceptionStrip
         exceptions={exceptions}
         loading={exceptionsLoading}
         onRecheck={onRecheck}
+        paychecks={preview?.items.length ?? 0}
       />
 
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
-
-      {preview && preview.items.length === 0 && (
-        <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/70">
-          No approved time entries fell inside this period. Either the period
-          is wrong or no one's time is approved yet.
-        </div>
-      )}
 
       {preview && preview.items.length > 0 && (
         <>
@@ -1510,11 +1839,9 @@ function QuickReview({
             ))}
           </div>
 
-          {schedule && (
+          {truth.payDate && (
             <p className="text-xs text-silver/70">
-              Pay date will land on{' '}
-              <strong className="text-silver/80">{fmtDate(parseYmd(schedule.nextPayDate))}</strong>{' '}
-              ({schedule.payDateOffsetDays} day offset from period end).
+              Paid on <strong className="text-silver/80">{fmtPayday(truth.payDate)}</strong>.
             </p>
           )}
         </>
@@ -1552,7 +1879,8 @@ function Step4({
   offCycle,
   periodStart,
   periodEnd,
-  schedule,
+  truth,
+  unassigned,
   notes,
   setNotes,
   preview,
@@ -1563,7 +1891,8 @@ function Step4({
   offCycle: boolean;
   periodStart: string;
   periodEnd: string;
-  schedule: PayrollSchedule | null;
+  truth: RunTruth;
+  unassigned: number;
   notes: string;
   setNotes: (v: string) => void;
   preview: PayrollRunPreviewResponse | null;
@@ -1590,6 +1919,7 @@ function Step4({
 
   return (
     <div className="space-y-4 text-sm">
+      {!offCycle && <RunTruthPanel truth={truth} preview={preview} periodStart={periodStart} periodEnd={periodEnd} unassigned={unassigned} />}
       <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs">
         <div className="flex items-center gap-2 text-gold mb-1.5">
           <FileText className="h-4 w-4" />
@@ -1603,7 +1933,9 @@ function Step4({
               lines you add on the run page after creating.
             </li>
           )}
-          {schedule && <li>• Schedule: {schedule.name} ({schedule.frequency.toLowerCase()})</li>}
+          {truth.scheduleName && <li>• Schedule: {truth.scheduleName}{truth.pattern ? ` — ${truth.pattern}` : ''}</li>}
+          {truth.people !== null && <li>• {truth.people} {truth.people === 1 ? 'person' : 'people'} on this schedule</li>}
+          {truth.payDate && <li>• Paid {fmtPayday(truth.payDate)}</li>}
           {preview && (
             <li>
               • {preview.totals.itemCount} paystub{preview.totals.itemCount === 1 ? '' : 's'} ·

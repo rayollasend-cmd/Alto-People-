@@ -114,6 +114,9 @@ const PayrollReadiness = lazyNamed(
 );
 const PayrollYtd = lazyNamed(() => import('@/pages/payroll/PayrollYtd'), 'PayrollYtd');
 const PayrollClosePage = lazyNamed(() => import('@/pages/payroll/PayrollClosePage'), 'PayrollClosePage');
+const PaySchedulesPage = lazyNamed(() => import('@/pages/payroll/schedules/PaySchedulesPage'), 'PaySchedulesPage');
+const NewPaySchedulePage = lazyNamed(() => import('@/pages/payroll/schedules/NewPaySchedulePage'), 'NewPaySchedulePage');
+const PayScheduleDetailPage = lazyNamed(() => import('@/pages/payroll/schedules/PayScheduleDetailPage'), 'PayScheduleDetailPage');
 const PayrollChecksPage = lazyNamed(() => import('@/pages/payroll/PayrollChecksPage'), 'PayrollChecksPage');
 const PayrollReviewPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewPage'), 'PayrollReviewPage');
 const PayrollReviewsPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewsPage'), 'PayrollReviewsPage');
@@ -673,6 +676,9 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/certified/:id/weeks/:weekEnding', element: <RequireCapability cap="process:payroll"><CertifiedWeek /></RequireCapability> },
   { path: 'payroll/contractors', element: <RequireCapability cap="process:payroll"><ContractorsDesk /></RequireCapability> },
   { path: 'payroll/banking', element: <RequireCapability cap="process:payroll"><PayrollBankingPage /></RequireCapability> },
+  { path: 'payroll/schedules', element: <RequireCapability cap="process:payroll"><PaySchedulesPage /></RequireCapability> },
+  { path: 'payroll/schedules/new', element: <RequireCapability cap="process:payroll"><NewPaySchedulePage /></RequireCapability> },
+  { path: 'payroll/schedules/:id', element: <RequireCapability cap="process:payroll"><PayScheduleDetailPage /></RequireCapability> },
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
   { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
