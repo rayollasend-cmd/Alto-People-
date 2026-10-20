@@ -7,7 +7,7 @@ import { setRoutingForTests } from '../../lib/mapboxRouting.js';
 import { PRE_TRIP_ITEMS, DRIVER_POSITION } from '../../lib/transportDrivers.js';
 import { generateAllSeries } from '../../lib/rideSeries.js';
 import { dateKeyInZone } from '../../lib/timeAnomalies.js';
-import { zonedWallTimeToUtcInstant } from '../../lib/timezone.js';
+import { DEFAULT_TIMEZONE, zonedWallTimeToUtcInstant } from '../../lib/timezone.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -438,6 +438,12 @@ describe('the fleet record, drivers and hours of service', () => {
     expect((await f.directorAgent.delete(`/transport/driver-shifts/${shift.body.shift.id}`)).status).toBe(204);
     expect((await f.directorAgent.post('/transport/runs').send(body)).status).toBe(201);
     // The driver's day: runs, hours (none clocked), the shift list, the pay estimate.
+    // "Today" is the company's day (Eastern), so give the driver a run on it: the
+    // fixture's run is 90 minutes out, which after 10:30 PM Eastern is tomorrow.
+    const todayKey = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+    if (f.serviceDate !== todayKey) {
+      await prisma.rideRun.create({ data: { vanId: f.van.id, driverUserId: f.driver.id, direction: 'FROM_WORK', serviceDate: todayKey, departAt: new Date(), createdById: f.director.id } });
+    }
     const today = await f.driverAgent.get('/transport/driver/today');
     expect(today.status).toBe(200);
     expect(today.body.associateId).toBe(f.mike.id);
