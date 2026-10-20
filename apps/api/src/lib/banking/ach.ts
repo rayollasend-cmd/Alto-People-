@@ -70,8 +70,16 @@ export function originationGaps(p: PayrollBankingProfile): string[] {
   if (!p.companyName) gaps.push('the company name banks will show');
   if (!p.companyId || p.companyId.length !== 10) gaps.push('the 10-character company ID (often 1 followed by your EIN)');
   if (!p.immediateOrigin) gaps.push('the immediate origin your bank assigned');
-  if (p.settlement === 'OWN_ACCOUNT' && p.fileFormat === 'BALANCED' && !p.fundingAccountId) gaps.push('the verified company account a balanced file debits for the total');
   return gaps;
+}
+
+/**
+ * A balanced file on the company's own account needs the verified account it
+ * debits. Kept apart from originationGaps: the micro-deposit and prenote files
+ * that verify that very account must still go out before it exists.
+ */
+export function balancedOffsetGap(p: Pick<PayrollBankingProfile, 'settlement' | 'fileFormat' | 'fundingAccountId'>): string[] {
+  return p.settlement === 'OWN_ACCOUNT' && p.fileFormat === 'BALANCED' && !p.fundingAccountId ? ['the verified company account a balanced file debits for the total'] : [];
 }
 
 export interface EntryInput {

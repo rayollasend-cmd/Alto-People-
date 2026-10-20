@@ -11,7 +11,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { isClientBoundedRole, isInternallyScoped, scopePayrollRuns } from '../lib/scope.js';
 import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 import { activeConnection } from '../lib/providers/connections.js';
-import { bankingProfile, fileContent, originationGaps, ownAccount as drawnOnOwnAccount, usesOurAch } from '../lib/banking/ach.js';
+import { balancedOffsetGap, bankingProfile, fileContent, originationGaps, ownAccount as drawnOnOwnAccount, usesOurAch } from '../lib/banking/ach.js';
 import { computeFunding, loadTenantHolidays, payDateFor, recordWire, submitFunding } from '../lib/banking/funding.js';
 import { applyAchReturn, applyNoc, confirmMicroDeposits, markFileUploaded, sendDuePrenotes, startAccountVerification } from '../lib/banking/directDeposit.js';
 import { accrueDepositsForRun } from '../lib/taxDeposits.js';
@@ -88,7 +88,7 @@ function profileView(p: PayrollBankingProfile) {
     collectTaxes: p.collectTaxes,
     collectGarnishments: p.collectGarnishments,
     fundingAccountId: p.fundingAccountId,
-    gaps: originationGaps(p),
+    gaps: [...originationGaps(p), ...balancedOffsetGap(p)],
   };
 }
 
