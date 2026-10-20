@@ -880,6 +880,15 @@ export function createApp() {
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.
+  // Intuit returns to the one redirect URI registered for the app. A state
+  // that starts "company." is the company's own books connecting (lib/books/qbo):
+  // on to its callback, whatever the payroll-sync module says.
+  app.get('/quickbooks/connect/callback', (req, res, next) => {
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    if (!state.startsWith('company.')) return next();
+    const qs = new URLSearchParams(req.query as Record<string, string>).toString();
+    res.redirect(`${env.APP_BASE_URL}/api/books/quickbooks/callback?${qs}`);
+  });
   app.use('/quickbooks', requireModule('payrollSync'), quickbooksRouter);
 
   // Production: the same Express service hosts the built React SPA. In dev,

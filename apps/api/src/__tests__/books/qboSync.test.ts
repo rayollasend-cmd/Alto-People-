@@ -4,7 +4,8 @@ import { agent, loginAs } from '../../../test/http.js';
 import { accountByKey, entryForKey, postEntry, voidEntry } from '../../lib/books/ledger.js';
 import { emitBooksChange } from '../../lib/books/events.js';
 import { FakeQboClient, resetStubCompanies } from '../../lib/books/qbo/fake.js';
-import { saveCompanyConnection, setQboClientFactory } from '../../lib/books/qbo/connection.js';
+import { redirectUri, saveCompanyConnection, setQboClientFactory } from '../../lib/books/qbo/connection.js';
+import { env } from '../../config/env.js';
 import { linkFor } from '../../lib/books/qbo/links.js';
 import { initialLink } from '../../lib/books/qbo/mapping.js';
 import { flushOutboxQueue, MAX_ATTEMPTS, processOutbox, registerOutboxListener, shouldQueue } from '../../lib/books/qbo/outbox.js';
@@ -56,6 +57,18 @@ const outboxRows = async () => {
 };
 
 describe('connecting', () => {
+  it('asks Intuit to return to the address the app already registered, and that callback hands company connections on to the books', async () => {
+    // Intuit refuses any redirect_uri not on the app's keys tab — the per-client one is.
+    expect(redirectUri()).toBe(`${env.APP_BASE_URL}/api/quickbooks/connect/callback`);
+    const company = await agent().get('/quickbooks/connect/callback').query({ code: 'C', state: 'company.t.u.n.sig', realmId: 'R1' });
+    expect(company.status).toBe(302);
+    expect(company.headers.location).toBe(`${env.APP_BASE_URL}/api/books/quickbooks/callback?code=C&state=company.t.u.n.sig&realmId=R1`);
+    // A client's payroll connection still lands on its own handler (a bad state there → back to Clients).
+    const client = await agent().get('/quickbooks/connect/callback').query({ code: 'C', state: 'not-a-company-state', realmId: 'R1' });
+    expect(client.status).toBe(302);
+    expect(client.headers.location).toMatch(/\/clients\?qbo_error=/);
+  });
+
   it('connects in stub mode through the callback, matches the charts by number and by name, creates the rest there, and brings QuickBooks’ own accounts and vendors over', async () => {
     qbo.seed('Account', { Name: 'Checking', AcctNum: '1000', AccountType: 'Bank', Classification: 'Asset' });
     qbo.seed('Account', { Name: 'Accounts receivable', AccountType: 'Accounts Receivable', Classification: 'Asset' });

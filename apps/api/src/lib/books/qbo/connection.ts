@@ -27,8 +27,15 @@ export function isStubMode(): boolean {
   return !env.INTUIT_CLIENT_ID || !env.INTUIT_CLIENT_SECRET;
 }
 
-function redirectUri(): string {
-  return `${env.APP_BASE_URL}/api/books/quickbooks/callback`;
+/**
+ * The return address Intuit must have on file — the SAME one the per-client
+ * payroll connection registered (lib/quickbooks.ts), so connecting the
+ * company needs no change in the Intuit developer portal. That callback
+ * sees a "company." state and hands the browser on to
+ * /api/books/quickbooks/callback (app.ts).
+ */
+export function redirectUri(): string {
+  return `${env.APP_BASE_URL}/api/quickbooks/connect/callback`;
 }
 
 function sign(tenantId: string, userId: string, nonce: string): string {
