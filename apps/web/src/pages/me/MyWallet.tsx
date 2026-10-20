@@ -242,8 +242,12 @@ function AddToAppDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     }
     offer.mutate(undefined, {
       onSuccess: async (o) => {
-        const { default: QRCode } = await import('qrcode');
-        setQr(await QRCode.toDataURL(o.url, { margin: 1, width: 240, errorCorrectionLevel: 'M' }));
+        try {
+          const { default: QRCode } = await import('qrcode');
+          setQr(await QRCode.toDataURL(o.url, { margin: 1, width: 240, errorCorrectionLevel: 'M' }));
+        } catch {
+          setQr(null); // an offer the encoder refuses shows the link alone
+        }
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

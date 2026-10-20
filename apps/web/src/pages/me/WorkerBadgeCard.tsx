@@ -39,13 +39,17 @@ export const PASS = {
 function useQr(value: string | undefined, size: number): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!value) return;
+    if (typeof value !== 'string' || !value) return;
     let live = true;
-    void import('qrcode').then(({ default: QRCode }) =>
-      QRCode.toDataURL(value, { margin: 1, width: size, errorCorrectionLevel: 'M' }).then((u) => {
+    // A value the encoder refuses draws no code; it never becomes an unhandled rejection.
+    void import('qrcode')
+      .then(({ default: QRCode }) => QRCode.toDataURL(value, { margin: 1, width: size, errorCorrectionLevel: 'M' }))
+      .then((u) => {
         if (live) setUrl(u);
-      }),
-    );
+      })
+      .catch(() => {
+        if (live) setUrl(null);
+      });
     return () => {
       live = false;
     };
