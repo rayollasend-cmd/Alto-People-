@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
+import { enumWords, known } from '@/lib/known';
 
 /**
  * The recruiter's side of the candidate's page, on the candidate's record:
@@ -30,6 +31,8 @@ const BADGE: Record<DocumentRequest['status'], { label: string; variant: 'pendin
   ACCEPTED: { label: 'Accepted', variant: 'success' },
   REJECTED: { label: 'Asked again', variant: 'destructive' },
 };
+/** BADGE for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const badgeOf = (k: string) => known(BADGE, k, () => ({ label: enumWords(k), variant: 'info' as const }));
 
 export function CandidatePortalPanel({ candidateId, canManage, onChanged }: { candidateId: string; canManage: boolean; onChanged?: () => void }) {
   const queryClient = useQueryClient();
@@ -121,7 +124,7 @@ export function CandidatePortalPanel({ candidateId, canManage, onChanged }: { ca
                   <FileText className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
                   <span className="truncate">{d.label}</span>
                 </span>
-                <Badge variant={BADGE[d.status].variant}>{BADGE[d.status].label}</Badge>
+                <Badge variant={badgeOf(d.status).variant}>{badgeOf(d.status).label}</Badge>
               </div>
               <div className="mt-1 text-xs2 text-ink-muted">
                 {d.status === 'REQUESTED' && `asked ${fmtDate(d.createdAt)}`}

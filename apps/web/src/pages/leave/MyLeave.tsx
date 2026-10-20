@@ -27,6 +27,10 @@ import {
   Textarea,
 } from '@/components/ui';
 import { STATUS_META } from './leaveWords';
+import { enumWords, known } from '@/lib/known';
+
+/** STATUS_META for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const statusMetaOf = (k: string) => known(STATUS_META, k, () => ({ label: enumWords(k), variant: 'outline' as const }));
 
 /**
  * The worker's own leave: ask for it from the phone, send the
@@ -126,7 +130,7 @@ function MyCase({ c }: { c: MyLeaveCase }) {
               {c.endDate ? t('myLeave.dates', { from: fmtDate(c.startDate), to: fmtDate(c.endDate) }) : t('myLeave.datesOpen', { from: fmtDate(c.startDate) })} · {t(`myLeave.schedule.${c.schedule}` as MessageKey)}
             </div>
           </div>
-          <Badge variant={STATUS_META[c.status].variant}>{t(`myLeave.status.${c.status}` as MessageKey)}</Badge>
+          <Badge variant={statusMetaOf(c.status).variant}>{t(`myLeave.status.${c.status}` as MessageKey)}</Badge>
         </div>
 
         {c.jobProtected && (

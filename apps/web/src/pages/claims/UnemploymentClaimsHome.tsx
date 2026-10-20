@@ -51,6 +51,7 @@ import {
   type PickedAssociate,
 } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
+import { enumWords, known } from '@/lib/known';
 
 /**
  * Unemployment claims — HR's desk (manage:claims).
@@ -73,6 +74,8 @@ const STATUS_META: Record<UiStatus, { label: string; variant: 'pending' | 'succe
   APPEALED: { label: 'Appealed', variant: 'pending' },
   CLOSED: { label: 'Closed', variant: 'outline' },
 };
+/** STATUS_META for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const statusMetaOf = (k: string) => known(STATUS_META, k, () => ({ label: enumWords(k), variant: 'outline' as const }));
 
 const OUTCOME_TEXT: Record<Outcome, string> = { ALLOWED: 'Benefits allowed', DENIED: 'Benefits denied' };
 const OFFER_TEXT: Record<OfferResponse, string> = { PENDING: 'Waiting on an answer', ACCEPTED: 'Accepted', DECLINED: 'Declined', NO_RESPONSE: 'No response' };
@@ -157,8 +160,8 @@ export function UnemploymentClaimsHome() {
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="truncate text-sm font-medium text-ink">{c.associateName}</span>
-                    <Badge size="sm" variant={STATUS_META[c.status].variant}>
-                      {STATUS_META[c.status].label}
+                    <Badge size="sm" variant={statusMetaOf(c.status).variant}>
+                      {statusMetaOf(c.status).label}
                     </Badge>
                   </span>
                   <span className="block truncate text-xs text-ink-muted">
@@ -274,7 +277,7 @@ function ClaimView({ id, onBack, onChanged }: { id: string; onBack: () => void; 
                 {c.state} claim{c.stateClaimNumber ? ` ${c.stateClaimNumber}` : ''} · filed {fmtDate(c.claimDate)} · notice received {fmtDate(c.noticeReceivedAt)}
               </p>
             </div>
-            <Badge variant={STATUS_META[c.status].variant}>{STATUS_META[c.status].label}</Badge>
+            <Badge variant={statusMetaOf(c.status).variant}>{statusMetaOf(c.status).label}</Badge>
           </div>
           {c.next && (
             <div className={cn('flex flex-wrap items-center gap-3 rounded-lg border p-3', c.next.overdue ? 'border-alert/50 bg-alert/5' : 'border-line bg-surface-raised')}>

@@ -62,6 +62,10 @@ import { ProgressBar } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { MyLeave } from './MyLeave';
 import { DOC_LABEL, REASONS_BY_TYPE, REASON_LABEL, SCHEDULE_LABEL, STATUS_META, TYPE_LABEL, YEAR_METHOD_LABEL } from './leaveWords';
+import { enumWords, known } from '@/lib/known';
+
+/** STATUS_META for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const statusMetaOf = (k: string) => known(STATUS_META, k, () => ({ label: enumWords(k), variant: 'outline' as const }));
 
 /**
  * Leave of absence — HR's desk (manage:leave), or the worker's own leave
@@ -171,8 +175,8 @@ function LeaveDesk() {
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="truncate text-sm font-medium text-ink">{c.associateName}</span>
-                    <Badge size="sm" variant={STATUS_META[c.status].variant}>
-                      {STATUS_META[c.status].label}
+                    <Badge size="sm" variant={statusMetaOf(c.status).variant}>
+                      {statusMetaOf(c.status).label}
                     </Badge>
                   </span>
                   <span className="block truncate text-xs text-ink-muted">
@@ -307,7 +311,7 @@ function CaseView({ id, onBack, onChanged }: { id: string; onBack: () => void; o
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              <Badge variant={STATUS_META[c.status].variant}>{STATUS_META[c.status].label}</Badge>
+              <Badge variant={statusMetaOf(c.status).variant}>{statusMetaOf(c.status).label}</Badge>
               {c.jobProtected && <Badge variant="info">Job protected</Badge>}
               {c.requestedBySelf && <Badge variant="outline">Asked from their phone</Badge>}
             </div>

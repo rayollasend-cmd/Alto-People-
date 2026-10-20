@@ -35,6 +35,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { enumWords, known } from '@/lib/known';
 
 /**
  * A payroll run's paper checks: who is paid by check this time (and the
@@ -50,6 +51,8 @@ const STATUS: Record<CheckStatus, { label: string; variant: 'default' | 'success
   VOID: { label: 'Void', variant: 'destructive' },
   STOPPED: { label: 'Stop payment', variant: 'destructive' },
 };
+/** STATUS for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const statusOf = (k: string) => known(STATUS, k, () => ({ label: enumWords(k), variant: 'default' as const }));
 
 export function PayrollChecksPage() {
   const { id = '' } = useParams<{ id: string }>();
@@ -117,11 +120,11 @@ export function PayrollChecksPage() {
     {
       key: 'status',
       header: 'Status',
-      accessor: (c) => STATUS[c.status].label,
+      accessor: (c) => statusOf(c.status).label,
       cardMeta: true,
       cell: (c) => (
         <span className="flex flex-col gap-0.5">
-          <Badge variant={STATUS[c.status].variant}>{STATUS[c.status].label}</Badge>
+          <Badge variant={statusOf(c.status).variant}>{statusOf(c.status).label}</Badge>
           {c.voidReason && <span className="text-xs text-ink-muted">{c.voidReason}</span>}
           {c.replacesCheckNumber && <span className="text-xs text-ink-muted">Replaces #{c.replacesCheckNumber}</span>}
         </span>

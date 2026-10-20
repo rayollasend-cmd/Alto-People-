@@ -277,6 +277,10 @@ profilePhotoRouter.delete(
 /** Stream a stored photo, or 404 when none is on file (or the blob is gone). */
 async function sendPhoto(req: Request, res: Response, key: string | null | undefined): Promise<void> {
   if (!key) {
+    // Most screens build the photo URL from an id and let the avatar fall
+    // back to initials: let the browser remember "no photo" for a couple of
+    // minutes, or a roster page re-asks for every face on every visit.
+    res.setHeader('Cache-Control', 'private, max-age=120');
     throw new HttpError(404, 'no_photo', 'No profile photo on file.');
   }
   // Driver-based read; null (blob gone) keeps the existing 404.

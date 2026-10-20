@@ -49,6 +49,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
+import { enumWords, known } from '@/lib/known';
 
 /**
  * Workers' comp claims — HR's desk (manage:claims).
@@ -70,6 +71,9 @@ const STATUS_META: Record<WcStatus, { label: string; variant: 'pending' | 'succe
   DENIED: { label: 'Denied', variant: 'destructive' },
   CLOSED: { label: 'Closed', variant: 'outline' },
 };
+/** STATUS_META for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const statusMetaOf = (k: string) => known(STATUS_META, k, () => ({ label: enumWords(k), variant: 'outline' as const }));
+
 const SEVERITY_TEXT: Record<string, string> = { MEDICAL_TREATMENT: 'Medical treatment', RESTRICTED_DUTY: 'Restricted duty', DAYS_AWAY: 'Days away', FATAL: 'Fatal' };
 const TREATMENT_TEXT: Record<Treatment, string> = { NONE: 'None', FIRST_AID: 'First aid on site', CLINIC: 'Clinic or doctor', EMERGENCY_ROOM: 'Emergency room', HOSPITALIZED: 'Hospitalized overnight' };
 const OFFER_TEXT: Record<OfferResponse, string> = { PENDING: 'Waiting', ACCEPTED: 'Accepted', DECLINED: 'Declined', NO_RESPONSE: 'No response' };
@@ -185,8 +189,8 @@ export function WorkersCompHome() {
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-medium text-ink">{c.associateName}</span>
-                        <Badge size="sm" variant={STATUS_META[c.status].variant}>
-                          {STATUS_META[c.status].label}
+                        <Badge size="sm" variant={statusMetaOf(c.status).variant}>
+                          {statusMetaOf(c.status).label}
                         </Badge>
                       </span>
                       <span className="block truncate text-xs text-ink-muted">
@@ -292,7 +296,7 @@ function ClaimView({ id, onBack, onChanged }: { id: string; onBack: () => void; 
               {c.carrierClaimNumber && <p className="text-sm text-ink-muted">Carrier claim {c.carrierClaimNumber}{c.carrierName ? ` · ${c.carrierName}` : ''}</p>}
             </div>
             <div className="flex flex-wrap gap-1.5">
-              <Badge variant={STATUS_META[c.status].variant}>{STATUS_META[c.status].label}</Badge>
+              <Badge variant={statusMetaOf(c.status).variant}>{statusMetaOf(c.status).label}</Badge>
               <Badge variant="outline">{c.claimType === 'INDEMNITY' ? 'Lost time' : 'Medical only'}</Badge>
             </div>
           </div>
@@ -448,7 +452,7 @@ function DaysCard({ c, onChanged }: { c: WcClaim; onChanged: () => void }) {
               <Select {...p} value={status} onChange={(e) => setStatus(e.target.value as WcStatus)}>
                 {(Object.keys(STATUS_META) as WcStatus[]).map((s) => (
                   <option key={s} value={s}>
-                    {STATUS_META[s].label}
+                    {statusMetaOf(s).label}
                   </option>
                 ))}
               </Select>

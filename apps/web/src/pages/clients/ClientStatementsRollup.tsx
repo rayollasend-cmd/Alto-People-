@@ -332,7 +332,7 @@ export function ClientStatementsRollup() {
                         <Badge variant="pending">Draft</Badge>
                       )}
                       {st.status === 'FINAL' && (st.paidAt ? <Badge variant="success">Paid {fmtDate(st.paidAt)}</Badge> : <Badge variant="pending">Unpaid</Badge>)}
-                      {st.snapshot.sla.pendingEntries > 0 && st.status === 'DRAFT' && (
+                      {(st.snapshot.sla?.pendingEntries ?? 0) > 0 && st.status === 'DRAFT' && (
                         <span className="text-2xs text-warning" title="Time entries in this period are still awaiting approval — finalizing now locks the figures without them.">
                           {st.snapshot.sla.pendingEntries} pending
                         </span>

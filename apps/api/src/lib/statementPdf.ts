@@ -67,7 +67,7 @@ export const invoiceLabel = (status: string, number: number | null): string =>
 
 /** What the remittance stub carries; pure, so the stub can be tested without a PDF. */
 export function remittanceStub(input: StatementPdfInput): { payTo: string; customer: string; invoice: string; dueDate: string; amountDue: string; paid: boolean } {
-  const s = complete(input.snapshot, input.billTo?.legalName ?? 'Client', input.period);
+  const s = completeStatementSnapshot(input.snapshot, input.billTo?.legalName ?? 'Client', input.period);
   const paid = !!input.paidAt;
   return {
     payTo: input.remitTo?.name ?? input.orgName ?? 'Alto People',
@@ -117,8 +117,11 @@ export async function statementContext(db: Db, o: { statementId: string; clientI
   };
 }
 
-/** Older and seeded snapshots can lack fields; the invoice reads a complete one. */
-function complete(snap: StatementSnapshot, fallbackName: string, period?: { start: string; end: string } | null): StatementSnapshot {
+/**
+ * Older and seeded snapshots can lack fields (the SLA block, the split
+ * totals); the invoice — and every screen — reads a complete one.
+ */
+export function completeStatementSnapshot(snap: StatementSnapshot, fallbackName: string, period?: { start: string; end: string } | null): StatementSnapshot {
   const s = (snap ?? {}) as Partial<StatementSnapshot>;
   const t = (s.totals ?? {}) as Partial<StatementSnapshot['totals']>;
   return {
@@ -134,7 +137,7 @@ function complete(snap: StatementSnapshot, fallbackName: string, period?: { star
 }
 
 export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer> {
-  const input: StatementPdfInput = { ...raw, snapshot: complete(raw.snapshot, raw.billTo?.legalName ?? 'Client', raw.period) };
+  const input: StatementPdfInput = { ...raw, snapshot: completeStatementSnapshot(raw.snapshot, raw.billTo?.legalName ?? 'Client', raw.period) };
   const s = input.snapshot;
   const orgName = input.orgName ?? input.brand?.name ?? 'Alto People';
   const brand: Brand = { ...(input.brand ?? { name: orgName }), name: orgName, lines: input.remitTo?.lines.length ? input.remitTo.lines : input.brand?.lines };

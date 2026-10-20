@@ -422,7 +422,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                         {money(s.snapshot.totals.amount)}
                         {s.snapshot.totals.otHours > 0 &&
                           ` (incl. ${s.snapshot.totals.otHours.toFixed(1)} h OT)`}
-                        {s.snapshot.sla.fillRatePct !== null &&
+                        {s.snapshot.sla?.fillRatePct != null &&
                           ` · fill ${s.snapshot.sla.fillRatePct}%`}
                         {s.status === 'DRAFT' && s.snapshot.generatedAt && (
                           <span className="text-silver/60">
@@ -430,7 +430,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                             · computed {fmtRelativeDate(s.snapshot.generatedAt)}
                           </span>
                         )}
-                        {s.snapshot.sla.pendingEntries > 0 && (
+                        {(s.snapshot.sla?.pendingEntries ?? 0) > 0 && (
                           <span className="text-warning">
                             {' '}
                             · {s.snapshot.sla.pendingEntries} entries still pending approval

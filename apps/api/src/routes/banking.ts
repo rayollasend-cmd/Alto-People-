@@ -409,7 +409,7 @@ bankingRouter.post('/runs/:runId/wire', PROCESS, async (req, res, next) => {
 
 bankingRouter.get('/files', PROCESS, async (req, res, next) => {
   try {
-    const purpose = z.enum(['FUNDING', 'DIRECT_DEPOSIT', 'PRENOTE', 'MICRODEPOSIT']).optional().parse(req.query.purpose || undefined);
+    const purpose = z.enum(['FUNDING', 'DIRECT_DEPOSIT', 'PRENOTE', 'MICRODEPOSIT', 'GARNISHMENT']).optional().parse(req.query.purpose || undefined);
     const files = await prisma.achFile.findMany({ where: { tenantId: tenantIdForWrite(), ...(purpose ? { purpose } : {}) }, orderBy: { createdAt: 'desc' }, take: 100 });
     const returns = await prisma.achEntry.groupBy({ by: ['achFileId'], where: { achFileId: { in: files.map((f) => f.id) }, status: 'RETURNED' }, _count: { _all: true } });
     const rc = new Map(returns.map((r) => [r.achFileId, r._count._all]));

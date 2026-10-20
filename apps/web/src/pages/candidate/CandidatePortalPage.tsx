@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { enumWords, known } from '@/lib/known';
 
 /**
  * The candidate's own page.
@@ -66,7 +67,8 @@ function DocumentRow({ token, doc }: { token: string; doc: CandidatePortal['docu
     onError: (err) => setError(err instanceof Error ? err.message : 'The upload did not go through. Try again.'),
   });
   const canUpload = doc.status === 'REQUESTED' || doc.status === 'REJECTED' || doc.status === 'UPLOADED';
-  const badge = DOC_BADGE[doc.status];
+  // A status this page doesn't know yet reads as words, never a crash (lib/known).
+  const badge = known(DOC_BADGE, doc.status, (k) => ({ label: enumWords(k), variant: 'info' as const }));
   return (
     <li className="py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-start justify-between gap-2">

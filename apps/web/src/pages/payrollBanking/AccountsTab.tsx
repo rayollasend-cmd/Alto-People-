@@ -23,6 +23,7 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDate } from '@/lib/format';
+import { enumWords, known } from '@/lib/known';
 
 /** The employer's operating accounts: add, prove ownership, choose the one payroll pulls from. */
 
@@ -34,6 +35,8 @@ const STATUS: Record<AccountStatus, { label: string; tone: NonNullable<BadgeProp
   FAILED: { label: 'Couldn’t verify', tone: 'destructive' },
   DISABLED: { label: 'Removed', tone: 'default' },
 };
+/** STATUS for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const statusOf = (k: string) => known(STATUS, k, () => ({ label: enumWords(k), tone: 'default' as const }));
 
 /** ABA check digit (3, 7, 1 weights). */
 export function routingLooksValid(r: string): boolean {
@@ -84,7 +87,7 @@ function AccountCard({ a, isFunding, onConfirm }: { a: EmployerAccount; isFundin
   });
   const use = useMutation({ mutationFn: () => setFundingAccount(a.id), onSuccess: () => { toast.success(`Payroll will be pulled from ····${a.accountLast4}.`); refresh(); }, onError: (e: Error) => toast.error(e.message) });
   const remove = useMutation({ mutationFn: () => disableAccount(a.id), onSuccess: () => { toast.success('Account removed.'); refresh(); }, onError: (e: Error) => toast.error(e.message) });
-  const s = STATUS[a.status];
+  const s = statusOf(a.status);
   return (
     <li>
       <Card className={isFunding ? 'border-gold/50' : undefined}>

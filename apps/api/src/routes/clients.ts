@@ -34,7 +34,7 @@ import {
   buildClientServiceReport,
   renderClientServiceReportPdf,
 } from '../lib/clientServiceReport.js';
-import { renderStatementPdf, statementContext } from '../lib/statementPdf.js';
+import { completeStatementSnapshot, renderStatementPdf, statementContext } from '../lib/statementPdf.js';
 import { finalizationTerms } from '../lib/statementDunning.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 
@@ -672,7 +672,8 @@ function statementRow(r: {
     periodEnd: r.periodEnd.toISOString().slice(0, 10),
     number: r.number,
     status: r.status,
-    snapshot: r.snapshot as StatementSnapshot,
+    // Statements saved before a field existed read complete (lib/statementPdf).
+    snapshot: completeStatementSnapshot(r.snapshot as StatementSnapshot, 'Client', { start: r.periodStart.toISOString().slice(0, 10), end: r.periodEnd.toISOString().slice(0, 10) }),
     finalizedAt: r.finalizedAt?.toISOString() ?? null,
     finalizedByEmail: r.finalizedBy?.email ?? null,
     paidAt: r.paidAt?.toISOString() ?? null,
@@ -1123,7 +1124,7 @@ clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS_READ, async (req, res, 
       where: { id: req.params.sid, clientId: req.params.id },
     });
     if (!row) throw new HttpError(404, 'not_found', 'Statement not found');
-    const s = row.snapshot as unknown as StatementSnapshot;
+    const s = completeStatementSnapshot(row.snapshot as unknown as StatementSnapshot, 'Client', { start: row.periodStart.toISOString().slice(0, 10), end: row.periodEnd.toISOString().slice(0, 10) });
     const lines: string[] = [];
     const push = (...cells: Array<string | number>) =>
       lines.push(cells.map((c) => csvCell(String(c))).join(','));

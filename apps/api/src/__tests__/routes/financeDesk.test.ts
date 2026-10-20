@@ -98,6 +98,23 @@ describe('cash forecast', () => {
   });
 });
 
+describe('statements saved before a field existed', () => {
+  it('read complete — the list never hands the page a snapshot missing its SLA block', async () => {
+    const client = await createClient('Old Books Inn');
+    const { user: finance } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = await loginAs(finance.email);
+    await prisma.clientStatement.create({
+      data: { clientId: client.id, periodStart: new Date('2026-08-01T00:00:00Z'), periodEnd: new Date('2026-08-07T00:00:00Z'), status: 'DRAFT', snapshot: { totals: { amount: 120, hours: 6 } } },
+    });
+    const r = await agent.get(`/clients/${client.id}/statements`);
+    expect(r.status).toBe(200);
+    const st = (r.body.statements ?? r.body)[0];
+    expect(st.snapshot.sla).toMatchObject({ pendingEntries: 0, noShows: 0, fillRatePct: null });
+    expect(st.snapshot.totals).toMatchObject({ amount: 120, hours: 6, regularHours: 6, otHours: 0 });
+    expect(st.snapshot.lines).toEqual([]);
+  });
+});
+
 describe('invoicing terms and the dunning cadence', () => {
   it('a finalized statement falls due on the client terms with the standing PO', async () => {
     const client = await createClient('Sandestin');

@@ -61,7 +61,10 @@ describe('a staff account sets its own photo', () => {
 
     expect((await agent.delete('/me/profile-photo')).status).toBe(204);
     expect((await agent.get('/auth/me')).body.user.photoUrl).toBeNull();
-    expect((await other.get(`/users/${hr.id}/photo`)).status).toBe(404);
+    const gone = await other.get(`/users/${hr.id}/photo`);
+    expect(gone.status).toBe(404);
+    // "No photo" is remembered briefly, so a roster of initials isn't re-asked on every visit.
+    expect(gone.headers['cache-control']).toBe('private, max-age=120');
   });
 
   it("an associate-linked login still sets the associate's headshot", async () => {

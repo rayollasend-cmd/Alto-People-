@@ -95,7 +95,7 @@ export interface BankingSummary {
 
 export interface AchFileRow {
   id: string;
-  purpose: 'FUNDING' | 'DIRECT_DEPOSIT' | 'PRENOTE' | 'MICRODEPOSIT';
+  purpose: 'FUNDING' | 'DIRECT_DEPOSIT' | 'PRENOTE' | 'MICRODEPOSIT' | 'GARNISHMENT';
   provider: string;
   status: string;
   effectiveDate: string;

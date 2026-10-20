@@ -39,6 +39,7 @@ import {
   Select,
 } from '@/components/ui';
 import { PALETTE, ancestorsOf, managerChoices, type OrgIndex } from './orgChartModel';
+import { enumWords, known } from '@/lib/known';
 
 /**
  * The org chart's drawing: one card for every kind of node, the chart
@@ -89,6 +90,8 @@ const SEAT_STATUS: Record<'PLANNED' | 'OPEN' | 'FROZEN', { label: string; varian
   OPEN: { label: 'Hiring', variant: 'success' },
   FROZEN: { label: 'On hold', variant: 'info' },
 };
+/** SEAT_STATUS for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
+const seatStatusOf = (k: string) => known(SEAT_STATUS, k, () => ({ label: enumWords(k), variant: 'info' as const }));
 
 /** The line under a name: title, role and shifts, or what a structure node holds. */
 export function describe(n: OrgNode, index: OrgIndex, p: Painter): string {
@@ -228,8 +231,8 @@ export function OrgCard({
         <div className="truncate text-xs text-ink-muted">{describe(n, index, painter)}</div>
         {!compact && n.kind === 'store' && <Coverage n={n} />}
         {!compact && n.kind === 'vacancy' && n.positionStatus && (
-          <Badge size="sm" variant={SEAT_STATUS[n.positionStatus].variant} className="mt-1">
-            {SEAT_STATUS[n.positionStatus].label}
+          <Badge size="sm" variant={seatStatusOf(n.positionStatus).variant} className="mt-1">
+            {seatStatusOf(n.positionStatus).label}
           </Badge>
         )}
         {!compact && n.former && (
@@ -689,8 +692,8 @@ export function TreeList({
                 {n.kind === 'store' && <Coverage n={n} />}
               </div>
               {n.kind === 'vacancy' && n.positionStatus && (
-                <Badge size="sm" variant={SEAT_STATUS[n.positionStatus].variant}>
-                  {SEAT_STATUS[n.positionStatus].label}
+                <Badge size="sm" variant={seatStatusOf(n.positionStatus).variant}>
+                  {seatStatusOf(n.positionStatus).label}
                 </Badge>
               )}
               {hasKids && isPerson && (index.teamSize.get(n.id) ?? 0) > 0 && (

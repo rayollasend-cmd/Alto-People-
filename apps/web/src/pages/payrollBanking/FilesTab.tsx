@@ -16,7 +16,10 @@ const PURPOSE: Record<AchFileRow['purpose'], string> = {
   DIRECT_DEPOSIT: 'Paychecks',
   PRENOTE: 'Bank tests',
   MICRODEPOSIT: 'Account check',
+  GARNISHMENT: 'Garnishment payments',
 };
+/** A purpose this screen doesn't know yet reads as a file, never a crash. */
+const purposeLabel = (p: string) => PURPOSE[p as AchFileRow['purpose']] ?? 'ACH file';
 
 const FILE_STATUS: Record<string, { label: string; tone: NonNullable<BadgeProps['variant']> }> = {
   CREATED: { label: 'Ready to upload', tone: 'pending' },
@@ -61,7 +64,7 @@ export function FilesTab({ inHouse }: { inHouse: boolean }) {
 
   const fileCols: GridColumn<AchFileRow>[] = [
     { key: 'created', header: 'Made', primary: true, accessor: (f) => f.createdAt, cell: (f) => <span className="font-medium text-ink">{fmtDateTime(f.createdAt)}</span>, sortable: true },
-    { key: 'purpose', header: 'What', accessor: (f) => PURPOSE[f.purpose], cardMeta: true },
+    { key: 'purpose', header: 'What', accessor: (f) => purposeLabel(f.purpose), cardMeta: true },
     {
       key: 'effective',
       header: 'Settles',
@@ -99,7 +102,7 @@ export function FilesTab({ inHouse }: { inHouse: boolean }) {
       searchable: false,
       stopRowClick: true,
       cell: (f) => (
-        <Button size="xs" variant="outline" onClick={() => downloadAchFile(f.id).then(() => void qc.invalidateQueries({ queryKey: ['payroll-banking', 'files'] })).catch((e: Error) => toast.error(e.message))} aria-label={`Download the ${PURPOSE[f.purpose].toLowerCase()} file made ${fmtDateTime(f.createdAt)}`}>
+        <Button size="xs" variant="outline" onClick={() => downloadAchFile(f.id).then(() => void qc.invalidateQueries({ queryKey: ['payroll-banking', 'files'] })).catch((e: Error) => toast.error(e.message))} aria-label={`Download the ${purposeLabel(f.purpose).toLowerCase()} file made ${fmtDateTime(f.createdAt)}`}>
           <Download className="mr-1 h-3.5 w-3.5" aria-hidden /> Download
         </Button>
       ),
