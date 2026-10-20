@@ -13773,6 +13773,12 @@ model PayrollBankingProfile {
   /// SAME_DAY | NEXT_DAY | TWO_DAY
   achSpeed                 String    @default("NEXT_DAY") @db.VarChar(12)
   submitCutoffEt           String    @default("16:00") @db.VarChar(5)
+  /// PREFUND: the employer's money is pulled a day ahead (a CCD debit) and the credits go from the platform's account.
+  /// OWN_ACCOUNT: the credits are drawn on the company's own account at the originating bank — no pull; the file is the money,
+  /// and a paycheck reads DISBURSED only when a person marks the file uploaded.
+  settlement               String    @default("PREFUND") @db.VarChar(12)
+  /// OWN_ACCOUNT only: UNBALANCED (credits alone; the bank books the offset) or BALANCED (the file ends with one debit to the company's account for the total).
+  fileFormat               String    @default("UNBALANCED") @db.VarChar(10)
   companyName              String?   @db.VarChar(16)
   companyId                String?   @db.VarChar(10)
   companyEntryDescription  String    @default("PAYROLL") @db.VarChar(10)

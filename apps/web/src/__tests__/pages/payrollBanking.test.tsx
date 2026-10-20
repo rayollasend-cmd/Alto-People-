@@ -17,6 +17,8 @@ const profile = {
   id: 'p1',
   bankRail: 'ACH',
   achSpeed: 'NEXT_DAY',
+  settlement: 'PREFUND',
+  fileFormat: 'UNBALANCED',
   submitCutoffEt: '16:00',
   companyName: 'ALTO HR',
   companyId: '1234567890',

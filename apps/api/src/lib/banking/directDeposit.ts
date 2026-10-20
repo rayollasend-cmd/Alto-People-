@@ -3,7 +3,7 @@ import type { AchEntry, PayoutMethod, Prisma, PrismaClient } from '@prisma/clien
 import { prisma as defaultPrisma } from '../../db.js';
 import { HttpError } from '../../middleware/error.js';
 import { enqueueAudit } from '../audit.js';
-import { encryptString, tryDecryptString } from '../crypto.js';
+import { decryptString, encryptString, tryDecryptString } from '../crypto.js';
 import { accountFingerprint, notifyFinance } from '../financialChanges.js';
 import { readRoutingNumber } from '../payoutMethod.js';
 import { rerouteReturnedItem } from '../payoutReroute.js';
@@ -11,7 +11,8 @@ import { sendPaystubEmail } from '../sendPaystubEmail.js';
 import { describeBranchFailure } from '../achReturnCodes.js';
 import { tenantIdForWrite } from '../tenant.js';
 import type { DisbursementAdapter, DisbursementInput, DisbursementResult } from '../disbursement.js';
-import { bankingProfile, originate, usesOurAch, type EntryInput } from './ach.js';
+import { bankingProfile, originate, ownAccount, usesOurAch, type EntryInput } from './ach.js';
+import { activeConnection } from '../providers/connections.js';
 import { applyFundingReturn, loadTenantHolidays, payDateFor } from './funding.js';
 import { addBankingDays, easternInstant, isBankingDay, onOrBeforeBankingDay, ymd } from './holidays.js';
 import { interpretNoc, isValidRouting } from './nacha.js';
@@ -137,7 +138,9 @@ export async function creditEffectiveDate(db: Db, runId: string | null, now = ne
   const today = ymd(now);
   const beforeCutoff = isBankingDay(today) && now < easternInstant(today, profile.submitCutoffEt);
   const sendDay = beforeCutoff ? today : addBankingDays(today, 1);
-  const sameDayOk = profile.achSpeed === 'SAME_DAY' && beforeCutoff;
+  // Same-day needs a bank partner that takes the entry now: a file a person
+  // uploads cannot promise the same-day window, so in-house is never same-day.
+  const sameDayOk = profile.achSpeed === 'SAME_DAY' && beforeCutoff && (await activeConnection('ORIGINATION')) !== null;
   const earliest = sameDayOk ? today : addBankingDays(sendDay, 1);
   let target = earliest;
   if (runId) {
@@ -193,9 +196,14 @@ export class AchRailAdapter implements DisbursementAdapter {
     return { provider: 'ACH', externalRef: out.entries[0]!.traceNumber, status: 'SUCCESS', failureReason: null };
   }
 
-  /** Send the collected paychecks as one file and settle each item. */
-  async finalize(): Promise<{ file: string | null; paid: number; held: number }> {
-    if (this.pending.length === 0) return { file: null, paid: 0, held: 0 };
+  /**
+   * Send the collected paychecks as one file and settle each item. Drawn on
+   * the company's own account with no bank partner, the file is the money
+   * and a person moves it: the paychecks stay PENDING (`queued`) until
+   * Finance marks the file uploaded (markFileUploaded).
+   */
+  async finalize(): Promise<{ file: string | null; paid: number; held: number; queued: number }> {
+    if (this.pending.length === 0) return { file: null, paid: 0, held: 0, queued: 0 };
     const work = this.pending;
     this.pending = [];
     const first = await this.db.payrollItem.findUnique({ where: { id: work[0]!.itemId }, select: { payrollRunId: true } });
@@ -204,6 +212,31 @@ export class AchRailAdapter implements DisbursementAdapter {
     const when = await creditEffectiveDate(this.db, runId);
     const profile = await bankingProfile(this.db);
     const now = new Date();
+    const credits = work.flatMap((w) => w.entries);
+    // Own account, no partner: the credits are drawn on the company's account at the bank.
+    const inHouseOwn = ownAccount(profile) && (await activeConnection('ORIGINATION')) === null;
+    const hold = async (reason: string) => {
+      for (const w of work) {
+        await this.db.payrollItem.update({ where: { id: w.itemId }, data: { status: 'HELD', failureReason: `ach_file_failed: ${reason}`.slice(0, 500) } });
+      }
+      return { file: null, paid: 0, held: work.length, queued: 0 };
+    };
+    let offset: EntryInput | null = null;
+    if (inHouseOwn && profile.fileFormat === 'BALANCED') {
+      const account = profile.fundingAccountId ? await this.db.employerBankAccount.findFirst({ where: { id: profile.fundingAccountId, status: 'VERIFIED' } }) : null;
+      if (!account) return hold('a balanced file debits the company account for the total, and no verified account is chosen in Payroll banking');
+      offset = {
+        kind: 'OFFSET',
+        sec: 'PPD',
+        amountCents: credits.reduce((a, e) => a + e.amountCents, 0),
+        routingNumber: account.routingNumber,
+        accountNumber: decryptString(account.accountNumberEnc),
+        accountType: account.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+        name: profile.companyName ?? 'OFFSET',
+        individualId: (profile.companyId ?? 'OFFSET').slice(0, 15),
+        bankAccountId: account.id,
+      };
+    }
     let out;
     try {
       out = await originate(this.db, profile, {
@@ -213,35 +246,105 @@ export class AchRailAdapter implements DisbursementAdapter {
         entryDescription: 'PAYROLL',
         payrollRunId: runId,
         createdById: this.actorUserId,
-        entries: work.flatMap((w) => w.entries),
+        entries: offset ? [...credits, offset] : credits,
       });
     } catch (err) {
-      const reason = err instanceof HttpError ? err.message : err instanceof Error ? err.message : String(err);
-      for (const w of work) {
-        await this.db.payrollItem.update({ where: { id: w.itemId }, data: { status: 'HELD', failureReason: `ach_file_failed: ${reason}`.slice(0, 500) } });
-      }
-      return { file: null, paid: 0, held: work.length };
+      return hold(err instanceof HttpError ? err.message : err instanceof Error ? err.message : String(err));
     }
     let paid = 0;
     let held = 0;
+    let queued = 0;
     for (const w of work) {
       const mine = out.entries.filter((e) => e.input.payrollItemId === w.itemId);
       const failed = mine.find((e) => !e.accepted);
       const ref = mine.map((e) => e.traceNumber).join(',').slice(0, 190);
-      await this.db.payrollDisbursementAttempt.create({
-        data: { payrollItemId: w.itemId, provider: 'ACH', status: failed ? 'FAILED' : 'SUCCESS', externalRef: ref || null, failureReason: failed?.error ?? null, attemptedById: this.actorUserId },
-      });
       if (failed) {
         held += 1;
+        await this.db.payrollDisbursementAttempt.create({
+          data: { payrollItemId: w.itemId, provider: 'ACH', status: 'FAILED', externalRef: ref || null, failureReason: failed.error ?? null, attemptedById: this.actorUserId },
+        });
         await this.db.payrollItem.update({ where: { id: w.itemId }, data: { status: 'HELD', failureReason: (failed.error ?? 'bank_rejected').slice(0, 500) } });
+      } else if (inHouseOwn) {
+        // The file is the money and a person moves it: the paycheck waits, with its trace number, for the upload.
+        queued += 1;
+        await this.db.payrollDisbursementAttempt.create({
+          data: { payrollItemId: w.itemId, provider: 'ACH', status: 'PENDING', externalRef: ref || null, failureReason: null, attemptedById: this.actorUserId },
+        });
+        await this.db.payrollItem.update({ where: { id: w.itemId }, data: { disbursementRef: ref, failureReason: null } });
       } else {
         paid += 1;
+        await this.db.payrollDisbursementAttempt.create({
+          data: { payrollItemId: w.itemId, provider: 'ACH', status: 'SUCCESS', externalRef: ref || null, failureReason: null, attemptedById: this.actorUserId },
+        });
         await this.db.payrollItem.update({ where: { id: w.itemId }, data: { status: 'DISBURSED', disbursementRef: ref, disbursedAt: now, failureReason: null } });
         void sendPaystubEmail(this.db, { payrollItemId: w.itemId });
       }
     }
-    return { file: out.file.id, paid, held };
+    return { file: out.file.id, paid, held, queued };
   }
+}
+
+/* ----- the upload, on the company's own account ------------------------------- */
+
+export interface FileUploadedResult {
+  fileId: string;
+  /** Paychecks that read DISBURSED with this call. */
+  paid: number;
+  /** Runs that settled (nothing left pending or held) with this call. */
+  runsSettled: string[];
+  /** The file had already been marked; nothing changed. */
+  already: boolean;
+}
+
+/**
+ * Finance says the in-house file reached the bank. The file is SUBMITTED,
+ * every paycheck in it that was waiting reads DISBURSED with its trace
+ * number (and gets its paystub), and a run with nothing left pending or
+ * held settles. Idempotent: a file already marked changes nothing.
+ */
+export async function markFileUploaded(db: PrismaClient, fileId: string, actorUserId: string, now = new Date()): Promise<FileUploadedResult> {
+  const file = await db.achFile.findFirst({
+    where: { id: fileId, tenantId: tenantIdForWrite() },
+    include: { entries: { select: { payrollItemId: true, traceNumber: true, kind: true } } },
+  });
+  if (!file) throw new HttpError(404, 'file_not_found', 'That file isn’t on record.');
+  if (file.provider !== 'IN_HOUSE') throw new HttpError(409, 'not_in_house', 'This file went through your bank partner as it was made; there is nothing to mark.');
+  if (file.status === 'REJECTED') throw new HttpError(409, 'file_rejected', 'This file was refused; nothing in it was sent.');
+  if (file.status === 'SUBMITTED' || file.status === 'SETTLED') return { fileId, paid: 0, runsSettled: [], already: true };
+
+  const byItem = new Map<string, string[]>();
+  for (const e of file.entries) {
+    if (e.kind !== 'CREDIT' || !e.payrollItemId) continue;
+    byItem.set(e.payrollItemId, [...(byItem.get(e.payrollItemId) ?? []), e.traceNumber]);
+  }
+  const paidItems: string[] = [];
+  const runIds = new Set<string>();
+  await db.$transaction(async (tx) => {
+    await tx.achFile.update({ where: { id: file.id }, data: { status: 'SUBMITTED', submittedAt: now } });
+    for (const [itemId, traces] of byItem) {
+      const item = await tx.payrollItem.findUnique({ where: { id: itemId }, select: { id: true, status: true, payrollRunId: true } });
+      if (!item) continue;
+      runIds.add(item.payrollRunId);
+      if (item.status !== 'PENDING') continue;
+      const ref = traces.join(',').slice(0, 190);
+      await tx.payrollDisbursementAttempt.create({
+        data: { payrollItemId: itemId, provider: 'ACH', status: 'SUCCESS', externalRef: ref, failureReason: null, attemptedById: actorUserId },
+      });
+      await tx.payrollItem.update({ where: { id: itemId }, data: { status: 'DISBURSED', disbursementRef: ref, disbursedAt: now, failureReason: null } });
+      paidItems.push(itemId);
+    }
+  }, { timeout: 60_000, maxWait: 10_000 });
+  for (const id of paidItems) void sendPaystubEmail(db, { payrollItemId: id });
+
+  const runsSettled: string[] = [];
+  for (const runId of runIds) {
+    const open = await db.payrollItem.count({ where: { payrollRunId: runId, status: { in: ['PENDING', 'HELD'] } } });
+    if (open > 0) continue;
+    const r = await db.payrollRun.updateMany({ where: { id: runId, status: 'FINALIZED' }, data: { status: 'DISBURSED', disbursedAt: now } });
+    if (r.count > 0) runsSettled.push(runId);
+  }
+  enqueueAudit({ actorUserId, action: 'payroll.ach_file_uploaded', entityType: 'AchFile', entityId: file.id, metadata: { paid: paidItems.length, runsSettled, sha256: file.sha256 } }, 'banking');
+  return { fileId, paid: paidItems.length, runsSettled, already: false };
 }
 
 /* ----- prenotes --------------------------------------------------------------- */
@@ -498,7 +601,9 @@ export async function applyNoc(db: PrismaClient, ref: { traceNumber?: string; en
 export async function markEntriesSettled(db: Db, now = new Date()): Promise<number> {
   await loadTenantHolidays(db);
   const cutoff = addBankingDays(ymd(now), -2);
-  const files = await db.achFile.findMany({ where: { tenantId: tenantIdForWrite(), effectiveDate: { lte: new Date(`${cutoff}T00:00:00Z`) }, status: { in: ['CREATED', 'DOWNLOADED', 'SUBMITTED'] } }, select: { id: true } });
+  // On the company's own account a file nobody marked uploaded never went anywhere: only marked files settle.
+  const statuses = ownAccount(await bankingProfile(db)) ? ['SUBMITTED'] : ['CREATED', 'DOWNLOADED', 'SUBMITTED'];
+  const files = await db.achFile.findMany({ where: { tenantId: tenantIdForWrite(), effectiveDate: { lte: new Date(`${cutoff}T00:00:00Z`) }, status: { in: statuses } }, select: { id: true } });
   if (!files.length) return 0;
   const r = await db.achEntry.updateMany({ where: { achFileId: { in: files.map((f) => f.id) }, status: 'SENT' }, data: { status: 'SETTLED' } });
   await db.achFile.updateMany({ where: { id: { in: files.map((f) => f.id) }, status: { in: ['DOWNLOADED', 'SUBMITTED'] } }, data: { status: 'SETTLED' } });

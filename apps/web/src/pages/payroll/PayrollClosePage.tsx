@@ -16,6 +16,8 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { statusTone } from '@/lib/status';
 import { RunFundingCard } from '@/pages/payrollBanking/FundingCard';
+import { centsToMoney, downloadAchFile, markAchFileUploaded } from '@/lib/bankingApi';
+import { useConfirm } from '@/lib/confirm';
 
 /**
  * The guided close: one payroll run, step by step, each with what blocks it
@@ -66,6 +68,8 @@ export interface PayrollClose {
     staleSignedAt: string | null;
   };
   items: { pending: number; disbursed: number; held: number; failed: number; voided: number };
+  /** Own-account ACH: the run's in-house file, which a person carries to the bank and marks uploaded. */
+  bankFile?: { id: string; status: string; effectiveDate: string; entryCount: number; totalCreditCents: number; format: 'UNBALANCED' | 'BALANCED'; bank: string } | null;
   heldItems: Array<{ id: string; name: string; netPay: number; reason: string | null }>;
   paidItems?: Array<{ id: string; name: string; netPay: number }>;
   rerouted: number;
@@ -320,6 +324,7 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
               <ArrowRight className="h-3 w-3" aria-hidden="true" />
             </Link>
           )}
+          {data.bankFile && <BankFileStep runId={r.id} file={data.bankFile} />}
           {(data.paidItems?.length ?? 0) > 0 && <RecordReturn runId={r.id} items={data.paidItems!} />}
         </div>
       );
@@ -349,6 +354,54 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
     default:
       return null;
   }
+}
+
+/**
+ * Own-account ACH: the run's file, the download, and the one button that
+ * makes its paychecks read paid — "it reached the bank".
+ */
+function BankFileStep({ runId, file }: { runId: string; file: NonNullable<PayrollClose['bankFile']> }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const waiting = file.status === 'CREATED' || file.status === 'DOWNLOADED';
+  const mark = useMutation({
+    mutationFn: () => markAchFileUploaded(file.id),
+    onSuccess: (r) => {
+      toast.success(r.already ? 'That file was already marked uploaded.' : `Marked uploaded: ${r.paid} paycheck${r.paid === 1 ? '' : 's'} now read paid.`);
+      void qc.invalidateQueries({ queryKey: ['payroll', 'close', runId] });
+      void qc.invalidateQueries({ queryKey: ['payroll-banking'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not mark the file uploaded.'),
+  });
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+      <span className="tabular-nums">
+        Bank file ({file.format === 'BALANCED' ? 'balanced' : 'unbalanced'}) · {file.entryCount} entr{file.entryCount === 1 ? 'y' : 'ies'} · {centsToMoney(file.totalCreditCents)} · posts {fmtDate(file.effectiveDate)} ·{' '}
+        {waiting ? 'not yet uploaded' : file.status === 'SUBMITTED' ? `uploaded to ${file.bank}` : file.status.toLowerCase()}
+      </span>
+      <Button size="xs" variant="outline" onClick={() => downloadAchFile(file.id).then(() => void qc.invalidateQueries({ queryKey: ['payroll', 'close', runId] })).catch((e: Error) => toast.error(e.message))}>
+        Download
+      </Button>
+      {waiting && (
+        <Button
+          size="xs"
+          variant="primary"
+          loading={mark.isPending}
+          onClick={async () => {
+            const ok = await confirm({
+              title: `Mark this file uploaded to ${file.bank}?`,
+              description: `${file.entryCount} entr${file.entryCount === 1 ? 'y' : 'ies'} for ${centsToMoney(file.totalCreditCents)}, posting ${fmtDate(file.effectiveDate)}. Do this only after the bank’s portal accepted the file: the paychecks in it read paid, dated now.`,
+              confirmLabel: 'Mark uploaded',
+              destructive: true,
+            });
+            if (ok) mark.mutate();
+          }}
+        >
+          Mark uploaded to {file.bank}
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /**

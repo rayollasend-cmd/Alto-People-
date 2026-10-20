@@ -53,6 +53,15 @@ export function usesOurAch(profile: Pick<PayrollBankingProfile, 'bankRail'>): bo
   return profile.bankRail === 'ACH';
 }
 
+/**
+ * Drawn on the company's own account at the originating bank: nothing is
+ * pulled ahead, the file is the money, and a paycheck reads paid only when
+ * a person marks the file uploaded (lib/banking/directDeposit).
+ */
+export function ownAccount(profile: Pick<PayrollBankingProfile, 'settlement'>): boolean {
+  return profile.settlement === 'OWN_ACCOUNT';
+}
+
 /** What the profile still needs before a file can be written. */
 export function originationGaps(p: PayrollBankingProfile): string[] {
   const gaps: string[] = [];
@@ -61,11 +70,13 @@ export function originationGaps(p: PayrollBankingProfile): string[] {
   if (!p.companyName) gaps.push('the company name banks will show');
   if (!p.companyId || p.companyId.length !== 10) gaps.push('the 10-character company ID (often 1 followed by your EIN)');
   if (!p.immediateOrigin) gaps.push('the immediate origin your bank assigned');
+  if (p.settlement === 'OWN_ACCOUNT' && p.fileFormat === 'BALANCED' && !p.fundingAccountId) gaps.push('the verified company account a balanced file debits for the total');
   return gaps;
 }
 
 export interface EntryInput {
-  kind: 'CREDIT' | 'DEBIT' | 'PRENOTE' | 'MICRODEPOSIT';
+  /** OFFSET: a balanced file's one debit to the company's own account for the credits' total (own-account settlement). */
+  kind: 'CREDIT' | 'DEBIT' | 'PRENOTE' | 'MICRODEPOSIT' | 'OFFSET';
   sec: SecCode;
   amountCents: number;
   routingNumber: string;
@@ -132,7 +143,7 @@ export async function originate(db: PrismaClient, profile: PayrollBankingProfile
       sameDayWindow: input.sameDay ? (input.sameDayWindow ?? '1300') : null,
       originatingDfi: `${profile.originatingDfi!}0`.slice(0, 9).padEnd(9, '0'),
       entries: input.entries.map((e) => ({
-        transactionCode: transactionCode(e.accountType, e.kind === 'DEBIT' ? 'debit' : 'credit', e.kind === 'PRENOTE'),
+        transactionCode: transactionCode(e.accountType, e.kind === 'DEBIT' || e.kind === 'OFFSET' ? 'debit' : 'credit', e.kind === 'PRENOTE'),
         routingNumber: e.routingNumber,
         accountNumber: e.accountNumber,
         amountCents: e.kind === 'PRENOTE' ? 0 : e.amountCents,
@@ -216,7 +227,7 @@ export async function originate(db: PrismaClient, profile: PayrollBankingProfile
 
   const toSend: OriginationEntry[] = made.map((m) => ({
     id: m.id,
-    direction: m.input.kind === 'DEBIT' ? 'debit' : 'credit',
+    direction: m.input.kind === 'DEBIT' || m.input.kind === 'OFFSET' ? 'debit' : 'credit',
     sec: m.input.sec,
     prenote: m.input.kind === 'PRENOTE',
     amountCents: m.input.kind === 'PRENOTE' ? 0 : m.input.amountCents,

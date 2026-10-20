@@ -63,7 +63,7 @@ export function AccountsTab({ summary }: { summary: BankingSummary | undefined }
       ) : (
         <ul className="grid gap-3 lg:grid-cols-2">
           {accounts.map((a) => (
-            <AccountCard key={a.id} a={a} isFunding={summary.profile.fundingAccountId === a.id} onConfirm={() => setConfirming(a)} />
+            <AccountCard key={a.id} a={a} isFunding={summary.profile.fundingAccountId === a.id} own={summary.profile.settlement === 'OWN_ACCOUNT'} onConfirm={() => setConfirming(a)} />
           ))}
         </ul>
       )}
@@ -73,7 +73,7 @@ export function AccountsTab({ summary }: { summary: BankingSummary | undefined }
   );
 }
 
-function AccountCard({ a, isFunding, onConfirm }: { a: EmployerAccount; isFunding: boolean; onConfirm: () => void }) {
+function AccountCard({ a, isFunding, own, onConfirm }: { a: EmployerAccount; isFunding: boolean; own: boolean; onConfirm: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const refresh = () => void qc.invalidateQueries({ queryKey: ['payroll-banking'] });
@@ -85,7 +85,7 @@ function AccountCard({ a, isFunding, onConfirm }: { a: EmployerAccount; isFundin
     },
     onError: (e: Error) => toast.error(e.message),
   });
-  const use = useMutation({ mutationFn: () => setFundingAccount(a.id), onSuccess: () => { toast.success(`Payroll will be pulled from ····${a.accountLast4}.`); refresh(); }, onError: (e: Error) => toast.error(e.message) });
+  const use = useMutation({ mutationFn: () => setFundingAccount(a.id), onSuccess: () => { toast.success(own ? `Payroll is drawn on ····${a.accountLast4}; a balanced file debits it for the total.` : `Payroll will be pulled from ····${a.accountLast4}.`); refresh(); }, onError: (e: Error) => toast.error(e.message) });
   const remove = useMutation({ mutationFn: () => disableAccount(a.id), onSuccess: () => { toast.success('Account removed.'); refresh(); }, onError: (e: Error) => toast.error(e.message) });
   const s = statusOf(a.status);
   return (
@@ -98,7 +98,7 @@ function AccountCard({ a, isFunding, onConfirm }: { a: EmployerAccount; isFundin
               <p className="text-sm text-ink-muted">{`${a.bankName ? `${a.bankName} · ` : ''}${a.accountType === 'SAVINGS' ? 'Savings' : 'Checking'} ····${a.accountLast4} · routing ${a.routingNumber}`}</p>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {isFunding && <Badge variant="accent">Payroll pulls from here</Badge>}
+              {isFunding && <Badge variant="accent">{own ? 'Payroll is drawn on this account' : 'Payroll pulls from here'}</Badge>}
               <Badge variant={s.tone}>{s.label}</Badge>
             </div>
           </div>
@@ -131,7 +131,7 @@ function AccountCard({ a, isFunding, onConfirm }: { a: EmployerAccount; isFundin
             )}
             {a.status === 'VERIFIED' && !isFunding && (
               <Button size="sm" onClick={() => use.mutate()} loading={use.isPending}>
-                Pull payroll from this account
+                {own ? 'Draw payroll on this account' : 'Pull payroll from this account'}
               </Button>
             )}
             {!isFunding && (

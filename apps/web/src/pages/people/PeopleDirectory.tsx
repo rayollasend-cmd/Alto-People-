@@ -867,7 +867,7 @@ const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
           <Link
             to={`/people/${r.id}`}
             onClick={(e) => e.stopPropagation()}
-            className="block truncate font-medium text-white hover:text-gold-bright hover:underline"
+            className="block truncate font-medium leading-6 text-white hover:text-gold-bright hover:underline"
           >
             {r.firstName} {r.lastName}
           </Link>

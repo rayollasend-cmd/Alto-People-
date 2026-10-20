@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FileStack, RotateCcw, Upload } from 'lucide-react';
-import { centsToMoney, downloadAchFile, listAchEntries, listAchFiles, uploadReturnFile, type AchEntryRow, type AchFileRow } from '@/lib/bankingApi';
+import { Download, FileStack, Landmark, RotateCcw, Upload } from 'lucide-react';
+import { centsToMoney, downloadAchFile, listAchEntries, listAchFiles, markAchFileUploaded, uploadReturnFile, type AchEntryRow, type AchFileRow } from '@/lib/bankingApi';
+import { useConfirm } from '@/lib/confirm';
 import { Badge, type BadgeProps } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
@@ -26,6 +27,8 @@ const FILE_STATUS: Record<string, { label: string; tone: NonNullable<BadgeProps[
   CREATED: { label: 'Ready to upload', tone: 'pending' },
   DOWNLOADED: { label: 'Downloaded', tone: 'info' },
   SUBMITTED: { label: 'Sent', tone: 'info' },
+  // Own account, in-house: "sent" means a person marked it uploaded.
+  UPLOADED: { label: 'Uploaded to the bank', tone: 'success' },
   SETTLED: { label: 'Settled', tone: 'success' },
   REJECTED: { label: 'Refused', tone: 'destructive' },
 };
@@ -47,8 +50,20 @@ const RETURN_WORDS: Record<string, string> = {
 
 type View = 'files' | 'returns';
 
-export function FilesTab({ inHouse }: { inHouse: boolean }) {
+export function FilesTab({ inHouse, ownAccount = false, bankName = null }: { inHouse: boolean; ownAccount?: boolean; bankName?: string | null }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
+  const bank = bankName?.trim() || 'your bank';
+  // Own account: the file is the money, so marking it uploaded is what reads the paychecks paid.
+  const markUploaded = useMutation({
+    mutationFn: (id: string) => markAchFileUploaded(id),
+    onSuccess: (r) => {
+      toast.success(r.already ? 'That file was already marked uploaded.' : `Marked uploaded: ${r.paid} paycheck${r.paid === 1 ? '' : 's'} now read paid${r.runsSettled.length ? `; ${r.runsSettled.length} run${r.runsSettled.length === 1 ? '' : 's'} settled` : ''}.`);
+      void qc.invalidateQueries({ queryKey: ['payroll-banking'] });
+      void qc.invalidateQueries({ queryKey: ['payroll'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   const [view, setView] = useState<View>('files');
   const files = useQuery({ queryKey: ['payroll-banking', 'files'], queryFn: listAchFiles, enabled: view === 'files' });
   const entries = useQuery({ queryKey: ['payroll-banking', 'entries'], queryFn: listAchEntries, enabled: view === 'returns' });
@@ -86,7 +101,7 @@ export function FilesTab({ inHouse }: { inHouse: boolean }) {
       accessor: (f) => f.status,
       searchable: false,
       cell: (f) => {
-        const s = FILE_STATUS[f.status] ?? { label: f.status, tone: 'default' as const };
+        const s = (ownAccount && inHouse && f.status === 'SUBMITTED' ? FILE_STATUS.UPLOADED : FILE_STATUS[f.status]) ?? { label: f.status, tone: 'default' as const };
         return (
           <span className="flex flex-wrap items-center gap-1.5">
             <Badge variant={s.tone}>{s.label}</Badge>
@@ -103,9 +118,30 @@ export function FilesTab({ inHouse }: { inHouse: boolean }) {
       searchable: false,
       stopRowClick: true,
       cell: (f) => (
-        <Button size="xs" variant="outline" onClick={() => downloadAchFile(f.id).then(() => void qc.invalidateQueries({ queryKey: ['payroll-banking', 'files'] })).catch((e: Error) => toast.error(e.message))} aria-label={`Download the ${purposeLabel(f.purpose).toLowerCase()} file made ${fmtDateTime(f.createdAt)}`}>
-          <Download className="mr-1 h-3.5 w-3.5" aria-hidden /> Download
-        </Button>
+        <span className="flex flex-wrap gap-1.5">
+          <Button size="xs" variant="outline" onClick={() => downloadAchFile(f.id).then(() => void qc.invalidateQueries({ queryKey: ['payroll-banking', 'files'] })).catch((e: Error) => toast.error(e.message))} aria-label={`Download the ${purposeLabel(f.purpose).toLowerCase()} file made ${fmtDateTime(f.createdAt)}`}>
+            <Download className="mr-1 h-3.5 w-3.5" aria-hidden /> Download
+          </Button>
+          {ownAccount && inHouse && f.uploadable && (
+            <Button
+              size="xs"
+              variant="primary"
+              loading={markUploaded.isPending && markUploaded.variables === f.id}
+              aria-label={`Mark the ${purposeLabel(f.purpose).toLowerCase()} file made ${fmtDateTime(f.createdAt)} uploaded to ${bank}`}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `Mark this file uploaded to ${bank}?`,
+                  description: `${f.entryCount} entr${f.entryCount === 1 ? 'y' : 'ies'} for ${centsToMoney(f.totalCreditCents)}, posting ${fmtDate(f.effectiveDate)}. Do this only after the bank’s portal accepted the file: the paychecks in it read paid, dated now.`,
+                  confirmLabel: 'Mark uploaded',
+                  destructive: true,
+                });
+                if (ok) markUploaded.mutate(f.id);
+              }}
+            >
+              <Landmark className="mr-1 h-3.5 w-3.5" aria-hidden /> Mark uploaded
+            </Button>
+          )}
+        </span>
       ),
     },
   ];

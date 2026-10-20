@@ -4,6 +4,9 @@ import { apiFetch } from './api';
 
 export type BankRail = 'PLATFORM' | 'ACH' | 'BRANCH' | 'WISE' | 'CHECK';
 export type AchSpeed = 'SAME_DAY' | 'NEXT_DAY' | 'TWO_DAY';
+/** PREFUND: the money is pulled a banking day ahead. OWN_ACCOUNT: drawn on the company's own account; the file is the money. */
+export type Settlement = 'PREFUND' | 'OWN_ACCOUNT';
+export type FileFormat = 'UNBALANCED' | 'BALANCED';
 export type KybStatus = 'NOT_STARTED' | 'PENDING' | 'APPROVED' | 'REJECTED';
 export type FundingStatus = 'NOT_STARTED' | 'DRAFT' | 'AWAITING_APPROVAL' | 'SUBMITTED' | 'SETTLED' | 'RETURNED' | 'WIRE_PENDING' | 'WIRE_RECEIVED' | 'CANCELLED';
 export type AccountStatus = 'UNVERIFIED' | 'MICRODEPOSITS_SENT' | 'PRENOTE_SENT' | 'VERIFIED' | 'FAILED' | 'DISABLED';
@@ -12,6 +15,8 @@ export interface BankingProfile {
   id: string;
   bankRail: BankRail;
   achSpeed: AchSpeed;
+  settlement: Settlement;
+  fileFormat: FileFormat;
   submitCutoffEt: string;
   companyName: string | null;
   companyId: string | null;
@@ -108,6 +113,8 @@ export interface AchFileRow {
   submittedAt: string | null;
   error: string | null;
   returns: number;
+  /** In-house and not yet marked uploaded: a person still has to carry it to the bank. */
+  uploadable: boolean;
 }
 
 export interface AchEntryRow {
@@ -186,6 +193,8 @@ export const recordWire = (runId: string, state: 'WIRE_PENDING' | 'WIRE_RECEIVED
 
 export const listAchFiles = () => apiFetch<{ files: AchFileRow[] }>(`${B}/files`);
 export const listAchEntries = () => apiFetch<{ entries: AchEntryRow[] }>(`${B}/entries`);
+export const markAchFileUploaded = (id: string) =>
+  apiFetch<{ fileId: string; paid: number; runsSettled: string[]; already: boolean }>(`${B}/files/${id}/uploaded`, { method: 'POST', body: {} });
 export const uploadReturnFile = (content: string) =>
   apiFetch<{ returned: number; corrected: number; unknown: number; total: number }>(`${B}/returns`, { method: 'POST', body: { content } });
 export const sendPrenotes = () => apiFetch<{ sent: number; file: string | null }>(`${B}/prenotes`, { method: 'POST', body: {} });

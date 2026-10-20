@@ -73,6 +73,7 @@ import { checkAdapter, resolveAdapter, type DisbursementInput } from '../lib/dis
 import { activeOverrides, closePendingCheckRequests, drawerAccount, overridesForRun } from '../lib/paperChecks.js';
 import { loadBrand } from '../lib/docKit/index.js';
 import { assertRunFunded } from '../lib/banking/funding.js';
+import { bankingProfile, ownAccount } from '../lib/banking/ach.js';
 import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
 import { accrueDepositsForRun } from '../lib/taxDeposits.js';
 import { postLiabilitiesForRun } from '../lib/payrollTaxLedger.js';
@@ -2298,6 +2299,14 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         unfunded = err instanceof HttpError ? err.message : 'This run isn’t funded yet.';
       }
     }
+    // Drawn on the company's own account: the run's in-house file, and whether a person has carried it to the bank yet.
+    const bankProfile = await bankingProfile(prisma);
+    const bankFile =
+      ownAccount(bankProfile) && run.status !== 'DRAFT'
+        ? await prisma.achFile.findFirst({ where: { payrollRunId: run.id, purpose: 'DIRECT_DEPOSIT', provider: 'IN_HOUSE' }, orderBy: { createdAt: 'desc' } })
+        : null;
+    const fileWaiting = !!bankFile && (bankFile.status === 'CREATED' || bankFile.status === 'DOWNLOADED');
+    const bankName = bankProfile.immediateDestinationName?.trim() || 'your bank';
     const byStatus = { pending: 0, disbursed: 0, held: 0, failed: 0, voided: 0 };
     for (const i of items) {
       if (i.status === 'PENDING') byStatus.pending += 1;
@@ -2384,8 +2393,14 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         blockers: byStatus.held + byStatus.failed + (unfunded ? 1 : 0) + (run.status === 'FINALIZED' && reviewMissing ? 1 : 0),
         warnings: 0,
         // The same reason the disburse route would give, so the step says why.
-        ...(unfunded ? { note: unfunded } : run.status === 'FINALIZED' && reviewNote ? { note: reviewNote } : {}),
-        to: unfunded ? '/payroll/banking' : run.status === 'FINALIZED' && reviewMissing ? `/payroll/runs/${run.id}/review` : `/payroll?run=${run.id}`,
+        ...(unfunded
+          ? { note: unfunded }
+          : run.status === 'FINALIZED' && reviewNote
+            ? { note: reviewNote }
+            : fileWaiting
+              ? { note: `The bank file is ready: download it, upload it in ${bankName}’s portal, then mark it uploaded — that is when the paychecks read paid.` }
+              : {}),
+        to: unfunded ? '/payroll/banking' : run.status === 'FINALIZED' && reviewMissing ? `/payroll/runs/${run.id}/review` : fileWaiting ? '/payroll/banking?tab=files' : `/payroll?run=${run.id}`,
       },
       {
         key: 'deposits',
@@ -2434,6 +2449,9 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         staleSignedAt: review.stale?.signedAt ?? null,
       },
       items: byStatus,
+      bankFile: bankFile
+        ? { id: bankFile.id, status: bankFile.status, effectiveDate: ymd(bankFile.effectiveDate), entryCount: bankFile.entryCount, totalCreditCents: Number(bankFile.totalCreditCents), format: bankProfile.fileFormat, bank: bankName }
+        : null,
       heldItems: items.filter((i) => i.status === 'HELD' || i.status === 'FAILED').map((i) => ({ id: i.id, name: name(i), netPay: Number(i.netPay), reason: i.failureReason })),
       // Paid and not yet re-sent: what a bank could still send back.
       paidItems: items.filter((i) => i.status === 'DISBURSED' && !i.reroutedAt).slice(0, 500).map((i) => ({ id: i.id, name: name(i), netPay: Number(i.netPay) })),

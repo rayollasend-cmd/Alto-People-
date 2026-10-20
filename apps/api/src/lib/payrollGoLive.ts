@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 import { tenantIdForWrite } from './tenant.js';
 import { NO_SIT_STATES, isStateTaxSupported, primeStateAcknowledgments, stateAwaitingReview } from './payrollTax.js';
 import { LOCAL_TAX_STATES } from './deductionTaxability.js';
-import { bankingProfile, originationGaps, usesOurAch } from './banking/ach.js';
+import { bankingProfile, originationGaps, ownAccount, usesOurAch } from './banking/ach.js';
 import { loadApprovalPolicy, rolesHolding } from './approvalPolicy.js';
 import { unscheduledWithTime } from './payScheduleMembership.js';
 import { postingGaps } from './books/posting/gaps.js';
@@ -165,11 +165,19 @@ export async function payrollGoLive(db: Db, now: Date = new Date()): Promise<Pay
         : missing('ach', 'Your bank’s ACH details', `Paychecks go out over your own ACH, and the bank still needs ${list(gaps)}.`, toBanking),
     );
     const funding = profile.fundingAccountId ? await db.employerBankAccount.findFirst({ where: { id: profile.fundingAccountId, tenantId } }) : null;
-    paying.push(
-      funding?.status === 'VERIFIED'
-        ? done('funding', 'Funding account', `${funding.label} (${funding.bankName ?? 'bank'}), verified.`, { label: 'Open bank accounts', to: '/payroll/banking?tab=accounts' })
-        : missing('funding', 'Funding account', funding ? `${funding.label} isn’t verified yet — the micro-deposits or bank letter haven’t been confirmed.` : 'No account is chosen to fund payroll from.', { label: 'Open bank accounts', to: '/payroll/banking?tab=accounts' }),
-    );
+    const toAccounts = { label: 'Open bank accounts', to: '/payroll/banking?tab=accounts' };
+    const bank = profile.immediateDestinationName?.trim() || 'your bank';
+    if (ownAccount(profile) && profile.fileFormat === 'UNBALANCED') {
+      paying.push(done('funding', 'Company account at the bank', `Paychecks are drawn on your account at ${bank}; the bank books the offset. Nothing is pulled ahead of payday.`, toBanking));
+    } else {
+      const what = ownAccount(profile) ? 'Offset account' : 'Funding account';
+      const why = ownAccount(profile) ? 'A balanced file debits it for the paychecks’ total.' : 'Payroll is pulled from it a banking day ahead.';
+      paying.push(
+        funding?.status === 'VERIFIED'
+          ? done('funding', what, `${funding.label} (${funding.bankName ?? 'bank'}), verified. ${why}`, toAccounts)
+          : missing('funding', what, funding ? `${funding.label} isn’t verified yet — the micro-deposits or bank letter haven’t been confirmed.` : `No account is chosen. ${why}`, toAccounts),
+      );
+    }
     paying.push(
       profile.kybStatus === 'APPROVED'
         ? done('kyb', 'Bank approval to send payroll', 'Your bank approved the company to originate ACH.', toBanking)

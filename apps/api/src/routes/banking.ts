@@ -11,9 +11,13 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { isClientBoundedRole, isInternallyScoped, scopePayrollRuns } from '../lib/scope.js';
 import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 import { activeConnection } from '../lib/providers/connections.js';
-import { bankingProfile, fileContent, originationGaps, usesOurAch } from '../lib/banking/ach.js';
+import { bankingProfile, fileContent, originationGaps, ownAccount as drawnOnOwnAccount, usesOurAch } from '../lib/banking/ach.js';
 import { computeFunding, loadTenantHolidays, payDateFor, recordWire, submitFunding } from '../lib/banking/funding.js';
-import { applyAchReturn, applyNoc, confirmMicroDeposits, sendDuePrenotes, startAccountVerification } from '../lib/banking/directDeposit.js';
+import { applyAchReturn, applyNoc, confirmMicroDeposits, markFileUploaded, sendDuePrenotes, startAccountVerification } from '../lib/banking/directDeposit.js';
+import { accrueDepositsForRun } from '../lib/taxDeposits.js';
+import { postLiabilitiesForRun } from '../lib/payrollTaxLedger.js';
+import { accrueRemittancesForRun } from '../lib/garnishmentRemittance.js';
+import { recordPayrollEvent } from '../lib/audit.js';
 import { payrollCalendar } from '../lib/banking/calendar.js';
 import { achTimeline, SAME_DAY_WINDOWS, type AchSpeed } from '../lib/banking/holidays.js';
 import { isValidRouting, parseReturnFile } from '../lib/banking/nacha.js';
@@ -33,6 +37,7 @@ import { isValidRouting, parseReturnFile } from '../lib/banking/nacha.js';
  *   POST /payroll-banking/runs/:runId/wire        a wire expected / received instead
  *   GET  /payroll-banking/files                   NACHA file history
  *   GET  /payroll-banking/files/:id/download      the file (audited)
+ *   POST /payroll-banking/files/:id/uploaded      own-account mode: the file reached the bank; its paychecks read paid
  *   GET  /payroll-banking/entries                 returns and notifications of change
  *   POST /payroll-banking/returns                 upload the bank's return file (in-house mode)
  *   POST /payroll-banking/prenotes                send due prenotes now
@@ -63,6 +68,8 @@ function profileView(p: PayrollBankingProfile) {
     id: p.id,
     bankRail: p.bankRail,
     achSpeed: p.achSpeed,
+    settlement: p.settlement,
+    fileFormat: p.fileFormat,
     submitCutoffEt: p.submitCutoffEt,
     companyName: p.companyName,
     companyId: p.companyId,
@@ -139,6 +146,8 @@ function fileView(f: AchFile & { _count?: { entries: number } }, returns = 0) {
     submittedAt: f.submittedAt?.toISOString() ?? null,
     error: f.error,
     returns,
+    // In-house and not yet marked: a person still has to carry it to the bank.
+    uploadable: f.provider === 'IN_HOUSE' && (f.status === 'CREATED' || f.status === 'DOWNLOADED'),
   };
 }
 
@@ -190,7 +199,8 @@ bankingRouter.get('/summary', async (req, res, next) => {
     });
     const fundings = await prisma.payrollFunding.findMany({ where: { payrollRunId: { in: runs.map((r) => r.id) } } });
     const byRun = new Map(fundings.map((f) => [f.payrollRunId, f]));
-    const runViews = usesOurAch(profile)
+    // Drawn on the company's own account there is nothing to fund: the files tab carries the runs.
+    const runViews = usesOurAch(profile) && !drawnOnOwnAccount(profile)
       ? await Promise.all(
           runs.map(async (r) => ({
             runId: r.id,
@@ -219,6 +229,8 @@ const DIGITS = (n: number) => z.string().trim().regex(new RegExp(`^\\d{${n}}$`))
 const ProfileInput = z.object({
   bankRail: z.enum(['PLATFORM', 'ACH', 'BRANCH', 'WISE', 'CHECK']).optional(),
   achSpeed: z.enum(['SAME_DAY', 'NEXT_DAY', 'TWO_DAY']).optional(),
+  settlement: z.enum(['PREFUND', 'OWN_ACCOUNT']).optional(),
+  fileFormat: z.enum(['UNBALANCED', 'BALANCED']).optional(),
   submitCutoffEt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   companyName: z.string().trim().min(1).max(16).nullable().optional(),
   companyId: z.string().trim().length(10).nullable().optional(),
@@ -369,7 +381,7 @@ bankingRouter.get('/runs/:runId/funding', async (req, res, next) => {
   try {
     const run = await reachableRun(req.user!, req.params.runId!);
     const profile = await bankingProfile(prisma);
-    if (!usesOurAch(profile)) {
+    if (!usesOurAch(profile) || drawnOnOwnAccount(profile)) {
       res.json({ applies: false, funding: null });
       return;
     }
@@ -436,6 +448,22 @@ bankingRouter.get('/files/:id/download', PROCESS, async (req, res, next) => {
   }
 });
 
+bankingRouter.post('/files/:id/uploaded', PROCESS, idempotent, async (req, res, next) => {
+  try {
+    const r = await markFileUploaded(prisma, req.params.id!, req.user!.id);
+    for (const runId of r.runsSettled) {
+      // The run just settled: the same bookkeeping the disburse route does when a rail answers at once.
+      void accrueDepositsForRun(prisma, runId).catch((err) => console.warn('[banking] tax-deposit accrual failed (advisory):', err));
+      void postLiabilitiesForRun(prisma, runId).catch((err) => console.warn('[banking] tax-liability posting failed (advisory):', err));
+      void accrueRemittancesForRun(prisma, runId).catch((err) => console.warn('[banking] garnishment-remittance accrual failed (advisory):', err));
+      const run = await prisma.payrollRun.findUnique({ where: { id: runId }, select: { clientId: true } });
+      await recordPayrollEvent({ actorUserId: req.user!.id, action: 'payroll.run_disbursed', payrollRunId: runId, clientId: run?.clientId ?? null, metadata: { provider: 'ACH', viaBankFile: true, fileId: r.fileId }, req, critical: true });
+    }
+    res.json(r);
+  } catch (err) {
+    next(err);
+  }
+});
 bankingRouter.get('/entries', PROCESS, async (req, res, next) => {
   try {
     const status = z.enum(['RETURNED', 'CORRECTED']).optional().parse(req.query.status || undefined);

@@ -101,7 +101,7 @@ export function PayrollBankingPage() {
           <DepositsTab requirePrenote={summary.data?.profile.requirePrenote ?? true} onAch={summary.data?.profile.bankRail === 'ACH'} />
         </TabsContent>
         <TabsContent value="files">
-          <FilesTab inHouse={!summary.data?.connection} />
+          <FilesTab inHouse={!summary.data?.connection} ownAccount={summary.data?.profile.settlement === 'OWN_ACCOUNT'} bankName={summary.data?.profile.immediateDestinationName ?? null} />
         </TabsContent>
         <TabsContent value="calendar">
           <CalendarTab />
@@ -175,7 +175,9 @@ function StatusBanner({ s, onSetup }: { s: BankingSummary; onSetup: () => void }
           <p className="text-sm text-ink-muted">
             {s.connection
               ? 'Each entry goes to your bank partner as it’s made; returns and corrections come back on their own.'
-              : 'Download each file from ACH files and upload it to your bank’s portal before its cutoff. Upload the return file your bank sends back so returns and corrections are applied.'}
+              : p.settlement === 'OWN_ACCOUNT'
+                ? `Paychecks are drawn on your own account at ${p.immediateDestinationName?.trim() || 'the bank'}. Download each file from ACH files, upload it in the bank’s portal before its cutoff, then mark it uploaded here — that is when the paychecks read paid. Upload the return file your bank sends back so returns and corrections are applied.`
+                : 'Download each file from ACH files and upload it to your bank’s portal before its cutoff. Upload the return file your bank sends back so returns and corrections are applied.'}
           </p>
         </div>
       </CardContent>
@@ -194,6 +196,9 @@ function FundingTab({ query, onTab, highlightRun }: { query: ReturnType<typeof u
   const s = query.data;
   if (s.profile.bankRail !== 'ACH') {
     return <EmptyState icon={Banknote} title="Nothing to fund here" description="Funding applies when payroll pays bank accounts through your own ACH. Turn it on in Setup." action={<Button size="sm" variant="outline" onClick={() => onTab('setup')}>Open setup</Button>} />;
+  }
+  if (s.profile.settlement === 'OWN_ACCOUNT') {
+    return <EmptyState icon={Banknote} title="Nothing to pull" description={`Payroll is drawn on your own account at ${s.profile.immediateDestinationName?.trim() || 'the bank'}: the ACH file is the money. Each run’s file waits under ACH files until you upload it and mark it uploaded.`} action={<Button size="sm" variant="outline" onClick={() => onTab('files')}>Open ACH files</Button>} />;
   }
   const account = s.accounts.find((a) => a.id === s.profile.fundingAccountId) ?? null;
   const next = s.runs.find((r) => canPull(r.funding.status));

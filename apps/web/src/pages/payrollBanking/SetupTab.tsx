@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { updateBankingProfile, type AchSpeed, type BankRail, type BankingProfile, type BankingSummary, type KybStatus } from '@/lib/bankingApi';
+import { updateBankingProfile, type AchSpeed, type BankRail, type BankingProfile, type BankingSummary, type FileFormat, type KybStatus, type Settlement } from '@/lib/bankingApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
@@ -19,6 +19,8 @@ import { routingLooksValid } from './AccountsTab';
 type Draft = {
   bankRail: BankRail;
   achSpeed: AchSpeed;
+  settlement: Settlement;
+  fileFormat: FileFormat;
   submitCutoffEt: string;
   companyName: string;
   companyId: string;
@@ -40,6 +42,8 @@ type Draft = {
 const fromProfile = (p: BankingProfile): Draft => ({
   bankRail: p.bankRail,
   achSpeed: p.achSpeed,
+  settlement: p.settlement,
+  fileFormat: p.fileFormat,
   submitCutoffEt: p.submitCutoffEt,
   companyName: p.companyName ?? '',
   companyId: p.companyId ?? '',
@@ -70,6 +74,8 @@ export function SetupTab({ summary }: { summary: BankingSummary }) {
       updateBankingProfile({
         bankRail: d.bankRail,
         achSpeed: d.achSpeed,
+        settlement: d.settlement,
+        fileFormat: d.fileFormat,
         submitCutoffEt: d.submitCutoffEt,
         companyName: d.companyName.trim() || null,
         companyId: d.companyId.trim() || null,
@@ -95,6 +101,9 @@ export function SetupTab({ summary }: { summary: BankingSummary }) {
     onError: (e: Error) => toast.error(e.message),
   });
   const ach = d.bankRail === 'ACH';
+  const own = ach && d.settlement === 'OWN_ACCOUNT';
+  // Same-day needs a bank partner that takes each entry now; a file a person uploads is never same-day.
+  const partner = !!summary.connection;
   return (
     <form
       className="space-y-4"
@@ -118,15 +127,27 @@ export function SetupTab({ summary }: { summary: BankingSummary }) {
               <option value="CHECK">Paper check</option>
             </Select>
           </Field>
-          <Field label="ACH speed" hint="How many banking days before pay day the paychecks go to the bank.">
+          <Field label="ACH speed" hint={partner ? 'How many banking days before pay day the paychecks go to the bank.' : 'How many banking days before pay day the file goes to the bank. Same-day needs a bank partner; a file you upload yourself is never same-day.'}>
             <Select value={d.achSpeed} onChange={(e) => set('achSpeed', e.target.value as AchSpeed)} disabled={!ach}>
-              <option value="SAME_DAY">Same day</option>
+              {partner && <option value="SAME_DAY">Same day</option>}
               <option value="NEXT_DAY">Next day</option>
               <option value="TWO_DAY">Two days</option>
             </Select>
           </Field>
           <Field label="Your bank’s cutoff (ET)" hint="Files after this go the next banking day.">
             <Input type="time" value={d.submitCutoffEt} onChange={(e) => set('submitCutoffEt', e.target.value)} disabled={!ach} />
+          </Field>
+          <Field label="Where the money comes from" hint={own ? 'The paychecks are drawn on your own account at the bank. Nothing is pulled ahead; the file is the money, and paychecks read paid when you mark it uploaded.' : 'The money is pulled from your operating account a banking day ahead, then the paychecks go out.'}>
+            <Select value={d.settlement} onChange={(e) => set('settlement', e.target.value as Settlement)} disabled={!ach}>
+              <option value="PREFUND">Pulled a day ahead (a funding debit)</option>
+              <option value="OWN_ACCOUNT">Our own account at the bank (no pull)</option>
+            </Select>
+          </Field>
+          <Field label="File format" hint={d.fileFormat === 'BALANCED' ? 'The file ends with one debit to your account for the total (service class 200). Your bank’s letter says which it wants.' : 'The file carries the credits alone and the bank books the offset to your account (service class 220). Your bank’s letter says which it wants.'}>
+            <Select value={d.fileFormat} onChange={(e) => set('fileFormat', e.target.value as FileFormat)} disabled={!own}>
+              <option value="UNBALANCED">Unbalanced — credits only</option>
+              <option value="BALANCED">Balanced — with the offset debit</option>
+            </Select>
           </Field>
         </CardContent>
       </Card>
@@ -174,12 +195,12 @@ export function SetupTab({ summary }: { summary: BankingSummary }) {
 
           <Card>
             <CardHeader>
-              <CardTitle>What the debit covers</CardTitle>
-              <CardDescription>Net pay to bank accounts is always pulled. Add what we pay on your behalf.</CardDescription>
+              <CardTitle>{own ? 'Bank tests' : 'What the debit covers'}</CardTitle>
+              <CardDescription>{own ? 'Nothing is pulled ahead on your own account; taxes and garnishments go out as their own files.' : 'Net pay to bank accounts is always pulled. Add what we pay on your behalf.'}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Check label="Payroll taxes (employee and employer)" checked={d.collectTaxes} onChange={(v) => set('collectTaxes', v)} />
-              <Check label="Garnishments we send to agencies" checked={d.collectGarnishments} onChange={(v) => set('collectGarnishments', v)} />
+              {!own && <Check label="Payroll taxes (employee and employer)" checked={d.collectTaxes} onChange={(v) => set('collectTaxes', v)} />}
+              {!own && <Check label="Garnishments we send to agencies" checked={d.collectGarnishments} onChange={(v) => set('collectGarnishments', v)} />}
               <Check label="Send a zero-dollar test to each new employee account" checked={d.requirePrenote} onChange={(v) => set('requirePrenote', v)} />
             </CardContent>
           </Card>

@@ -6,7 +6,7 @@ import { notifyFinance } from '../financialChanges.js';
 import { tenantIdForWrite } from '../tenant.js';
 import { createApprovalRequest, registerApplyHandler } from '../approvalRequests.js';
 import { describeBranchFailure } from '../achReturnCodes.js';
-import { bankingProfile, originate, usesOurAch } from './ach.js';
+import { bankingProfile, originate, ownAccount, usesOurAch } from './ach.js';
 import { achTimeline, adjustPayDate, setHolidayOverrides, type AchSpeed } from './holidays.js';
 
 /**
@@ -127,6 +127,7 @@ export function viewFunding(f: PayrollFunding): FundingView {
 export async function prepareFunding(db: PrismaClient, runId: string, actorUserId: string, payDateOverride?: string): Promise<PayrollFunding> {
   const profile = await bankingProfile(db);
   if (!usesOurAch(profile)) throw new HttpError(409, 'not_our_ach', 'This organization pays bank accounts through another rail, so there is nothing to fund here.');
+  if (ownAccount(profile)) throw new HttpError(409, 'own_account', 'Payroll is drawn on the company’s own account at the bank, so there is nothing to pull — the ACH file is the money.');
   await loadTenantHolidays(db);
   const existing = await db.payrollFunding.findUnique({ where: { payrollRunId: runId } });
   if (existing && !['DRAFT', 'CANCELLED'].includes(existing.status)) return existing;
@@ -312,6 +313,8 @@ export async function recordWire(db: PrismaClient, runId: string, actorUserId: s
 export async function assertRunFunded(db: Db, runId: string): Promise<void> {
   const profile = await bankingProfile(db);
   if (!usesOurAch(profile)) return;
+  // Drawn on the company's own account: the credits and their offset leave together; nothing is pulled ahead.
+  if (ownAccount(profile)) return;
   const funding = await db.payrollFunding.findUnique({ where: { payrollRunId: runId } });
   if (funding && ['SETTLED', 'WIRE_RECEIVED'].includes(funding.status)) return;
   // A run with no one paid by our ACH (and nothing else we collect) needs no debit.
@@ -336,6 +339,7 @@ export async function assertRunFunded(db: Db, runId: string): Promise<void> {
 export async function payrollFundingNeedingYou(db: Db): Promise<{ count: number; description: string }> {
   const profile = await bankingProfile(db);
   if (!usesOurAch(profile)) return { count: 0, description: 'Payroll isn’t paid through your own ACH.' };
+  if (ownAccount(profile)) return { count: 0, description: 'Payroll is drawn on your own account; the ACH file is the money.' };
   const tenantId = tenantIdForWrite();
   const [unfunded, trouble, accounts] = await Promise.all([
     db.payrollRun.count({ where: { tenantId, status: 'FINALIZED', NOT: { id: { in: (await db.payrollFunding.findMany({ where: { tenantId, status: { in: ['SUBMITTED', 'SETTLED', 'WIRE_RECEIVED', 'AWAITING_APPROVAL'] } }, select: { payrollRunId: true } })).map((f) => f.payrollRunId) } } } }),
