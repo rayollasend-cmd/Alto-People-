@@ -82,8 +82,8 @@ describe('vendors', () => {
     expect(made.body.vendor).toMatchObject({ name: 'Coastal Van Lease', hasTaxId: true, taxIdLast4: '6789', hasBank: true, accountLast4: '6789', state: 'FL', balance: 0, pendingBankChange: null });
     expect(JSON.stringify(made.body)).not.toContain('123456789');
     const row = await prisma.vendor.findUniqueOrThrow({ where: { id: made.body.vendor.id } });
-    expect(row.taxIdEnc!.toString('utf8')).not.toContain('123456789');
-    expect(row.accountNumberEnc!.toString('utf8')).not.toContain('000123456789');
+    expect(Buffer.from(row.taxIdEnc!).toString('utf8')).not.toContain('123456789');
+    expect(Buffer.from(row.accountNumberEnc!).toString('utf8')).not.toContain('000123456789');
 
     // Bad routing is refused outright.
     expect((await s.a.patch(`/books/vendors/${row.id}`).send({ routingNumber: '123456789', accountNumber: '1111' })).body.error.code).toBe('invalid_routing');

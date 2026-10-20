@@ -35,7 +35,7 @@ function item(partial: Partial<ProjectedItem> & { associateId: string }): Projec
     ytdWages: 0,
     ytdMedicareWages: 0,
     ...partial,
-  };
+  } as ProjectedItem;
 }
 
 const SHEET: PayrollSheet = {

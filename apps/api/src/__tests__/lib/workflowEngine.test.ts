@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Prisma } from '@prisma/client';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { runWithTenant } from '../../lib/tenant.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
@@ -31,7 +32,7 @@ afterAll(async () => {
 });
 
 async function definition(trigger: 'ASSOCIATE_HIRED' | 'TIME_OFF_REQUESTED', actions: Array<{ kind: string; params: Record<string, unknown> }>, conditions: Record<string, unknown> = {}) {
-  return prisma.workflowDefinition.create({ data: { name: `${trigger} test`, trigger, conditions, actions } });
+  return prisma.workflowDefinition.create({ data: { name: `${trigger} test`, trigger, conditions: conditions as Prisma.InputJsonValue, actions: actions as unknown as Prisma.InputJsonValue } });
 }
 
 describe('the workflow engine', () => {

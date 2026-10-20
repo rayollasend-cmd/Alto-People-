@@ -27,9 +27,9 @@ async function people() {
   };
 }
 
-const binary = (res: { on: (e: string, fn: (c?: Buffer) => void) => void; setEncoding?: (e: string) => void }, cb: (err: Error | null, body: Buffer) => void) => {
+const binary = (res: import('superagent').Response, cb: (err: Error | null, body: Buffer) => void) => {
   const chunks: Buffer[] = [];
-  res.on('data', (c?: Buffer) => chunks.push(c as Buffer));
+  res.on('data', (c: Buffer) => chunks.push(c));
   res.on('end', () => cb(null, Buffer.concat(chunks)));
 };
 

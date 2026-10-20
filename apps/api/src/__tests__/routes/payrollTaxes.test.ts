@@ -25,7 +25,7 @@ beforeEach(async () => {
   await truncateAll();
   routes = [];
   calls.length = 0;
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1] = {}) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init.method ?? 'GET').toUpperCase();
     calls.push({ url, method, body: typeof init.body === 'string' ? init.body : null });

@@ -297,7 +297,7 @@ describe('Plaid', () => {
     expect(ex).toMatchObject({ itemId: 'item-1', accounts: [{ accountId: 'acc-chk', name: 'Business Checking', mask: '0042', institution: 'First Coast Bank', linkedFeedId: null }, { accountId: 'acc-card' }] });
     // The access token is kept encrypted with the connection, never in a column.
     const conn = await prisma.providerConnection.findFirstOrThrow({ where: { kind: 'BANK_FEED' } });
-    expect(conn.credentialsEnc!.toString('utf8')).not.toContain('access-sandbox-1');
+    expect(Buffer.from(conn.credentialsEnc!).toString('utf8')).not.toContain('access-sandbox-1');
 
     const cash = await accountByKey(prisma, 'CASH_OPERATING');
     const card = await accountByKey(prisma, 'CREDIT_CARD');

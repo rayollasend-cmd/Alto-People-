@@ -33,7 +33,7 @@ beforeEach(async () => {
   routes = [];
   calls.length = 0;
   reroute.mockClear();
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1] = {}) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init.method ?? 'GET').toUpperCase();
     calls.push({ url, method, body: typeof init.body === 'string' ? init.body : null, headers: (init.headers ?? {}) as Record<string, string> });
@@ -300,6 +300,6 @@ describe('payouts through Wise', () => {
     expect((await post(bounced)).body).toEqual({ ok: true });
     expect((await post(bounced)).body).toEqual({ ok: true, duplicate: true });
     expect(reroute).toHaveBeenCalledTimes(1);
-    expect(reroute.mock.calls[0]![1]).toMatchObject({ payrollItemId: item.id, returnedRef: '987654' });
+    expect((reroute.mock.calls[0] as unknown as unknown[])[1]).toMatchObject({ payrollItemId: item.id, returnedRef: '987654' });
   });
 });

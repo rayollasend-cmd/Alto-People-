@@ -71,7 +71,7 @@ describe('the math', () => {
     expect(percentileOf(30, m)).toBe(90);
     // 12% burden, no overhead (the env defaults): 16 × 1.12 ÷ 0.75.
     expect(billForMargin(16, 25)).toBe(23.89);
-    const bands = new Map([
+    const bands: Parameters<typeof recommend>[0]['bands'] = new Map([
       ['below', { band: 'below' as const, shifts: 100, filled: 78, fillRate: 0.78, noShowRate: 0.05 }],
       ['at', { band: 'at' as const, shifts: 120, filled: 112, fillRate: 0.93, noShowRate: 0.02 }],
     ]);

@@ -114,7 +114,7 @@ describe('the review report', () => {
     });
     expect(xlsx.status).toBe(200);
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(xlsx.body as Buffer);
+    await wb.xlsx.load(xlsx.body as unknown as Parameters<typeof wb.xlsx.load>[0]);
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Summary', 'Register', 'To look at', 'By department', 'By state']);
     const reg = wb.getWorksheet('Register')!;
     expect(reg.getRow(2).getCell(1).value).toBe('Maria Lopez');
