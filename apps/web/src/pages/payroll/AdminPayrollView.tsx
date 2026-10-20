@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   Users,
   X,
+  PlaneTakeoff,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -710,6 +711,12 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     <Link to="/payroll/readiness">
                       <Users className="mr-2 h-4 w-4" />
                       {t('payrollHome.readiness')}
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/payroll/go-live">
+                      <PlaneTakeoff className="mr-2 h-4 w-4" />
+                      {t('payrollHome.goLive')}
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>

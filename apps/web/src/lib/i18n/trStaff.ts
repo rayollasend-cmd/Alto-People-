@@ -217,6 +217,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'payrollHome.morePages': 'Diğer bordro sayfaları',
   'payrollHome.more': 'Daha fazla',
   'payrollHome.readiness': 'Hazırlık',
+  'payrollHome.goLive': 'Bordroyu kendiniz çalıştırın',
   'payrollHome.ytd': 'Yılbaşından bugüne raporu',
   'payrollHome.taxForms': 'Vergi formları',
   'payrollHome.compliance': 'Uyum',

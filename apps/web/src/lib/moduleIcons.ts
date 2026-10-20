@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  PlaneTakeoff as PayrollGoLiveIcon,
   Library as BooksIcon,
   FileChartColumn as BooksReportsIcon,
   BookText as BooksJournalIcon,
@@ -289,6 +290,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'pay-schedules': PaySchedulesIcon,
   'cash-forecast': CashForecastIcon,
   'pay-bill': PayBillIcon,
+  'payroll-go-live': PayrollGoLiveIcon,
   'books': BooksIcon,
   'books-reports': BooksReportsIcon,
   'books-journal': BooksJournalIcon,

@@ -37,6 +37,7 @@ import { payrollRouter } from './routes/payroll.js';
 import { associatePayScheduleRouter, paySchedulesRouter } from './routes/paySchedules.js';
 import { bankingRouter } from './routes/banking.js';
 import { booksRouter } from './routes/books/index.js';
+import { payrollGoLiveRouter } from './routes/payrollGoLive.js';
 import { booksQuickbooksWebhookRouter } from './routes/books/quickbooksWebhook.js';
 import { payBillRouter } from './routes/payBill.js';
 import { financialChangesRouter } from './routes/financialChanges.js';
@@ -546,6 +547,8 @@ export function createApp() {
   app.use('/payroll/pay-schedules', requireCapability('view:payroll'), paySchedulesRouter);
   // One person's pay schedule: payroll, or the onboarding desk setting a new hire's (gated inside).
   app.use('/associates', requireAuth, associatePayScheduleRouter);
+  // Running payroll in-house: the company-level go-live checklist (lib/payrollGoLive).
+  app.use('/payroll/go-live', requireCapability('process:payroll'), payrollGoLiveRouter);
   app.use('/payroll', requireCapability('view:payroll'), payrollRouter);
   // W-4 SSN re-collection campaign (2026-06-11 key-rotation remediation).
   // Same capability as the SSN reveal endpoint — this surface names who

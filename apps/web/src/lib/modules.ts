@@ -6,6 +6,7 @@ import { PLATFORM_OPERATOR_TENANT_ID, ROLE_MODULE } from '@alto-people/shared';
 
 export type ModuleKey =
   | 'inbox'
+  | 'payroll-go-live'
   | 'books'
   | 'books-reports'
   | 'books-journal'
@@ -312,6 +313,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'payroll-banking',
   'pay-schedules',
   'payroll-compliance',
+  'payroll-go-live',
   'cash-forecast',
   'pay-bill',
   'books',
@@ -1421,6 +1423,15 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'payroll-go-live',
+    path: '/payroll/go-live',
+    label: 'Run payroll in-house',
+    description:
+      'Everything the company needs on file to run payroll itself — the EIN, federal and state tax accounts, filing, how paychecks go out, schedules and controls — checked, with where to fix each.',
+    requires: 'process:payroll',
+    group: 'payroll-finance',
+  },
+  {
     key: 'cash-forecast',
     path: '/finance/cash-forecast',
     label: 'Cash forecast',
@@ -2168,7 +2179,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   pay: {
     key: 'pay',
     label: 'Pay & finance',
-    children: ['payroll', 'pay-schedules', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'tax-jurisdictions', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
+    children: ['payroll', 'payroll-go-live', 'pay-schedules', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'tax-jurisdictions', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
   },
   // The company's own books (2027-01): its hub is the overview.
   books: {

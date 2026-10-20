@@ -908,6 +908,7 @@ const en = {
   'payrollHome.morePages': 'More payroll pages',
   'payrollHome.more': 'More',
   'payrollHome.readiness': 'Readiness',
+  'payrollHome.goLive': 'Run payroll in-house',
   'payrollHome.ytd': 'Year-to-date report',
   'payrollHome.taxForms': 'Tax forms',
   'payrollHome.compliance': 'Compliance',

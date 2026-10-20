@@ -840,6 +840,7 @@ export const es: Record<MessageKey, string> = {
   'payrollHome.morePages': 'Más páginas de nómina',
   'payrollHome.more': 'Más',
   'payrollHome.readiness': 'Preparación',
+  'payrollHome.goLive': 'Nómina propia: lista de preparación',
   'payrollHome.ytd': 'Informe del año a la fecha',
   'payrollHome.taxForms': 'Formularios fiscales',
   'payrollHome.compliance': 'Cumplimiento',

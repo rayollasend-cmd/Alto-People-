@@ -131,6 +131,7 @@ const WotcDesk = lazyNamed(() => import('@/pages/payroll/WotcDesk'), 'WotcDesk')
 const AcaHours = lazyNamed(() => import('@/pages/benefits/AcaHours'), 'AcaHours');
 const WotcScreeningTask = lazyNamed(() => import('@/pages/onboarding/tasks/WotcScreeningTask'), 'WotcScreeningTask');
 const CashForecastPage = lazyNamed(() => import('@/pages/finance/CashForecastPage'), 'CashForecastPage');
+const PayrollGoLivePage = lazyNamed(() => import('@/pages/payroll/PayrollGoLivePage'), 'PayrollGoLivePage');
 const BooksHome = lazyNamed(() => import('@/pages/books/BooksHome'), 'BooksHome');
 const BooksReportsPage = lazyNamed(() => import('@/pages/books/reports/BooksReportsPage'), 'BooksReportsPage');
 const JournalPage = lazyNamed(() => import('@/pages/books/ledger/JournalPage'), 'JournalPage');
@@ -703,6 +704,7 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
   { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
+  { path: 'payroll/go-live', element: <RequireCapability cap="process:payroll"><PayrollGoLivePage /></RequireCapability> },
   { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/runs/:id/close', element: <RequireCapability cap="process:payroll"><PayrollClosePage /></RequireCapability> },
