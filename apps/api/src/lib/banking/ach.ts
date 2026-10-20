@@ -82,7 +82,8 @@ export interface EntryInput {
 }
 
 export interface OriginateInput {
-  purpose: 'FUNDING' | 'DIRECT_DEPOSIT' | 'PRENOTE' | 'MICRODEPOSIT' | 'GARNISHMENT';
+  /** VENDOR: a bill payment to a vendor's bank (lib/books/payables). */
+  purpose: 'FUNDING' | 'DIRECT_DEPOSIT' | 'PRENOTE' | 'MICRODEPOSIT' | 'GARNISHMENT' | 'VENDOR';
   effectiveDate: string;
   sameDay: boolean;
   /** HHMM of the same-day window asked for (e.g. "1300"), when sameDay. */

@@ -432,6 +432,10 @@ const EnvSchema = z.object({
   INTUIT_CLIENT_ID: z.string().optional(),
   INTUIT_CLIENT_SECRET: z.string().optional(),
   INTUIT_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  // The books (2027-01): Intuit's webhook verifier token for the company QuickBooks —
+  // change notifications are HMAC-SHA256-signed with it (intuit-signature). Unset = webhooks refused; the
+  // five-minute pull still brings every change over.
+  INTUIT_WEBHOOK_VERIFIER: z.string().optional(),
   // Phase 99 — server-side secret used to HMAC kiosk PINs. Defaults to
   // PAYOUT_ENCRYPTION_KEY in dev so we don't bloat .env; production
   // should set its own (rotation invalidates all existing PINs).

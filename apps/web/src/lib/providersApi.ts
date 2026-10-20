@@ -2,7 +2,7 @@ import { apiFetch } from './api';
 
 /** Service providers (apps/api/src/lib/providers): E-Verify, screening, drug tests, tax filing, payouts. */
 
-export type ProviderKind = 'EVERIFY' | 'BACKGROUND_CHECK' | 'DRUG_TEST' | 'TAX_FILING' | 'PAYOUT' | 'EMBEDDED_PAYROLL' | 'TAX_ENGINE' | 'ORIGINATION';
+export type ProviderKind = 'EVERIFY' | 'BACKGROUND_CHECK' | 'DRUG_TEST' | 'TAX_FILING' | 'PAYOUT' | 'EMBEDDED_PAYROLL' | 'TAX_ENGINE' | 'ORIGINATION' | 'BANK_FEED';
 export type ProviderHealth = 'not_tested' | 'healthy' | 'failing' | 'paused';
 
 export interface ProviderField {

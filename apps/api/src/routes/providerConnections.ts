@@ -20,6 +20,7 @@ import { drugTestAdapter } from '../lib/providers/drugTesting.js';
 import { taxFilingAdapter } from '../lib/providers/taxFiling.js';
 import { testWiseConnection } from '../lib/providers/payouts.js';
 import { ProviderError } from '../lib/providers/http.js';
+import { testPlaidConnection } from '../lib/books/bank/plaid.js';
 
 /**
  * Settings & trust → Integrations → Screening, filing and payouts.
@@ -40,7 +41,7 @@ export const providerConnectionsRouter = Router();
 const canView = requireCapability('view:integrations');
 const canManage = requireCapability('manage:integrations');
 
-const KINDS = ['EVERIFY', 'BACKGROUND_CHECK', 'DRUG_TEST', 'TAX_FILING', 'PAYOUT', 'EMBEDDED_PAYROLL', 'TAX_ENGINE', 'ORIGINATION'] as const;
+const KINDS = ['EVERIFY', 'BACKGROUND_CHECK', 'DRUG_TEST', 'TAX_FILING', 'PAYOUT', 'EMBEDDED_PAYROLL', 'TAX_ENGINE', 'ORIGINATION', 'BANK_FEED'] as const;
 /** Providers whose webhooks are signed with a secret Alto mints and the admin pastes into the provider. */
 const SHARED_SECRET = new Set(['EVERIFY_AGENT', 'GENERIC_SCREENING', 'ESCREEN', 'QUEST_ESP']);
 
@@ -210,6 +211,8 @@ async function runTest(row: ProviderConnection): Promise<void> {
       return testTaxEngine(ctx);
     case 'ORIGINATION':
       return originationProviderFor(ctx).test();
+    case 'BANK_FEED':
+      return testPlaidConnection(ctx);
   }
 }
 

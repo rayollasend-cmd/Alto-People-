@@ -4,6 +4,7 @@ import { HttpError } from '../middleware/error.js';
 import { computeEmployerTaxes } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
 import { tenantIdForWrite } from './tenant.js';
+import { booksAfterPayrollRun } from './books/posting/hooks.js';
 
 /**
  * Manual checks and third-party sick pay (PAYEXP §3).
@@ -157,6 +158,7 @@ export async function recordManualCheck(
 
   // The liabilities this check created (bookkeeping never fails the record).
   await postRunLiabilities(db, result.runId);
+  booksAfterPayrollRun(result.runId);
   await recordCriticalAudit(
     {
       actorUserId: input.actorUserId,
@@ -193,6 +195,7 @@ export async function voidManualCheck(db: PrismaClient, input: { runId: string; 
   if (!run) throw new HttpError(404, 'check_not_found', 'Manual check not found');
   if (run.status !== 'DISBURSED') throw new HttpError(409, 'already_void', 'This check is already voided.');
   await db.$transaction((tx) => voidManualCheckTx(tx, run.id, input.reason, input.actorUserId));
+  booksAfterPayrollRun(run.id);
   await recordCriticalAudit(
     { actorUserId: input.actorUserId, action: 'payroll.manual_check.voided', entityType: 'PayrollRun', entityId: run.id, metadata: { reason: input.reason } },
     'manualChecks.void',

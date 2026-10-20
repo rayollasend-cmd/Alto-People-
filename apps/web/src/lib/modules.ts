@@ -6,6 +6,18 @@ import { PLATFORM_OPERATOR_TENANT_ID, ROLE_MODULE } from '@alto-people/shared';
 
 export type ModuleKey =
   | 'inbox'
+  | 'books'
+  | 'books-reports'
+  | 'books-journal'
+  | 'books-accounts'
+  | 'books-receivables'
+  | 'books-bills'
+  | 'books-vendors'
+  | 'books-bank'
+  | 'books-close'
+  | 'books-budgets'
+  | 'books-assets'
+  | 'books-quickbooks'
   | 'settings'
   | 'tenant-profile'
   | 'sign-in'
@@ -219,6 +231,10 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'season-planner',
   // Pay against the local market, for rate negotiations.
   'market-rates',
+  // The company's books, read (2027-01).
+  'books',
+  'books-reports',
+  'books-budgets',
 ]);
 
 /** The floor supervisor's sidebar: their floor, the faces on it, the live
@@ -298,6 +314,18 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'payroll-compliance',
   'cash-forecast',
   'pay-bill',
+  'books',
+  'books-reports',
+  'books-journal',
+  'books-accounts',
+  'books-receivables',
+  'books-bills',
+  'books-vendors',
+  'books-bank',
+  'books-close',
+  'books-budgets',
+  'books-assets',
+  'books-quickbooks',
   'market-rates',
   'earned-wage',
   'daily-pay',
@@ -1412,6 +1440,122 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    key: 'books',
+    path: '/books',
+    label: 'Books',
+    description:
+      'The company’s own books at a glance: cash in the bank, what clients owe and what you owe, profit this month, the month-end close and the QuickBooks sync.',
+    descriptionNoClients:
+      'The company’s own books at a glance: cash in the bank, what you are owed and what you owe, profit this month, the month-end close and the QuickBooks sync.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-reports',
+    path: '/books/reports',
+    label: 'Financial statements',
+    description:
+      'Profit and loss, balance sheet, cash flow and trial balance — for the company, a client, a site or a department, by month, with every number opening to the entries behind it.',
+    descriptionNoClients:
+      'Profit and loss, balance sheet, cash flow and trial balance — for the company, a site or a department, by month, with every number opening to the entries behind it.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-journal',
+    path: '/books/journal',
+    label: 'Journal',
+    description:
+      'Every entry in the books — posted on their own by payroll, statements, bills and the bank, or by hand — with where each came from.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-accounts',
+    path: '/books/accounts',
+    label: 'Chart of accounts',
+    description:
+      'The accounts the books keep, their balances, and each one’s detail.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-receivables',
+    path: '/books/receivables',
+    label: 'Receivables',
+    description:
+      'What clients owe: statements by age, payments received and applied, and who is late.',
+    descriptionNoClients:
+      'What you are owed: invoices by age, payments received and applied, and what is late.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-bills',
+    path: '/books/bills',
+    label: 'Bills',
+    description:
+      'Vendor bills: entered, approved by a second person, scheduled and paid by ACH or check.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-vendors',
+    path: '/books/vendors',
+    label: 'Vendors',
+    description:
+      'The people and companies you pay — their terms, bank details and 1099s.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-bank',
+    path: '/books/bank',
+    label: 'Bank and cards',
+    description:
+      'Bank and card activity matched to the books, categorized by rule, and reconciled to each statement.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-close',
+    path: '/books/close',
+    label: 'Month-end close',
+    description:
+      'Each month’s close: the checklist, accruals, the lock, and a second person’s sign-off.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-budgets',
+    path: '/books/budgets',
+    label: 'Budgets',
+    description:
+      'Budget against actual by account, month, client and department, with the forecast to year end.',
+    descriptionNoClients:
+      'Budget against actual by account, month and department, with the forecast to year end.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-assets',
+    path: '/books/assets',
+    label: 'Fixed assets',
+    description:
+      'Vans, equipment and build-outs on the books, depreciated each month.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
+    key: 'books-quickbooks',
+    path: '/books/quickbooks',
+    label: 'QuickBooks sync',
+    description:
+      'The company’s QuickBooks kept in step both ways: what went over, what came back, and anything waiting for a decision.',
+    requires: 'view:books',
+    group: 'payroll-finance',
+  },
+  {
     key: 'market-rates',
     path: '/market-rates',
     label: 'Market rates',
@@ -1980,6 +2124,7 @@ export type DoorKey =
   | 'hire'
   | 'time'
   | 'pay'
+  | 'books'
   | 'compliance'
   | 'operations'
   | 'transport'
@@ -2025,6 +2170,13 @@ export const DOORS: Record<DoorKey, NavDoor> = {
     label: 'Pay & finance',
     children: ['payroll', 'pay-schedules', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'tax-jurisdictions', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
   },
+  // The company's own books (2027-01): its hub is the overview.
+  books: {
+    key: 'books',
+    label: 'Books',
+    hub: 'books',
+    children: ['books-reports', 'books-journal', 'books-accounts', 'books-receivables', 'books-bills', 'books-vendors', 'books-bank', 'books-close', 'books-budgets', 'books-assets', 'books-quickbooks'],
+  },
   compliance: {
     key: 'compliance',
     label: (term) => term('nav.compliance'),
@@ -2049,7 +2201,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   more: { key: 'more', label: 'More', children: [] },
 };
 
-const DEFAULT_RAIL: readonly DoorKey[] = ['me', 'team', 'people', 'hire', 'time', 'pay', 'compliance', 'operations', 'transport', 'clients', 'comms', 'insights', 'settings'];
+const DEFAULT_RAIL: readonly DoorKey[] = ['me', 'team', 'people', 'hire', 'time', 'pay', 'books', 'compliance', 'operations', 'transport', 'clients', 'comms', 'insights', 'settings'];
 
 /**
  * Which doors a role gets, in order. Most roles take the default and let

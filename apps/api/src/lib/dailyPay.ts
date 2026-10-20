@@ -11,6 +11,7 @@ import type { AggregatorResult, ProjectedItem } from './payrollAggregator.js';
 import { computePaycheckTaxes, stateAwaitingReview } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
 import { tenantJob } from './tenantJobs.js';
+import { booksAfterPayrollRun } from './books/posting/hooks.js';
 
 /**
  * Daily / next-day pay (PAYEXP §1).
@@ -542,6 +543,8 @@ export async function runDailyPay(opts: { now?: Date; actorUserId?: string | nul
     }
     if (status === 'HELD') summary.held.push({ associateId, workDate: workDay, reason: failure ?? 'held' });
     summary.paid.push({ associateId, workDate: workDay, runId: run.id, itemId: item.id, gross, net, status });
+    // The books: the daily check accrues and, once sent, leaves payroll checking.
+    booksAfterPayrollRun(run.id);
     enqueueAudit(
       { actorUserId: opts.actorUserId ?? null, action: 'payroll.daily_pay.settled', entityType: 'PayrollRun', entityId: run.id, metadata: { associateId, workDate: workDay, gross, net, status, fee: feeTaken } },
       'dailyPay.settle',

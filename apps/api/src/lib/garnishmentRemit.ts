@@ -4,6 +4,7 @@ import { decryptString, encryptString } from './crypto.js';
 import { bankingProfile, originate, type EntryInput, type OriginateInput, type OriginateResult } from './banking/ach.js';
 import { isValidRouting } from './banking/nacha.js';
 import { addBankingDays, isBankingDay, onOrBeforeBankingDay } from './banking/holidays.js';
+import { booksAfterGarnishmentRemittance } from './books/posting/hooks.js';
 
 /**
  * Electronic remittance of withheld garnishments.
@@ -267,6 +268,8 @@ export async function remitElectronically(
         reference: `ACH file ${result.file.id.slice(0, 8)}`,
       },
     });
+    // The books: garnishments payable paid out (lib/books/posting).
+    booksAfterGarnishmentRemittance(r.id);
     sent.push({ remittanceId: r.id, entries: lines.length, amount: Math.round(lines.reduce((s, l) => s + l.amount, 0) * 100) / 100 });
   }
   return { achFileId: result.file.id, fileStatus: result.file.status, sent, advice };

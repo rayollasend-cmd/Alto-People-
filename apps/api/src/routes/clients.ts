@@ -1,3 +1,4 @@
+import { emitBooksChange } from '../lib/books/events.js';
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import {
@@ -37,6 +38,8 @@ import {
 import { completeStatementSnapshot, renderStatementPdf, statementContext } from '../lib/statementPdf.js';
 import { finalizationTerms } from '../lib/statementDunning.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
+import { booksAfterStatement } from '../lib/books/posting/hooks.js';
+import { recordStatementPaidInFull } from '../lib/books/posting/receivables.js';
 
 export const clientsRouter = Router();
 
@@ -268,6 +271,8 @@ clientsRouter.post('/', MANAGE, async (req, res, next) => {
       name: created.name,
       status: created.status,
     });
+    // The company QuickBooks keeps a customer per client (lib/books/qbo).
+    emitBooksChange({ localType: 'Client', localId: created.id, op: 'UPSERT' });
     res.status(201).json(toSummary(created));
   } catch (err) {
     next(err);
@@ -315,6 +320,7 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
     await auditClient(req, 'client.updated', updated.id, {
       changed: Object.keys(data),
     });
+    emitBooksChange({ localType: 'Client', localId: updated.id, op: 'UPSERT' });
     res.json(toSummary(updated));
   } catch (err) {
     next(err);
@@ -929,6 +935,8 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
       },
       'clients.statement_finalized',
     );
+    // The books: the statement is a receivable and revenue (lib/books/posting).
+    booksAfterStatement(row.id);
     notifyPortalOfStatement(
       row.clientId,
       `${statementLabel(updated.number, row.periodStart, row.periodEnd)} is ready`,
@@ -1090,11 +1098,9 @@ clientsRouter.post('/:id/statements/:sid/mark-paid', STATEMENTS, async (req, res
     if (row.paidAt) {
       throw new HttpError(409, 'already_paid', 'Statement is already marked paid.');
     }
-    const updated = await prisma.clientStatement.update({
-      where: { id: row.id },
-      data: { paidAt: new Date(), paidById: req.user!.id, paymentRef },
-      include: { finalizedBy: { select: { email: true } } },
-    });
+    // One path for money received (lib/books/posting/receivables): a payment of
+    // what is still open, into the books, and the statement marked paid.
+    const updated = await recordStatementPaidInFull(prisma, { statementId: row.id, userId: req.user!.id, paymentRef });
     await recordCriticalAudit(
       {
         actorUserId: req.user!.id,

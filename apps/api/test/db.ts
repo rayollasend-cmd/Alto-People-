@@ -2,6 +2,7 @@ import { PrismaClient, type Role } from '@prisma/client';
 import { hashPassword } from '../src/lib/passwords.js';
 import { flushPendingAudits } from '../src/lib/audit.js';
 import { flushPendingNotifications } from '../src/lib/notify.js';
+import { flushPendingBooks } from '../src/lib/books/posting/common.js';
 import { seedShippedPacks } from '../src/lib/laborRules/store.js';
 
 export const prisma = new PrismaClient();
@@ -265,6 +266,33 @@ const TABLES = [
   'HrCaseSlaPolicy',
   'DocumentRetentionPolicy',
   'MassUpdateBatch',
+  // The books (2027-01): ledger, payables, bank, close, budgets, assets, QuickBooks sync.
+  'JournalLine',
+  'JournalEntry',
+  'CloseTask',
+  'FiscalPeriod',
+  'BillPaymentApplication',
+  'BillPayment',
+  'BillLine',
+  'Bill',
+  'RecurringBill',
+  'Vendor',
+  'ClientPaymentApplication',
+  'ClientPayment',
+  'BankTransaction',
+  'BankReconciliation',
+  'BankRule',
+  'BankFeedAccount',
+  'BudgetLine',
+  'Budget',
+  'DepreciationEntry',
+  'FixedAsset',
+  'LedgerAccount',
+  'QboSyncConflict',
+  'QboSyncEvent',
+  'QboOutbox',
+  'QboSyncLink',
+  'QboCompanyConnection',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */
@@ -282,6 +310,8 @@ export async function truncateAll(): Promise<void> {
   // The same for notification chains (shift notices, emails, WhatsApp): a
   // late insert against a wiped table is an FK error in the next test's log.
   await flushPendingNotifications();
+  // And the books' after-the-fact posting (lib/books/posting): a late entry must not land in the next test.
+  await flushPendingBooks();
   // Brief 2-1: the Tenant table is preserved (Alto HR is seeded once), but a test's
   // second tenant must not outlive it — no table references Tenant by key.
   await prisma.tenant.deleteMany({ where: { id: { not: '00000000-0000-4000-8000-000000000001' } } });

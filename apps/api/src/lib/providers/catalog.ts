@@ -13,7 +13,7 @@
  *               could not confirm, marked "confirm with vendor" in code
  */
 
-export type ProviderKindName = 'EVERIFY' | 'BACKGROUND_CHECK' | 'DRUG_TEST' | 'TAX_FILING' | 'PAYOUT' | 'EMBEDDED_PAYROLL' | 'TAX_ENGINE' | 'ORIGINATION';
+export type ProviderKindName = 'EVERIFY' | 'BACKGROUND_CHECK' | 'DRUG_TEST' | 'TAX_FILING' | 'PAYOUT' | 'EMBEDDED_PAYROLL' | 'TAX_ENGINE' | 'ORIGINATION' | 'BANK_FEED';
 
 export type ProviderId =
   | 'DHS_EVERIFY'
@@ -29,7 +29,8 @@ export type ProviderId =
   | 'SYMMETRY_STE'
   | 'VERTEX_PAYROLL'
   | 'MODERN_TREASURY'
-  | 'INCREASE';
+  | 'INCREASE'
+  | 'PLAID';
 
 export interface ProviderField {
   key: string;
@@ -65,6 +66,7 @@ export const PROVIDER_KIND_LABEL: Record<ProviderKindName, string> = {
   EMBEDDED_PAYROLL: 'Payroll taxes, paid and filed for you',
   TAX_ENGINE: 'Tax engine',
   ORIGINATION: 'Bank (ACH)',
+  BANK_FEED: 'Bank and card feeds',
 };
 
 export const PROVIDERS: readonly ProviderInfo[] = [
@@ -341,6 +343,25 @@ export const ORIGINATION_PROVIDERS: readonly ProviderInfo[] = [
     ],
     confidence: 'partner',
     baseUrls: { SANDBOX: 'https://sandbox.vertexpayroll.com/api', PRODUCTION: 'https://api.vertexpayroll.com/api' },
+  },
+  {
+    id: 'PLAID',
+    kind: 'BANK_FEED',
+    label: 'Plaid',
+    what: 'Brings the company’s bank and card transactions into the books every few hours, with balances, so they can be matched and reconciled — no statement uploads.',
+    credentialFields: [
+      { key: 'clientId', label: 'Client ID', secret: false, hint: 'Plaid Dashboard → Developers → Keys.' },
+      { key: 'secret', label: 'Secret', secret: true, hint: 'The sandbox or production secret, matching the environment below.' },
+    ],
+    settingFields: [],
+    webhook: { supported: false, how: 'The books pull new transactions on a schedule (and on “Sync now”); nothing calls back.' },
+    steps: [
+      'Create a Plaid account and enable the Transactions product.',
+      'Enter the client ID and the secret for the environment you choose (sandbox first).',
+      'Test the connection, then open Books › Bank and cards and choose “Connect a bank” to link each account.',
+    ],
+    confidence: 'documented',
+    baseUrls: { SANDBOX: 'https://sandbox.plaid.com', PRODUCTION: 'https://production.plaid.com' },
   },
 ];
 

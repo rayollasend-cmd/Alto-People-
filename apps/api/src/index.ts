@@ -68,6 +68,7 @@ import { startAuditSinkCron } from './lib/auditSink.js';
 import { ensurePersonWorkers } from './lib/workers.js';
 import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
+import { runBooksJobs } from './lib/books/jobs.js';
 import { syncAllPlans } from './lib/retirement.js';
 import { applyDueBackupWithholding } from './lib/contractors.js';
 import { installEventSync, runScheduledSyncs } from './lib/integrations/sync.js';
@@ -238,6 +239,11 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
     runForEachTenant('pay-schedules', () => sweepTenantSchedules(prisma)).catch((err) => logger.warn({ err }, 'pay schedule sweep failed'));
   setTimeout(() => void sweepPaySchedules(), 5 * 60_000).unref();
   setInterval(sweepPaySchedules, 3 * 60 * 60_000).unref();
+  // The books: recurring bills, bank feeds, accrual reversals and
+  // depreciation, and the QuickBooks outbox and pull (lib/books/jobs).
+  const sweepBooks = () => runForEachTenant('books', () => runBooksJobs(prisma)).catch((err) => logger.warn({ err }, 'books sweep failed'));
+  setTimeout(() => void sweepBooks(), 2 * 60_000).unref();
+  setInterval(sweepBooks, 5 * 60_000).unref();
   startAgentDriftCron();
   // Brief 3-5: the HR and VMS connections sync on their schedule (every five
   // minutes the clock is checked per tenant) and on the domain events the

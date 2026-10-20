@@ -17,6 +17,7 @@ const PURPOSE: Record<AchFileRow['purpose'], string> = {
   PRENOTE: 'Bank tests',
   MICRODEPOSIT: 'Account check',
   GARNISHMENT: 'Garnishment payments',
+  VENDOR: 'Vendor payments',
 };
 /** A purpose this screen doesn't know yet reads as a file, never a crash. */
 const purposeLabel = (p: string) => PURPOSE[p as AchFileRow['purpose']] ?? 'ACH file';

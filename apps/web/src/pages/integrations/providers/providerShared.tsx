@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Banknote, Building2, Calculator, CalendarCheck2, Check, Copy, FlaskConical, Landmark, Plug, ShieldCheck, UserSearch, type LucideIcon } from 'lucide-react';
+import { Banknote, Building2, Calculator, CalendarCheck2, Check, Copy, CreditCard, FlaskConical, Landmark, Plug, ShieldCheck, UserSearch, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ProviderConnection, ProviderHealth, ProviderKind } from '@/lib/providersApi';
 import { fmtDateTime, fmtRelativeDate } from '@/lib/format';
@@ -17,6 +17,7 @@ export const KIND_ICON: Record<ProviderKind, LucideIcon> = {
   TAX_ENGINE: Calculator,
   EMBEDDED_PAYROLL: CalendarCheck2,
   ORIGINATION: Building2,
+  BANK_FEED: CreditCard,
 };
 
 /** What each kind does when nothing is connected, and what connecting changes — plain words. */
@@ -60,6 +61,11 @@ export const KIND_COPY: Record<ProviderKind, { title: string; manual: string; co
     title: 'Your bank (ACH)',
     manual: 'With payroll on your own ACH, deposits go out in a NACHA file you upload to your bank.',
     connected: 'Deposits and the funding debit go to your bank as ACH payment orders, and settlements and returns come back on their own.',
+  },
+  BANK_FEED: {
+    title: 'Bank and card feeds',
+    manual: 'Bank and card statements are uploaded to the books as CSV or OFX files and reconciled from there.',
+    connected: 'Bank and card transactions arrive in the books on their own every few hours, ready to match and reconcile.',
   },
 };
 

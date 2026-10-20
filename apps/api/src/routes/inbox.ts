@@ -805,6 +805,21 @@ const SOURCES: SourceDef[] = [
     visible: (u) => can(u, 'view:transport'),
     count: async () => (await transportNeedsYou()).total,
   },
+  {
+    key: 'books-bills',
+    label: 'Bills',
+    description: 'Vendor bills waiting for your approval, and approved bills due in the next week.',
+    path: '/books/bills',
+    visible: (u) => can(u, 'manage:books'),
+    count: async (u) => {
+      const tenantId = tenantIdForWrite();
+      const [toApprove, dueSoon] = await Promise.all([
+        prisma.bill.count({ where: { tenantId, status: 'PENDING_APPROVAL', NOT: { createdById: u.id } } }),
+        prisma.bill.count({ where: { tenantId, status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, dueDate: { lte: new Date(Date.now() + 7 * DAY_MS) } } }),
+      ]);
+      return toApprove + dueSoon;
+    },
+  },
 ];
 
 /**

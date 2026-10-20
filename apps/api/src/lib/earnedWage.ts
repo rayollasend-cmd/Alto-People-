@@ -13,6 +13,7 @@ import { orgSettingIdFor } from './branding.js';
 import { tenantIdForWrite } from './tenant.js';
 import { tryDecryptString } from './crypto.js';
 import { readRoutingNumber } from './payoutMethod.js';
+import { booksAfterWageAdvance } from './books/posting/hooks.js';
 
 /**
  * Earned-wage access: pay before payday.
@@ -278,6 +279,8 @@ export async function requestEarnedWageAdvance(
       paidAt: status === 'PAID' ? now : null,
     },
   });
+  // The books: the advance leaves payroll checking (lib/books/posting).
+  if (status === 'PAID') booksAfterWageAdvance(row.id);
   enqueueAudit(
     {
       actorUserId: input.actor.id,

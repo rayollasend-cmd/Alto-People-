@@ -90,6 +90,9 @@ const KIND_LINK: Record<ApprovalRequestKind, (r: ApprovalRequest) => string> = {
   GARNISHMENT_PAYEE_BANK: () => '/payroll/garnishments?tab=orders',
   PAY_BY_CHECK: (r) => `/payroll/runs/${(r.proposed as { runId?: string } | null)?.runId ?? ''}/checks`,
   PAYROLL_FUNDING_LIMIT: (r) => (r.subjectType === 'PayrollRun' ? `/payroll/banking?run=${r.subjectId}` : '/payroll/banking?tab=setup'),
+  BILL_APPROVAL: (r) => `/books/bills/${r.subjectId}`,
+  VENDOR_BANK: (r) => `/books/vendors/${r.subjectId}`,
+  PERIOD_REOPEN: (r) => `/books/close/${(r.proposed as { periodKey?: string } | null)?.periodKey ?? ''}`,
 };
 
 /** The link a decider opens to see the subject. */

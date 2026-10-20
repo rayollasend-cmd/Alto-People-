@@ -19,3 +19,4 @@ export * from './forecast.js';
 export * from './tasks.js';
 export * from './controlRoom.js';
 export * from './paySchedules.js';
+export * from './books/index.js';

@@ -6,6 +6,7 @@ import { secondPersonExists } from './approvalPolicy.js';
 import { filingMode, withProvider } from './embeddedPayroll/index.js';
 import { depositDue, isDepositFrequency, quarterLabel, type DepositFrequency } from './payrollTaxCalendar.js';
 import { tenantIdForWrite } from './tenant.js';
+import { booksAfterTaxPayment } from './books/posting/hooks.js';
 
 /**
  * The payroll-tax liability ledger.
@@ -378,6 +379,8 @@ export async function submitPaymentToProvider(db: PrismaClient, paymentId: strin
 /** A payment's liabilities are paid; the federal 941 deposit rows follow so the older ledger agrees. */
 async function settleLiabilities(db: Db, payment: TaxPayment, actorUserId: string | null): Promise<void> {
   await db.taxLiability.updateMany({ where: { paymentId: payment.id }, data: { status: 'PAID' } });
+  // The books: the liabilities paid out of payroll checking (lib/books/posting).
+  booksAfterTaxPayment(payment.id);
   if (payment.kind === 'FEDERAL_WITHHOLDING') {
     const runs = (await db.taxLiability.findMany({ where: { paymentId: payment.id }, select: { payrollRunId: true } })).map((r) => r.payrollRunId).filter((x): x is string => !!x);
     if (runs.length) {

@@ -36,6 +36,8 @@ import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
 import { associatePayScheduleRouter, paySchedulesRouter } from './routes/paySchedules.js';
 import { bankingRouter } from './routes/banking.js';
+import { booksRouter } from './routes/books/index.js';
+import { booksQuickbooksWebhookRouter } from './routes/books/quickbooksWebhook.js';
 import { payBillRouter } from './routes/payBill.js';
 import { financialChangesRouter } from './routes/financialChanges.js';
 import { payrollTaxesRouter } from './routes/payrollTaxes.js';
@@ -425,6 +427,8 @@ export function createApp() {
   // And every connected service provider (E-Verify agents, Checkr, eScreen, Quest, TaxBandits,
   // Wise) — each adapter verifies its own signature over the raw body.
   app.use('/webhooks/providers', tenantMiddleware, providerWebhooksRouter);
+  // And Intuit's change notifications for the company QuickBooks (intuit-signature over the raw body).
+  app.use('/books/quickbooks/webhook', tenantMiddleware, booksQuickbooksWebhookRouter);
   // 2mb to accommodate base64-encoded kiosk selfies (1MB raw → ~1.4MB
   // base64 → headroom for the JSON envelope).
   app.use(express.json({ limit: '2mb' }));
@@ -535,6 +539,8 @@ export function createApp() {
   app.use('/pay-bill', requireAuth, payBillRouter);
   // Payroll banking: funding, employer accounts, NACHA files, returns, the payroll calendar.
   app.use('/payroll-banking', requireCapability('view:payroll'), bankingRouter);
+  // The company's own books (2027-01): ledger, payables, bank, close, budgets, assets, QuickBooks.
+  app.use('/books', booksRouter);
   app.use('/payroll/federal-w4', requireCapability('process:payroll'), federalW4Router);
   // Pay schedules and who is on them (rules, effective-dated moves) — before /payroll so its /:id routes don't shadow these.
   app.use('/payroll/pay-schedules', requireCapability('view:payroll'), paySchedulesRouter);

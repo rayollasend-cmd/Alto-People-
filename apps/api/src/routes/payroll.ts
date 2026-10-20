@@ -112,6 +112,7 @@ import { ZipArchive } from 'archiver';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { booksAfterGarnishmentRemittance, booksAfterPayrollRun, booksAfterRunDeleted, booksAfterTaxDeposit } from '../lib/books/posting/hooks.js';
 
 export const payrollRouter = Router();
 
@@ -1584,6 +1585,8 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, idempotent, async (req, res, n
     // Pay reaches the bill: retro pay rebilled and premiums billed by each
     // client's contract (lib/payBillLink). Never fails the finalize.
     await onPayrollFinalized(prisma, updated.id, req.user!.id).catch((err) => console.warn('[payroll] pay-bill link failed:', err));
+    // The books: the run's wages, taxes and deductions accrue (lib/books/posting).
+    booksAfterPayrollRun(updated.id);
     // The review report is ready: the people who can sign hear about it.
     await notifyReviewers(prisma, updated).catch((err) => console.warn('[payroll] review notice failed:', err));
     // Outbound webhooks — run id + period + status only. Deliberately NO
@@ -1711,6 +1714,7 @@ payrollRouter.delete('/runs/:id', VOID, async (req, res, next) => {
       },
       req,
     });
+    booksAfterRunDeleted(run.id);
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -2162,6 +2166,8 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
       include: RUN_INCLUDE,
     });
 
+    // The books: the checks that went out leave payroll checking (lib/books/posting).
+    booksAfterPayrollRun(run.id);
     // Tier-1 — the withheld taxes just became trust-fund money on an IRS
     // deadline. Accrue the deposit obligation now (fire-and-forget:
     // bookkeeping must never fail a disbursement).
@@ -2592,6 +2598,7 @@ payrollRouter.post('/tax-deposits/:id/mark-paid', PROCESS, async (req, res, next
         confirmationNumber,
       },
     });
+    booksAfterTaxDeposit(updated.id);
     await recordPayrollEvent({
       actorUserId: req.user!.id,
       action: 'payroll.tax_deposit_paid',
@@ -2929,6 +2936,7 @@ payrollRouter.post('/garnishment-remittances/:id/mark-sent', PROCESS, async (req
       where: { id: remittance.id },
       data: { status: 'SENT', sentAt: new Date(), sentById: req.user!.id, reference },
     });
+    booksAfterGarnishmentRemittance(remittance.id);
     await recordPayrollEvent({
       actorUserId: req.user!.id,
       action: 'payroll.garnishment_remitted',
@@ -3140,6 +3148,7 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, idempotent, async (req, 
       req,
     });
 
+    booksAfterPayrollRun(run.id);
     res.json({ retried: heldIds.length, succeeded });
   } catch (err) {
     next(err);
@@ -3320,6 +3329,8 @@ payrollRouter.post('/runs/:id/void', VOID, async (req, res, next) => {
       reason,
       associates: recipients,
     });
+    // The books: a voided run's entries come off (or reverse, in a closed month).
+    booksAfterPayrollRun(updated.id);
 
     res.json(toDetail(updated));
   } catch (err) {

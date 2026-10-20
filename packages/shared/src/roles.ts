@@ -215,7 +215,15 @@ export type Capability =
   //  - manage:claims  unemployment claims and workers' comp claims (the
   //    FROI, injuries, restrictions, the employer's contest evidence)
   | 'manage:leave'
-  | 'manage:claims';
+  | 'manage:claims'
+  // The books (2027-01): the company's OWN finance — the general ledger,
+  // payables, bank reconciliation, the month-end close, budgets, fixed
+  // assets and the QuickBooks sync. Owner + Finance only; never the
+  // org-wide admin family (recruiters and marketing don't read the P&L).
+  //  - view:books     read the ledger, statements, budgets and the sync
+  //  - manage:books   post entries, enter and pay bills, reconcile, close
+  | 'view:books'
+  | 'manage:books';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -292,6 +300,8 @@ const FULL_ADMIN: Capability[] = [
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   EXECUTIVE_CHAIRMAN: new Set<Capability>([
     ...ALL_VIEWS,
+    // The owner reads the company's books; Finance keeps them.
+    'view:books',
     'view:audit',
     'view:executive',
     'view:product-analytics',
@@ -317,6 +327,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   // perform the HR/Finance settle step.
   HR_ADMINISTRATOR: new Set<Capability>([
     ...FULL_ADMIN,
+    // One of the two owner seats: the books, read and kept.
+    'view:books',
+    'manage:books',
     // Granted here rather than in FULL_ADMIN: product telemetry starts with
     // the two roles accountable for the platform, and widens deliberately.
     'view:product-analytics',
@@ -373,6 +386,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   // HR/onboarding/recruiting surface area.
   FINANCE_ACCOUNTANT: new Set<Capability>([
     'view:dashboard',
+    // The company's own books are Finance's to keep.
+    'view:books',
+    'manage:books',
     'view:time',
     // Payroll is finance's end-to-end (owner decision, 2026-09-05):
     // approving timesheets and working the corrections window ARE the

@@ -6225,6 +6225,9 @@ export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
   'BILLING_ADJUSTMENT',
   'GARNISHMENT_PAYEE_BANK',
   'PAY_BY_CHECK',
+  'BILL_APPROVAL',
+  'VENDOR_BANK',
+  'PERIOD_REOPEN',
 ]))();
 export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
 
@@ -6244,6 +6247,9 @@ export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> =
   BILLING_ADJUSTMENT: 'Billing adjustment',
   GARNISHMENT_PAYEE_BANK: 'Garnishment payee bank',
   PAY_BY_CHECK: 'Paper check this payday',
+  BILL_APPROVAL: 'Vendor bill',
+  VENDOR_BANK: 'Vendor bank account',
+  PERIOD_REOPEN: 'Reopen a closed month',
 };
 
 export const ApprovalRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']))();

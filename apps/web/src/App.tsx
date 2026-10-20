@@ -131,6 +131,27 @@ const WotcDesk = lazyNamed(() => import('@/pages/payroll/WotcDesk'), 'WotcDesk')
 const AcaHours = lazyNamed(() => import('@/pages/benefits/AcaHours'), 'AcaHours');
 const WotcScreeningTask = lazyNamed(() => import('@/pages/onboarding/tasks/WotcScreeningTask'), 'WotcScreeningTask');
 const CashForecastPage = lazyNamed(() => import('@/pages/finance/CashForecastPage'), 'CashForecastPage');
+const BooksHome = lazyNamed(() => import('@/pages/books/BooksHome'), 'BooksHome');
+const BooksReportsPage = lazyNamed(() => import('@/pages/books/reports/BooksReportsPage'), 'BooksReportsPage');
+const JournalPage = lazyNamed(() => import('@/pages/books/ledger/JournalPage'), 'JournalPage');
+const JournalEntryPage = lazyNamed(() => import('@/pages/books/ledger/JournalEntryPage'), 'JournalEntryPage');
+const AccountsPage = lazyNamed(() => import('@/pages/books/ledger/AccountsPage'), 'AccountsPage');
+const AccountDetailPage = lazyNamed(() => import('@/pages/books/ledger/AccountDetailPage'), 'AccountDetailPage');
+const ReceivablesPage = lazyNamed(() => import('@/pages/books/receivables/ReceivablesPage'), 'ReceivablesPage');
+const BillsPage = lazyNamed(() => import('@/pages/books/payables/BillsPage'), 'BillsPage');
+const BillDetailPage = lazyNamed(() => import('@/pages/books/payables/BillDetailPage'), 'BillDetailPage');
+const VendorsPage = lazyNamed(() => import('@/pages/books/payables/VendorsPage'), 'VendorsPage');
+const VendorDetailPage = lazyNamed(() => import('@/pages/books/payables/VendorDetailPage'), 'VendorDetailPage');
+const BankPage = lazyNamed(() => import('@/pages/books/bank/BankPage'), 'BankPage');
+const BankAccountPage = lazyNamed(() => import('@/pages/books/bank/BankAccountPage'), 'BankAccountPage');
+const ReconcilePage = lazyNamed(() => import('@/pages/books/bank/ReconcilePage'), 'ReconcilePage');
+const ClosePage = lazyNamed(() => import('@/pages/books/close/ClosePage'), 'ClosePage');
+const ClosePeriodPage = lazyNamed(() => import('@/pages/books/close/ClosePeriodPage'), 'ClosePeriodPage');
+const BudgetsPage = lazyNamed(() => import('@/pages/books/budgets/BudgetsPage'), 'BudgetsPage');
+const BudgetDetailPage = lazyNamed(() => import('@/pages/books/budgets/BudgetDetailPage'), 'BudgetDetailPage');
+const FixedAssetsPage = lazyNamed(() => import('@/pages/books/assets/FixedAssetsPage'), 'FixedAssetsPage');
+const FixedAssetDetailPage = lazyNamed(() => import('@/pages/books/assets/FixedAssetDetailPage'), 'FixedAssetDetailPage');
+const QuickbooksSyncPage = lazyNamed(() => import('@/pages/books/quickbooks/QuickbooksSyncPage'), 'QuickbooksSyncPage');
 const PayBillPage = lazyNamed(() => import('@/pages/finance/PayBillPage'), 'PayBillPage');
 const MarketRatesHome = lazyNamed(() => import('@/pages/market/MarketRatesHome'), 'MarketRatesHome');
 const LaborRulesPage = lazyNamed(() => import('@/pages/payroll/LaborRulesPage'), 'LaborRulesPage');
@@ -698,6 +719,28 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/wotc', element: <RequireCapability cap="process:payroll" anyOf={['manage:onboarding']}><WotcDesk /></RequireCapability> },
   { path: 'benefits/aca', element: <RequireCapability cap="process:payroll"><AcaHours /></RequireCapability> },
   { path: 'finance/cash-forecast', element: <RequireCapability cap="process:payroll"><CashForecastPage /></RequireCapability> },
+  // The company's own books (2027-01).
+  { path: 'books', element: <RequireCapability cap="view:books"><BooksHome /></RequireCapability> },
+  { path: 'books/reports', element: <RequireCapability cap="view:books"><BooksReportsPage /></RequireCapability> },
+  { path: 'books/journal', element: <RequireCapability cap="view:books"><JournalPage /></RequireCapability> },
+  { path: 'books/journal/:id', element: <RequireCapability cap="view:books"><JournalEntryPage /></RequireCapability> },
+  { path: 'books/accounts', element: <RequireCapability cap="view:books"><AccountsPage /></RequireCapability> },
+  { path: 'books/accounts/:id', element: <RequireCapability cap="view:books"><AccountDetailPage /></RequireCapability> },
+  { path: 'books/receivables', element: <RequireCapability cap="view:books"><ReceivablesPage /></RequireCapability> },
+  { path: 'books/bills', element: <RequireCapability cap="view:books"><BillsPage /></RequireCapability> },
+  { path: 'books/bills/:id', element: <RequireCapability cap="view:books"><BillDetailPage /></RequireCapability> },
+  { path: 'books/vendors', element: <RequireCapability cap="view:books"><VendorsPage /></RequireCapability> },
+  { path: 'books/vendors/:id', element: <RequireCapability cap="view:books"><VendorDetailPage /></RequireCapability> },
+  { path: 'books/bank', element: <RequireCapability cap="view:books"><BankPage /></RequireCapability> },
+  { path: 'books/bank/:id', element: <RequireCapability cap="view:books"><BankAccountPage /></RequireCapability> },
+  { path: 'books/bank/:id/reconcile', element: <RequireCapability cap="view:books"><ReconcilePage /></RequireCapability> },
+  { path: 'books/close', element: <RequireCapability cap="view:books"><ClosePage /></RequireCapability> },
+  { path: 'books/close/:periodKey', element: <RequireCapability cap="view:books"><ClosePeriodPage /></RequireCapability> },
+  { path: 'books/budgets', element: <RequireCapability cap="view:books"><BudgetsPage /></RequireCapability> },
+  { path: 'books/budgets/:id', element: <RequireCapability cap="view:books"><BudgetDetailPage /></RequireCapability> },
+  { path: 'books/assets', element: <RequireCapability cap="view:books"><FixedAssetsPage /></RequireCapability> },
+  { path: 'books/assets/:id', element: <RequireCapability cap="view:books"><FixedAssetDetailPage /></RequireCapability> },
+  { path: 'books/quickbooks', element: <RequireCapability cap="view:books"><QuickbooksSyncPage /></RequireCapability> },
   { path: 'finance/pay-bill', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><PayBillPage /></RequireCapability> },
   { path: 'market-rates', element: <RequireCapability cap="view:clients"><MarketRatesHome /></RequireCapability> },
   { path: 'payroll/labor-rules', element: <RequireCapability cap="process:payroll" anyOf={['manage:org', 'view:executive']}><LaborRulesPage /></RequireCapability> },

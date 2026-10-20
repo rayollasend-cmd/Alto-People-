@@ -121,7 +121,8 @@ describe('the sidebar stays a dozen rows, not a hundred', () => {
   it('the roles that hold every capability still get a short rail', () => {
     for (const role of ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'MANAGER', 'MARKETING_MANAGER'] as Role[]) {
       const shape = shapeFor(role);
-      expect(shape.rows.length + shape.doors.length, role).toBeLessThanOrEqual(16);
+      // 17 since the owner's Books door (2027-01) — the company's own finance is a door, not a corner of Pay.
+      expect(shape.rows.length + shape.doors.length, role).toBeLessThanOrEqual(17);
     }
   });
 
