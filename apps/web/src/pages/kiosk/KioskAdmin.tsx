@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { PunchPhotosTab } from './PunchPhotosTab';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
@@ -16,6 +17,7 @@ import {
   RotateCw,
   Nfc,
   ScanFace,
+  Camera,
   ScrollText,
   Search,
   Stethoscope,
@@ -94,13 +96,31 @@ import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 import { BadgeDialog } from './BadgeDialog';
 
-type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces';
+type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces' | 'photos';
 
 type ClientLocation = Awaited<ReturnType<typeof listClientLocations>>['locations'][number];
 // Stable empties so derived lists keep their identity across renders
 // (they sit in memo/effect deps).
 const NO_LOCATIONS: ClientLocation[] = [];
 const NO_PINS: KioskPin[] = [];
+
+/** Why a punch is in the review queue, in plain words. */
+function anomalyLabel(pu: { anomalyKind: KioskPunchSummary['anomalyKind']; rejectReason: string | null }): string {
+  switch (pu.anomalyKind) {
+    case 'IMPOSSIBLE_TRAVEL':
+      return 'Impossible travel';
+    case 'FACE_MISMATCH':
+      return 'Face mismatch';
+    case 'GEOFENCE':
+      return 'Outside geofence';
+    case 'FACE_ENROLLMENT':
+      return 'New face enrolled';
+    case 'NO_PHOTO':
+      return 'No photo — confirm they were there';
+    default:
+      return pu.rejectReason ?? 'Anomaly';
+  }
+}
 
 export function KioskAdmin() {
   const { user } = useAuth();
@@ -115,7 +135,8 @@ export function KioskAdmin() {
     tabParam === 'pins' ||
     tabParam === 'review' ||
     tabParam === 'log' ||
-    tabParam === 'faces'
+    tabParam === 'faces' ||
+    tabParam === 'photos'
       ? tabParam
       : 'devices';
   const setTab = (next: Tab) => {
@@ -187,6 +208,9 @@ export function KioskAdmin() {
           <TabsTrigger value="log">
             <ScrollText className="mr-2 h-4 w-4" /> Punch log
           </TabsTrigger>
+          <TabsTrigger value="photos">
+            <Camera className="mr-2 h-4 w-4" /> Photos
+          </TabsTrigger>
           <TabsTrigger value="faces">
             <ScanFace className="mr-2 h-4 w-4" /> Face refs
           </TabsTrigger>
@@ -195,6 +219,7 @@ export function KioskAdmin() {
         <TabsContent value="pins"><PinsTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
         <TabsContent value="review"><ReviewTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
         <TabsContent value="log"><LogTab /></TabsContent>
+        <TabsContent value="photos"><PunchPhotosTab canManage={canManage} /></TabsContent>
         <TabsContent value="faces"><FacesTab canManage={canManage} /></TabsContent>
       </Tabs>
     </ListTemplate>
@@ -2404,7 +2429,7 @@ function LogTab() {
   );
   const [rejectGroup, setRejectGroup] = useState<'' | KioskRejectGroup>(() => {
     const g = urlParams.get('reason');
-    return g === 'wrong_client' || g === 'not_recognized' || g === 'inactive'
+    return g === 'wrong_client' || g === 'not_recognized' || g === 'inactive' || g === 'photo_required'
       ? g
       : '';
   });
@@ -2643,6 +2668,7 @@ function LogTab() {
           <option value="wrong_client">Wrong site (number under another client)</option>
           <option value="not_recognized">Unrecognized number</option>
           <option value="inactive">Inactive associate</option>
+          <option value="photo_required">Photo required, none taken</option>
         </Select>
         <Select
           size="sm"
@@ -3121,14 +3147,14 @@ function ReviewTab({
                   key: 'reason',
                   header: 'Reason',
                   accessor: (pu) =>
-                    pu.anomalyKind === 'IMPOSSIBLE_TRAVEL' ? 'Impossible travel' : pu.anomalyKind === 'FACE_MISMATCH' ? 'Face mismatch' : pu.anomalyKind === 'GEOFENCE' ? 'Outside geofence' : pu.anomalyKind === 'FACE_ENROLLMENT' ? 'New face enrolled' : (pu.rejectReason ?? 'Anomaly'),
+                    anomalyLabel(pu),
                   sortable: true,
                   cardMeta: true,
                   className: 'text-xs text-warning',
                   cell: (pu) => (
                     <>
                       <div className="font-medium">
-                        {pu.anomalyKind === 'IMPOSSIBLE_TRAVEL' ? 'Impossible travel' : pu.anomalyKind === 'FACE_MISMATCH' ? 'Face mismatch' : pu.anomalyKind === 'GEOFENCE' ? 'Outside geofence' : pu.anomalyKind === 'FACE_ENROLLMENT' ? 'New face enrolled' : (pu.rejectReason ?? 'Anomaly')}
+                        {anomalyLabel(pu)}
                       </div>
                       {pu.anomalyDetail && <div className="text-silver">{pu.anomalyDetail}</div>}
                     </>

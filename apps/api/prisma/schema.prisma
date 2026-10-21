@@ -8619,6 +8619,10 @@ enum KioskAnomalyKind {
   // every future match. Enrollment punches land in the review queue so
   // an admin eyeballs the selfie once against the associate.
   FACE_ENROLLMENT
+  // A punch that had to carry a photo (lib/punchPhotoPolicy) and came
+  // without one because the kiosk's camera wasn't working: kept, never
+  // refused (refusing is unpaid work), and a supervisor confirms it.
+  NO_PHOTO
 }
 
 // Kiosk face-verification consent — see Associate.faceConsentStatus.
@@ -16551,4 +16555,32 @@ model QboSyncEvent {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([tenantId, createdAt])
+}
+
+/// Whether a kiosk punch must carry a photo (2027-01). scope: COMPANY | CLIENT | SITE | ASSOCIATE —
+/// the most specific rule in force wins (lib/punchPhotoPolicy). required=false on a narrower scope
+/// exempts it from a broader one. Ended rules stay as history (endedAt).
+model PunchPhotoRule {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  scope       String    @db.VarChar(10)
+  clientId    String?   @db.Uuid
+  siteId      String?   @db.Uuid
+  associateId String?   @db.Uuid
+  required    Boolean   @default(true)
+  /// Why — required for a person-level rule, so singling someone out is on the record.
+  reason      String?   @db.VarChar(500)
+  startsOn    DateTime  @db.Date
+  /// The last day it applies (inclusive); null = until ended.
+  endsOn      DateTime? @db.Date
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  endedAt     DateTime? @db.Timestamptz(6)
+  endedById   String?   @db.Uuid
+  endReason   String?   @db.VarChar(500)
+
+  @@index([tenantId, scope])
+  @@index([associateId])
+  @@index([siteId])
+  @@index([clientId])
 }

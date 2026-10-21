@@ -145,6 +145,8 @@ interface KioskStrings {
   privacy: string;
   cameraUnavailable: string;
   continueWithoutSelfie: string;
+  /** A required photo the camera can't take: punch anyway, flagged for a supervisor. */
+  punchWithoutPhoto: string;
   confirmOutTitle: string;
   confirmOutBreak: string;
   confirmOutLeave: string;
@@ -217,6 +219,7 @@ const STRINGS: Record<Lang, KioskStrings> = {
     privacy: 'Your photo is used only to verify this time punch.',
     cameraUnavailable: 'Camera unavailable',
     continueWithoutSelfie: 'Continue without selfie',
+    punchWithoutPhoto: 'Punch without a photo — a supervisor will confirm',
     confirmOutTitle: 'Done for the day,',
     confirmOutBreak: '☕ Just taking a break',
     confirmOutLeave: 'Leaving — clock me out',
@@ -302,6 +305,7 @@ const STRINGS: Record<Lang, KioskStrings> = {
     privacy: 'Tu foto se usa solo para verificar esta marcación.',
     cameraUnavailable: 'Cámara no disponible',
     continueWithoutSelfie: 'Continuar sin foto',
+    punchWithoutPhoto: 'Marcar sin foto — un supervisor lo confirmará',
     confirmOutTitle: '¿Terminaste por hoy,',
     confirmOutBreak: '☕ Solo voy a descansar',
     confirmOutLeave: 'Me voy — marcar salida',
@@ -383,7 +387,13 @@ export function KioskPage() {
     faceConsent: FaceConsentStatus | null;
     missedClockOutAt?: string | null;
     breakQuestions?: { meal: boolean; rest: boolean } | null;
+    /** A photo must be taken at this punch — no skipping, consent or not. */
+    photoRequired?: boolean;
+    photoNotice?: string | null;
   } | null>(null);
+  // Read synchronously by routeByConsent and submit, which run in the same
+  // tick the preflight lands (before its state re-renders).
+  const photoRequiredRef = useRef(false);
   // The break answer, carried into the clock-out punch (lib/timeCorrections on the API).
   const breakAnswerRef = useRef<{ meal: 'YES' | 'NO' | 'WAIVED'; rest?: 'YES' | 'NO' | null } | null>(null);
   const [breakMealAnswer, setBreakMealAnswer] = useState<'YES' | 'NO' | 'WAIVED' | null>(null);
@@ -641,6 +651,7 @@ export function KioskPage() {
     setError(null);
     setPinError(null);
     setPreflight(null);
+    photoRequiredRef.current = false;
     setStage('idle');
   };
   const scheduleReset = (ms: number) => {
@@ -776,7 +787,10 @@ export function KioskPage() {
         faceConsent: v.faceConsent,
         missedClockOutAt: v.missedClockOut?.clockInAt ?? null,
         breakQuestions: v.breakQuestions ?? null,
+        photoRequired: !!v.photoRequired,
+        photoNotice: v.photoNotice ?? null,
       });
+      photoRequiredRef.current = !!v.photoRequired;
       // Remember this PIN's consent so a later OFFLINE punch can
       // decide camera-or-not without the server. null clears the
       // cache entry — an admin RESET must not leave a stale
@@ -875,17 +889,17 @@ export function KioskPage() {
   // `intentOverride` exists for same-tick callers (the confirmOut screen
   // routes straight into a PIN-only submit before React has re-rendered
   // with the new `intent` state); everyone else relies on state.
-  const submit = async (selfieData: string | null, intentOverride?: Intent) => {
+  const submit = async (selfieData: string | null, intentOverride?: Intent, cameraDown = false) => {
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     try {
-      await submitInner(selfieData, intentOverride);
+      await submitInner(selfieData, intentOverride, cameraDown);
     } finally {
       submitInFlightRef.current = false;
     }
   };
 
-  const submitInner = async (selfieData: string | null, intentOverride?: Intent) => {
+  const submitInner = async (selfieData: string | null, intentOverride?: Intent, cameraDown = false) => {
     if (!token) {
       setStage('setup');
       return;
@@ -900,8 +914,11 @@ export function KioskPage() {
       // Deferred to the background attach (see attachSelfieAndFace) so the
       // large selfie upload + CPU-heavy descriptor extraction don't sit in
       // front of the result screen. Kept tiny, the punch returns fast even
-      // on a slow uplink.
-      selfie: null,
+      // on a slow uplink. A REQUIRED photo goes with the punch instead: the
+      // server refuses the punch without it.
+      selfie: photoRequiredRef.current ? selfieData : null,
+      photoPolicyAware: true,
+      photoUnavailable: photoRequiredRef.current && cameraDown,
       latitude: loc?.lat ?? null,
       longitude: loc?.lng ?? null,
       faceDescriptor: null,
@@ -923,6 +940,7 @@ export function KioskPage() {
       // Fire-and-forget: upload the selfie + attach the descriptor now that
       // the associate is already clocked in.
       if (selfieData) void attachSelfieAndFace(selfieData, r.punchId, token);
+      photoRequiredRef.current = false;
     } catch (err) {
       // Server rejected (4xx) → real error, show it. Network failure →
       // queue and tell the user "saved offline". 429 (throttle collision,
@@ -993,6 +1011,7 @@ export function KioskPage() {
         pin: badgeRef.current ? '' : pin,
         badgeToken: badgeRef.current,
         selfie: selfieData,
+        photoUnavailable: photoRequiredRef.current && cameraDown,
         // Offline punches skip face capture — it's a best-effort fraud
         // signal and the selfie image is still queued for HR review.
         faceDescriptor: null,
@@ -1024,6 +1043,14 @@ export function KioskPage() {
     consent: FaceConsentStatus | null,
     intentOverride?: Intent,
   ) => {
+    // A required photo (lib/punchPhotoPolicy on the API): straight to the
+    // camera whatever the face-matching answer — the photo isn't face
+    // matching, and the screen says it's required. Consent can be asked
+    // another time.
+    if (photoRequiredRef.current) {
+      setStage('selfie');
+      return;
+    }
     if (consent === null) {
       setStage('consent');
     } else if (consent === 'DECLINED') {
@@ -1253,8 +1280,12 @@ export function KioskPage() {
           // submit is the second line of defence).
           onSkip={() => {
             setStage('submitting');
-            void submit(null);
+            // A required photo that can't be taken: the punch still counts,
+            // flagged for a supervisor (the camera is reported as down).
+            void submit(null, undefined, photoRequiredRef.current);
           }}
+          photoRequired={!!preflight?.photoRequired}
+          photoNotice={preflight?.photoNotice ?? null}
           onCancel={reset}
         />
       )}
@@ -1732,12 +1763,18 @@ function SelfieCapture({
   onCaptured,
   onSkip,
   onCancel,
+  photoRequired = false,
+  photoNotice = null,
 }: {
   t: KioskStrings;
   preflight: { firstName: string; predictedAction: KioskPunchAction; missedClockOutAt?: string | null } | null;
   onCaptured: (dataUrl: string) => void;
+  /** No photo: skipped — or, when one is required, the camera couldn't take it. */
   onSkip: () => void;
   onCancel: () => void;
+  /** A photo is required at this punch: no skip button while the camera works. */
+  photoRequired?: boolean;
+  photoNotice?: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1888,7 +1925,7 @@ function SelfieCapture({
         <div className="text-silver text-sm mb-6">{streamErr}</div>
         <div className="flex gap-3 justify-center">
           <Button onClick={onSkip} size="lg">
-            {t.continueWithoutSelfie}
+            {photoRequired ? t.punchWithoutPhoto : t.continueWithoutSelfie}
           </Button>
           <Button onClick={onCancel} size="lg" variant="secondary">
             {t.cancel}
@@ -1973,14 +2010,21 @@ function SelfieCapture({
           the error screen — a camera that shows a black rectangle without
           ever rejecting (the hang case) used to leave Cancel as the only
           way out, looping the associate back to the same dead camera. */}
+      {photoRequired && photoNotice && (
+        <div role="status" className="mt-3 max-w-sm rounded-lg border border-gold/50 bg-gold/10 px-4 py-2 text-center text-base text-ink">
+          {photoNotice}
+        </div>
+      )}
       <div className="mt-4 flex items-center gap-4">
-        <button
-          onClick={onSkip}
-          disabled={analyzing}
-          className="min-h-[44px] px-6 text-silver text-base hover:text-white transition disabled:opacity-40"
-        >
-          {t.continueWithoutSelfie}
-        </button>
+        {!photoRequired && (
+          <button
+            onClick={onSkip}
+            disabled={analyzing}
+            className="min-h-[44px] px-6 text-silver text-base hover:text-white transition disabled:opacity-40"
+          >
+            {t.continueWithoutSelfie}
+          </button>
+        )}
         <button
           onClick={onCancel}
           disabled={analyzing}

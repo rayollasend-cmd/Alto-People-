@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { kioskPhotoNotice, noticeCameraDown, photoPolicyFor } from '../lib/punchPhotoPolicy.js';
 import { breakQuestionsFor, isStaleOpenEntry, promptMissedClockOut, recordBreakAttestation } from '../lib/timeCorrections.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { ALTO_TENANT_ID, runWithTenant, tenantIdForWrite } from '../lib/tenant.js';
@@ -1276,13 +1277,17 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   // of eyeballing raw reason strings. Groups cover both the preflight
   // and punch-time variants of each reason.
   const rejectGroup = z
-    .enum(['wrong_client', 'not_recognized', 'inactive'])
+    .enum(['wrong_client', 'not_recognized', 'inactive', 'photo_required'])
     .optional()
     .parse(req.query.rejectGroup);
+  // Photo at punch: punches kept with no photo (missing), or kept without the
+  // photo their rule required (flagged NO_PHOTO, waiting on a supervisor).
+  const photo = z.enum(['missing', 'required_missing']).optional().parse(req.query.photo);
   const rejectReasonsFor: Record<string, string[]> = {
     wrong_client: ['pin_wrong_client', 'pin_wrong_client_preflight'],
     not_recognized: ['pin_not_recognized', 'pin_not_recognized_preflight'],
     inactive: ['associate_inactive', 'associate_inactive_preflight'],
+    photo_required: ['photo_required'],
   };
   const from = z
     .string()
@@ -1331,6 +1336,8 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
       ? { rejectReason: { in: rejectReasonsFor[rejectGroup] } }
       : {}),
     ...(anomaliesOnly ? { anomalyKind: { not: null } } : {}),
+    ...(photo === 'missing' ? { selfie: null, action: { not: 'REJECTED' } } : {}),
+    ...(photo === 'required_missing' ? { anomalyKind: 'NO_PHOTO' } : {}),
     ...(from || to
       ? {
           createdAt: {
@@ -1698,6 +1705,15 @@ const PunchInputSchema = z.object({
   // Selfie as a base64 data URL or raw base64. Optional but strongly
   // encouraged — we surface it in HR for buddy-punching disputes.
   selfie: z.string().max(2_000_000).optional().nullable(),
+  // Photo at punch (lib/punchPhotoPolicy): this kiosk screen knows photos
+  // can be required, and sends the photo with the punch when one is.
+  photoPolicyAware: z.boolean().optional(),
+  // The camera wouldn't start: a required-photo punch is kept, flagged
+  // NO_PHOTO for a supervisor to confirm, never refused.
+  photoUnavailable: z.boolean().optional(),
+  // Replayed from the offline queue: hours already worked — a missing
+  // required photo is flagged for a supervisor, never refused.
+  queuedOffline: z.boolean().optional(),
   // Phase 100 — geofence inputs. Required when the device has a geofence
   // configured; ignored otherwise. Browser geolocation reports lat/lng
   // as JS numbers.
@@ -2367,10 +2383,16 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     }
   }
 
+  // Photo at punch: whether this person's punch here needs a photo, and what the kiosk tells them.
+  const photoPolicy = await photoPolicyFor(prisma, { associateId: pinRow.associateId, siteId: device.locationId, clientId: device.clientId });
+
   res.json({
     ok: true,
     associateFirstName: pinRow.associate.firstName,
     predictedAction,
+    // A photo must be taken at this punch: no "continue without", consent or not.
+    photoRequired: photoPolicy.required,
+    photoNotice: kioskPhotoNotice(photoPolicy),
     // Drives the one-time consent screen: null = never asked (kiosk
     // asks before the first selfie), DECLINED = PIN-only flow (camera
     // never opens), GRANTED = selfie as usual.
@@ -2787,8 +2809,44 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
   // photos are part of what's consented to, so null must behave like
   // DECLINED here. (The rejected-PIN path above still keeps its selfie:
   // identity unknown there, and the image is the fraud evidence.)
+  //
+  // Except where a photo is REQUIRED at punch (lib/punchPhotoPolicy): there
+  // the picture is kept whatever the face-matching answer — a photo isn't a
+  // face template, and the person was told at the keypad. Matching below
+  // still needs consent.
+  const photoPolicy = await photoPolicyFor(prisma, { associateId: pinRow.associateId, siteId: device.locationId, clientId: device.clientId });
   const storedSelfie =
-    pinRow.associate.faceConsentStatus === 'GRANTED' ? selfie : null;
+    photoPolicy.required || pinRow.associate.faceConsentStatus === 'GRANTED' ? selfie : null;
+  // A required photo that isn't here: refused, unless the camera is down (kept
+  // and flagged below) or the tablet runs a screen from before photos could be
+  // required (kept and flagged — reloading it fixes that).
+  let noPhotoDetail: string | null = null;
+  if (photoPolicy.required && !selfie) {
+    if (input.photoUnavailable) {
+      noPhotoDetail = 'No photo — the kiosk’s camera wasn’t working. Confirm they were there.';
+      void noticeCameraDown(prisma, device.id).catch(() => undefined);
+    } else if (input.queuedOffline) {
+      noPhotoDetail = 'No photo — punched while the kiosk was offline. Confirm they were there.';
+    } else if (!input.photoPolicyAware) {
+      noPhotoDetail = 'No photo — the tablet is running an older kiosk screen. Reload it, and confirm they were there.';
+    } else {
+      await prisma.kioskPunch.create({
+        data: {
+          kioskDeviceId: device.id,
+          action: 'REJECTED',
+          rejectReason: 'photo_required',
+          associateId: pinRow.associateId,
+          kioskPinId: pinRow.id,
+          punchLat,
+          punchLng,
+          distanceMeters: dist,
+          idempotencyKey: input.idempotencyKey ?? null,
+          clientPunchedAt,
+        },
+      });
+      throw new HttpError(400, 'photo_required', 'A photo is required for this punch. Look at the camera and try again.');
+    }
+  }
 
   // 5 + 5b — the Phase 101 face-reference lookup and the Phase 104
   // impossible-travel lookback both key off this associateId and are
@@ -3078,6 +3136,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
       | 'FACE_MISMATCH'
       | 'GEOFENCE'
       | 'FACE_ENROLLMENT'
+      | 'NO_PHOTO'
       | null = null;
     let anomalyDetail: string | null = null;
     if (impossibleTravel) {
@@ -3096,6 +3155,13 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
       // future match (the imposter reads as "correct" forever).
       anomalyKind = 'FACE_ENROLLMENT';
       anomalyDetail = 'first face enrollment — confirm the selfie matches the associate';
+    }
+    // A required photo that didn't come: a supervisor confirms the person was there.
+    if (noPhotoDetail && (anomalyKind === null || anomalyKind === 'FACE_ENROLLMENT')) {
+      anomalyKind = 'NO_PHOTO';
+      anomalyDetail = noPhotoDetail;
+    } else if (noPhotoDetail && anomalyDetail) {
+      anomalyDetail = `${anomalyDetail}; ${noPhotoDetail}`;
     }
 
     const punch = await tx.kioskPunch.create({
@@ -3351,6 +3417,18 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
     select: { faceConsentStatus: true },
   });
   if (associate?.faceConsentStatus !== 'GRANTED') {
+    // A required photo is kept without face consent (lib/punchPhotoPolicy) —
+    // the picture only; no descriptor is matched or enrolled.
+    const policy = await photoPolicyFor(prisma, { associateId, siteId: device.locationId, clientId: device.clientId });
+    if (policy.required) {
+      let late: Buffer<ArrayBuffer> | null = null;
+      try {
+        late = decodeSelfie(input.selfie ?? null);
+      } catch {
+        /* malformed — nothing to keep */
+      }
+      if (late) await prisma.kioskPunch.update({ where: { id: punch.id }, data: { selfie: late } });
+    }
     res.json({ ok: true, skipped: true });
     return;
   }

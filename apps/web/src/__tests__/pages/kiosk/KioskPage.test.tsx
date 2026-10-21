@@ -202,6 +202,39 @@ describe('<KioskPage> punch flow', () => {
     expect(await screen.findByText('Clocked in')).toBeInTheDocument();
   });
 
+  it('a required photo: straight to the camera even after declining face matching, no skip — a dead camera punches flagged', async () => {
+    vi.mocked(kioskVerifyPin).mockResolvedValue({
+      ...VERIFY_OK,
+      faceConsent: 'DECLINED',
+      photoRequired: true,
+      photoNotice: 'A photo is required at each of your punches.',
+    });
+    vi.mocked(kioskPunch).mockResolvedValue(PUNCH_OK);
+
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+
+    // Declined face matching used to mean PIN-only; a required photo opens the camera anyway.
+    // jsdom has no camera, so this lands on the camera-unavailable screen — whose only way
+    // through is a flagged punch, never "continue without selfie".
+    expect(await screen.findByText(/camera unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /continue without selfie/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /punch without a photo — a supervisor will confirm/i }));
+    expect(await screen.findByText('Clocked in')).toBeInTheDocument();
+    expect(vi.mocked(kioskPunch).mock.calls[0]![0]).toMatchObject({ selfie: null, photoPolicyAware: true, photoUnavailable: true });
+  });
+
+  it('without a rule every punch says it knows about required photos, and claims no broken camera', async () => {
+    vi.mocked(kioskVerifyPin).mockResolvedValue(VERIFY_OK);
+    vi.mocked(kioskPunch).mockResolvedValue(PUNCH_OK);
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+    expect(await screen.findByText('Clocked in')).toBeInTheDocument();
+    expect(vi.mocked(kioskPunch).mock.calls[0]![0]).toMatchObject({ photoPolicyAware: true, photoUnavailable: false });
+  });
+
   it('network failure on verify AND punch lands in the offline queue — no camera without known consent', async () => {
     vi.mocked(kioskVerifyPin).mockRejectedValue(new Error('network down'));
     vi.mocked(kioskPunch).mockRejectedValue(new Error('network down'));

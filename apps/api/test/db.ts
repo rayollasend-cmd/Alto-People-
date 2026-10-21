@@ -293,6 +293,8 @@ const TABLES = [
   'QboOutbox',
   'QboSyncLink',
   'QboCompanyConnection',
+  // Photo-at-punch rules (2027-01).
+  'PunchPhotoRule',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

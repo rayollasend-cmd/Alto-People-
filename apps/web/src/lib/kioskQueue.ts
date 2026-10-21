@@ -32,6 +32,8 @@ export interface QueuedPunch {
   capturedAt: string;
   /** Phase 105 — null = clock toggle, 'BREAK' = break toggle. */
   intent: 'BREAK' | null;
+  /** The camera wouldn't start (a required photo couldn't be taken). */
+  photoUnavailable?: boolean;
   attempts: number;
   lastError: string | null;
 }
@@ -209,6 +211,10 @@ async function drainItems(
         idempotencyKey: item.idempotencyKey,
         clientPunchedAt: item.capturedAt,
         intent: item.intent,
+        // Hours already worked: a missing required photo is flagged, never refused (lib/punchPhotoPolicy).
+        photoPolicyAware: true,
+        queuedOffline: true,
+        photoUnavailable: item.photoUnavailable ?? false,
       });
       synced++;
     } catch (err: unknown) {

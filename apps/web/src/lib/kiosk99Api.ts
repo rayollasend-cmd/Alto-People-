@@ -68,7 +68,9 @@ export type KioskAnomalyKind =
   | 'FACE_MISMATCH'
   | 'IMPOSSIBLE_TRAVEL'
   | 'GEOFENCE'
-  | 'FACE_ENROLLMENT';
+  | 'FACE_ENROLLMENT'
+  /** A required photo the camera couldn't take (or an offline / older-screen punch): a supervisor confirms. */
+  | 'NO_PHOTO';
 
 export interface KioskPunchSummary {
   id: string;
@@ -184,6 +186,10 @@ export const kioskVerifyPin = (payload: {
     missedClockOut?: { entryId: string; clockInAt: string } | null;
     /** Before a clock-out where the state requires breaks: what to ask. */
     breakQuestions?: { meal: boolean; rest: boolean } | null;
+    /** A photo must be taken at this punch (lib/punchPhotoPolicy on the API) — no skipping. */
+    photoRequired?: boolean;
+    /** What to tell the person about it (never the reason). */
+    photoNotice?: string | null;
   }>('/kiosk/verify-pin', {
     method: 'POST',
     body: payload,
@@ -367,7 +373,7 @@ export const diagnoseKioskPin = (params: {
   );
 };
 
-export type KioskRejectGroup = 'wrong_client' | 'not_recognized' | 'inactive';
+export type KioskRejectGroup = 'wrong_client' | 'not_recognized' | 'inactive' | 'photo_required';
 
 export const listKioskPunches = (params?: {
   associateId?: string;
@@ -465,6 +471,12 @@ export const kioskPunch = (input: {
   intent?: 'BREAK' | null;
   /** Where the state requires breaks: the answer given on the tablet before clocking out. */
   breakAttestation?: { meal: 'YES' | 'NO' | 'WAIVED'; rest?: 'YES' | 'NO' | null } | null;
+  /** This screen knows photos can be required, and sends one inline when they are. */
+  photoPolicyAware?: boolean;
+  /** The camera wouldn't start: a required-photo punch is kept and flagged, not refused. */
+  photoUnavailable?: boolean;
+  /** Replayed from the offline queue. */
+  queuedOffline?: boolean;
 }) =>
   apiFetch<KioskPunchResult>('/kiosk/punch', {
     method: 'POST',

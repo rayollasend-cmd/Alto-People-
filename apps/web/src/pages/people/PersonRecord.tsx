@@ -33,6 +33,7 @@ import { CATEGORY_LABELS as CASE_CATEGORY_LABELS, listCaseQueue, type QueueCaseR
 import { StatusBadge, statusLabel, statusTone } from '@/lib/status';
 import { CompensationTab, DocumentsTab, EmploymentTab, PaymentsTab, ProfileTab } from './PeopleDirectory';
 import { PromoteDialog } from './PromoteDialog';
+import { PunchPhotoCard } from '@/components/PunchPhotoCard';
 import { ProtectedLeaveFlag } from '../leave/ProtectedLeaveFlag';
 
 /**
@@ -365,16 +366,20 @@ function TimeTab({ associateId, query }: { associateId: string; query: ReturnTyp
   );
   if (entries.length === 0) {
     return (
+      <div className="space-y-4">
+      <PunchPhotoCard associateId={associateId} />
       <EmptyState
         icon={Clock}
         title={`No hours in the last ${TIME_WINDOW_DAYS} days`}
         description={`Punches from the kiosk and the clock widget land here as they happen; the full ${term('label.timesheet').toLowerCase()} history goes back further.`}
         action={historyLink}
       />
+      </div>
     );
   }
   return (
     <div className="space-y-4">
+      <PunchPhotoCard associateId={associateId} />
       <div className="grid gap-[var(--d-stack)] sm:grid-cols-3">
         <MetricCard label={`Hours · ${TIME_WINDOW_DAYS} days`} value={fmtHours(totalMinutes / 60)} hint="Net of breaks" />
         <MetricCard label="Entries" value={String(entries.length)} hint={query.data.truncated ? 'The list was cut at the server cap' : `Since ${fmtDate(parseYmd(windowStartYmd()) ?? windowStartYmd())}`} />
