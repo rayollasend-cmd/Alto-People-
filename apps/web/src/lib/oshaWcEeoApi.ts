@@ -73,6 +73,12 @@ export const get300A = (clientId: string, year: number) =>
     otherRecordable: number;
     totalDaysAway: number;
     totalDaysRestricted: number;
+    /** Hours on the clock at this client in the year — the injury rates' denominator. */
+    hoursWorked?: number;
+    /** Recordable cases per 100 full-time workers (200,000 hours); null without hours. */
+    trir?: number | null;
+    /** Days-away and restricted cases per 100 full-time workers. */
+    dart?: number | null;
   }>(`/osha/300a?clientId=${clientId}&year=${year}`);
 
 export const listWcClassCodes = (stateCode?: string) =>

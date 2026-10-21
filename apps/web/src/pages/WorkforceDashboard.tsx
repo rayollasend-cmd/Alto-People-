@@ -18,6 +18,7 @@ import {
   Radio,
   ShieldAlert,
   Store,
+  TrendingUp,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -34,6 +35,9 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { SectionTitle } from '@/components/ui/SectionTitle';
+import { AttendanceTrendTiles } from '@/components/attendance/AttendanceTrendTiles';
+import { AttendanceHeatmapCard } from '@/components/attendance/AttendanceHeatmapCard';
 
 /**
  * The Workforce Manager's COMMAND CENTER — the engine room of the
@@ -763,6 +767,17 @@ export function WorkforceDashboard() {
           </Card>
         </div>
       </div>
+
+      {/* ---- THE TREND: eight workweeks, and where in the week ------- */}
+      <section aria-label="Attendance trends" className="space-y-3">
+        <SectionTitle
+          icon={TrendingUp}
+          title="The last eight weeks"
+          description="Fill, no-shows, call-outs and lates by workweek — then which days and places they gather on."
+        />
+        <AttendanceTrendTiles />
+        <AttendanceHeatmapCard />
+      </section>
     </HomeTemplate>
   );
 }

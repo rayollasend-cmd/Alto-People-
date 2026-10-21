@@ -52,7 +52,7 @@ import {
 } from '@/lib/timeApi';
 import { listDirectory } from '@/lib/directoryApi';
 import { listSchedulingAssociates, listShifts } from '@/lib/schedulingApi';
-import { AdminTimeView } from '@/pages/time/AdminTimeView';
+import { AdminTimeView, defaultQueuePeriod } from '@/pages/time/AdminTimeView';
 import { AuthContext } from '@/lib/auth';
 
 // Fixed windows from the MOCKED endpoint — the component only displays
@@ -887,5 +887,74 @@ describe('<AdminTimeView> clickable KPI tiles', () => {
     expect(
       await screen.findByRole('button', { name: /anomalies only/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('<AdminTimeView> queue opens on the pay period', () => {
+  const P = (start: string, end: string, current: boolean, hasRun: boolean) => ({ start, end, current, hasRun });
+
+  it('picks the current period — or the just-closed one until its payday, while it has no run', () => {
+    const periods = [P('2026-10-17', '2026-10-30', true, false), P('2026-10-03', '2026-10-16', false, false)];
+    // Four days after the close, unpaid: that period's time is what needs approving.
+    expect(defaultQueuePeriod(periods, '2026-10-20')).toMatchObject({ which: 'LAST', period: { start: '2026-10-03' } });
+    // Payday itself still counts; the day after, the current period.
+    expect(defaultQueuePeriod(periods, '2026-10-23')?.which).toBe('LAST');
+    expect(defaultQueuePeriod([{ ...periods[0]!, current: true }, periods[1]!], '2026-10-24')?.which).toBe('CURRENT');
+    // Already run: nothing left to approve there.
+    expect(defaultQueuePeriod([periods[0]!, { ...periods[1]!, hasRun: true }], '2026-10-20')).toMatchObject({ which: 'CURRENT', period: { start: '2026-10-17' } });
+    expect(defaultQueuePeriod([], '2026-10-20')).toBeNull();
+  });
+
+  it('opens on the current period instead of the last 14 days', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    const select = await screen.findByLabelText<HTMLSelectElement>(/pay period/i);
+    await waitFor(() => expect(select.value).toBe('2026-06-29|2026-07-05'));
+    expect(screen.getByDisplayValue('2026-06-29')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('2026-07-05')).toBeInTheDocument();
+    // The first read already asks for that window — no 14-day read first.
+    const froms = vi.mocked(listAdminTimeEntries).mock.calls.map((c) => (c[0] as { from?: string }).from);
+    expect(froms.length).toBeGreaterThan(0);
+    expect(froms.every((f) => f?.startsWith('2026-06-2') || f?.startsWith('2026-06-29'))).toBe(true);
+  });
+
+  it('remembers the window picked last time ("Last week") on the next visit', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await screen.findByLabelText(/pay period/i);
+    await user.click(await screen.findByRole('button', { name: /^last week$/i }));
+    expect(localStorage.getItem('alto:list.time.range.v1')).toContain('LAST_WEEK');
+  });
+});
+
+describe('<AdminTimeView> queue keyboard', () => {
+  it('j moves the cursor onto a row and a approves it', async () => {
+    const row = {
+      id: 'k1',
+      associateId: 'a1',
+      associateName: 'Kim Keys',
+      clientId: null,
+      clientName: 'Walmart',
+      status: 'COMPLETED' as const,
+      notes: null,
+      rejectionReason: null,
+      approvedById: null,
+      approverEmail: null,
+      approvedAt: null,
+      minutesElapsed: 480,
+      netMinutes: 480,
+      clockInAt: new Date(2026, 5, 30, 8, 0).toISOString(),
+      clockOutAt: new Date(2026, 5, 30, 16, 0).toISOString(),
+      anomalies: [],
+      breaks: [],
+    };
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: [row], truncated: false } as never);
+    vi.mocked(approveTimeEntry).mockResolvedValue({} as never);
+    const user = renderAtPath('/?tab=queue');
+    await screen.findByText('Kim Keys');
+    await user.keyboard('j');
+    await waitFor(() => expect(document.querySelector('#time-row-k1')?.className).toMatch(/inset_3px/));
+    await user.keyboard('a');
+    await waitFor(() => expect(approveTimeEntry).toHaveBeenCalledWith('k1'));
   });
 });

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import {
   BooksBillInputSchema,
   BooksBillPaymentInputSchema,
+  BooksBillsApproveInputSchema,
+  type BooksBillsApproveResult,
   BooksRecurringBillInputSchema,
   BooksVendorInputSchema,
   BooksVendorUpdateSchema,
@@ -13,7 +15,7 @@ import type { Prisma as P } from '@prisma/client';
 import { prisma } from '../../db.js';
 import { HttpError } from '../../middleware/error.js';
 import { requireCapability } from '../../middleware/auth.js';
-import { pendingResponse } from '../../lib/approvalRequests.js';
+import { decideApprovalRequest, pendingResponse } from '../../lib/approvalRequests.js';
 import { bankingProfile, usesOurAch } from '../../lib/banking/ach.js';
 import { getBlobStore } from '../../lib/blobStore.js';
 import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from '../../lib/uploads.js';
@@ -135,6 +137,35 @@ booksPayablesRouter.post('/bills/:id/submit', MANAGE, async (req, res) => {
   const bill = await billInReach(prisma, String(req.params.id));
   const approval = await submitBill(prisma, bill, req.user!.id);
   res.status(202).json(pendingResponse(approval));
+});
+
+/** Approve several at once — each its own decision, the second-person rule intact. */
+booksPayablesRouter.post('/bills/approve', MANAGE, async (req, res) => {
+  const { ids } = BooksBillsApproveInputSchema.parse(req.body ?? {});
+  const me = viewer(req);
+  const bills = await prisma.bill.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: [...new Set(ids)] } }, include: { vendor: { select: { name: true } } } });
+  const byId = new Map(bills.map((b) => [b.id, b]));
+  const out: BooksBillsApproveResult = { approved: [], skipped: [] };
+  for (const id of ids) {
+    const b = byId.get(id);
+    if (!b) {
+      out.skipped.push({ id, reason: 'Not found.' });
+      continue;
+    }
+    if (b.status !== 'PENDING_APPROVAL' || !b.approvalRequestId) {
+      out.skipped.push({ id, reason: b.status === 'DRAFT' ? 'It’s a draft — not sent for approval.' : 'Already decided.' });
+      continue;
+    }
+    try {
+      const d = await decideApprovalRequest(prisma, b.approvalRequestId, me, { decision: 'APPROVE' });
+      if (d.applyError) out.skipped.push({ id, reason: `Approved, but it didn’t post: ${d.applyError}` });
+      else out.approved.push({ id, total: Number(b.total), vendorName: b.vendor.name });
+    } catch (err) {
+      if (!(err instanceof HttpError)) throw err;
+      out.skipped.push({ id, reason: err.code === 'maker_checker' ? 'You entered it — a second person approves it.' : err.message });
+    }
+  }
+  res.json(out);
 });
 
 booksPayablesRouter.post('/bills/:id/withdraw', MANAGE, async (req, res) => {

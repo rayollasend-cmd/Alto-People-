@@ -46,6 +46,8 @@ import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { NotInYetCard } from '@/components/attendance/NotInYetCard';
+import { FillRateTrendCard } from '@/components/attendance/FillRateTrendCard';
 import { FloorTeamStrip, MyLeadStrip, useFloorTeam } from '@/components/FloorTeam';
 import type { FloorSupervisorTeam } from '@/lib/shiftWindowsApi';
 import { coverageByHour } from '@/pages/portal/coverage';
@@ -734,6 +736,13 @@ export function SupervisorDashboard() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* ---- Not in yet: started, no punch — call, text, or cover ---- */}
+            <NotInYetCard
+              className="animate-enter"
+              canCover={!watchOnly}
+              filter={mine ? (p) => inWindows({ locationId: p.siteId, startsAt: p.startsAt, timezone: p.timezone }, myWindows) : undefined}
+            />
           </div>
         }
         decisions={{ title: t('home.needsYou'), content: watchOnly ? <WatchNeedsYou /> : <RoleDecisionQueue title={null} /> }}
@@ -1027,6 +1036,9 @@ export function SupervisorDashboard() {
               </CardContent>
             </Card>
           )}
+
+          {/* ---- Fill rate, eight workweeks, against the 95% line ------------- */}
+          {!watchOnly && <FillRateTrendCard className="animate-enter md:col-span-2 xl:col-span-12" />}
 
           {/* ---- Their own plan ---------------------------------------------- */}
           <div className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-5' : 'xl:col-span-12')} style={enterStagger(5)}>

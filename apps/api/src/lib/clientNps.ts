@@ -162,6 +162,8 @@ export interface NpsResults {
     lastComment: string | null;
   }>;
   trend: Array<{ quarter: string; nps: number | null; responded: number; invited: number }>;
+  /** Each client's NPS wave by wave (oldest first, the same quarters as `trend`) — null where it had no answers. */
+  clientTrends: Array<{ clientId: string; clientName: string; points: Array<{ quarter: string; nps: number | null; responded: number }> }>;
   comments: Array<{ clientName: string; score: number; comment: string; at: string }>;
   /** Whether this quarter's wave can still be sent (nothing sent yet). */
   canSendQuarter: string | null;
@@ -190,6 +192,19 @@ export async function computeNpsResults(prisma: PrismaClient = defaultPrisma, no
     const scores = w.invites.filter((i) => i.score !== null).map((i) => i.score!);
     return { quarter: w.quarter, nps: npsOf(scores), responded: scores.length, invited: w.invites.length };
   });
+  const oldestFirst = [...waves].reverse();
+  const clientNames = new Map<string, string>();
+  for (const w of oldestFirst) for (const i of w.invites) clientNames.set(i.clientId, i.client.name);
+  const clientTrends = [...clientNames.entries()]
+    .map(([clientId, clientName]) => ({
+      clientId,
+      clientName,
+      points: oldestFirst.map((w) => {
+        const scores = w.invites.filter((i) => i.clientId === clientId && i.score !== null).map((i) => i.score!);
+        return { quarter: w.quarter, nps: npsOf(scores), responded: scores.length };
+      }),
+    }))
+    .sort((a, b) => a.clientName.localeCompare(b.clientName));
   const current = waves[0] ?? null;
   const previous = waves[1] ?? null;
   const byClientFor = (w: typeof current) => {
@@ -242,6 +257,7 @@ export async function computeNpsResults(prisma: PrismaClient = defaultPrisma, no
       }))
       .sort((a, b) => (a.nps ?? 101) - (b.nps ?? 101) || a.clientName.localeCompare(b.clientName)),
     trend,
+    clientTrends,
     comments,
     canSendQuarter: waves.some((w) => w.quarter === thisQuarter) ? null : thisQuarter,
   };

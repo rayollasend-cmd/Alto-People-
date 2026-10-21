@@ -39,7 +39,7 @@ export const CLOSE_TASKS: readonly TaskTemplate[] = [
   { key: 'bank_reviewed', title: 'Review every bank and card line', detail: 'Each line from the month is matched to the books, categorized, or excluded.', auto: true, link: () => '/books/bank' },
   { key: 'bank_reconciled', title: 'Reconcile bank and card accounts', detail: 'Each account reconciled to its statement through the last day of the month.', auto: true, link: () => '/books/bank' },
   { key: 'nothing_to_post', title: 'Everything the platform produced is in the ledger', detail: 'Payroll, statements, client payments, tax deposits, reimbursements and garnishment payments for the month all posted.', auto: true, link: () => '/books/journal' },
-  { key: 'bills_approved', title: 'Approve or void the month’s bills', detail: 'No bill dated in the month left waiting for approval.', auto: true, link: () => '/books/bills?status=PENDING_APPROVAL' },
+  { key: 'bills_approved', title: 'Approve or void the month’s bills', detail: 'No bill dated in the month left waiting for approval.', auto: true, link: () => '/books/bills?tab=approve' },
   { key: 'statements_final', title: 'Finalize the month’s statements', detail: 'Every statement ending in the month is final, so revenue is booked.', auto: true, link: () => '/clients/statements' },
   { key: 'depreciation_posted', title: 'Post depreciation', detail: 'Every fixed asset’s depreciation for the month is on the books.', auto: true, link: () => '/books/assets' },
   { key: 'accruals_reviewed', title: 'Record accruals', detail: 'Expenses incurred but not yet billed (and wages earned but not yet paid) entered as accruals that reverse next month.', auto: false, link: (p) => `/books/close/${p}#accruals` },

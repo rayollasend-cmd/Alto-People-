@@ -87,6 +87,10 @@
   --color-chart-1:        176 140  46;  /* #B08C2E */
   --color-chart-2:         59 130 246;  /* #3B82F6 */
   --color-chart-3:         13 148 136;  /* #0D9488 */
+  /* Slots 4–5 of the one categorical order (components/ui/charts/palette):
+     violet and magenta, validated with 1–3 on navy (adjacent CVD ΔE ≥ 13). */
+  --color-chart-4:        144 133 233;  /* #9085E9 */
+  --color-chart-5:        213  81 129;  /* #D55181 */
   --color-alert:          233  98  85;  /* #E96255 — brightened for safer AA margin on navy (≈5.3:1) */
   --color-success:         52 168 116;  /* #34A874 */
   --color-warning:        237 178  60;  /* #EDB23C */
@@ -143,6 +147,8 @@
   --color-chart-1:        184 134  11;  /* #B8860B — validated on white */
   --color-chart-2:         37  99 235;  /* #2563EB */
   --color-chart-3:         13 148 136;  /* #0D9488 */
+  --color-chart-4:         74  58 167;  /* #4A3AA7 — validated with 1–3 on white */
+  --color-chart-5:        213  81 129;  /* #D55181 */
   /* red-600 was 4.83:1 bare and only 3.82:1 once it sat on its own tint
      (every destructive badge). red-700 clears both. */
   --color-alert:          185  28  28;  /* #B91C1C — 6.5:1 on white (AA) */

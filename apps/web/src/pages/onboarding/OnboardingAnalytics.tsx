@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, ChevronDown, ChevronUp, Clock, TrendingUp, Users } from 'lucide-react';
+import { ChevronDown, ChevronUp, Clock, TrendingUp, Users } from 'lucide-react';
 import type { OnboardingAnalyticsResponse } from '@alto-people/shared';
 import { getOnboardingAnalytics } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
@@ -10,6 +10,9 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 
 const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
@@ -267,17 +270,7 @@ export function OnboardingAnalytics() {
           </div>
 
           {/* Monthly trend */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-silver" />
-                Last 6 months — invited vs completed
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <MonthlyChart points={data.monthly} />
-            </CardContent>
-          </Card>
+          <MonthlyChart points={data.monthly} />
         </>
       )}
     </ListTemplate>
@@ -359,74 +352,40 @@ function MonthlyChart({
 }: {
   points: OnboardingAnalyticsResponse['monthly'];
 }) {
-  const max = Math.max(
-    1, // avoid division-by-zero on a fully empty window
-    ...points.flatMap((p) => [p.invited, p.completed])
-  );
+  const rows = points.map((p) => ({
+    month: fmtMonth(p.month),
+    invited: p.invited,
+    completed: p.completed,
+    rate: p.invited > 0 ? Math.round((p.completed / p.invited) * 100) : null,
+  }));
+  const invited = points.reduce((n, p) => n + p.invited, 0);
+  const completed = points.reduce((n, p) => n + p.completed, 0);
   return (
-    <div className="flex items-end gap-3 h-40">
-      {points.map((p) => (
-        <div key={p.month} className="flex-1 flex flex-col items-center gap-1.5">
-          {/* Two side-by-side bars per month: invited (silver) + completed (gold). */}
-          <div className="flex items-end gap-1 h-32 w-full justify-center">
-            <BarColumn
-              value={p.invited}
-              max={max}
-              tone="silver"
-              tip={`${p.invited} invited`}
-            />
-            <BarColumn
-              value={p.completed}
-              max={max}
-              tone="gold"
-              tip={`${p.completed} completed`}
-            />
-          </div>
-          <div className="text-2xs text-silver tabular-nums">
-            {fmtMonth(p.month)}
-          </div>
-        </div>
-      ))}
-      <div className="ml-3 text-2xs text-silver flex flex-col gap-1.5">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-sm bg-silver/50" />
-          Invited
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-sm bg-gold" />
-          Completed
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function BarColumn({
-  value,
-  max,
-  tone,
-  tip,
-}: {
-  value: number;
-  max: number;
-  tone: 'silver' | 'gold';
-  tip: string;
-}) {
-  const h = max > 0 ? (value / max) * 100 : 0;
-  return (
-    <div
-      className="w-3 rounded-t flex items-end"
-      style={{ height: '100%' }}
-      title={tip}
+    <ChartFrame
+      title={`Last ${points.length} months — invited vs completed`}
+      summary={`${invited} invited and ${completed} completed over the last ${points.length} months.`}
+      csvName="onboarding-monthly"
+      height={220}
+      columns={[
+        { key: 'month', label: 'Month' },
+        { key: 'invited', label: 'Invited', numeric: true },
+        { key: 'completed', label: 'Completed', numeric: true },
+        { key: 'rate', label: 'Completed of invited', numeric: true, format: (v) => (v === null || v === undefined ? '—' : `${v}%`) },
+      ]}
+      rows={invited + completed > 0 ? rows : []}
+      empty={<p className="text-sm text-silver">Nobody was invited in the last {points.length} months.</p>}
     >
-      <div
-        className={cn(
-          'w-full rounded-t transition-all',
-          tone === 'gold' ? 'bg-gold' : 'bg-silver/40'
-        )}
-        style={{ height: `${h}%` }}
-      />
-    </div>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+          <CartesianGrid stroke={PALETTE.grid} vertical={false} />
+          <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
+          <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width={40} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar dataKey="invited" name="Invited" fill={PALETTE.other} radius={[3, 3, 0, 0]} maxBarSize={22} />
+          <Bar dataKey="completed" name="Completed" fill={PALETTE.series[0]} radius={[3, 3, 0, 0]} maxBarSize={22} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartFrame>
   );
 }
-

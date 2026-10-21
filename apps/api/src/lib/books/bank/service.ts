@@ -2,6 +2,8 @@ import { Prisma, type BankFeedAccount, type BankRule, type BankTransaction, type
 import type {
   BankAccountCreateInput,
   BankAccountUpdateInput,
+  BankBulkAction,
+  BankBulkResult,
   BankCategorizeInput,
   BankCsvMapping,
   BankFeedAccountView,
@@ -478,9 +480,76 @@ const payeeKey = (t: Pick<BankTransaction, 'payee' | 'description'>) =>
     .slice(0, 3)
     .join(' ');
 
+/** What every suggestion on a page shares: the rules, the chart, the feeds. Loaded once per request. */
+interface SuggestCtx {
+  rules: BankRule[];
+  byId: Map<string, LedgerAccount>;
+  feeds: Map<string, BankFeedAccount>;
+  /** Loaded on the first deposit: who a deposit might be from. */
+  clients?: Array<{ id: string; name: string; key: string }>;
+}
+
+/** A company name, reduced to what a bank description would carry. */
+const NAME_NOISE = new Set(['inc', 'llc', 'ltd', 'corp', 'corporation', 'co', 'company', 'the', 'lp', 'llp', 'pllc']);
+const nameKey = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !NAME_NOISE.has(w))
+    .join(' ');
+
+/** Who a deposit is from: the rule's client, or the client whose name the description carries (the longest such name). */
+async function depositClient(db: Db, t: BankTransaction, ruleClientId: string | null, ctx: SuggestCtx): Promise<{ id: string; name: string } | null> {
+  if (Number(t.amount) <= 0) return null;
+  ctx.clients ??= (await db.client.findMany({ where: { tenantId: tenantIdForWrite() }, select: { id: true, name: true } }))
+    .map((c) => ({ ...c, key: nameKey(c.name) }))
+    .filter((c) => c.key.length >= 4);
+  if (ruleClientId) {
+    const c = ctx.clients.find((x) => x.id === ruleClientId);
+    if (c) return { id: c.id, name: c.name };
+  }
+  const text = ` ${nameKey(`${t.payee ?? ''} ${t.description}`)} `;
+  const hit = ctx.clients.filter((c) => text.includes(` ${c.key} `)).sort((a, b) => b.key.length - a.key.length)[0];
+  return hit ? { id: hit.id, name: hit.name } : null;
+}
+
+async function suggestCtx(db: Db): Promise<SuggestCtx> {
+  const [rules, { byId }] = await Promise.all([activeRules(db), accountIndex(db)]);
+  return { rules, byId, feeds: new Map() };
+}
+
 export async function suggestionsFor(db: Db, id: string): Promise<BankTxnSuggestions> {
-  const t = await txnOr404(db, id);
-  const feed = await feedOr404(db, t.feedAccountId);
+  return suggest(db, await txnOr404(db, id), await suggestCtx(db));
+}
+
+const NOTHING: BankTxnSuggestions = { matches: [], rule: null, lastTime: null, exactLineId: null, client: null };
+
+/** Suggestions for several transactions in one call — the review list asks once per page. Unknown or decided ids get none. */
+export async function suggestionsForMany(db: Db, ids: string[]): Promise<Record<string, BankTxnSuggestions>> {
+  const rows = await db.bankTransaction.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: ids } } });
+  const ctx = await suggestCtx(db);
+  const out: Record<string, BankTxnSuggestions> = {};
+  // A few at a time: each is a handful of small queries.
+  for (let i = 0; i < rows.length; i += 8) {
+    const chunk = rows.slice(i, i + 8);
+    const got = await Promise.all(chunk.map((t) => (t.status === 'UNMATCHED' ? suggest(db, t, ctx) : NOTHING)));
+    chunk.forEach((t, k) => (out[t.id] = got[k]!));
+  }
+  return out;
+}
+
+async function feedFor(db: Db, t: BankTransaction, ctx: SuggestCtx): Promise<BankFeedAccount> {
+  let feed = ctx.feeds.get(t.feedAccountId);
+  if (!feed) {
+    feed = await feedOr404(db, t.feedAccountId);
+    ctx.feeds.set(t.feedAccountId, feed);
+  }
+  return feed;
+}
+
+async function suggest(db: Db, t: BankTransaction, ctx: SuggestCtx): Promise<BankTxnSuggestions> {
+  const feed = await feedFor(db, t, ctx);
   const tenantId = tenantIdForWrite();
   const cents = toCents(t.amount);
   const from = new Date(t.postedOn.getTime() - 5 * DAY);
@@ -515,9 +584,12 @@ export async function suggestionsFor(db: Db, id: string): Promise<BankTxnSuggest
       daysApart: Math.round(Math.abs(c.entry.entryDate.getTime() - t.postedOn.getTime()) / DAY),
     }))
     .sort((a, b) => a.daysApart - b.daysApart);
+  // Unambiguous: the only candidate, or the only one on the same day.
+  const sameDay = matches.filter((m) => m.daysApart === 0);
+  const exactLineId = matches.length === 1 ? matches[0]!.lineId : sameDay.length === 1 ? sameDay[0]!.lineId : null;
 
-  const { byId } = await accountIndex(db);
-  const rule = (await activeRules(db)).find((r) => ruleFits(r, t)) ?? null;
+  const { byId } = ctx;
+  const rule = ctx.rules.find((r) => ruleFits(r, t)) ?? null;
   const ruleAcct = rule ? byId.get(rule.accountId) : undefined;
 
   // What the same payee was categorized as last time.
@@ -541,7 +613,62 @@ export async function suggestionsFor(db: Db, id: string): Promise<BankTxnSuggest
     matches,
     rule: rule && ruleAcct ? { ruleId: rule.id, name: rule.name, accountId: ruleAcct.id, accountCode: ruleAcct.code, accountName: ruleAcct.name, vendorId: rule.vendorId, clientId: rule.clientId, departmentId: rule.departmentId } : null,
     lastTime,
+    exactLineId,
+    client: await depositClient(db, t, rule?.clientId ?? null, ctx),
   };
+}
+
+/**
+ * Decide many at once (For review → "Accept all suggested", "Match all
+ * exact", or the selection excluded). Each is its own decision — an accepted
+ * one posts its own entry, idempotent by its key — and anything already
+ * decided, or with nothing to take, is skipped with why. Sending the same
+ * list twice does nothing the second time.
+ */
+export async function bulkDecide(db: Db, action: BankBulkAction, ids: string[], userId: string | null): Promise<BankBulkResult> {
+  const rows = await db.bankTransaction.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: [...new Set(ids)] } }, orderBy: [{ postedOn: 'asc' }, { createdAt: 'asc' }] });
+  const found = new Set(rows.map((r) => r.id));
+  const result: BankBulkResult = { action, done: [], skipped: ids.filter((id) => !found.has(id)).map((id) => ({ id, reason: 'Not found.' })) };
+  const ctx = await suggestCtx(db);
+  for (const t of rows) {
+    if (t.status !== 'UNMATCHED') {
+      result.skipped.push({ id: t.id, reason: 'Already decided.' });
+      continue;
+    }
+    try {
+      if (action === 'EXCLUDE') {
+        const done = await db.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'EXCLUDED', decidedById: userId, decidedAt: new Date() } });
+        if (done.count === 0) throw new HttpError(409, 'already_decided', 'Already decided.');
+      } else {
+        // Asked again for each, so one decided earlier in this batch is seen by the next.
+        const s = await suggest(db, t, ctx);
+        if (action === 'MATCH') {
+          if (!s.exactLineId) {
+            result.skipped.push({ id: t.id, reason: s.matches.length ? 'More than one entry could be it — match it by hand.' : 'Nothing in the books to match.' });
+            continue;
+          }
+          await match(db, t.id, s.exactLineId, userId);
+        } else {
+          if (s.matches.length > 0) {
+            result.skipped.push({ id: t.id, reason: 'It’s already in the books — match it instead.' });
+            continue;
+          }
+          const feed = await feedFor(db, t, ctx);
+          const pick = s.rule ? { accountId: s.rule.accountId, vendorId: s.rule.vendorId, clientId: s.rule.clientId, departmentId: s.rule.departmentId } : s.lastTime ? { accountId: s.lastTime.accountId } : null;
+          if (!pick) {
+            result.skipped.push({ id: t.id, reason: 'No suggestion to accept.' });
+            continue;
+          }
+          await categorizeTxn(db, t, feed, pick, userId, s.rule?.ruleId ?? null);
+        }
+      }
+      result.done.push(t.id);
+    } catch (err) {
+      if (!(err instanceof HttpError)) throw err;
+      result.skipped.push({ id: t.id, reason: err.message });
+    }
+  }
+  return result;
 }
 
 function assertUndecided(t: BankTransaction): void {

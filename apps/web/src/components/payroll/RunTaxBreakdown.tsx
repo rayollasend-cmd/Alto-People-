@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { fmtMoney } from '@/lib/format';
+import { fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { StackedBarChart } from '@/components/ui/charts';
 import { getRunTaxLines } from '@/lib/taxJurisdictionsApi';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -25,6 +26,17 @@ export function RunTaxBreakdown({ runId }: { runId: string }) {
           {totals.employer > 0 ? ` · Employer-paid ${fmtMoney(totals.employer)}` : ''}
         </span>
       </div>
+      {jurisdictions.length > 1 && (
+        <div role="img" aria-label={`Tax by jurisdiction: ${[...jurisdictions].sort((a, b) => b.amount - a.amount).map((j) => `${j.name} ${fmtMoney(j.amount)}`).join(', ')}.`} className="mb-3">
+          <StackedBarChart
+            data={[...jurisdictions].sort((a, b) => b.amount - a.amount).map((j) => ({ name: j.employer ? `${j.name} (employer)` : j.name, amount: j.amount }))}
+            x="name"
+            layout="horizontal"
+            series={[{ key: 'amount', name: 'Tax' }]}
+            format={fmtMoneyCompact}
+          />
+        </div>
+      )}
       <table className="w-full text-sm">
         <caption className="sr-only">Taxes withheld in this run, by jurisdiction</caption>
         <thead>

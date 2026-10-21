@@ -7,7 +7,8 @@ import { openKeyboardShortcuts } from '@/components/KeyboardShortcutsDialog';
  *
  *   One global listener (GlobalShortcuts, mounted in Layout) for the
  *   go-to chords: press `g`, then `h` home, `i` inbox, `s` schedule,
- *   `p` people, `a` approvals, `,` settings. `?` opens the shortcut list
+ *   `p` people, `a` approvals, `t` timesheets, `y` payroll, `b` books,
+ *   `o` onboarding, `,` settings. `?` opens the shortcut list
  *   (KeyboardShortcutsDialog has its own handler; this one is the chord
  *   leader). Nothing fires while typing in a field or inside a dialog.
  *
@@ -24,6 +25,10 @@ export const GO_TO: ReadonlyArray<{ key: string; path: string; label: string }> 
   { key: 's', path: '/scheduling', label: 'Schedule' },
   { key: 'p', path: '/people', label: 'People' },
   { key: 'a', path: '/approvals', label: 'Approvals' },
+  { key: 't', path: '/time-attendance?tab=queue', label: 'Timesheets' },
+  { key: 'y', path: '/payroll', label: 'Payroll' },
+  { key: 'b', path: '/books', label: 'Books' },
+  { key: 'o', path: '/onboarding', label: 'Onboarding' },
   { key: ',', path: '/settings', label: 'Settings' },
 ];
 
@@ -102,7 +107,7 @@ export function useListKeyboard<T>({ items, idOf, onOpen, onApprove, onDecline, 
   useEffect(() => {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
       if (isTypingTarget(e.target)) return;
       if (ids.length === 0) return;
       const at = current ? ids.indexOf(current) : -1;

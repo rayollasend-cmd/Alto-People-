@@ -63,6 +63,7 @@ import {
   updateVan,
   unwaiveRide,
   waiveRide,
+  waiveRides,
   type Ride,
   type RideDirection,
   type RideRun,
@@ -95,6 +96,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { ListTemplate } from '@/components/templates';
 import { CostsSection, DriversTab, FeedbackSection, IncidentsSection, SosBanner, TransportNeedsYou, VanRecordDrawer } from './TransportDesk';
+import { TransportTrends } from './TransportTrends';
 import {
   Dialog,
   DialogContent,
@@ -179,6 +181,14 @@ function shiftDay(ymd: string, n: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+/** After 6 PM the desk is planning tomorrow's vans — that's the board it opens on. */
+const EVENING_HOUR = 18;
+function defaultBoardDay(now = new Date()): string {
+  const today = ymdLocal(now);
+  return now.getHours() >= EVENING_HOUR ? shiftDay(today, 1) : today;
+}
+
 /**
  * The pick box — how a run gets built, in all three places it happens: the
  * riders on Today's board, the proposals in Plan runs, a week's worth in
@@ -225,7 +235,18 @@ export function TransportHome() {
     else next.set('tab', v);
     setParams(next, { replace: true });
   };
-  const [date, setDate] = useState(() => ymdLocal());
+  // The board's day lives in the URL (/transport?date=YYYY-MM-DD) so a link
+  // from anywhere opens the right day, and Back returns to it.
+  const [fallbackDay] = useState(() => defaultBoardDay());
+  const urlDate = params.get('date');
+  const date = urlDate && YMD.test(urlDate) ? urlDate : fallbackDay;
+  const setDate = (d: string) => {
+    const next = new URLSearchParams(params);
+    next.set('date', d);
+    setParams(next, { replace: true });
+  };
+  const today = ymdLocal();
+  const tomorrow = shiftDay(today, 1);
   const board = useQuery({
     queryKey: ['transport', 'board', date],
     queryFn: () => getTransportBoard(date),
@@ -256,11 +277,16 @@ export function TransportHome() {
               <Button variant="ghost" size="icon-sm" aria-label="Next day" onClick={() => setDate(shiftDay(date, 1))}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
-              {date !== ymdLocal() && (
-                <Button variant="secondary" size="sm" onClick={() => setDate(ymdLocal())}>
-                  Today
-                </Button>
-              )}
+              <div className="ml-1 flex items-center gap-1" role="group" aria-label="Jump to">
+                {[
+                  { day: today, label: 'Today' },
+                  { day: tomorrow, label: 'Tomorrow' },
+                ].map((c) => (
+                  <Button key={c.label} variant={date === c.day ? 'primary' : 'secondary'} size="sm" aria-pressed={date === c.day} onClick={() => setDate(c.day)}>
+                    {c.label}
+                  </Button>
+                ))}
+              </div>
             </div>
           ) : undefined
         }
@@ -285,6 +311,7 @@ export function TransportHome() {
             <div className="space-y-5">
               <TransportNeedsYou />
               <TodayBoard board={board.data} manage={manage} />
+              <TransportTrends />
             </div>
           ) : null}
         </TabsContent>
@@ -364,6 +391,30 @@ function useRideActions() {
         await refresh();
       } catch (err) {
         toast.error(errMsg(err));
+      }
+    },
+    /** Several no-show fees, one reason. Taken rides never come off — the server says so per ride. */
+    waiveMany: async (rides: Ride[], title: string): Promise<boolean> => {
+      const fees = rides.filter(canWaive);
+      if (fees.length === 0) return false;
+      const total = fees.reduce((s, r) => s + r.owedCents, 0);
+      const reason = await prompt({
+        title,
+        description: `${fees.length} no-show ${fees.length === 1 ? 'fee' : 'fees'}, ${cents(total)} in all. None of it comes out of pay, and each rider hears about it. A ride someone took is never waived.`,
+        reasonLabel: 'Reason',
+        reasonPlaceholder: 'The van came to the wrong stop',
+        confirmLabel: `Waive ${fees.length === 1 ? 'the fee' : `${fees.length} fees`}`,
+      });
+      if (!reason) return false;
+      try {
+        const out = await waiveRides(fees.map((r) => r.id), reason);
+        if (out.skipped.length > 0) toast.warning(`${out.waived} waived · ${out.skipped.length} not: ${out.skipped[0]!.message}`);
+        else toast.success(`${out.waived} ${out.waived === 1 ? 'fee' : 'fees'} waived`);
+        await refresh();
+        return true;
+      } catch (err) {
+        toast.error(errMsg(err));
+        return false;
       }
     },
     unwaive: async (r: Ride) => {
@@ -872,6 +923,7 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                   onMessage={() => void message(run)}
                   onCancelRide={(r) => void actions.cancel(r)}
                   onWaive={(r) => void actions.waive(r)}
+                  onWaiveAll={(rides) => void actions.waiveMany(rides, `Waive every no-show fee on ${run.van.name}’s ${fmtTimeTz(run.departAt, run.rides[0]?.store.timezone)} run?`)}
                 />
               ))}
             </div>
@@ -904,6 +956,7 @@ function RunPanel({
   onMessage,
   onCancelRide,
   onWaive,
+  onWaiveAll,
 }: {
   run: RideRun;
   live: RunMap | null;
@@ -914,8 +967,10 @@ function RunPanel({
   onMessage: () => void;
   onCancelRide: (r: Ride) => void;
   onWaive: (r: Ride) => void;
+  onWaiveAll: (rides: Ride[]) => void;
 }) {
   const tz = run.rides[0]?.store.timezone;
+  const waivable = run.rides.filter(canWaive);
   const riders = run.rides.filter((r) => r.status !== 'CANCELLED');
   const full = run.seats.taken >= run.seats.capacity;
   const active = run.status === 'ACTIVE';
@@ -1009,6 +1064,16 @@ function RunPanel({
             );
           })}
         </ol>
+        {manage && waivable.length > 1 && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs text-silver">
+            <span>
+              {waivable.length} no-show fees on this run · {cents(waivable.reduce((sum, r) => sum + r.owedCents, 0))}
+            </span>
+            <Button size="xs" variant="secondary" onClick={() => onWaiveAll(waivable)}>
+              Waive all no-shows on this run
+            </Button>
+          </div>
+        )}
         {manage && (run.status === 'PLANNED' || active) && (
           <div className="mt-2 flex flex-wrap gap-2 coarse:gap-3">
             <Button size="sm" variant="secondary" onClick={onMessage}>
@@ -1681,6 +1746,9 @@ function RidesTab({ manage }: { manage: boolean }) {
   // What the server will actually accept onto a run: still waiting, no van.
   const eligible = all.filter((r) => r.status === 'REQUESTED' && !r.run);
   const pickedRides = eligible.filter((r) => picked.has(r.id));
+  // No-show fees can be picked too — waived together, with one reason.
+  const waivable = all.filter(canWaive);
+  const pickedFees = waivable.filter((r) => picked.has(r.id));
 
   // A run is one van going one way on one day — the server refuses anything
   // else with ride_mismatch, so say so here rather than letting them build a
@@ -1720,12 +1788,16 @@ function RidesTab({ manage }: { manage: boolean }) {
           ))}
         </Select>
       </div>
-      {manage && pickedRides.length > 0 && (
+      {manage && (pickedRides.length > 0 || pickedFees.length > 0) && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gold/40 bg-gold/[0.06] px-3 py-2">
           <span className="text-sm text-white">
-            <span className="font-semibold tabular-nums">{pickedRides.length}</span> selected
+            <span className="font-semibold tabular-nums">{pickedRides.length + pickedFees.length}</span> selected
           </span>
-          {blocked ? (
+          {pickedRides.length === 0 ? (
+            <span className="text-xs text-silver">
+              {pickedFees.length} no-show {pickedFees.length === 1 ? 'fee' : 'fees'} · {cents(pickedFees.reduce((sum, r) => sum + r.owedCents, 0))}
+            </span>
+          ) : blocked ? (
             <span className="text-xs text-warning">{blocked}</span>
           ) : (
             <span className="text-xs text-silver">
@@ -1741,10 +1813,27 @@ function RidesTab({ manage }: { manage: boolean }) {
             <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
               Clear
             </Button>
-            <Button size="sm" disabled={!!blocked || board.isFetching} loading={board.isFetching} onClick={() => setDispatching(true)}>
-              <Send className="h-3.5 w-3.5" />
-              Dispatch {pickedRides.length}
-            </Button>
+            {pickedFees.length > 0 && (
+              <Button
+                size="sm"
+                variant={pickedRides.length > 0 ? 'secondary' : 'primary'}
+                onClick={() =>
+                  void actions
+                    .waiveMany(pickedFees, `Waive ${pickedFees.length === 1 ? `${pickedFees[0]!.rider.name}’s no-show fee` : `${pickedFees.length} no-show fees`}?`)
+                    .then((done) => {
+                      if (done) setPicked((prev) => new Set([...prev].filter((id) => !pickedFees.some((r) => r.id === id))));
+                    })
+                }
+              >
+                Waive {pickedFees.length === 1 ? 'fee' : `${pickedFees.length} fees`}
+              </Button>
+            )}
+            {pickedRides.length > 0 && (
+              <Button size="sm" disabled={!!blocked || board.isFetching} loading={board.isFetching} onClick={() => setDispatching(true)}>
+                <Send className="h-3.5 w-3.5" />
+                Dispatch {pickedRides.length}
+              </Button>
+            )}
           </span>
         </div>
       )}
@@ -1775,9 +1864,15 @@ function RidesTab({ manage }: { manage: boolean }) {
             selectable={
               manage
                 ? {
-                    // What the server will actually accept onto a run: still waiting, no van.
-                    disabled: (r) => !(r.status === 'REQUESTED' && !r.run),
-                    selectAllLabel: `Select all ${eligible.length} waiting for a van`,
+                    // What the server will act on: a ride still waiting with no van
+                    // (dispatch), or a no-show fee still owed (waive).
+                    disabled: (r) => !((r.status === 'REQUESTED' && !r.run) || canWaive(r)),
+                    selectAllLabel:
+                      waivable.length === 0
+                        ? `Select all ${eligible.length} waiting for a van`
+                        : eligible.length === 0
+                          ? `Select all ${waivable.length} no-show fees`
+                          : `Select all ${eligible.length} waiting and ${waivable.length} no-show fees`,
                     selection: { selected: picked, onChange: setPicked },
                   }
                 : undefined

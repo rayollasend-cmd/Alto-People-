@@ -4699,8 +4699,40 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
       { gross: 0, fit: 0, fica: 0, medicare: 0, sit: 0, preTax: 0, postTax: 0, net: 0 },
     );
 
+    // Month by month (by payout date, UTC): gross, taxes withheld, other
+    // deductions, net — summed per run in SQL, then bucketed by the run's
+    // disbursement month.
+    const runGroups = await prisma.payrollItem.groupBy({
+      by: ['payrollRunId'],
+      where: {
+        status: { not: 'VOIDED' },
+        payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: { gte: yearStart, lt: yearEndExclusive } },
+      },
+      _sum: { grossPay: true, federalWithholding: true, fica: true, medicare: true, stateWithholding: true, netPay: true },
+    });
+    const runDates = await prisma.payrollRun.findMany({
+      where: { id: { in: runGroups.map((g) => g.payrollRunId) } },
+      select: { id: true, disbursedAt: true },
+    });
+    const paidOn = new Map(runDates.map((r) => [r.id, r.disbursedAt]));
+    const monthly = Array.from({ length: 12 }, (_, m) => ({ month: `${yearParam}-${String(m + 1).padStart(2, '0')}`, gross: 0, tax: 0, deductions: 0, net: 0, runs: 0 }));
+    for (const g of runGroups) {
+      const at = paidOn.get(g.payrollRunId);
+      if (!at) continue;
+      const b = monthly[at.getUTCMonth()]!;
+      const gross = Number(g._sum.grossPay ?? 0);
+      const tax = Number(g._sum.federalWithholding ?? 0) + Number(g._sum.fica ?? 0) + Number(g._sum.medicare ?? 0) + Number(g._sum.stateWithholding ?? 0);
+      const net = Number(g._sum.netPay ?? 0);
+      b.gross += gross;
+      b.tax += tax;
+      b.net += net;
+      b.deductions += Math.max(0, gross - tax - net);
+      b.runs += 1;
+    }
+
     res.json({
       taxYear: yearParam,
+      monthly: monthly.map((m) => ({ ...m, gross: round2(m.gross), tax: round2(m.tax), deductions: round2(m.deductions), net: round2(m.net) })),
       totals: {
         gross: round2(totals.gross),
         fit: round2(totals.fit),

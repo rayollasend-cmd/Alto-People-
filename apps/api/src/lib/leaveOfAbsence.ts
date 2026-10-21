@@ -300,7 +300,8 @@ export async function releaseShiftsForLeave(
           ? `${personName} is on approved leave ${range}. ${shifts.length ? `${shifts.length} of their shifts are open again and need cover.` : 'They had no assigned shifts in that window.'}`
           : `${personName} has approved ${c.schedule === 'INTERMITTENT' ? 'intermittent' : 'reduced-schedule'} leave ${range}. They may miss some shifts at short notice; those absences are protected.`,
       category: 'scheduling',
-      linkUrl: '/scheduling',
+      // Released shifts: the open ones, from the first day of the leave.
+      linkUrl: c.schedule === 'CONTINUOUS' && shifts.length ? `/scheduling?open=1&view=day&date=${fmtDay(c.startDate)}` : '/scheduling',
     });
   }
   return c.schedule === 'CONTINUOUS' ? shifts.length : 0;

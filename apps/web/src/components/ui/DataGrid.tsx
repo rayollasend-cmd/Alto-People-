@@ -50,7 +50,10 @@ import {
  *   columns      a chooser; the choice is kept per grid, per person
  *   export       CSV of exactly what is on screen — visible columns,
  *                current sort, current search — never "the whole table"
- *   select       checkboxes and a bulk-action bar, when asked for
+ *   select       checkboxes and a bulk-action bar, when asked for;
+ *                shift-click a second box to take the whole run between
+ *   keyboard     with the table focused (a click on a row does it), j/k
+ *                or ↑/↓ move a cursor, Enter opens the row, x selects it
  *   url          ?sort= ?dir= ?q= so a filtered view is a link you can send
  *   phones       a card per row, built from the same column list, instead
  *                of a table that hides itself — and only the layout the
@@ -201,6 +204,9 @@ export interface DataGridProps<T> {
     collapsible?: { defaultOpen: (key: string, index: number) => boolean };
   };
   className?: string;
+  /** j/k ↑/↓ Enter x on the focused table. Default on; false for a grid
+   *  whose page already drives the rows with its own keys. */
+  keyboard?: boolean;
 }
 
 const COLS_KEY = (id: string, userId: string | null) => `alto.grid.${id}.cols.v1.${userId ?? 'anon'}`;
@@ -346,6 +352,7 @@ function GridCore<T>({
   total,
   groupBy,
   className,
+  keyboard = true,
   q,
   setQ,
   initialSort,
@@ -456,6 +463,28 @@ function GridCore<T>({
       else next.add(key);
       return next;
     });
+  // Shift-click a second box: every selectable row between the two takes
+  // the state the clicked one is moving to — the way a mail client works.
+  const lastPicked = React.useRef<string | null>(null);
+  const pick = (key: string, shift: boolean) => {
+    const anchor = lastPicked.current;
+    lastPicked.current = key;
+    if (!shift || !anchor || anchor === key) return toggleOne(key);
+    const order = selectableRows.map(rowKey);
+    const a = order.indexOf(anchor);
+    const b = order.indexOf(key);
+    if (a === -1 || b === -1) return toggleOne(key);
+    const on = !selected.has(key);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const k of order.slice(Math.min(a, b), Math.max(a, b) + 1)) {
+        if (on) next.add(k);
+        else next.delete(k);
+      }
+      return next;
+    });
+  };
+  const shiftOf = (e: React.SyntheticEvent) => (e.nativeEvent as MouseEvent).shiftKey === true;
   const clearSelection = () => setSelected(new Set());
   // A row that left the list (filtered away, deleted) leaves the selection.
   // Only for a selection this grid owns: a controlled one may span other
@@ -616,6 +645,77 @@ function GridCore<T>({
   const padBottom = vItems.length ? virtualizer.getTotalSize() - vItems[vItems.length - 1]!.end : 0;
   const items: GridItem<T>[] = virtualize ? vItems.map((v) => ({ ...flat[v.index]!, v }) as GridItem<T>) : flat;
 
+  /* ---- keyboard ------------------------------------------------------ */
+  // A cursor over the top-level rows. Rows that open are focusable already
+  // (TableRow), so the cursor is the focused row and moving it moves focus;
+  // a selectable list whose rows don't open makes the table box focusable
+  // instead. Keys aimed at a control inside a row — a checkbox, a button, a
+  // field — stay that control's.
+  const [cursor, setCursor] = React.useState<string | null>(null);
+  const rowsOpen = Boolean(onRowClick || expandable);
+  const boxFocusable = keyboard && !rowsOpen && Boolean(selectable);
+  const navRows = flat.flatMap((it, index) => (it.kind === 'row' && !it.child ? [{ key: rowKey(it.row), row: it.row, index }] : []));
+  const cursorAt = cursor ? navRows.findIndex((r) => r.key === cursor) : -1;
+  const rowEl = (box: HTMLElement, key: string) =>
+    [...box.querySelectorAll<HTMLElement>('[data-grid-row]')].find((el) => el.getAttribute('data-grid-row') === key);
+  const onGridFocus = (e: React.FocusEvent<HTMLDivElement>) => {
+    const k = (e.target as HTMLElement).getAttribute?.('data-grid-row');
+    if (k) setCursor(k);
+  };
+  const onGridKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const onRow = target.hasAttribute?.('data-grid-row');
+    if (e.defaultPrevented || (target !== e.currentTarget && !onRow) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (navRows.length === 0) return;
+    const box = e.currentTarget;
+    const go = (i: number) => {
+      e.preventDefault();
+      // The grid's cursor, not a page-wide list cursor as well (useListKeyboard listens on window).
+      e.stopPropagation();
+      const r = navRows[Math.max(0, Math.min(navRows.length - 1, i))]!;
+      setCursor(r.key);
+      const land = () => {
+        const el = rowEl(box, r.key);
+        if (rowsOpen) el?.focus({ preventScroll: false });
+        else el?.scrollIntoView?.({ block: 'nearest' });
+      };
+      if (virtualize) {
+        virtualizer.scrollToIndex(r.index, { align: 'auto' });
+        requestAnimationFrame(land);
+      } else land();
+    };
+    const current = cursorAt >= 0 ? navRows[cursorAt]! : null;
+    switch (e.key) {
+      case 'j':
+      case 'ArrowDown':
+        return go(cursorAt + 1);
+      case 'k':
+      case 'ArrowUp':
+        return go(cursorAt <= 0 ? 0 : cursorAt - 1);
+      case 'Home':
+        return go(0);
+      case 'End':
+        return go(navRows.length - 1);
+      case 'Enter':
+        // A focused row opens itself (TableRow); this is the box's cursor.
+        if (!current || onRow) return;
+        e.preventDefault();
+        if (onRowClick) onRowClick(current.row);
+        else if (expandable) toggleExpand(current.row);
+        return;
+      case 'x':
+        if (!current || !selectable || selectable.disabled?.(current.row)) return;
+        e.preventDefault();
+        pick(current.key, e.shiftKey);
+        return;
+      case 'Escape':
+        if (cursor) setCursor(null);
+        return;
+      default:
+        return;
+    }
+  };
+
   /* ---- one card ------------------------------------------------------ */
   const cardBody = (row: T, child: boolean) => {
     const key = rowKey(row);
@@ -655,7 +755,7 @@ function GridCore<T>({
               type="checkbox"
               className="mt-1 h-4 w-4 accent-gold"
               checked={selected.has(key)}
-              onChange={() => toggleOne(key)}
+              onChange={(e) => pick(key, shiftOf(e))}
               onClick={(e) => e.stopPropagation()}
               aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
             />
@@ -888,8 +988,15 @@ function GridCore<T>({
           {!showCards && (
             <div
               ref={scrollRef}
+              tabIndex={boxFocusable ? 0 : undefined}
+              onKeyDown={keyboard ? onGridKey : undefined}
+              onFocus={keyboard ? onGridFocus : undefined}
+              onBlur={keyboard ? (e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setCursor(null) : undefined}
+              role={boxFocusable ? 'group' : undefined}
+              aria-label={boxFocusable ? t('grid.keysAria', { caption }) : undefined}
               className={cn(
                 virtualize && 'max-h-[70vh] overflow-auto rounded-md border border-navy-secondary',
+                boxFocusable && 'rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright/60',
               )}
             >
               <Table caption={caption} wrapperClassName={virtualize ? 'overflow-visible' : undefined}>
@@ -990,6 +1097,8 @@ function GridCore<T>({
                         key={child ? `${key}:child` : key}
                         id={child ? undefined : rowId?.(row)}
                         data-state={isSelected ? 'selected' : undefined}
+                        data-grid-row={child ? undefined : key}
+                        data-kb-cursor={!child && cursor === key ? 'true' : undefined}
                         onClick={rowClick}
                         aria-label={onRowClick && !child ? rowActionLabel?.(row) : undefined}
                         aria-expanded={expandable && !child ? isOpen : undefined}
@@ -1008,7 +1117,7 @@ function GridCore<T>({
                                 type="checkbox"
                                 className="h-6 w-6 accent-gold"
                                 checked={isSelected}
-                                onChange={() => toggleOne(key)}
+                                onChange={(e) => pick(key, shiftOf(e))}
                                 aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
                               />
                             )}

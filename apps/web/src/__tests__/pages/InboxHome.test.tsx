@@ -81,15 +81,16 @@ describe('InboxHome', () => {
     expect(within(rows[0]).getByText('7')).toBeInTheDocument();
     expect(within(rows[0]).getByRole('link', { name: 'Open Applications to review' })).toHaveAttribute(
       'href',
-      '/onboarding',
+      // The link carries the way back (components/InboxReturnBar).
+      '/onboarding?from=inbox&inbox=onboarding-review',
     );
     expect(within(rows[1]).getByRole('heading', { name: 'Approvals' })).toBeInTheDocument();
-    expect(within(rows[1]).getByRole('link', { name: 'Open Approvals' })).toHaveAttribute('href', '/approvals');
+    expect(within(rows[1]).getByRole('link', { name: 'Open Approvals' })).toHaveAttribute('href', '/approvals?from=inbox&inbox=approvals');
 
     // The empty queue is still named, under "All clear".
     expect(screen.getByRole('heading', { name: 'All clear' })).toBeInTheDocument();
     const quiet = screen.getByRole('list', { name: 'Queues with nothing waiting' });
-    expect(within(quiet).getByRole('link', { name: /Hotline reports/ })).toHaveAttribute('href', '/hotline-admin');
+    expect(within(quiet).getByRole('link', { name: /Hotline reports/ })).toHaveAttribute('href', '/hotline-admin?from=inbox&inbox=hotline');
 
     expect(screen.queryByText('Nothing is waiting on you.')).not.toBeInTheDocument();
     expect(apiFetch).toHaveBeenCalledWith('/me/inbox');
@@ -107,7 +108,7 @@ describe('InboxHome', () => {
     expect(await screen.findByText('Nothing is waiting on you.')).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Decisions waiting on you' })).not.toBeInTheDocument();
     // The watched-but-empty queue is still reachable.
-    expect(screen.getByRole('link', { name: /Approvals/ })).toHaveAttribute('href', '/approvals');
+    expect(screen.getByRole('link', { name: /Approvals/ })).toHaveAttribute('href', '/approvals?from=inbox&inbox=approvals');
   });
 
   it('offers a retry when the inbox fails to load', async () => {

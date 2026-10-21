@@ -19,6 +19,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
+import { BudgetCharts } from './BudgetCharts';
 import { BUDGET_STATUS } from './BudgetsPage';
 
 /**
@@ -382,6 +383,7 @@ function VsActual({ budget: b }: { budget: BudgetDetail }) {
               <MetricCard label="Forecast to year end" value={fmtMoney(r.netIncome.forecast)} hint="Actual so far + the budget left" />
               <MetricCard label="At the current pace" value={fmtMoney(r.netIncome.runRate)} hint={`Annual budget ${fmtMoney(r.netIncome.annualBudget)}`} />
             </div>
+            <BudgetCharts report={r} />
             {view === 'ytd' ? <YtdTable report={r} /> : <MonthTable report={r} />}
           </>
         )}

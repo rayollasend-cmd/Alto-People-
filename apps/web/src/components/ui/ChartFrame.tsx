@@ -1,9 +1,12 @@
 import { useState, type ReactNode } from 'react';
-import { Download, Table2, LineChart } from 'lucide-react';
+import { BarChart3, Download, Table2, LineChart } from 'lucide-react';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
 import { Button } from './Button';
 import { Card, CardContent } from './Card';
+import { EmptyState } from './EmptyState';
+import { InChartFrame } from './charts/frame';
+import { EXTENDED_SERIES, PALETTE, TOOLTIP_STYLE } from './charts/palette';
 import { SectionTitle } from './SectionTitle';
 
 /**
@@ -21,29 +24,21 @@ export interface ChartColumn {
   format?: (v: unknown) => string;
 }
 
+/**
+ * Colors for hand-built recharts figures — the same tokens as the kit
+ * (components/ui/charts/palette). `series` is the validated categorical
+ * order; slots past the fifth are neutrals kept for older charts, not
+ * new hues — fold a sixth series into "Other".
+ */
 export const CHART = {
-  grid: 'rgb(var(--color-silver) / 0.15)',
-  axis: 'rgb(var(--color-silver))',
-  series: [
-    'rgb(var(--color-gold))',
-    'rgb(var(--color-sky))',
-    'rgb(var(--color-teal))',
-    'rgb(var(--color-success))',
-    'rgb(var(--color-warning))',
-    'rgb(var(--color-alert))',
-    'rgb(var(--color-steel))',
-    'rgb(var(--color-silver))',
-  ],
-  good: 'rgb(var(--color-success))',
-  bad: 'rgb(var(--color-alert))',
-  warn: 'rgb(var(--color-warning))',
-  muted: 'rgb(var(--color-silver) / 0.35)',
-  tooltip: {
-    background: 'rgb(var(--color-surface))',
-    border: '1px solid rgb(var(--color-silver) / 0.25)',
-    borderRadius: 8,
-    fontSize: 12,
-  },
+  grid: PALETTE.grid,
+  axis: PALETTE.axis,
+  series: EXTENDED_SERIES,
+  good: PALETTE.good,
+  bad: PALETTE.bad,
+  warn: PALETTE.warn,
+  muted: PALETTE.muted,
+  tooltip: TOOLTIP_STYLE,
 } as const;
 
 export function ChartFrame({
@@ -66,7 +61,7 @@ export function ChartFrame({
   csvName: string;
   height?: number;
   children: ReactNode;
-  /** Shown instead of the chart when there is nothing to draw. */
+  /** Shown instead of the chart when there is nothing to draw. Defaults to a quiet empty state. */
   empty?: ReactNode;
 }) {
   const [asTable, setAsTable] = useState(false);
@@ -127,13 +122,13 @@ export function ChartFrame({
           }
         />
         {!hasData ? (
-          empty
+          (empty ?? <EmptyState size="sm" icon={BarChart3} title="Nothing to chart yet" description="It fills in as the numbers come in." />)
         ) : asTable ? (
           table(false)
         ) : (
           <>
             <div role="img" aria-label={summary} style={{ height }}>
-              {children}
+              <InChartFrame.Provider value={true}>{children}</InChartFrame.Provider>
             </div>
             {table(true)}
           </>

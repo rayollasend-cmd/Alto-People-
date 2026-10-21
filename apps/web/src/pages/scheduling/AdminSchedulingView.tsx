@@ -134,6 +134,7 @@ import { Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { ListTemplate } from '@/components/templates';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { isTypingTarget } from '@/lib/shortcuts';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
@@ -572,6 +573,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // open: the week grid (their row lives there), and none of the filters
   // they left behind that could hide them. Read once, at mount.
   const [deepLinkAssociate] = useState<string | null>(() => searchParams.get('associate'));
+  // A link about one shift (?shift=<id>) — a call-out, a swap, an
+  // unassigned alert — or about a day's open shifts (?open=1&date=). Both
+  // drop the filters left behind that could hide what the link is about.
+  const [deepLinkShift] = useState<string | null>(() => searchParams.get('shift'));
+  const [deepLinkDate] = useState<string | null>(() => {
+    const d = searchParams.get('date');
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(fromYmd(d).getTime()) ? d : null;
+  });
+  // Open shifts only — the calendar views' lens for "who still needs
+  // covering", set by ?open=1 and cleared from its chip.
+  const [openOnly, setOpenOnly] = useState<boolean>(() => searchParams.get('open') === '1');
+  const focusedLink = Boolean(deepLinkAssociate || deepLinkShift || openOnly);
   // View mode persists in the URL so deep links stay stable.
   const view: ViewMode = parseView(searchParams.get('view') ?? (searchParams.get('associate') ? 'week' : null));
   const setView = useCallback(
@@ -638,6 +651,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, [tileDensity]);
 
   const [filter, setFilter] = useState<ShiftStatus | 'ALL'>(() => {
+    if (openOnly) return 'OPEN';
     const s = readStoredFilters()?.status;
     const valid = ['ALL', 'OPEN', 'ASSIGNED', 'DRAFT', 'COMPLETED', 'CANCELLED'];
     return s && valid.includes(s) ? (s as ShiftStatus | 'ALL') : 'OPEN';
@@ -660,7 +674,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   //                  positions in the schedule), AND-combined client-side.
   // client + location are filtered server-side; position is client-side.
   const [posFilter, setPosFilter] = useState<string>(
-    () => (deepLinkAssociate ? '' : (readStoredFilters()?.position ?? '')),
+    () => (focusedLink ? '' : (readStoredFilters()?.position ?? '')),
   );
   // Deep-link params (?client / ?location / ?week / ?associate) beat the
   // persisted localStorage filters — a shared link must show ITS scope.
@@ -670,8 +684,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     () =>
       boundedClient?.id ??
       searchParams.get('client') ??
-      // A person link with no store: every store, so they're on the roster.
-      (deepLinkAssociate ? '' : null) ??
+      // A person (or shift) link with no store: every store, so what the
+      // link is about is on screen.
+      (deepLinkAssociate || deepLinkShift ? '' : null) ??
       (storeScope.enabled && storeScope.clientId ? storeScope.clientId : null) ??
       readStoredFilters()?.client ??
       '',
@@ -711,11 +726,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (boundedClient) return;
     const urlClient = searchParams.get('client');
     if (urlClient) storeScope.setClientId(urlClient);
-    else if (deepLinkAssociate) storeScope.setClientId('');
+    else if (deepLinkAssociate || deepLinkShift) storeScope.setClientId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [locationFilter, setLocationFilter] = useState<string>(
-    () => searchParams.get('location') ?? (deepLinkAssociate ? '' : (readStoredFilters()?.location ?? '')),
+    () => searchParams.get('location') ?? (deepLinkAssociate || deepLinkShift ? '' : (readStoredFilters()?.location ?? '')),
   ); // '' = all
   // Persist the scope + status chip so they survive navigating away and back.
   useEffect(() => {
@@ -768,6 +783,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const d = fromYmd(wk.slice(0, 10));
       if (!Number.isNaN(d.getTime())) return d;
     }
+    if (deepLinkDate) return startOfWeekMonday(fromYmd(deepLinkDate));
     return readStoredWeekRange()?.start ?? startOfWeekMonday(new Date());
   });
   const [weekDayCount, setWeekDayCount] = useState<number>(
@@ -801,6 +817,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // of weekStart so the user can have a "calendar week" they're planning AND a
   // "today" zoom.
   const [dayAnchor, setDayAnchor] = useState<Date>(() => {
+    if (deepLinkDate) return fromYmd(deepLinkDate);
     const stored = readStoredAnchors()?.day;
     if (stored) {
       const d = fromYmd(stored);
@@ -837,6 +854,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // explicit "Show more" instead of a wall.
   const [listVisibleCount, setListVisibleCount] = useState(LIST_PAGE_SIZE);
   const [listFrom, setListFrom] = useState<string>(() => {
+    if (deepLinkDate) return deepLinkDate;
     const stored = readStoredAnchors();
     if (stored && stored.listFrom !== undefined) return stored.listFrom;
     const d = new Date();
@@ -844,6 +862,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     return ymd(d);
   });
   const [listTo, setListTo] = useState<string>(() => {
+    if (deepLinkDate) return deepLinkDate;
     const stored = readStoredAnchors();
     if (stored && stored.listTo !== undefined) return stored.listTo;
     const d = new Date();
@@ -1235,6 +1254,64 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (canManage) setShowCreate(true);
   }, [searchParams, setSearchParams, canManage, clients.length, clientsError]);
 
+  // ?shift=<id>: open that shift — the assign dialog while it can still be
+  // staffed, its edit dialog otherwise — and move every view to its day.
+  // Read by id, so a shift outside the loaded window still opens. The
+  // link's ?open/&date params are consumed with it (replace, so Back and
+  // refresh don't reopen the dialog).
+  const shiftJump = useQuery({
+    queryKey: ['scheduling', 'shifts', 'jump', deepLinkShift],
+    queryFn: () => listShifts({ id: deepLinkShift! }),
+    enabled: Boolean(deepLinkShift),
+    retry: false,
+  });
+  const shiftJumpDoneRef = useRef(false);
+  useEffect(() => {
+    if (!deepLinkShift || shiftJumpDoneRef.current || shiftJump.isPending) return;
+    shiftJumpDoneRef.current = true;
+    const next = new URLSearchParams(searchParams);
+    next.delete('shift');
+    next.delete('open');
+    next.delete('date');
+    setSearchParams(next, { replace: true });
+    const target = shiftJump.data?.shifts[0];
+    if (!target) {
+      toast.error('That shift could not be found — it may have been deleted, or it is outside your stores.');
+      return;
+    }
+    const day = new Date(target.startsAt);
+    day.setHours(0, 0, 0, 0);
+    setWeekStart(startOfWeekMonday(day));
+    setWeekDayCount(7);
+    setDayAnchor(day);
+    const first = new Date(day);
+    first.setDate(1);
+    setMonthAnchor(first);
+    const dayYmd = ymd(day);
+    setListFrom((cur) => (cur && cur <= dayYmd ? cur : dayYmd));
+    setListTo((cur) => (cur && cur >= dayYmd ? cur : dayYmd));
+    if (target.status === 'OPEN' || target.status === 'DRAFT' || target.status === 'ASSIGNED') {
+      if (canManage) setAssignTarget(target);
+      else setEditTarget(target);
+    } else {
+      setEditTarget(target);
+    }
+    // searchParams changes identity every render; the ref ends the cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkShift, shiftJump.isPending, shiftJump.data, canManage]);
+
+  // ?open=1 / ?date= are read once at mount (state above); drop them from
+  // the address so the lens's chip, not a stale URL, says what's on.
+  useEffect(() => {
+    if (deepLinkShift) return; // consumed with the shift above
+    if (!searchParams.get('open') && !searchParams.get('date')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('open');
+    next.delete('date');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Associate list for the pivot grid Y axis — scoped to the selected
   // client/location so the rows match the filtered schedule (picking a
   // client now narrows the people shown, not just the shifts).
@@ -1469,9 +1546,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const filteredShifts = useMemo(() => {
     if (!shifts) return shifts;
     const pos = posFilter.trim().toLowerCase();
-    if (!pos) return shifts;
-    return shifts.filter((s) => s.position.trim().toLowerCase() === pos);
-  }, [shifts, posFilter]);
+    // The open-only lens narrows the calendar views; the list view has its
+    // own status chips (the link's ?open=1 sets them to Open as well).
+    const lensOpen = openOnly && view !== 'list';
+    if (!pos && !lensOpen) return shifts;
+    return shifts.filter((s) => (!pos || s.position.trim().toLowerCase() === pos) && (!lensOpen || s.status === 'OPEN'));
+  }, [shifts, posFilter, openOnly, view]);
 
   // The complement of the position filter — shifts that exist in the loaded
   // window but are hidden from the grid. The week matrix shows a per-cell
@@ -1550,12 +1630,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // when the grid renders a store zone, so the ribbon count, the chips on
   // screen, and the server's published set all agree. (Browser-local weeks
   // and store-local weeks differ at the edges by the zone offset.)
-  const publishWindow = useMemo(() => {
-    if (!gridTimeZone) return { from: weekStart, to: weekEnd };
-    const zoneMidnight = (d: Date) =>
-      zonedWallTimeToUtc(d.getFullYear(), d.getMonth() + 1, d.getDate(), 0, 0, gridTimeZone);
-    return { from: zoneMidnight(weekStart), to: zoneMidnight(weekEnd) };
-  }, [weekStart, weekEnd, gridTimeZone]);
+  // The instants a run of days covers on the store's calendar (browser-local
+  // midnights when there's no single store zone).
+  const zoneWindow = useCallback(
+    (start: Date, end: Date) => {
+      if (!gridTimeZone) return { from: start, to: end };
+      const zoneMidnight = (d: Date) =>
+        zonedWallTimeToUtc(d.getFullYear(), d.getMonth() + 1, d.getDate(), 0, 0, gridTimeZone);
+      return { from: zoneMidnight(start), to: zoneMidnight(end) };
+    },
+    [gridTimeZone],
+  );
+  const publishWindow = useMemo(() => zoneWindow(weekStart, weekEnd), [zoneWindow, weekStart, weekEnd]);
 
   const draftsInWeek = useMemo(() => {
     if (!shifts || view === 'list') return 0;
@@ -1869,6 +1955,101 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       setDeduping(false);
     }
   };
+
+  // "Build next week" — the weekly chore as one guided action: copy this
+  // week (people and all) into next week as drafts, auto-schedule what's
+  // still open there, move the grid to it, and land on one review whose
+  // last button publishes. Nothing is published without that click.
+  const [buildingWeek, setBuildingWeek] = useState(false);
+  const [buildSummary, setBuildSummary] = useState<string | null>(null);
+  const onBuildNextWeek = async () => {
+    if (buildingWeek) return;
+    const target = shiftWeek(weekStart, 1);
+    const win = zoneWindow(target, addDaysLocal(target, weekDayCount));
+    const ok = await confirm({
+      title: `Build the week of ${fmtDate(target)}?`,
+      description: `Copies this week's shifts — ${term('workers').toLowerCase()} and all — into next week as drafts, then fills what's still open with the best-scoring ${term('worker').toLowerCase()} for each. You review every pick before anything is published.`,
+      confirmLabel: 'Build next week',
+    });
+    if (!ok) return;
+    setBuildingWeek(true);
+    try {
+      const copied = await copyWeek({
+        sourceWeekStart: weekStart.toISOString(),
+        targetWeekStart: target.toISOString(),
+        preserveAssignments: true,
+      });
+      const scope = clientFilter ? { clientId: clientFilter } : {};
+      const before = await listShifts({ from: win.from.toISOString(), to: win.to.toISOString(), ...scope });
+      const candidateIds = before.shifts
+        .filter((x) => x.assignedAssociateId === null && x.status !== 'CANCELLED' && x.status !== 'COMPLETED')
+        .map((x) => x.id);
+      const res =
+        candidateIds.length > 0
+          ? await autoScheduleWeek({ weekStart: win.from.toISOString(), weekEnd: win.to.toISOString(), ...scope })
+          : ({ assigned: 0, skipped: [], byAssociate: [] } satisfies AutoScheduleWeekResponse);
+      if (view !== 'week') setView('week');
+      setWeekStart(target);
+      setBuildSummary(
+        `${copied.created} shift${copied.created === 1 ? '' : 's'} copied${copied.assigned ? ` (${copied.assigned} with their ${term('worker').toLowerCase()})` : ''}${copied.alreadyThere ? `, ${copied.alreadyThere} already there` : ''}.`,
+      );
+      setAutoResult({ res, candidateIds });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not build next week.');
+    } finally {
+      setBuildingWeek(false);
+    }
+  };
+
+  // Schedule keys: ← / → move the view a period, t jumps to today, n starts
+  // a new shift. They stand down while typing or inside a dialog, and on
+  // the list view (no period to move).
+  const keyStateRef = useRef({ view, canManage, weekDayCount, dayAnchor, monthAnchor });
+  keyStateRef.current = { view, canManage, weekDayCount, dayAnchor, monthAnchor };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (isTypingTarget(e.target)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      const k = keyStateRef.current;
+      const step = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+      if (step !== 0 && k.view !== 'list') {
+        e.preventDefault();
+        if (k.view === 'week') setWeekStart((w) => addDaysLocal(w, step * k.weekDayCount));
+        else if (k.view === 'day') setDayAnchor(addDaysLocal(k.dayAnchor, step));
+        else {
+          const d = new Date(k.monthAnchor);
+          d.setMonth(d.getMonth() + step);
+          setMonthAnchor(d);
+        }
+        return;
+      }
+      if (e.key === 't' && k.view !== 'list') {
+        e.preventDefault();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (k.view === 'week') {
+          setWeekStart(startOfWeekMonday(today));
+          setWeekDayCount(7);
+        } else if (k.view === 'day') setDayAnchor(today);
+        else {
+          today.setDate(1);
+          setMonthAnchor(today);
+        }
+        return;
+      }
+      if (e.key === 'n' && k.canManage) {
+        e.preventDefault();
+        setCreateInitialDate(k.view === 'day' ? k.dayAnchor : null);
+        setCreateInitialEnd(null);
+        setCreateInitialAssociateId(null);
+        setCreateInitialOpenSlots(0);
+        setShowCreate(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const onAutoScheduleWeek = async () => {
     if (autoScheduling) return;
@@ -2574,7 +2755,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }
         primaryAction={
           canManage ? (
-            <Button onClick={() => setShowCreate(true)}>
+            <Button onClick={() => setShowCreate(true)} title="New shift (n)">
               <Plus className="h-4 w-4" />
               New shift
             </Button>
@@ -2685,6 +2866,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               size="sm"
               onClick={() => setWeekStart((w) => addDaysLocal(w, -weekDayCount))}
               aria-label="Previous period"
+              title="Previous period (←)"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -2705,6 +2887,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               size="sm"
               onClick={() => setWeekStart((w) => addDaysLocal(w, weekDayCount))}
               aria-label="Next period"
+              title="Next period (→)"
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -2756,6 +2939,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               >
                 <Copy className="h-3.5 w-3.5" />
                 Repeat week…
+              </Button>
+            )}
+            {canManage && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void onBuildNextWeek()}
+                loading={buildingWeek}
+                title="Copy this week into next week, fill what's open, review the picks, then publish"
+              >
+                <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />
+                Build next week
               </Button>
             )}
             <div className="ml-auto inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
@@ -2866,6 +3061,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 setDayAnchor(d);
               }}
               aria-label="Previous day"
+              title="Previous day (←)"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -2891,6 +3087,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 setDayAnchor(d);
               }}
               aria-label="Next day"
+              title="Next day (→)"
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -2925,6 +3122,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 setMonthAnchor(d);
               }}
               aria-label="Previous month"
+              title="Previous month (←)"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -2951,6 +3149,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 setMonthAnchor(d);
               }}
               aria-label="Next month"
+              title="Next month (→)"
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -3016,6 +3215,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* Read-only viewers have no filter row; the range stands alone for them. */}
       {!canManage && rangeControls && <div className="no-print mb-3 flex">{rangeControls}</div>}
+
+      {/* The open-only lens a "needs cover" link turns on — said out loud,
+          one click to drop it, so the grid never reads as half-empty. */}
+      {openOnly && view !== 'list' && (
+        <div className="no-print mb-3 flex flex-wrap items-center gap-2 rounded-md border border-gold/40 bg-gold/10 px-3 py-2 text-sm text-ink" role="status">
+          <span className="min-w-0 flex-1">Showing open shifts only{view === 'day' ? ` on ${fmtDayHeaderTz(dayAnchor, null)}` : ''}.</span>
+          <Button size="xs" variant="ghost" onClick={() => setOpenOnly(false)}>
+            Show every shift
+          </Button>
+        </div>
+      )}
 
       {/* Auto-schedule ribbon (week view only). Hides when there are no
           unassigned OPEN shifts in the visible week. Stacks above the publish
@@ -3808,7 +4018,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       <AutoScheduleReviewDialog
         result={autoResult}
         shifts={shifts}
-        onClose={() => setAutoResult(null)}
+        buildSummary={buildSummary}
+        draftsToPublish={draftsInWeek}
+        onPublish={() => {
+          setAutoResult(null);
+          setBuildSummary(null);
+          void onPublishWeek();
+        }}
+        onClose={() => {
+          setAutoResult(null);
+          setBuildSummary(null);
+        }}
         onRefresh={refresh}
         onEdit={(s) => {
           setAutoResult(null);
@@ -6880,6 +7100,9 @@ function PublishSkipsDialog({
 function AutoScheduleReviewDialog({
   result,
   shifts,
+  buildSummary,
+  draftsToPublish,
+  onPublish,
   onClose,
   onRefresh,
   onEdit,
@@ -6888,6 +7111,11 @@ function AutoScheduleReviewDialog({
 }: {
   result: { res: AutoScheduleWeekResponse; candidateIds: string[] } | null;
   shifts: Shift[] | null;
+  /** Set when the review ends "Build next week": what the copy did. */
+  buildSummary?: string | null;
+  /** Drafts in the week on screen — the review's last step publishes them. */
+  draftsToPublish?: number;
+  onPublish?: () => void;
   onClose: () => void;
   onRefresh: () => Promise<void> | void;
   onEdit: (s: Shift) => void;
@@ -6925,8 +7153,9 @@ function AutoScheduleReviewDialog({
     <Dialog open={result !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Auto-schedule review</DialogTitle>
+          <DialogTitle>{buildSummary ? 'Next week, built' : 'Auto-schedule review'}</DialogTitle>
           <DialogDescription>
+            {buildSummary && <>{buildSummary} </>}
             {result && (
               <>
                 Assigned {result.res.assigned} shift
@@ -6994,8 +7223,13 @@ function AutoScheduleReviewDialog({
             </Button>
           )}
           <Button type="button" variant="secondary" onClick={onClose}>
-            Done
+            {onPublish && (draftsToPublish ?? 0) > 0 ? 'Not yet' : 'Done'}
           </Button>
+          {onPublish && (draftsToPublish ?? 0) > 0 && (
+            <Button type="button" onClick={onPublish}>
+              Publish {draftsToPublish} shift{draftsToPublish === 1 ? '' : 's'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

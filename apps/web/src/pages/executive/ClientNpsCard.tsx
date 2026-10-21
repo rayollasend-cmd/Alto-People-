@@ -6,6 +6,7 @@ import { NpsNumber } from '@/pages/clients/ClientNpsPage';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Sparkline } from '@/components/ui/charts/Sparkline';
 
 /** The quarter's client NPS on the executive's home, with the lowest clients first. */
 export function ClientNpsCard() {
@@ -35,6 +36,20 @@ export function ClientNpsCard() {
               <div className="mt-0.5 text-xs text-ink-muted">
                 {r.current.responded} of {r.current.invited} answered · {r.current.open ? `open until ${fmtDate(r.current.closesAt)}` : 'closed'}
               </div>
+              {r.trend.filter((t) => t.nps !== null).length >= 2 && (
+                <div className="mt-2 flex items-center gap-2 text-2xs text-ink-muted">
+                  <Sparkline
+                    series={r.trend.map((t) => t.nps)}
+                    tone="primary"
+                    width={112}
+                    height={28}
+                    label={`NPS by quarter: ${r.trend.map((t) => `${t.quarter} ${t.nps ?? 'no answers'}`).join(', ')}`}
+                  />
+                  <span>
+                    {r.trend[0]!.quarter}–{r.trend[r.trend.length - 1]!.quarter}
+                  </span>
+                </div>
+              )}
             </div>
             <ul className="min-w-0 flex-1 divide-y divide-line">
               {r.byClient.slice(0, 4).map((c) => (

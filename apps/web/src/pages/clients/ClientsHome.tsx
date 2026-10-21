@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -37,6 +37,9 @@ import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { NewClientDialog } from './NewClientDialog';
 import { ListTemplate } from '@/components/templates';
 import { PipelineSection } from './PipelineSection';
+import { rollUpWeeks, type StoreTrend } from './ClientPerformance';
+import { storeTrends } from '@/lib/schedulingApi';
+import { Sparkline } from '@/components/ui/charts/Sparkline';
 
 const STATUS_FILTERS: Array<{ value: ClientStatus | 'ALL'; label: string }> = [
   { value: 'ALL', label: 'All' },
@@ -74,6 +77,15 @@ export function ClientsHome() {
   // The weekly service-report endpoint is billing-gated; the button only
   // renders for logins that can actually download it.
   const canReport = can('process:payroll') || can('view:executive');
+  // Four weeks of hours and margin per client, for the row's trend line —
+  // labor margin reads to scheduling, executives and payroll only.
+  const canTrend = can('manage:scheduling') || can('view:executive') || can('process:payroll');
+  const trendsQuery = useQuery({ queryKey: ['clients', 'storeTrends', 'all'], queryFn: () => storeTrends<StoreTrend>(null), enabled: canTrend, retry: false, staleTime: 5 * 60_000 });
+  const trendByClient = useMemo(() => {
+    const byClient = new Map<string, StoreTrend[]>();
+    for (const st of trendsQuery.data?.stores ?? []) byClient.set(st.clientId, [...(byClient.get(st.clientId) ?? []), st]);
+    return new Map([...byClient.entries()].map(([id, stores]) => [id, rollUpWeeks(stores)]));
+  }, [trendsQuery.data]);
   // Per-row busy tracking so several clients' reports can generate in
   // parallel — a single busy id serialized the whole run.
   const [reportBusyIds, setReportBusyIds] = useState<Set<string>>(new Set());
@@ -423,6 +435,34 @@ export function ClientsHome() {
                   </span>
                 ),
               },
+              ...(canTrend && trendByClient.size > 0
+                ? [
+                    {
+                      key: 'trend',
+                      header: 'Hours · 4 wks',
+                      accessor: (c: ClientListItem) => trendByClient.get(c.id)?.reduce((n, w) => n + w.hours, 0) ?? null,
+                      csv: (c: ClientListItem) => {
+                        const w = trendByClient.get(c.id);
+                        return w ? String(Math.round(w.reduce((n, x) => n + x.hours, 0))) : '';
+                      },
+                      sortable: true,
+                      searchable: false,
+                      align: 'right' as const,
+                      cell: (c: ClientListItem) => {
+                        const w = trendByClient.get(c.id);
+                        if (!w || w.length === 0) return <span className="text-silver/70">—</span>;
+                        const total = Math.round(w.reduce((n, x) => n + x.hours, 0));
+                        const margin = w[w.length - 1]!.marginPerHour;
+                        return (
+                          <span className="inline-flex items-center justify-end gap-2" title={margin === null ? undefined : `Last week’s margin: $${margin.toFixed(2)} an hour`}>
+                            <Sparkline series={w.map((x) => x.hours)} tone={margin !== null && margin < 0 ? 'bad' : 'primary'} width={64} height={20} />
+                            <span className="tabular-nums text-silver">{total.toLocaleString('en-US')}h</span>
+                          </span>
+                        );
+                      },
+                    },
+                  ]
+                : []),
               {
                 key: 'lastPayroll',
                 header: 'Last payroll',

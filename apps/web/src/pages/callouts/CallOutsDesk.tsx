@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, PhoneCall, PhoneOff } from 'lucide-react';
+import { CalendarSearch, ChevronDown, ChevronRight, PhoneCall, PhoneOff, UserCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtRelativeDayTz, fmtShiftRangeTz } from '@/lib/format';
 import { CALL_OUT_REASONS, listCallOuts, recordCallOutFor, type CallOutItem, type CallOutReason } from '@/lib/callOutsApi';
-import { listShifts } from '@/lib/schedulingApi';
+import { assignShift, getAutoFillCandidates, listShifts } from '@/lib/schedulingApi';
 import { ListTemplate } from '@/components/templates';
 import { Avatar } from '@/components/ui/Avatar';
 import { QueryError } from '@/components/ui/QueryError';
@@ -70,11 +71,56 @@ function CoverBadge({ item }: { item: CallOutItem }) {
   return <Badge variant="pending">Looking for cover</Badge>;
 }
 
-function CallOutRow({ item }: { item: CallOutItem }) {
+/**
+ * The one-click fill on a shift still looking for cover: the best-ranked
+ * person who's free (the same ranking the bench asks), assigned in place —
+ * and the shift itself, one click away, for anything the pick can't settle.
+ */
+function CoverActions({ item, canManage }: { item: CallOutItem; canManage: boolean }) {
+  const qc = useQueryClient();
+  const looking = item.cover.state !== 'covered';
+  const picks = useQuery({
+    queryKey: ['scheduling', 'auto-fill', item.shift.id],
+    queryFn: () => getAutoFillCandidates(item.shift.id),
+    enabled: canManage && looking,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const top = (picks.data?.candidates ?? []).find((c) => c.associateId !== item.associateId && c.noConflict && !c.onApprovedTimeOff && c.score > 0) ?? null;
+  const assign = useMutation({
+    mutationFn: (pick: { associateId: string; associateName: string }) => assignShift(item.shift.id, { associateId: pick.associateId }),
+    onSuccess: (_shift, pick) => {
+      toast.success(`${pick.associateName} has the ${item.shift.position} shift. They were told.`);
+      void qc.invalidateQueries({ queryKey: ['callouts'] });
+      void qc.invalidateQueries({ queryKey: ['scheduling'] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not assign — open the shift to pick someone.'),
+  });
+  if (!canManage) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {looking && top && (
+        <Button size="sm" onClick={() => assign.mutate(top)} loading={assign.isPending} title={`Best fit: ${Math.round(top.score * 100)}% — free, no conflict, ${Math.round(top.weeklyMinutesScheduled / 60)} h already this week`}>
+          <UserCheck className="h-4 w-4" aria-hidden="true" />
+          Assign {top.associateName}
+        </Button>
+      )}
+      {looking && picks.isSuccess && !top && <span className="text-xs text-ink-muted">Nobody free ranks for it yet.</span>}
+      <Button size="sm" variant="ghost" asChild>
+        <Link to={`/scheduling?shift=${item.shift.id}`}>
+          <CalendarSearch className="h-4 w-4" aria-hidden="true" />
+          Open shift
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
+function CallOutRow({ item, canManage, highlight }: { item: CallOutItem; canManage: boolean; highlight: boolean }) {
   const [open, setOpen] = useState(false);
   const when = `${fmtRelativeDayTz(item.shift.startsAt, item.shift.timezone, Date.now())} · ${fmtShiftRangeTz(item.shift.startsAt, item.shift.endsAt, item.shift.timezone)}`;
   return (
-    <li className="py-3 first:pt-0 last:pb-0">
+    <li id={`callout-${item.id}`} className={cn('py-3 first:pt-0 last:pb-0 transition-colors', highlight && 'rounded-md bg-gold/10 ring-2 ring-gold/60')}>
       <div className="flex flex-wrap items-start gap-3">
         <Avatar src={item.photoUrl} name={item.name} size="sm" />
         {/* On a phone the details take the row and "Cover steps" wraps beneath them. */}
@@ -96,6 +142,7 @@ function CallOutRow({ item }: { item: CallOutItem }) {
             {item.hasRecording && <span className="text-xs text-ink-muted">Left a voice message</span>}
           </div>
           {item.note && <p className="mt-1.5 text-sm text-ink">“{item.note}”</p>}
+          <CoverActions item={item} canManage={canManage} />
         </div>
         {item.cover.steps.length > 0 && (
           <Button size="sm" variant="ghost" className="ml-11 sm:ml-0" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={`${open ? 'Hide' : 'Show'} how cover is going for ${item.name}`}>
@@ -200,10 +247,41 @@ function RecordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
 
 export function CallOutsDesk() {
   const { can } = useAuth();
+  const canManage = can('manage:scheduling');
   const [range, setRange] = useState<'today' | 'week'>('today');
   const [recording, setRecording] = useState(false);
   const list = useQuery({ queryKey: ['callouts', range], queryFn: () => listCallOuts(range), refetchInterval: 60_000 });
   const d = list.data;
+
+  // ?callout=<id> (a notification's link): ring that call-out and bring it
+  // into view — widening to the week when it isn't today or tomorrow.
+  const [params, setParams] = useSearchParams();
+  const linked = params.get('callout');
+  const [highlight, setHighlight] = useState<string | null>(null);
+  useEffect(() => {
+    if (!linked || !d) return;
+    const found = d.items.some((i) => i.id === linked);
+    if (!found && range === 'today') {
+      setRange('week');
+      return;
+    }
+    const next = new URLSearchParams(params);
+    next.delete('callout');
+    setParams(next, { replace: true });
+    if (!found) {
+      toast.error('That call-out isn’t in this week any more.');
+      return;
+    }
+    setHighlight(linked);
+    requestAnimationFrame(() => document.getElementById(`callout-${linked}`)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }));
+    // params changes identity every render; consuming `linked` ends the cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linked, d, range]);
+  useEffect(() => {
+    if (!highlight) return;
+    const t = window.setTimeout(() => setHighlight(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [highlight]);
   const looking = (d?.items ?? []).filter((i) => i.cover.state !== 'covered');
   const covered = (d?.items ?? []).filter((i) => i.cover.state === 'covered');
 
@@ -213,7 +291,7 @@ export function CallOutsDesk() {
       subtitle="When someone can’t make their shift — by phone, text, WhatsApp or the app — cover starts on its own. Here’s how it’s going."
       breadcrumbs={[{ label: 'Time & scheduling' }, { label: 'Call-outs' }]}
       primaryAction={
-        can('manage:scheduling') ? (
+        canManage ? (
           <Button onClick={() => setRecording(true)}>
             <PhoneCall className="h-4 w-4" aria-hidden="true" />
             Record a call-out
@@ -268,7 +346,7 @@ export function CallOutsDesk() {
                   </h2>
                   <Card>
                     <CardContent className="p-4">
-                      <ul className="divide-y divide-line">{looking.map((i) => <CallOutRow key={i.id} item={i} />)}</ul>
+                      <ul className="divide-y divide-line">{looking.map((i) => <CallOutRow key={i.id} item={i} canManage={canManage} highlight={highlight === i.id} />)}</ul>
                     </CardContent>
                   </Card>
                 </section>
@@ -280,7 +358,7 @@ export function CallOutsDesk() {
                   </h2>
                   <Card>
                     <CardContent className="p-4">
-                      <ul className="divide-y divide-line">{covered.map((i) => <CallOutRow key={i.id} item={i} />)}</ul>
+                      <ul className="divide-y divide-line">{covered.map((i) => <CallOutRow key={i.id} item={i} canManage={canManage} highlight={highlight === i.id} />)}</ul>
                     </CardContent>
                   </Card>
                 </section>

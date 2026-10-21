@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 import type { CloseListResponse, ClosePeriodDetail, CloseTaskView } from '@alto-people/shared';
@@ -118,12 +118,23 @@ describe('ClosePeriodPage', () => {
     expect(screen.getByRole('button', { name: /Ready to close/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /Ready to close/ })).toHaveAttribute('title', '2 steps are still open.');
 
+    // A note is optional and inline — no dialog in the way.
+    await user.click(screen.getByRole('button', { name: 'Add a note' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: /Note for/ }), 'Within 2%');
     await user.click(screen.getByRole('button', { name: 'Mark done' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.type(within(dialog).getByRole('textbox'), 'Within 2%');
-    await user.click(within(dialog).getByRole('button', { name: 'Mark done' }));
     await waitFor(() => expect(api.updateCloseTask).toHaveBeenCalledWith('2026-09', 'budget_review', { status: 'DONE', note: 'Within 2%' }));
     expect(await screen.findByText('Within 2%')).toBeInTheDocument();
+  });
+
+  it('marks a hand step done in one click', async () => {
+    api.getCloseMonth.mockResolvedValue(detail());
+    api.updateCloseTask.mockResolvedValue(detail());
+    const user = userEvent.setup();
+    atMonth();
+    await user.click(await screen.findByRole('button', { name: 'Mark done' }));
+    await waitFor(() => expect(api.updateCloseTask).toHaveBeenCalledWith('2026-09', 'budget_review', { status: 'DONE', note: null }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('a second person signs off a month waiting for it; the executive only reads', async () => {

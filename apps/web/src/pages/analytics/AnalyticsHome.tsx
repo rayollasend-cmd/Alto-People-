@@ -13,13 +13,12 @@ import {
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
-import type { DashboardKPIs } from '@alto-people/shared';
+import type { DashboardKPIs, KpiTrend } from '@alto-people/shared';
+import { PALETTE } from '@/components/ui/charts/palette';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
-import { chartColor, type ChartColorToken } from '@/lib/chartColors';
 import { downloadCsv } from '@/lib/csv';
 import { fmtMoney, ymdLocal } from '@/lib/format';
-import { useTheme } from '@/lib/theme';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -40,7 +39,7 @@ const RetentionSection = lazy(() =>
 );
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricCard, type MetricTrend, type TrendGood } from '@/components/ui/MetricCard';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -71,17 +70,16 @@ const STATUS_LABELS: Record<string, string> = {
   REJECTED: 'Rejected',
   CANCELLED: 'Cancelled',
 };
-// Palette TOKENS, not hexes — resolved via chartColor() at render time so
-// the donut tracks index.css (including the light/dark flip) instead of a
-// hand-copied snapshot of the palette.
-const STATUS_COLORS: Record<string, ChartColorToken> = {
-  APPROVED: 'success',
-  IN_REVIEW: 'warning',
-  SUBMITTED: 'gold',
-  DRAFT: 'silver',
-  REJECTED: 'alert',
+// The kit's tokens (CSS variables), so the donut follows the theme. The
+// statuses are states, so the reserved state colors carry them.
+const STATUS_COLORS: Record<string, string> = {
+  APPROVED: PALETTE.good,
+  IN_REVIEW: PALETTE.warn,
+  SUBMITTED: PALETTE.primary,
+  DRAFT: PALETTE.other,
+  REJECTED: PALETTE.bad,
   // Called off, not a verdict — muted, never red.
-  CANCELLED: 'steel',
+  CANCELLED: PALETTE.info,
 };
 
 const WINDOW_PRESETS = [7, 30, 60, 90] as const;
@@ -97,10 +95,6 @@ export function AnalyticsHome() {
   const term = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
   const workers = term('workers');
-  // Subscribe to the theme context (value unused) so a light/dark flip
-  // re-renders the page and chartColor() re-reads the swapped CSS vars
-  // for the status donut.
-  useTheme();
   const [days, setDays] = useState<WindowDays>(30);
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -188,11 +182,12 @@ export function AnalyticsHome() {
         description="Headcount and live presence."
       >
         {kpis ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <Stat
               label={`Active ${workers.toLowerCase()}`}
               value={kpis.activeAssociates.toString()}
               link={hasClients ? '/clients' : '/people'}
+              trend={weekly(kpis.trends?.hires, 'hires vs last wk')}
             />
             <Stat
               label="Clocked in right now"
@@ -204,6 +199,15 @@ export function AnalyticsHome() {
               }
               link="/time-attendance"
             />
+            {kpis.trends?.hoursWorked && (
+              <Stat
+                label="Hours worked · last week"
+                value={fmtHours(lastComplete(kpis.trends.hoursWorked))}
+                hint={`${fmtHours(kpis.trends.hoursWorked.series.at(-1) ?? 0)} so far this week`}
+                link="/time-attendance"
+                trend={weekly(kpis.trends.hoursWorked, 'vs the week before', fmtHours)}
+              />
+            )}
           </div>
         ) : (
           <SkeletonGrid />
@@ -219,6 +223,15 @@ export function AnalyticsHome() {
               hint={`Shifts without an assigned ${term('worker').toLowerCase()}`}
               link="/scheduling"
             />
+            {kpis.trends?.shiftsScheduled && (
+              <Stat
+                label="Shifts scheduled · last week"
+                value={lastComplete(kpis.trends.shiftsScheduled).toLocaleString()}
+                hint={`${(kpis.trends.shiftsScheduled.series.at(-1) ?? 0).toLocaleString()} so far this week`}
+                link="/scheduling"
+                trend={weekly(kpis.trends.shiftsScheduled, 'vs the week before')}
+              />
+            )}
           </div>
         ) : (
           <SkeletonGrid count={1} />
@@ -263,6 +276,8 @@ export function AnalyticsHome() {
                 value={kpis.pendingOnboardingApplications.toString()}
                 accent={kpis.pendingOnboardingApplications > 0}
                 link="/onboarding"
+                trend={weekly(kpis.trends?.applications, 'new vs last wk')}
+                good="neutral"
               />
               <Stat
                 label="I-9 Section 2 backlog"
@@ -349,18 +364,35 @@ interface StatProps {
   hint?: string;
   accent?: boolean;
   link?: string;
+  trend?: MetricTrend;
+  /** Which direction is good news for the trend; default up. */
+  good?: TrendGood;
 }
 
-function Stat({ label, value, hint, accent, link }: StatProps) {
+function Stat({ label, value, hint, accent, link, trend, good }: StatProps) {
   return (
     <MetricCard
       label={label}
       value={value}
       hint={hint}
       accent={accent}
+      trend={trend}
+      trendGood={good}
       wrap={link ? (card) => <Link to={link}>{card}</Link> : undefined}
     />
   );
+}
+
+const fmtHours = (n: number) => `${Math.round(n).toLocaleString()}h`;
+
+/** The last complete week (the final bucket is the week in progress). */
+function lastComplete(t: KpiTrend): number {
+  return t.series[t.series.length - 2] ?? 0;
+}
+
+/** The API's weekly series as a tile trend, when it sent one. */
+function weekly(t: KpiTrend | undefined, deltaLabel: string, format?: (n: number) => string): MetricTrend | undefined {
+  return t && t.series.length >= 2 ? { ...t, deltaLabel, format } : undefined;
 }
 
 /**
@@ -380,7 +412,7 @@ function buildStatusBreakdown(
       out.push({
         name: STATUS_LABELS[status] ?? status,
         value,
-        color: chartColor(STATUS_COLORS[status]),
+        color: STATUS_COLORS[status],
       });
       seen.add(status);
     }

@@ -6,6 +6,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Capability } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 
+vi.mock('@/lib/schedulingApi', () => ({
+  listMyShifts: vi.fn(),
+}));
+
 vi.mock('@/lib/timeOffApi', () => ({
   getMyBalance: vi.fn(),
   listMyRequests: vi.fn(),
@@ -19,9 +23,10 @@ import {
   getMyBalance,
   listMyRequests,
 } from '@/lib/timeOffApi';
-import { AssociateTimeOffView } from '@/pages/timeoff/AssociateTimeOffView';
+import { listMyShifts } from '@/lib/schedulingApi';
+import { AssociateTimeOffView, defaultCategory } from '@/pages/timeoff/AssociateTimeOffView';
 
-function renderView() {
+function renderView(path = '/time-off') {
   // Fresh client per render so cached lists never leak between tests;
   // retry off so mocked failures surface immediately.
   const queryClient = new QueryClient({
@@ -50,7 +55,7 @@ function renderView() {
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthContext.Provider value={value}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[path]}>
           <AssociateTimeOffView />
         </MemoryRouter>
       </AuthContext.Provider>
@@ -64,6 +69,7 @@ beforeEach(() => {
     recentLedger: [],
   });
   vi.mocked(listMyRequests).mockResolvedValue({ requests: [] });
+  vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] } as never);
 });
 
 describe('<AssociateTimeOffView>', () => {
@@ -114,7 +120,8 @@ describe('<AssociateTimeOffView>', () => {
 
     await waitFor(() => {
       expect(createMyRequest).toHaveBeenCalledWith({
-        category: 'VACATION',
+        // The category starts on the one with time in it.
+        category: 'SICK',
         startDate: '2026-05-04',
         endDate: '2026-05-04',
         hours: 8,
@@ -287,5 +294,49 @@ describe('<AssociateTimeOffView>', () => {
     // accessible name so the "Withdrawn" status filter chip doesn't count.
     const withdrawButtons = screen.getAllByRole('button', { name: /^withdraw$/i });
     expect(withdrawButtons).toHaveLength(1);
+  });
+});
+
+describe('<AssociateTimeOffView> form defaults', () => {
+  it('starts on the category with time in it, vacation when none has any', () => {
+    expect(defaultCategory([{ category: 'SICK', balanceMinutes: 240 }, { category: 'VACATION', balanceMinutes: 0 }] as never)).toBe('SICK');
+    expect(defaultCategory([{ category: 'SICK', balanceMinutes: 0 }] as never)).toBe('VACATION');
+    expect(defaultCategory(null)).toBe('VACATION');
+  });
+
+  it('starts tomorrow', async () => {
+    const user = userEvent.setup();
+    renderView();
+    await waitFor(() => expect(getMyBalance).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: /request time off/i }));
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    const tomorrow = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    expect(screen.getByLabelText(/start date/i)).toHaveValue(tomorrow);
+  });
+
+  it('a shift card’s "Request this shift off" opens on that day with the shift’s hours', async () => {
+    // A Saturday 7:00–13:30 shift (paid 5.5 h after its unpaid meal break),
+    // on a day the weekday count would call zero.
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [
+        {
+          id: 's1',
+          status: 'ASSIGNED',
+          startsAt: new Date(2026, 10, 7, 7, 0).toISOString(),
+          endsAt: new Date(2026, 10, 7, 13, 30).toISOString(),
+        },
+      ],
+    } as never);
+    vi.mocked(createMyRequest).mockResolvedValue({} as never);
+    const user = userEvent.setup();
+    renderView('/time-off?new=1&date=2026-11-07&shift=s1');
+    expect(await screen.findByDisplayValue('2026-11-07')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('spinbutton')).toHaveValue(5.5));
+    expect(screen.getByText(/hours from your schedule/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^submit$/i }));
+    await waitFor(() =>
+      expect(createMyRequest).toHaveBeenCalledWith(expect.objectContaining({ startDate: '2026-11-07', endDate: '2026-11-07', hours: 5.5 })),
+    );
   });
 });

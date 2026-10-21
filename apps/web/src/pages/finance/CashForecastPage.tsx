@@ -12,7 +12,9 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import type { CashForecast, CashLine } from './financeTypes';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { CashFlowChart, cashRows } from './financeCharts';
+import type { CashForecast, CashLine, CashWeek } from './financeTypes';
 
 /**
  * The cash forecast, every line: payroll and deposits going out, statements
@@ -91,6 +93,7 @@ export function CashForecastPage() {
       )}
       {data && (
         <div className="space-y-4">
+          <CashChart weeks={data.weeks} />
           <Card>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
@@ -166,5 +169,36 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: stri
         <div className={cn('mt-2 font-display text-2xl leading-none tabular-nums', tone)}>{value}</div>
       </CardContent>
     </Card>
+  );
+}
+
+/* ---- Running balance over money in and out ------------------------------ */
+
+function CashChart({ weeks }: { weeks: CashWeek[] }) {
+  if (weeks.length === 0) return null;
+  const low = weeks.reduce((m, w) => (w.cumulative < m.cumulative ? w : m), weeks[0]!);
+  const end = weeks[weeks.length - 1]!;
+  const summary =
+    low.cumulative < 0
+      ? `The running total dips to ${fmtMoney(low.cumulative)} in the week of ${fmtDate(low.weekStart)} and ends at ${fmtMoney(end.cumulative)}.`
+      : `The running total stays above zero, ending at ${fmtMoney(end.cumulative)} after ${weeks.length} weeks.`;
+  return (
+    <ChartFrame
+      title="Week by week"
+      description="Money in above the line, money out below, and the running total across the horizon."
+      summary={summary}
+      columns={[
+        { key: 'weekStart', label: 'Week of', format: (v) => fmtDate(v as string) },
+        { key: 'inflow', label: 'Money in', numeric: true, format: (v) => fmtMoney(v as number) },
+        { key: 'outflow', label: 'Money out', numeric: true, format: (v) => fmtMoney(v as number) },
+        { key: 'net', label: 'Net', numeric: true, format: (v) => fmtMoney(v as number) },
+        { key: 'cumulative', label: 'Running total', numeric: true, format: (v) => fmtMoney(v as number) },
+      ]}
+      rows={cashRows(weeks)}
+      csvName="cash-forecast"
+      height={280}
+    >
+      <CashFlowChart weeks={weeks} />
+    </ChartFrame>
   );
 }

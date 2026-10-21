@@ -12,7 +12,7 @@ import { notifyAssociate, notifyClientSupervisors, notifyUser, trackNotification
 import { assertDriverFit, hosSettings } from '../lib/transportDrivers.js';
 import { resetDrift } from '../lib/transportSafety.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
-import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
+import { DEFAULT_TIMEZONE, localDateKey } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
 import { activeGeocoder, geocode, reverseGeocode, searchAddresses, type GeoPoint } from '../lib/geocode.js';
@@ -726,7 +726,7 @@ transportRouter.post('/me/rides', RIDE, async (req, res) => {
         body:
           `${ride.direction === 'TO_WORK' ? 'To' : 'Home from'} ${store.name} at ${fmtWhen(targetAt, store.timezone)} — ` +
           `inside the ${settings.cutoffHours}-hour planning window. Drivers see it now; it needs one to accept.`,
-        linkUrl: '/transport',
+        linkUrl: `/transport?date=${localDateKey(targetAt, store.timezone)}`,
       }),
     );
   }
@@ -2006,7 +2006,7 @@ transportRouter.post('/driver/requests/:rideId/decline', DRIVE, async (req, res)
       await notifyTransportDesk({
         subject: `No driver took ${ride.associate.firstName}'s seat`,
         body: `${ride.associate.firstName} ${ride.associate.lastName} · ${ride.direction === 'TO_WORK' ? 'to' : 'home from'} ${ride.location.name} · ${fmtWhen(ride.targetAt, ride.location.timezone)}. Every driver declined — dispatch it yourself or offer it again.`,
-        linkUrl: '/',
+        linkUrl: `/transport?date=${localDateKey(ride.targetAt, ride.location.timezone)}`,
       });
     }
   }
@@ -2297,16 +2297,60 @@ transportRouter.post('/rides/:id/waive', MANAGE, async (req, res) => {
   const { reason } = ReasonInput.parse(req.body);
   const ride = await prisma.ride.findUnique({ where: { id }, select: rideSelect });
   if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
+  const refused = whyNotWaivable(ride);
+  if (refused) throw new HttpError(409, refused.code, refused.message);
+  await waiveOne(ride, reason, req.user!.id);
+  res.json({ ok: true });
+});
+
+/**
+ * Waive several no-show fees with one reason — a run that came to the wrong
+ * stop, a morning the vans were late. Fees only: a ride someone took is
+ * never waived, and it comes back in `skipped` with why, along with
+ * anything already waived or already taken by payroll.
+ */
+const BulkWaiveInput = z.object({ rideIds: z.array(z.string().uuid()).min(1).max(200), reason: z.string().trim().min(3).max(300) });
+
+transportRouter.post('/rides/waive', MANAGE, async (req, res) => {
+  const { rideIds, reason } = BulkWaiveInput.parse(req.body);
+  const ids = [...new Set(rideIds)];
+  const rides = await prisma.ride.findMany({ where: { id: { in: ids } }, select: rideSelect });
+  const found = new Map(rides.map((r) => [r.id, r]));
+  const waived: string[] = [];
+  const skipped: Array<{ id: string; code: string; message: string }> = [];
+  for (const id of ids) {
+    const ride = found.get(id);
+    if (!ride) {
+      skipped.push({ id, code: 'not_found', message: 'Ride not found.' });
+      continue;
+    }
+    const refused = whyNotWaivable(ride);
+    if (refused) {
+      skipped.push({ id, ...refused });
+      continue;
+    }
+    await waiveOne(ride, reason, req.user!.id);
+    waived.push(id);
+  }
+  res.json({ waived: waived.length, waivedIds: waived, skipped });
+});
+
+type WaivableRide = Prisma.RideGetPayload<{ select: typeof rideSelect }>;
+
+/** Why this ride's charge can't be waived — null when it can (an unpaid, unwaived no-show fee). */
+function whyNotWaivable(ride: WaivableRide): { code: string; message: string } | null {
   if (ride.status === 'BOARDED' || ride.status === 'COMPLETED') {
-    throw new HttpError(409, 'ride_taken', 'They took this ride, so its fare can’t be waived. Only a no-show fee can be.');
+    return { code: 'ride_taken', message: 'They took this ride, so its fare can’t be waived. Only a no-show fee can be.' };
   }
-  if (ride.chargeCents === 0 || ride.waivedAt) throw new HttpError(409, 'nothing_to_waive', 'Nothing is owed on this ride.');
-  if (ride.chargedRunId) {
-    throw new HttpError(409, 'already_charged', 'Payroll already took this charge — refund it as a reimbursement instead.');
-  }
-  await prisma.ride.update({ where: { id }, data: { waivedAt: new Date(), waivedById: req.user!.id, waiveReason: reason, waiveKind: 'MANAGER' } });
+  if (ride.chargeCents === 0 || ride.waivedAt) return { code: 'nothing_to_waive', message: 'Nothing is owed on this ride.' };
+  if (ride.chargedRunId) return { code: 'already_charged', message: 'Payroll already took this charge — refund it as a reimbursement instead.' };
+  return null;
+}
+
+async function waiveOne(ride: WaivableRide, reason: string, actorUserId: string): Promise<void> {
+  await prisma.ride.update({ where: { id: ride.id }, data: { waivedAt: new Date(), waivedById: actorUserId, waiveReason: reason, waiveKind: 'MANAGER' } });
   enqueueAudit(
-    { actorUserId: req.user!.id, action: 'transport.charge_waived', entityType: 'Ride', entityId: id, metadata: { reason, cents: ride.chargeCents } },
+    { actorUserId, action: 'transport.charge_waived', entityType: 'Ride', entityId: ride.id, metadata: { reason, cents: ride.chargeCents } },
     'transport',
   );
   void trackNotificationWork(
@@ -2317,8 +2361,7 @@ transportRouter.post('/rides/:id/waive', MANAGE, async (req, res) => {
       linkUrl: '/rides',
     }),
   );
-  res.json({ ok: true });
-});
+}
 
 /**
  * Undo a waiver: the charge is owed again. A waived no-show fee comes back

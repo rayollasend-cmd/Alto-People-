@@ -15,8 +15,11 @@ import { I9_SECTION2, blockerWords, pendingSection2, section2Link } from './comp
 import { INCIDENT_LOOP, closable, incidentWhere, openDays, openIncidents, severityWords } from './incidentLoop.js';
 import { COVERAGE_CREDENTIALS, latestCoverage } from './credentialCoverage.js';
 import { tenantIdForWrite } from './tenant.js';
+import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
 
 const DAY_MS = 24 * 3600_000;
+/** Store-local "YYYY-MM-DD" — the date a deep link opens the schedule or a queue on. */
+const ymd = (d: Date) => localDateKey(d, DEFAULT_TIMEZONE);
 
 export type DecisionDomain =
   | 'site-ops'
@@ -96,7 +99,7 @@ export async function computeRoleDecisions(
 
   /* ----- Site operations (supervisors + anyone managing time) ----------- */
   if (can('manage:time')) {
-    const [walkIns, unapproved] = await Promise.all([
+    const [walkIns, unapproved, oldestUnapproved] = await Promise.all([
       prisma.clockInRequest.findMany({
         where: { status: 'PENDING', ...clientClamp },
         select: { requestedAt: true },
@@ -104,6 +107,11 @@ export async function computeRoleDecisions(
       }),
       prisma.timeEntry.count({
         where: { status: 'COMPLETED', clockInAt: { lt: thisWeekStart }, ...clientClamp },
+      }),
+      prisma.timeEntry.findFirst({
+        where: { status: 'COMPLETED', clockInAt: { lt: thisWeekStart }, ...clientClamp },
+        orderBy: { clockInAt: 'asc' },
+        select: { clockInAt: true },
       }),
     ]);
     if (walkIns.length > 0) {
@@ -118,7 +126,7 @@ export async function computeRoleDecisions(
         detail: `Someone is standing at a kiosk unable to work — oldest has waited ${oldestMin} minutes.`,
         stakes: null,
         ageDays: null,
-        linkUrl: '/approvals',
+        linkUrl: '/approvals?tab=walkins',
         quickAction: 'Approve all',
       });
     }
@@ -131,7 +139,9 @@ export async function computeRoleDecisions(
         detail: 'Unapproved time is unbillable and holds up payroll — run timesheet approval.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/time-attendance',
+        // The queue, opened on exactly the weeks that fired this: the oldest
+        // unapproved punch through the day before this week.
+        linkUrl: `/time-attendance?tab=queue&from=${ymd(oldestUnapproved?.clockInAt ?? thisWeekStart)}&to=${ymd(new Date(thisWeekStart.getTime() - DAY_MS))}`,
       });
     }
   }
@@ -223,7 +233,7 @@ export async function computeRoleDecisions(
           'The auto-fill engine already invited the eligible bench — these still need a hand.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/scheduling',
+        linkUrl: `/scheduling?open=1&view=day&date=${ymd(now)}`,
       });
     }
     // Prediction, not reaction: tomorrow's shifts held by high-risk
@@ -243,7 +253,7 @@ export async function computeRoleDecisions(
             .join(', ')}) — worth a confirmation text tonight or a pre-arranged backup.`,
           stakes: null,
           ageDays: null,
-          linkUrl: '/scheduling',
+          linkUrl: `/scheduling?view=day&date=${ymd(new Date(now.getTime() + DAY_MS))}`,
         });
       }
     }
@@ -256,7 +266,7 @@ export async function computeRoleDecisions(
         detail: 'Associates volunteered — a fast yes fills the schedule and rewards initiative.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/approvals',
+        linkUrl: '/approvals?tab=pickups',
       });
     }
   }
@@ -581,7 +591,7 @@ export async function computeRoleDecisions(
         detail: 'Drafts idle over a week are unbilled revenue.',
         stakes: total || null,
         ageDays: null,
-        linkUrl: '/clients',
+        linkUrl: '/clients/statements',
       });
     }
     // Per-statement, with keys IDENTICAL to the executive engine's, so a

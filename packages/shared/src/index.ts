@@ -21,3 +21,4 @@ export * from './controlRoom.js';
 export * from './paySchedules.js';
 export * from './books/index.js';
 export * from './payrollGoLive.js';
+export * from './attendanceInsights.js';

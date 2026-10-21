@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
@@ -69,6 +69,7 @@ import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
 import { BulkApproveDialog } from './BulkApproveDialog';
+import { SavedViewsMenu } from '@/components/SavedViewsMenu';
 import { BulkInviteDialog } from './BulkInviteDialog';
 import { CsvImportDialog } from './CsvImportDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
@@ -472,6 +473,35 @@ export function ApplicationsList() {
   const approvableSelected = (items ?? []).filter(
     (a) => selected.has(a.id) && a.percentComplete === 100 && !isTerminal(a),
   );
+  // Submitted and every task done: the ones HR can approve now. One click
+  // selects them all, and the bulk bar's Approve takes it from there.
+  const readyRows = (items ?? []).filter(
+    (a) => (a.status === 'SUBMITTED' || a.status === 'IN_REVIEW') && a.percentComplete === 100,
+  );
+
+  // Saved views: the filters on screen as a named set (components/SavedViewsMenu).
+  const [savedViewId, setSavedViewId] = useState<string | null>(null);
+  const viewQuery = useMemo(() => {
+    const q: Record<string, string> = {};
+    if (status !== 'ACTIVE') q.status = status;
+    if (clientId) q.clientId = clientId;
+    if (urlQ) q.q = urlQ;
+    if (invitedWindow !== 'ALL') q.invited = invitedWindow;
+    return q;
+  }, [status, clientId, urlQ, invitedWindow]);
+  const applySavedView = (id: string | null, query: Record<string, string>) => {
+    setSavedViewId(id);
+    const nextStatus: StatusFilter = isStatusFilter(query.status) ? query.status : 'ACTIVE';
+    setStoredStatus(nextStatus);
+    setInvitedWindow(isInvitedWindow(query.invited) ? query.invited : 'ALL');
+    setQInput(query.q ?? '');
+    const next = new URLSearchParams(searchParams);
+    for (const k of ['status', 'clientId', 'q']) next.delete(k);
+    if (nextStatus !== 'ACTIVE') next.set('status', nextStatus);
+    if (query.clientId) next.set('clientId', query.clientId);
+    if (query.q) next.set('q', query.q);
+    setSearchParams(next, { replace: true });
+  };
 
   // CSV export of the ENTIRE filtered result set — same all-pages loop as
   // PeopleDirectory, so a >1-page backlog doesn't silently truncate.
@@ -981,6 +1011,24 @@ export function ApplicationsList() {
               </FilterChip>
             ))}
           </div>
+          <SavedViewsMenu
+            scope="onboarding.applications"
+            current={viewQuery}
+            activeId={savedViewId}
+            onApply={applySavedView}
+            allLabel="Default view"
+          />
+          {canManage && readyRows.length > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setSelected(new Set(readyRows.map((a) => a.id)))}
+              title="Select every submitted application whose tasks are all done — then approve them together"
+            >
+              <UserCheck className="h-4 w-4" />
+              Select ready ({readyRows.length})
+            </Button>
+          )}
           {stats.stale > 0 && (
             <Button
               size="sm"

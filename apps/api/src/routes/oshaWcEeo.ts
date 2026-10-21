@@ -246,8 +246,31 @@ oshaWcEeoRouter.put('/osha/incidents/:id', MANAGE_COMP, async (req, res) => {
 oshaWcEeoRouter.get('/osha/300a', VIEW_COMP, async (req, res) => {
   const clientId = z.string().uuid().parse(req.query.clientId);
   const year = z.coerce.number().int().min(2000).max(2100).parse(req.query.year);
-  res.json(await osha300aSummary(prisma, clientId, year));
+  const [summary, hoursWorked] = await Promise.all([osha300aSummary(prisma, clientId, year), clientHoursInYear(clientId, year)]);
+  // The injury rates OSHA normalises to 100 full-time workers (200,000 hours a year).
+  const rate = (cases: number) => (hoursWorked > 0 ? Math.round(((cases * 200_000) / hoursWorked) * 100) / 100 : null);
+  res.json({
+    ...summary,
+    hoursWorked: Math.round(hoursWorked),
+    trir: rate(summary.totalCases),
+    dart: rate(summary.daysAwayCases + summary.restrictedCases),
+  });
 });
+
+/** Hours on the clock for one client in a calendar year (closed, accepted entries) — summed in SQL; a raw query sees no tenant guard, so it names the tenant. */
+async function clientHoursInYear(clientId: string, year: number): Promise<number> {
+  const start = new Date(Date.UTC(year, 0, 1));
+  const end = new Date(Date.UTC(year + 1, 0, 1));
+  const rows = await prisma.$queryRaw<Array<{ hours: unknown }>>(Prisma.sql`
+    SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt"))) / 3600, 0) AS hours
+    FROM "TimeEntry"
+    WHERE "clockOutAt" IS NOT NULL
+      AND "status"::text IN ('COMPLETED', 'APPROVED')
+      AND "clockInAt" >= ${start} AND "clockInAt" < ${end}
+      AND "clientId" = ${clientId}::uuid
+      AND "tenantId" = ${tenantIdForWrite()}::uuid`);
+  return Number(rows[0]?.hours ?? 0);
+}
 
 // ----- Workers' Comp class codes -----------------------------------------
 

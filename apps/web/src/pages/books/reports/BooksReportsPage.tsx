@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { Amount, DimensionFilters, dimsQuery, yearStart } from '../ledger/ledgerKit';
+import { PnlMonthBars, PnlWaterfall } from './PnlCharts';
 
 /**
  * The financial statements: profit and loss (by month or by client beside
@@ -227,6 +228,10 @@ function ProfitAndLossView({ p }: { p: ReportParams }) {
   const r = q.data;
   return (
     <div className="space-y-[var(--d-stack)]">
+      <div className={cn('grid gap-[var(--d-stack)]', p.columns === 'month' && r.columns.length > 1 && 'xl:grid-cols-2')}>
+        <PnlWaterfall totals={r.totals} />
+        {p.columns === 'month' && r.columns.length > 1 && <PnlMonthBars r={r} />}
+      </div>
       <Card>
         <CardContent className="p-4 md:p-6">
           <p className="mb-2 text-xs text-ink-muted">{`${fmtDate(r.from)} – ${fmtDate(r.to)}`}</p>

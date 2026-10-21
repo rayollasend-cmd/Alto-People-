@@ -25,4 +25,19 @@ describe('GET /scheduling/shifts', () => {
     expect(res.status).toBe(200);
     expect(res.body.shifts.find((s: { id: string }) => s.id === shift.id)).toMatchObject({ clientId: null, clientName: null, position: 'Front desk' });
   });
+
+  it('?id= reads one shift wherever it sits — the /scheduling?shift= link — and rejects a bad id', async () => {
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hr = await loginAs(agent(), user.email);
+    const far = new Date(Date.now() + 90 * 86_400_000);
+    const [a, b] = await Promise.all([
+      prisma.shift.create({ data: { clientId: null, position: 'Night audit', startsAt: far, endsAt: new Date(far.getTime() + 8 * 3_600_000), status: 'ASSIGNED' } }),
+      prisma.shift.create({ data: { clientId: null, position: 'Bell desk', startsAt: far, endsAt: new Date(far.getTime() + 8 * 3_600_000), status: 'OPEN' } }),
+    ]);
+    const res = await hr.get('/scheduling/shifts').query({ id: a.id });
+    expect(res.status).toBe(200);
+    expect(res.body.shifts.map((s: { id: string }) => s.id)).toEqual([a.id]);
+    expect(b.id).not.toBe(a.id);
+    expect((await hr.get('/scheduling/shifts').query({ id: 'not-a-uuid' })).status).toBe(400);
+  });
 });

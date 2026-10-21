@@ -327,8 +327,20 @@ export interface PayrollYtdRow {
   paystubCount: number;
 }
 
+export interface PayrollYtdMonth {
+  /** YYYY-MM, by payout date. */
+  month: string;
+  gross: number;
+  tax: number;
+  deductions: number;
+  net: number;
+  runs: number;
+}
+
 export interface PayrollYtdResponse {
   taxYear: number;
+  /** Twelve months of the year (older APIs leave it out). */
+  monthly?: PayrollYtdMonth[];
   totals: {
     gross: number;
     fit: number;

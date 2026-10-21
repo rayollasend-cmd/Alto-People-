@@ -20,6 +20,11 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Input } from '@/components/ui/Input';
 import { ListTemplate } from '@/components/templates';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
+import { getPeopleAnalytics } from '@/lib/peopleAnalyticsApi';
+import { parseYmd } from '@/lib/format';
 
 /**
  * Headcount (Brief 1A-2) — one definition of active, on one screen.
@@ -117,6 +122,8 @@ export function HeadcountHome() {
           }))}
         />
       </div>
+
+      {can('view:analytics') && <HeadcountTrend />}
 
       <section className="space-y-3" aria-labelledby="headcount-turnover">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -455,5 +462,54 @@ function CompactList({ title, rows }: { title: string; rows: { key: string; labe
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/* ------------------------------------------------------ the year, month by month */
+
+const monthName = (ym: string) => fmtDate(parseYmd(`${ym}-01`)).replace(/ \d{1,2},/, ',').replace(/,\s*/, ' ');
+
+/**
+ * Twelve months of the employed count with each month's hires and
+ * separations beside it. It counts everyone employed at the month's end —
+ * the people-analytics definition — so it can differ from the active count
+ * above, which needs recent work.
+ */
+function HeadcountTrend() {
+  const q = useQuery({ queryKey: ['peopleAnalytics', 12], queryFn: () => getPeopleAnalytics(12), retry: false, staleTime: 5 * 60_000 });
+  const rows = useMemo(() => (q.data?.headcount ?? []).map((h) => ({ month: monthName(h.month), headcount: h.headcount, hires: h.hires, separations: -h.separations })), [q.data]);
+  if (q.isError || !q.data || rows.length === 0) return null;
+  const first = q.data.headcount[0]!;
+  const last = q.data.headcount[q.data.headcount.length - 1]!;
+  const hires = q.data.headcount.reduce((n, h) => n + h.hires, 0);
+  const left = q.data.headcount.reduce((n, h) => n + h.separations, 0);
+  return (
+    <ChartFrame
+      title="Headcount, month by month"
+      description="Everyone employed at each month’s end, with that month’s hires above the line and separations below. It needs no recent work, so it can run above the active count."
+      summary={`Employed went from ${first.headcount} to ${last.headcount} over ${q.data.headcount.length} months: ${hires} hired, ${left} left.`}
+      csvName="headcount-by-month"
+      columns={[
+        { key: 'month', label: 'Month' },
+        { key: 'headcount', label: 'Employed', numeric: true },
+        { key: 'hires', label: 'Hires', numeric: true },
+        { key: 'separations', label: 'Separations', numeric: true, format: (v) => String(Math.abs(Number(v))) },
+      ]}
+      rows={rows}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} stackOffset="sign">
+          <CartesianGrid stroke={PALETTE.grid} vertical={false} />
+          <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="flow" tick={TICK} tickLine={false} axisLine={false} width={40} allowDecimals={false} tickFormatter={(v: number) => String(Math.abs(v))} />
+          <YAxis yAxisId="count" orientation="right" tick={TICK} tickLine={false} axisLine={false} width={48} allowDecimals={false} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v) => Math.abs(Number(v)).toLocaleString('en-US')} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar yAxisId="flow" dataKey="hires" name="Hires" stackId="flow" fill={PALETTE.good} radius={[3, 3, 0, 0]} maxBarSize={24} />
+          <Bar yAxisId="flow" dataKey="separations" name="Separations" stackId="flow" fill={PALETTE.bad} radius={[0, 0, 3, 3]} maxBarSize={24} />
+          <Line yAxisId="count" dataKey="headcount" name="Employed" stroke={PALETTE.series[0]} strokeWidth={2} dot={false} type="monotone" />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </ChartFrame>
   );
 }

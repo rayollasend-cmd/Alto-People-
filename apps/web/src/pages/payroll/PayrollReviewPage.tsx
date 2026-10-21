@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { AlertTriangle, ArrowRight, Download, FileSpreadsheet, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDate, fmtDateTime, fmtHours, fmtMoney, fmtPercent } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtHours, fmtMoney, fmtMoneyCompact, fmtPercent } from '@/lib/format';
 import { statusTone } from '@/lib/status';
 import {
   FLAG_LABEL,
@@ -25,6 +25,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { Waterfall } from '@/components/ui/charts';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Textarea } from '@/components/ui/Input';
@@ -50,7 +52,7 @@ const RUN_STATUS_LABEL: Record<PayrollReviewReport['run']['status'], string> = {
 export function PayrollReviewPage() {
   const { id = '' } = useParams<{ id: string }>();
   const q = useQuery({ queryKey: ['payroll', 'review', id], queryFn: () => getPayrollReview(id), enabled: !!id });
-  const crumbs = [{ label: 'Payroll', to: '/payroll' }, { label: 'Guided close', to: `/payroll/runs/${id}/close` }, { label: 'Review' }];
+  const crumbs = [{ label: 'Payroll', to: `/payroll?run=${id}` }, { label: 'Guided close', to: `/payroll/runs/${id}/close` }, { label: 'Review' }];
 
   if (q.isError) {
     return (
@@ -146,10 +148,12 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
       summary={
         <div className="space-y-3">
           <SignoffBanner signoff={signoff} status={r.status} />
+          {signoff.current && open && <PayNext runId={r.id} status={r.status} net={report.totals.net} />}
           <Totals report={report} />
         </div>
       }
     >
+      <PayWaterfall report={report} />
       <div className="grid gap-[var(--d-stack)] lg:grid-cols-2">
         <MoneyCard
           title="Cash required"
@@ -214,6 +218,70 @@ function SignoffBanner({ signoff, status }: { signoff: ReviewState; status: Payr
         </p>
       </div>
     </div>
+  );
+}
+
+/* ---- After sign-off: straight on to paying ------------------------------ */
+
+function PayNext({ runId, status, net }: { runId: string; status: PayrollReviewReport['run']['status']; net: number }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold/30 bg-gold/5 p-3.5">
+      <p className="text-sm text-ink">{status === 'DRAFT' ? 'Signed off. Finalize the run, then pay it out.' : 'Signed off and ready to pay out.'}</p>
+      <Button asChild>
+        <Link to={`/payroll?run=${runId}&next=pay`}>
+          {status === 'DRAFT' ? 'Finalize & disburse' : 'Disburse'} {fmtMoney(net)}
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
+/* ---- Gross to net to cash, as one picture ------------------------------ */
+
+function PayWaterfall({ report }: { report: PayrollReviewReport }) {
+  const t = report.totals;
+  if (t.gross <= 0) return null;
+  const pay = [
+    { label: 'Pre-tax deductions', value: -t.preTax },
+    { label: 'Taxes withheld', value: -t.employeeTaxes },
+    { label: 'After-tax deductions', value: -t.postTax },
+    { label: 'Other', value: -t.other },
+    { label: 'Reimbursements', value: t.reimbursements },
+  ].filter((x) => Math.abs(x.value) >= 0.005);
+  // What else leaves the bank beyond net pay: withholding and deductions
+  // sent on, then the employer's own taxes.
+  const sentOn = Math.max(0, report.cash.total - t.net - t.employerTaxes);
+  const cash = [
+    { label: 'Withheld, sent on', value: sentOn },
+    { label: 'Employer taxes', value: t.employerTaxes },
+  ].filter((x) => x.value >= 0.005);
+  const rows = [
+    { step: 'Gross pay', amount: t.gross },
+    ...pay.map((x) => ({ step: x.label, amount: x.value })),
+    { step: 'Net pay', amount: t.net },
+    ...cash.map((x) => ({ step: x.label, amount: x.value })),
+    { step: 'Cash required', amount: report.cash.total },
+  ];
+  const words = { total: 'Total', up: 'Adds', down: 'Comes out' };
+  return (
+    <ChartFrame
+      title="Where the money goes"
+      description="Gross pay down to what people take home, then up to what leaves the bank."
+      summary={`Gross pay ${fmtMoney(t.gross)} becomes net pay ${fmtMoney(t.net)} after ${fmtMoney(t.preTax + t.employeeTaxes + t.postTax + t.other)} withheld; with employer taxes and money sent on, the run needs ${fmtMoney(report.cash.total)} in cash.`}
+      columns={[
+        { key: 'step', label: 'Step' },
+        { key: 'amount', label: 'Amount', numeric: true, format: (v) => fmtMoney(v as number) },
+      ]}
+      rows={rows}
+      csvName="payroll-waterfall"
+      height={300}
+    >
+      <div className="grid h-full grid-rows-2 gap-3 *:min-h-0 lg:grid-cols-[3fr_2fr] lg:grid-rows-1 lg:gap-4">
+        <Waterfall start={{ label: 'Gross', value: t.gross }} steps={pay} end={{ label: 'Net pay' }} format={fmtMoneyCompact} words={words} />
+        <Waterfall start={{ label: 'Net pay', value: t.net }} steps={cash} end={{ label: 'Cash required' }} format={fmtMoneyCompact} words={words} />
+      </div>
+    </ChartFrame>
   );
 }
 

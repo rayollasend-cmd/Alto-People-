@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -158,6 +158,30 @@ const when = (iso: string) => `${fmtRelativeDayTz(iso)} · ${fmtTime(iso)}`;
 /** The queues on the desk, in the order they are worked. */
 type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'proposals' | 'requests' | 'unconfirmed';
 
+/** ?tab= names a queue (the links' contract: swaps, pickups, walkins,
+ *  timeoff, proposals, requests, unconfirmed); an item param names one row
+ *  and implies its queue. Exported for tests. */
+const TAB_QUEUES: Record<string, QueueKey> = {
+  swaps: 'swaps',
+  pickups: 'pickups',
+  walkins: 'walk-ins',
+  'walk-ins': 'walk-ins',
+  timeoff: 'time-off',
+  'time-off': 'time-off',
+  proposals: 'proposals',
+  requests: 'requests',
+  unconfirmed: 'unconfirmed',
+};
+export function queueFromParams(p: URLSearchParams): QueueKey | null {
+  if (p.get('request')) return 'time-off';
+  if (p.get('walkin')) return 'walk-ins';
+  if (p.get('swap')) return 'swaps';
+  if (p.get('pickup')) return 'pickups';
+  if (p.get('proposal')) return 'proposals';
+  if (p.get('approval')) return 'requests';
+  return TAB_QUEUES[p.get('tab') ?? ''] ?? null;
+}
+
 export function ApprovalsHome() {
   const queryClient = useQueryClient();
   const { can } = useAuth();
@@ -171,17 +195,7 @@ export function ApprovalsHome() {
   // desk opens the first queue with work on desktop, and on a phone the
   // queue list is the page.
   const [searchParams, setSearchParams] = useSearchParams();
-  const [picked, setPicked] = useState<QueueKey | null>(() =>
-    searchParams.get('request')
-      ? 'time-off'
-      : searchParams.get('walkin')
-        ? 'walk-ins'
-        : searchParams.get('tab') === 'proposals' || searchParams.get('proposal')
-          ? 'proposals'
-          : searchParams.get('tab') === 'requests' || searchParams.get('approval')
-            ? 'requests'
-            : null,
-  );
+  const [picked, setPicked] = useState<QueueKey | null>(() => queueFromParams(searchParams));
   // ?approval=<id> (a request's notification, the Inbox, a pay-change row) lands on that card.
   const [focusRequest, setFocusRequest] = useState<string | null>(() => searchParams.get('approval'));
   const [coverOpen, setCoverOpen] = useState(false);
@@ -286,6 +300,36 @@ export function ApprovalsHome() {
   const openQueue: QueueKey | null = picked ?? (loaded ? firstWithWork : null);
   const openCount = queues.find((q) => q.key === openQueue)?.value;
   const openLabel = queues.find((q) => q.key === openQueue)?.label ?? 'Not confirmed yet';
+
+  // When the queue being worked runs dry, move on to the next one with
+  // work (in desk order, wrapping) instead of leaving an empty panel —
+  // only after it had something in it, so a link to an already-decided
+  // item doesn't bounce the reader somewhere they didn't ask for.
+  const hadWorkRef = useRef<{ key: QueueKey | null; had: boolean }>({ key: null, had: false });
+  useEffect(() => {
+    if (hadWorkRef.current.key !== picked) hadWorkRef.current = { key: picked, had: false };
+    if (!picked || typeof openCount !== 'number') return;
+    if (openCount > 0) {
+      hadWorkRef.current.had = true;
+      return;
+    }
+    if (!hadWorkRef.current.had) return;
+    const order = queues.map((q) => q.key);
+    const at = order.indexOf(picked);
+    const next = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))]
+      .map((k) => queues.find((q) => q.key === k)!)
+      .find((q) => typeof q.value === 'number' && q.value > 0);
+    const doneLabel = queues.find((q) => q.key === picked)?.label ?? 'That queue';
+    if (next) {
+      toast.success(`${doneLabel} is clear — on to ${next.label.toLowerCase()}.`);
+      setPicked(next.key);
+    } else {
+      toast.success(`${doneLabel} is clear — nothing else is waiting on you.`);
+    }
+    hadWorkRef.current = { key: next?.key ?? picked, had: false };
+    // queues is rebuilt every render from the counts already in the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked, openCount]);
 
   const queue = (
     <div className="space-y-3 animate-enter">
@@ -629,7 +673,7 @@ const fmtYmd = (iso: string) => fmtDate(parseYmd(iso));
  * target that's no longer pending gets an explanatory toast instead.
  */
 function useDeepLinkFlash(
-  param: 'request' | 'walkin',
+  param: 'request' | 'walkin' | 'swap' | 'pickup',
   ids: string[] | null,
 ): string | null {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -649,7 +693,7 @@ function useDeepLinkFlash(
     requestAnimationFrame(() => {
       document
         .getElementById(`${param}-${target}`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        ?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     });
     window.setTimeout(() => setFlashId(null), 2000);
     // searchParams/setSearchParams change identity on the consume above;
@@ -723,6 +767,17 @@ function WalkInClockInsPanel() {
   const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
   const flashId = useDeepLinkFlash('walkin', items === null ? null : itemIds);
+  // j/k over the people at the kiosk, a clocks them in, d opens the deny note.
+  const kb = useListKeyboard({
+    items: items ?? [],
+    idOf: (r) => r.id,
+    onApprove: (r) => void decide(r.id, () => approveClockInRequest(r.id), `${r.associateName} is clocked in.`),
+    onDecline: (r) => {
+      setDenyReason('');
+      setDenyTarget(r);
+    },
+    enabled: !denyTarget && !bulkDenyOpen && pendingId === null,
+  });
 
   // Optimistic removal, matching PendingTimeOffPanel directly below —
   // two panels in one stack must not behave differently under the same tap.
@@ -856,7 +911,7 @@ function WalkInClockInsPanel() {
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60">
+          <ul className="divide-y divide-navy-secondary/60" aria-label="People waiting at the kiosk" {...kb.listProps}>
             {items.map((r) => (
               <li
                 key={r.id}
@@ -864,6 +919,7 @@ function WalkInClockInsPanel() {
                 className={`flex flex-wrap items-center justify-between gap-3 py-3${
                   flashId === r.id ? ` rounded-md ${FLASH_ROW_CLASS}` : ''
                 }`}
+                {...kb.rowProps(r.id)}
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <input
@@ -1021,7 +1077,7 @@ function PendingTimeOffPanel({
 }) {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [denyTarget, setDenyTarget] = useState<TimeOffRequest | null>(null);
+  const [denyTarget, setDenyTarget] = useState<TimeOffRequest | 'selected' | null>(null);
   // Memoized: a fresh array identity on every render defeats memoization
   // inside useSelection, and this page refetches itself every minute.
   const itemIds = useMemo(() => items?.map((r) => r.id) ?? [], [items]);
@@ -1129,6 +1185,28 @@ function PendingTimeOffPanel({
     enabled: !denyTarget,
   });
 
+  // Deny selected — one note for all of them, through the same bulk
+  // endpoint; a failed row stays selected and is named.
+  const bulkDeny = async (note: string) => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await bulkDecideRequests({ ids, decision: 'DENY', note });
+      if (res.decided > 0) toast.success(`Denied ${res.decided} request${res.decided === 1 ? '' : 's'}.`);
+      if (res.failed.length > 0) {
+        const nameById = new Map((items ?? []).map((r) => [r.id, r.associateName ?? 'request']));
+        for (const f of res.failed) toast.error(`Could not deny ${nameById.get(f.id) ?? 'request'}.`, { description: f.error });
+        selectAll(res.failed.map((f) => f.id));
+      } else {
+        clear();
+      }
+    } finally {
+      setBulkBusy(false);
+      void queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY });
+    }
+  };
+
   // Bulk approvals go through the server's bulk endpoint — one round-trip,
   // per-id failure reporting. Partial failure keeps ONLY the failed rows
   // selected (named per-row) so a retry doesn't start from scratch.
@@ -1179,9 +1257,14 @@ function PendingTimeOffPanel({
       stagger={3}
       actions={
         selected.size > 0 && (
-          <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
-            Approve selected ({selected.size})
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setDenyTarget('selected')} disabled={bulkBusy}>
+              Deny selected ({selected.size})
+            </Button>
+            <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
+              Approve selected ({selected.size})
+            </Button>
+          </div>
         )
       }
     >
@@ -1229,8 +1312,18 @@ function PendingTimeOffPanel({
                     <div className="text-xs text-silver mt-0.5 tabular-nums">
                       {CATEGORY_LABELS[r.category] ?? r.category} · {fmtYmd(r.startDate)}
                       {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`} ·{' '}
-                      {fmtHours(r.requestedMinutes)}
+                      <span className={r.balanceMinutes != null && r.balanceMinutes < r.requestedMinutes ? 'text-alert' : undefined}>
+                        {fmtHours(r.requestedMinutes)}
+                        {r.balanceMinutes != null && ` of ${fmtHours(r.balanceMinutes)} available`}
+                      </span>
                     </div>
+                    {/* The coverage hole this approval would punch — seen
+                        before the click, same badge as Time off. */}
+                    {(r.assignedShiftOverlaps ?? 0) > 0 && (
+                      <Badge variant="pending" size="sm" className="mt-1">
+                        releases {r.assignedShiftOverlaps} {r.assignedShiftOverlaps === 1 ? 'shift' : 'shifts'}
+                      </Badge>
+                    )}
                     {r.reason && (
                       <div className="text-xs text-silver/70 italic mt-1">
                         "{r.reason}"
@@ -1265,7 +1358,8 @@ function PendingTimeOffPanel({
 
       <DenyDialog
         target={denyTarget}
-        onSubmit={(target, note) => denyMutation.mutateAsync({ target, note })}
+        count={denyTarget === 'selected' ? selected.size : 1}
+        onSubmit={(target, note) => (target === 'selected' ? bulkDeny(note) : denyMutation.mutateAsync({ target, note }))}
         onClose={() => setDenyTarget(null)}
       />
     </QueueCard>
@@ -1274,13 +1368,16 @@ function PendingTimeOffPanel({
 
 function DenyDialog({
   target,
+  count = 1,
   onSubmit,
   onClose,
 }: {
-  target: TimeOffRequest | null;
+  /** One request, or 'selected' — every checked row, one shared note. */
+  target: TimeOffRequest | 'selected' | null;
+  count?: number;
   /** Must reject on server failure (mutateAsync) — the dialog only closes
    *  itself on success so a failed deny keeps the typed note in place. */
-  onSubmit: (target: TimeOffRequest, note: string) => Promise<unknown>;
+  onSubmit: (target: TimeOffRequest | 'selected', note: string) => Promise<unknown>;
   onClose: () => void;
 }) {
   const [note, setNote] = useState('');
@@ -1323,9 +1420,11 @@ function DenyDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Deny request</DialogTitle>
+          <DialogTitle>{target === 'selected' ? `Deny ${count} request${count === 1 ? '' : 's'}` : 'Deny request'}</DialogTitle>
           <DialogDescription>
-            The associate will see your note in their request history.
+            {target === 'selected'
+              ? 'Each person sees this same note in their request history.'
+              : 'The associate will see your note in their request history.'}
           </DialogDescription>
         </DialogHeader>
         <Field label="Note" required>
@@ -1366,6 +1465,16 @@ function SwapsPanel() {
   const itemIds = useMemo(() => items?.map((s) => s.id) ?? [], [items]);
   const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
+  // ?swap=<id> (the swap's notification) rings its row once it loads.
+  const flashId = useDeepLinkFlash('swap', items === null ? null : itemIds);
+  // j/k over the swaps, a approves, d rejects (lib/shortcuts).
+  const kb = useListKeyboard({
+    items: items ?? [],
+    idOf: (x) => x.id,
+    onApprove: (x) => void decide(x.id, () => managerApproveSwap(x.id), 'Swap approved.'),
+    onDecline: (x) => void decide(x.id, () => managerRejectSwap(x.id), 'Swap rejected.'),
+    enabled: pendingId === null && !bulkBusy,
+  });
   const error = swapsQ.isError
     ? swapsQ.error instanceof ApiError
       ? swapsQ.error.message
@@ -1443,9 +1552,14 @@ function SwapsPanel() {
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60">
+          <ul className="divide-y divide-navy-secondary/60" aria-label="Swap requests" {...kb.listProps}>
             {items.map((s) => (
-              <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <li
+                key={s.id}
+                id={`swap-${s.id}`}
+                className={`flex flex-wrap items-center justify-between gap-3 py-3${flashId === s.id ? ` rounded-md ${FLASH_ROW_CLASS}` : ''}`}
+                {...kb.rowProps(s.id)}
+              >
                 <div className="flex min-w-0 items-center gap-3">
                   <input
                     type="checkbox"
@@ -1529,6 +1643,16 @@ function PickupsPanel() {
   const itemIds = useMemo(() => items?.map((c) => c.id) ?? [], [items]);
   const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
+  // ?pickup=<id> (the claim's notification) rings its row once it loads.
+  const flashId = useDeepLinkFlash('pickup', items === null ? null : itemIds);
+  // j/k over the pickups, a approves (assigns the shift), d rejects.
+  const kb = useListKeyboard({
+    items: items ?? [],
+    idOf: (x) => x.id,
+    onApprove: (x) => void decide(x.id, () => approveOpenShiftClaim(x.id), 'Pickup approved — shift assigned.'),
+    onDecline: (x) => void decide(x.id, () => rejectOpenShiftClaim(x.id), 'Pickup rejected.'),
+    enabled: pendingId === null && !bulkBusy,
+  });
   const error = pickupsQ.isError
     ? pickupsQ.error instanceof ApiError
       ? pickupsQ.error.message
@@ -1604,9 +1728,14 @@ function PickupsPanel() {
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60">
+          <ul className="divide-y divide-navy-secondary/60" aria-label="Pickup requests" {...kb.listProps}>
             {items.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <li
+                key={c.id}
+                id={`pickup-${c.id}`}
+                className={`flex flex-wrap items-center justify-between gap-3 py-3${flashId === c.id ? ` rounded-md ${FLASH_ROW_CLASS}` : ''}`}
+                {...kb.rowProps(c.id)}
+              >
                 <div className="flex min-w-0 items-center gap-3">
                   <input
                     type="checkbox"

@@ -23,6 +23,8 @@ vi.mock('@/components/RoleDecisionQueue', () => ({
 }));
 vi.mock('@/components/MyPlanCard', () => ({ MyPlanCard: () => <div>my plan</div> }));
 vi.mock('@/components/home/HugoSeat', () => ({ HugoSeat: () => null }));
+const hours = vi.hoisted(() => ({ getTeamHours: vi.fn() }));
+vi.mock('@/lib/attendanceInsightsApi', () => hours);
 
 import { getTeamDashboard, getTeamHome, listReports, listTeamTimeOff, listTeamTimesheets, type TeamHome } from '@/lib/teamApi';
 import { ManagerDashboard } from '@/pages/ManagerDashboard';
@@ -86,6 +88,7 @@ const emptyHome: TeamHome = {
 };
 
 beforeEach(() => {
+  hours.getTeamHours.mockResolvedValue({ weekStart: '2026-10-17', weekEnd: '2026-10-24', thresholdHours: 40, people: [] });
   vi.mocked(getTeamHome).mockResolvedValue(emptyHome);
   vi.mocked(getTeamDashboard).mockResolvedValue({
     directReports: 6,
@@ -109,6 +112,22 @@ beforeEach(() => {
 });
 
 describe('<ManagerDashboard>', () => {
+  it('draws each report\u2019s hours this week against 40, naming who is heading into overtime', async () => {
+    hours.getTeamHours.mockResolvedValue({
+      weekStart: '2026-10-17',
+      weekEnd: '2026-10-24',
+      thresholdHours: 40,
+      people: [
+        { associateId: 'a-1', name: 'Ann Lee', workedHours: 30, scheduledHours: 16, projectedHours: 46, onClock: true },
+        { associateId: 'a-2', name: 'Bo Chen', workedHours: 12, scheduledHours: 8, projectedHours: 20, onClock: false },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Hours this week' })).toBeInTheDocument();
+    expect(screen.getByText(/1 person is heading into overtime/)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /Ann Lee \(46h\)/ })).toBeInTheDocument();
+  });
+
   it('leads with ONE counted "Needs you": the approvals ranked, the decision queue folded while they wait', async () => {
     renderPage();
     await screen.findByText('Timesheets to review');

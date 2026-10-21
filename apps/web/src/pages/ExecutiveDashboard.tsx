@@ -6,26 +6,13 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { ArrowDownRight, ArrowUpRight, Download, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtMoneyCompact, fmtRelativeDate } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
 import { getOpsBoard, getOpsScorecard } from '@/lib/opsApi';
@@ -38,6 +25,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { MetricCard, type MetricTrend, type TrendGood } from '@/components/ui/MetricCard';
+import { DetailsTable, PALETTE, StackedBarChart, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, TrendLineChart } from '@/components/ui/charts';
 import { AgentRoiTile } from '@/pages/executive/AgentRoiTile';
 import { ClientNpsCard } from '@/pages/executive/ClientNpsCard';
 import { WhatIfClientCard } from '@/pages/executive/WhatIfClientCard';
@@ -234,15 +224,7 @@ const ATTENDANCE_LABEL: Record<string, string> = {
   NO_CALL_NO_SHOW: 'No-call no-shows',
 };
 
-const GOLD = 'rgb(var(--color-gold))';
-const SILVER = 'rgb(var(--color-silver))';
-const GRID = 'rgb(var(--color-silver) / 0.12)';
-const TOOLTIP_STYLE = {
-  background: 'rgb(var(--color-navy))',
-  border: '1px solid rgb(var(--color-navy-secondary))',
-  borderRadius: 6,
-  fontSize: 12,
-} as const;
+const fmtHours = (n: number) => `${n.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`;
 
 /** WoW delta chip — green up / red down, with margin semantics. */
 function Delta({ now, prev, money, upIsBad = false }: { now: number; prev: number; money?: boolean; upIsBad?: boolean }) {
@@ -693,32 +675,52 @@ function RateCalculator({
   );
 }
 
+/** One KPI on the chairman's band: the kit tile, a link when it has a home. */
 function Tile({
   label,
   value,
   sub,
   to,
-  delta,
+  trend,
+  good,
 }: {
   label: string;
   value: string;
   sub?: string;
   to?: string;
-  delta?: React.ReactNode;
+  /** Eight weeks behind the figure, when the summary has them. */
+  trend?: MetricTrend;
+  good?: TrendGood;
 }) {
-  const body = (
-    <Card className={to ? 'h-full transition-colors hover:border-gold/40' : 'h-full'}>
-      <CardContent>
-        <div className="text-xs text-silver">{label}</div>
-        <div className="mt-1 flex items-baseline gap-2">
-          <span className="text-2xl font-semibold tabular-nums text-white">{value}</span>
-          {delta}
-        </div>
-        {sub && <div className="mt-0.5 text-xs text-silver">{sub}</div>}
-      </CardContent>
-    </Card>
+  return (
+    <MetricCard
+      label={label}
+      value={value}
+      hint={sub}
+      trend={trend}
+      trendGood={good}
+      className="h-full"
+      wrap={to ? (card) => <Link to={to} className="block h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright">{card}</Link> : undefined}
+    />
   );
-  return to ? <Link to={to}>{body}</Link> : body;
+}
+
+function withLabel(t: MetricTrend | undefined, deltaLabel: string): MetricTrend | undefined {
+  return t ? { ...t, deltaLabel } : undefined;
+}
+
+/** "Estimated margin went from $4.1k to $5.3k over 8 weeks; the high was $5.6k." */
+function trendSentence(rows: Array<Record<string, unknown>>, key: string, name: string): string {
+  const vals = rows.map((r) => Number(r[key])).filter((n) => Number.isFinite(n));
+  if (vals.length < 2) return `${name}: not enough weeks yet.`;
+  return `${name} went from ${fmtMoneyCompact(vals[0]!)} to ${fmtMoneyCompact(vals[vals.length - 1]!)} over ${vals.length} weeks; the high was ${fmtMoneyCompact(Math.max(...vals))}.`;
+}
+
+/** A weekly series off the summary's trend as a tile trend (last − prior week). */
+function weekTrend(weeks: ExecWeek[], pick: (w: ExecWeek) => number, format: (n: number) => string): MetricTrend | undefined {
+  if (weeks.length < 2) return undefined;
+  const series = weeks.map(pick);
+  return { series, delta: Math.round((series[series.length - 1]! - series[series.length - 2]!) * 10) / 10, deltaLabel: 'vs prior wk', format };
 }
 
 interface PortalEngagement {
@@ -858,9 +860,9 @@ export function ExecutiveDashboard() {
   const composition = useMemo(() => {
     if (!summary) return [];
     return [
-      { name: 'Active', value: summary.workforce.active, color: GOLD },
-      { name: 'Onboarding', value: summary.workforce.onboardingInFlight, color: 'rgb(var(--color-steel))' },
-      { name: 'Paused', value: summary.workforce.deactivated, color: 'rgb(var(--color-silver) / 0.45)' },
+      { name: 'Active', value: summary.workforce.active, color: PALETTE.primary },
+      { name: 'Onboarding', value: summary.workforce.onboardingInFlight, color: PALETTE.secondary },
+      { name: 'Paused', value: summary.workforce.deactivated, color: PALETTE.other },
     ].filter((s) => s.value > 0);
   }, [summary]);
 
@@ -870,6 +872,11 @@ export function ExecutiveDashboard() {
   // The one number (§4.1), with its eight-week arc behind it: the margin
   // story when the tenant bills clients; the labor-cost story otherwise.
   const workersLc = term('workers').toLowerCase();
+  const hoursSummary =
+    trendData.length > 0
+      ? `Hours over ${trendData.length} weeks: ${fmtHours(trendData[0]!.hours)} to ${fmtHours(trendData[trendData.length - 1]!.hours)}, overtime ${fmtHours(trendData[trendData.length - 1]!.ot)} last week.`
+      : 'No hours yet.';
+  const heroSummary = trendSentence(trendData, billRates ? 'margin' : 'laborCost', billRates ? 'Estimated margin' : 'Labor cost');
   const heroCard = summary ? (
     <Card className="overflow-hidden">
       <CardContent>
@@ -899,82 +906,29 @@ export function ExecutiveDashboard() {
             {billRates ? 'Open the live margin board' : 'Open the labor board'}
           </Link>
         </div>
-        <div className="mt-4 h-44">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={trendData} margin={{ top: 4, right: 8, bottom: 0, left: -6 }}>
-              <defs>
-                <linearGradient id="execBilled" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={GOLD} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={GOLD} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke={GRID} vertical={false} />
-              <XAxis
-                dataKey="week"
-                tick={{ fill: SILVER, fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
-                tick={{ fill: SILVER, fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-                width={44}
-              />
-              <Tooltip
-                formatter={(value, name) => [
-                  fmtMoney(Number(value)),
-                  name === 'billed' ? 'Est. billed' : name === 'margin' ? 'Est. margin' : 'Labor cost',
-                ]}
-                labelFormatter={(l) => `Week of ${l}`}
-                contentStyle={TOOLTIP_STYLE}
-              />
-              {billRates ? (
-                <>
-                  <Area
-                    type="monotone"
-                    dataKey="billed"
-                    stroke={GOLD}
-                    strokeWidth={2}
-                    fill="url(#execBilled)"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="margin"
-                    stroke="rgb(var(--color-success))"
-                    strokeWidth={2}
-                    fill="transparent"
-                  />
-                </>
-              ) : (
-                <Area
-                  type="monotone"
-                  dataKey="laborCost"
-                  stroke={GOLD}
-                  strokeWidth={2}
-                  fill="url(#execBilled)"
-                />
-              )}
-            </AreaChart>
-          </ResponsiveContainer>
+        <div className="mt-4" role="img" aria-label={heroSummary}>
+          <TrendLineChart
+            data={trendData}
+            x="week"
+            height={196}
+            format={(v) => fmtMoneyCompact(v)}
+            yLabel="Dollars per week"
+            heading={(l) => `Week of ${l}`}
+            series={
+              billRates
+                ? [
+                    { key: 'billed', name: 'Est. billed', area: true },
+                    { key: 'margin', name: 'Est. margin' },
+                  ]
+                : [{ key: 'laborCost', name: 'Labor cost, fully loaded', area: true }]
+            }
+          />
         </div>
-        <div className="mt-1 flex gap-4 text-2xs text-silver/70">
-          {billRates ? (
-            <>
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-4 rounded-full bg-gold" /> Est. billed
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-4 rounded-full bg-success" /> Est. margin
-              </span>
-            </>
-          ) : (
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-gold" /> Labor cost, fully loaded
-            </span>
-          )}
-        </div>
+        <DetailsTable
+          label="Details"
+          columns={billRates ? ['Week of', 'Est. billed', 'Est. margin', 'Labor cost'] : ['Week of', 'Labor cost']}
+          rows={trendData.map((w) => (billRates ? [w.week, fmtMoney(w.billed), fmtMoney(w.margin), fmtMoney(w.laborCost)] : [w.week, fmtMoney(w.laborCost)]))}
+        />
       </CardContent>
     </Card>
   ) : null;
@@ -1349,6 +1303,7 @@ export function ExecutiveDashboard() {
               value={String(summary.workforce.active)}
               sub={`${summary.workforce.deactivated} paused · ${summary.workforce.onboardingInFlight} onboarding`}
               to="/people"
+              trend={withLabel(weekTrend(summary.trend, (w) => w.headsWorked, (n) => String(n)), 'worked vs prior wk')}
             />
             <Tile
               label={t('execHome.hiresSeparations')}
@@ -1376,11 +1331,7 @@ export function ExecutiveDashboard() {
               value={`${summary.lastWeek.workedHours.toFixed(1)}h`}
               sub={`${summary.lastWeek.otHours.toFixed(1)}h OT`}
               to="/analytics"
-              delta={
-                prevWeek ? (
-                  <Delta now={summary.lastWeek.workedHours} prev={prevWeek.workedHours} />
-                ) : undefined
-              }
+              trend={weekTrend(summary.trend, (w) => w.workedHours, fmtHours)}
             />
             {billRates && (
               <Tile
@@ -1388,11 +1339,7 @@ export function ExecutiveDashboard() {
                 value={fmtMoney(summary.lastWeek.estBilled)}
                 sub="at standard SOW rates"
                 to="/clients"
-                delta={
-                  prevWeek ? (
-                    <Delta now={summary.lastWeek.estBilled} prev={prevWeek.estBilled} money />
-                  ) : undefined
-                }
+                trend={weekTrend(summary.trend, (w) => w.estBilled, (n) => fmtMoneyCompact(n))}
               />
             )}
             <Tile
@@ -1400,11 +1347,8 @@ export function ExecutiveDashboard() {
               value={fmtMoney(summary.lastWeek.estLaborCost)}
               sub="fully loaded"
               to="/labor-costs"
-              delta={
-                !billRates && prevWeek ? (
-                  <Delta now={summary.lastWeek.estLaborCost} prev={prevWeek.estLaborCost} money upIsBad />
-                ) : undefined
-              }
+              trend={weekTrend(summary.trend, (w) => w.estLaborCost, (n) => fmtMoneyCompact(n))}
+              good={billRates ? 'neutral' : 'down'}
             />
             <Tile
               label={t('execHome.thisWeekSoFar')}
@@ -1981,76 +1925,55 @@ export function ExecutiveDashboard() {
 
           {/* Infographics row: hours composition + workforce donut. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">{t('execHome.hoursOvertime')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={trendData} margin={{ top: 4, right: 8, bottom: 0, left: -12 }}>
-                      <CartesianGrid stroke={GRID} vertical={false} />
-                      <XAxis
-                        dataKey="week"
-                        tick={{ fill: SILVER, fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tick={{ fill: SILVER, fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                        width={40}
-                      />
-                      <Tooltip
-                        formatter={(value, name) => [
-                          `${Number(value).toFixed(1)}h`,
-                          name === 'regular' ? 'Regular hours' : 'Overtime',
-                        ]}
-                        labelFormatter={(l) => `Week of ${l}`}
-                        contentStyle={TOOLTIP_STYLE}
-                      />
-                      <Bar dataKey="regular" stackId="h" fill="rgb(var(--color-steel))" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="ot" stackId="h" fill={GOLD} radius={[3, 3, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="mt-1 flex gap-4 text-2xs text-silver/70">
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-1.5 w-4 rounded-full bg-steel" /> Regular
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-1.5 w-4 rounded-full bg-gold" /> Overtime
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="lg:col-span-2">
+              <ChartFrame
+                title={t('execHome.hoursOvertime')}
+                summary={hoursSummary}
+                columns={[
+                  { key: 'week', label: 'Week of' },
+                  { key: 'regular', label: 'Regular hours', numeric: true, format: (v) => fmtHours(Number(v)) },
+                  { key: 'ot', label: 'Overtime', numeric: true, format: (v) => fmtHours(Number(v)) },
+                  { key: 'hours', label: 'Total', numeric: true, format: (v) => fmtHours(Number(v)) },
+                ]}
+                rows={trendData}
+                csvName="hours-and-overtime"
+                height={232}
+              >
+                <StackedBarChart
+                  data={trendData}
+                  x="week"
+                  format={(v) => `${Math.round(v).toLocaleString()}h`}
+                  yLabel="Hours"
+                  heading={(l) => `Week of ${l}`}
+                  series={[
+                    { key: 'regular', name: 'Regular', color: PALETTE.secondary },
+                    { key: 'ot', name: 'Overtime', color: PALETTE.primary },
+                  ]}
+                />
+              </ChartFrame>
+            </div>
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">{t('execHome.workforceComposition')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-44">
+            <ChartFrame
+              title={t('execHome.workforceComposition')}
+              summary={composition.map((c) => `${c.value} ${c.name.toLowerCase()}`).join(', ') || 'Nobody on the roster yet.'}
+              columns={[
+                { key: 'name', label: 'Status' },
+                { key: 'value', label: 'People', numeric: true },
+              ]}
+              rows={composition}
+              csvName="workforce-composition"
+              height={232}
+            >
+              <div className="flex h-full flex-col">
+                <div className="min-h-0 flex-1">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie
-                        data={composition}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius="62%"
-                        outerRadius="90%"
-                        paddingAngle={2}
-                        stroke="none"
-                      >
+                      <Pie data={composition} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="90%" paddingAngle={2} stroke="none" isAnimationActive={false}>
                         {composition.map((s) => (
                           <Cell key={s.name} fill={s.color} />
                         ))}
                       </Pie>
-                      <Tooltip
-                        formatter={(value, name) => [String(value), String(name)]}
-                        contentStyle={TOOLTIP_STYLE}
-                      />
+                      <Tooltip formatter={(value, name) => [String(value), String(name)]} contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -2058,15 +1981,15 @@ export function ExecutiveDashboard() {
                   {composition.map((s) => (
                     <li key={s.name} className="flex items-center justify-between">
                       <span className="flex items-center gap-1.5">
-                        <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
+                        <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
                         {s.name}
                       </span>
                       <span className="tabular-nums text-white">{s.value}</span>
                     </li>
                   ))}
                 </ul>
-              </CardContent>
-            </Card>
+              </div>
+            </ChartFrame>
           </div>
 
           {/* Live floor — per-store coverage bars. */}

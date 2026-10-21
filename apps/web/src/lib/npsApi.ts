@@ -28,6 +28,8 @@ export interface NpsResults {
     lastComment: string | null;
   }>;
   trend: Array<{ quarter: string; nps: number | null; responded: number; invited: number }>;
+  /** Each client's NPS wave by wave, oldest first. */
+  clientTrends?: Array<{ clientId: string; clientName: string; points: Array<{ quarter: string; nps: number | null; responded: number }> }>;
   comments: Array<{ clientName: string; score: number; comment: string; at: string }>;
   canSendQuarter: string | null;
 }

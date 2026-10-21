@@ -14,8 +14,12 @@ import {
   type PlayKind,
   type RetentionItem,
   type RiskBand,
+  type RetentionSummary,
 } from '@/lib/retentionApi';
 import { ListTemplate } from '@/components/templates';
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 import { Avatar } from '@/components/ui/Avatar';
 import { QueryError } from '@/components/ui/QueryError';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -236,17 +240,7 @@ export function RetentionDesk() {
             />
           </div>
         )}
-        {s && s.stores.length > 0 && (
-          <p className="text-sm text-ink-muted">
-            Most at risk:{' '}
-            {s.stores.slice(0, 4).map((st, i) => (
-              <span key={st.id}>
-                {i > 0 ? ', ' : ''}
-                <span className="text-ink">{st.name}</span> ({[st.high ? `${st.high} at high risk` : null, st.medium ? `${st.medium} at some risk` : null].filter(Boolean).join(', ')})
-              </span>
-            ))}
-          </p>
-        )}
+        {s && s.stores.length > 0 && <RiskByPlace stores={s.stores} />}
         {list.isError ? (
           <QueryError what="retention" query={list} />
         ) : list.isLoading || !list.data ? (
@@ -282,6 +276,7 @@ export function RetentionDesk() {
             </CardContent>
           </Card>
         )}
+        {s && s.plays.some((p) => p.stayRate !== null) && <StayRateChart plays={s.plays} />}
         {s && s.plays.some((p) => p.taken > 0) && (
           <section aria-labelledby="ret-plays">
             <h2 id="ret-plays" className="mb-2 text-sm font-medium text-ink">
@@ -309,5 +304,74 @@ export function RetentionDesk() {
       </div>
       <PlayDialog item={playing?.item ?? null} kind={playing?.kind ?? null} onClose={() => setPlaying(null)} />
     </ListTemplate>
+  );
+}
+
+/** Where the risk sits: high and some risk, stacked, for every location with anyone at risk. */
+function RiskByPlace({ stores }: { stores: RetentionSummary['stores'] }) {
+  const term = useTerm();
+  const rows = [...stores].sort((a, b) => b.high - a.high || b.medium - a.medium).map((st) => ({ name: st.name, high: st.high, medium: st.medium }));
+  const shown = rows.slice(0, 12);
+  const place = term('label.store').toLowerCase();
+  const top = rows[0];
+  return (
+    <ChartFrame
+      title={`At risk, by ${place}`}
+      description={rows.length > shown.length ? `The ${shown.length} with the most people at risk — the table has all ${rows.length}.` : undefined}
+      summary={top ? `${top.name} has the most people at risk: ${top.high} high and ${top.medium} some.` : 'Nobody at risk.'}
+      csvName="retention-by-location"
+      height={Math.max(140, shown.length * 30 + 40)}
+      columns={[
+        { key: 'name', label: term('label.store') },
+        { key: 'high', label: 'High risk', numeric: true },
+        { key: 'medium', label: 'Some risk', numeric: true },
+      ]}
+      rows={rows}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={shown} layout="vertical" margin={{ top: 0, right: 12, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
+          <XAxis type="number" allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
+          <YAxis type="category" dataKey="name" width={140} tick={TICK} tickLine={false} axisLine={false} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar dataKey="high" name="High risk" stackId="risk" fill={PALETTE.bad} maxBarSize={18} />
+          <Bar dataKey="medium" name="Some risk" stackId="risk" fill={PALETTE.warn} radius={[0, 3, 3, 0]} maxBarSize={18} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartFrame>
+  );
+}
+
+/** Of the people a play was tried with, the share still here 90 days on. */
+function StayRateChart({ plays }: { plays: RetentionSummary['plays'] }) {
+  const rows = plays
+    .filter((p) => p.stayRate !== null)
+    .sort((a, b) => (b.stayRate ?? 0) - (a.stayRate ?? 0))
+    .map((p) => ({ play: PLAY_LABEL[p.kind], stayRate: p.stayRate, measured: p.stayed + p.left }));
+  return (
+    <ChartFrame
+      title="Stayed 90 days, by play"
+      description="Only plays with a 90-day outcome count. A small number of people makes a rate shaky — the table has how many."
+      summary={`${rows[0]!.play} kept the most: ${rows[0]!.stayRate}% stayed.`}
+      csvName="retention-plays"
+      height={Math.max(140, rows.length * 32 + 30)}
+      columns={[
+        { key: 'play', label: 'Play' },
+        { key: 'stayRate', label: 'Stayed', numeric: true, format: (v) => `${v}%` },
+        { key: 'measured', label: 'People measured', numeric: true },
+      ]}
+      rows={rows}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 12, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
+          <XAxis type="number" domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={TICK} tickLine={false} axisLine={false} />
+          <YAxis type="category" dataKey="play" width={160} tick={TICK} tickLine={false} axisLine={false} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v) => `${v}%`} />
+          <Bar dataKey="stayRate" name="Stayed" fill={PALETTE.good} radius={[0, 3, 3, 0]} maxBarSize={18} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartFrame>
   );
 }

@@ -1,6 +1,8 @@
 import type {
   BankAccountCreateInput,
   BankAccountUpdateInput,
+  BankBulkAction,
+  BankBulkResult,
   BankCategorizeInput,
   BankCsvMapping,
   BankFeedAccountView,
@@ -14,6 +16,7 @@ import type {
   BankRuleInput,
   BankRuleView,
   BankTxnCounts,
+  BankSuggestionsBatch,
   BankTxnStatus,
   BankTxnSuggestions,
   BankTxnView,
@@ -46,6 +49,10 @@ export const importBankFile = (id: string, body: { filename: string; content: st
 export const syncBankAccount = (id: string) => apiFetch<BankImportResult>(`${B}/accounts/${id}/sync`, { method: 'POST', timeoutMs: 120_000 });
 
 export const getTxnSuggestions = (id: string) => apiFetch<BankTxnSuggestions>(`${B}/transactions/${id}/suggestions`);
+/** A page of suggestions in one request. */
+export const getTxnSuggestionsBatch = (ids: string[]) => apiFetch<BankSuggestionsBatch>(`${B}/transactions/suggestions`, { method: 'POST', body: { ids } });
+/** Decide many at once — each its own decision; already decided ones come back skipped. */
+export const bulkDecideTxns = (action: BankBulkAction, ids: string[]) => apiFetch<BankBulkResult>(`${B}/transactions/bulk`, { method: 'POST', body: { action, ids }, timeoutMs: 120_000 });
 export const categorizeTxn = (id: string, body: BankCategorizeInput) => apiFetch<{ transaction: BankTxnView }>(`${B}/transactions/${id}/categorize`, { method: 'POST', body });
 export const matchTxn = (id: string, lineId: string) => apiFetch<{ transaction: BankTxnView }>(`${B}/transactions/${id}/match`, { method: 'POST', body: { lineId } });
 export const excludeTxn = (id: string) => apiFetch<{ transaction: BankTxnView }>(`${B}/transactions/${id}/exclude`, { method: 'POST' });

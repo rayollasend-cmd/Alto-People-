@@ -45,7 +45,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { CandidateBoard } from './CandidateBoard';
 import { CandidateDetailDrawer } from './CandidateDetailDrawer';
-import { SavedViewsMenu } from './SavedViewsMenu';
+import { SavedViewsMenu } from '@/components/SavedViewsMenu';
 import {
   Avatar,
   Badge,

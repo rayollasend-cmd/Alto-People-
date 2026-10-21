@@ -3,12 +3,14 @@ import { z } from 'zod';
 import {
   BankAccountCreateInputSchema,
   BankAccountUpdateInputSchema,
+  BankBulkInputSchema,
   BankCategorizeInputSchema,
   BankImportInputSchema,
   BankImportPreviewInputSchema,
   BankMatchInputSchema,
   BankReconcileStartInputSchema,
   BankRuleInputSchema,
+  BankSuggestionsBatchInputSchema,
   BankTickInputSchema,
 } from '@alto-people/shared';
 import { prisma } from '../../db.js';
@@ -18,6 +20,7 @@ import { getBrandingSync } from '../../lib/branding.js';
 import { tableSheet, toBuffer, workbook } from '../../lib/docKit/xlsx.js';
 import {
   applyRules,
+  bulkDecide,
   categorize,
   categoryAccounts,
   completeReconciliation,
@@ -39,6 +42,7 @@ import {
   reconciliationDetail,
   startReconciliation,
   suggestionsFor,
+  suggestionsForMany,
   syncFeed,
   tick,
   transactionView,
@@ -125,6 +129,20 @@ booksBankRouter.post('/accounts/:id/sync', MANAGE, async (req, res) => {
 });
 
 /* ---- Review ------------------------------------------------------------------ */
+
+/** A page of suggestions in one call. A read — POST only for the list of ids. */
+booksBankRouter.post('/transactions/suggestions', async (req, res) => {
+  const { ids } = BankSuggestionsBatchInputSchema.parse(req.body ?? {});
+  res.json({ suggestions: await suggestionsForMany(prisma, ids) });
+});
+
+booksBankRouter.post('/transactions/bulk', MANAGE, async (req, res) => {
+  const { action, ids } = BankBulkInputSchema.parse(req.body ?? {});
+  const result = await bulkDecide(prisma, action, ids, req.user!.id);
+  const verb = action === 'ACCEPT' ? 'categorized' : action === 'MATCH' ? 'matched' : 'excluded';
+  for (const id of result.done) audit(req.user!.id, `books.bank.${verb}`, 'BankTransaction', id, { bulk: true });
+  res.json(result);
+});
 
 booksBankRouter.get('/transactions/:id', async (req, res) => {
   res.json({ transaction: await transactionView(prisma, Uuid.parse(req.params.id)) });

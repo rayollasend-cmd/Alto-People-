@@ -1,9 +1,8 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Bot } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { fmtMoney } from '@/lib/format';
-import { Card, CardContent } from '@/components/ui/Card';
+import { MetricCard } from '@/components/ui/MetricCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -29,31 +28,25 @@ export function AgentRoiTile() {
   const r = q.data ?? null;
   if (q.isError) return null;
   return (
-    <Link to="/agents" className="block h-full" aria-label="Agents: hours saved and cost, last 30 days">
-      <Card className="h-full transition-colors hover:border-accent/40">
-        <CardContent>
-          <div className="flex items-center gap-1.5 text-xs text-ink-muted">
-            <Bot className="h-3.5 w-3.5" aria-hidden="true" />
-            Agents · 30 days
-          </div>
-          {!r ? (
-            <Skeleton className="mt-2 h-8 w-24" />
-          ) : (
-            <>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="text-2xl font-semibold tabular-nums text-ink">{r.hoursSaved}h</span>
-                <span className="text-xs text-ink-muted">saved</span>
-              </div>
-              <div className="mt-0.5 text-xs text-ink-muted">
-                {fmtMoney(r.costCents / 100)} cost
-                {r.hoursPerDollar !== null ? ` · ${r.hoursPerDollar}h per $` : ''}
-                {r.proposals.acceptancePct !== null ? ` · ${r.proposals.acceptancePct}% of ${r.proposals.filed} proposals accepted` : ` · ${r.assistant.answers} questions answered`}
-              </div>
-              <div className="mt-0.5 text-2xs text-ink-muted">estimate</div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </Link>
+    <MetricCard
+      label="Agents · 30 days"
+      value={r ? `${r.hoursSaved}h saved` : <Skeleton className="h-8 w-24" />}
+      hint={
+        r ? (
+          <>
+            {fmtMoney(r.costCents / 100)} cost
+            {r.hoursPerDollar !== null ? ` · ${r.hoursPerDollar}h per $` : ''}
+            {r.proposals.acceptancePct !== null ? ` · ${r.proposals.acceptancePct}% of ${r.proposals.filed} proposals accepted` : ` · ${r.assistant.answers} questions answered`}
+            <span className="block text-2xs text-ink-muted">estimate</span>
+          </>
+        ) : undefined
+      }
+      className="h-full"
+      wrap={(card) => (
+        <Link to="/agents" className="block h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" aria-label="Agents: hours saved and cost, last 30 days">
+          {card}
+        </Link>
+      )}
+    />
   );
 }

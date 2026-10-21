@@ -28,6 +28,8 @@ import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
+import { DetailsTable } from '@/components/ui/charts';
+import { AgingBar, CashFlowChart, MarginChart } from './financeCharts';
 import type { BillingWeek, CashWeek, FinanceOverview, MarginTrend, PayCycle } from './financeTypes';
 import { useTenant } from '@/lib/auth';
 
@@ -261,7 +263,6 @@ function CashLine({ weeks }: { weeks: CashWeek[] }) {
 export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
   const { t } = useI18n();
   if (!cash) return null;
-  const max = Math.max(1, ...cash.weeks.map((w) => Math.max(w.inflow, w.outflow)));
   return (
     <Card className="h-full animate-enter" style={enterStagger(5)}>
       <CardContent>
@@ -279,20 +280,20 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
         {cash.weeks.every((w) => w.inflow === 0 && w.outflow === 0) ? (
           <p className="mt-3 text-sm text-silver">{t('fin.cashEmpty')}</p>
         ) : (
-          <ul className="mt-3 space-y-2" aria-label={t('fin.cashTitle')}>
-            {cash.weeks.map((w) => (
-              <li key={w.weekStart} className="grid grid-cols-[5.5rem_1fr_auto] items-center gap-2 text-xs tabular-nums">
-                <span className="text-silver">{md(w.weekStart)}</span>
-                <span className="flex flex-col gap-0.5" aria-hidden="true">
-                  <span className="h-1.5 rounded-full bg-success/70" style={{ width: `${(w.inflow / max) * 100}%`, minWidth: w.inflow > 0 ? 2 : 0 }} />
-                  <span className="h-1.5 rounded-full bg-silver/50" style={{ width: `${(w.outflow / max) * 100}%`, minWidth: w.outflow > 0 ? 2 : 0 }} />
-                </span>
-                <span className={cn('font-medium', w.cumulative >= 0 ? 'text-ink' : 'text-alert')} title={`${t('fin.cashIn')} ${fmtMoney(w.inflow)} · ${t('fin.cashOut')} ${fmtMoney(w.outflow)}`}>
-                  {fmtMoney(w.cumulative)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <>
+            <div
+              role="img"
+              aria-label={`${t('fin.cashTitle')}: ${cash.weeks.map((w) => `${md(w.weekStart)} ${t('fin.cashIn')} ${fmtMoney(w.inflow)}, ${t('fin.cashOut')} ${fmtMoney(w.outflow)}, ${t('fin.cashRunning')} ${fmtMoney(w.cumulative)}`).join('; ')}`}
+              className="mt-3 h-40"
+            >
+              <CashFlowChart weeks={cash.weeks} compact />
+            </div>
+            <DetailsTable
+              label={t('fin.cashDetails')}
+              columns={[t('fin.cashWeekCol'), t('fin.cashIn'), t('fin.cashOut'), t('fin.cashRunning')]}
+              rows={cash.weeks.map((w) => [md(w.weekStart), fmtMoney(w.inflow), fmtMoney(w.outflow), fmtMoney(w.cumulative)])}
+            />
+          </>
         )}
         <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
           <Money label={t('fin.cashIn')} value={cash.totals.inflow} tone="text-success" />
@@ -615,7 +616,6 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
   if (!margin) return null;
   const weeks = margin.weeks;
   const any = weeks.some((w) => w.hours > 0);
-  const max = Math.max(1, ...weeks.map((w) => Math.max(w.revenue, w.wages)));
   const done = weeks.filter((w) => !w.inProgress);
   const totals = done.reduce((s, w) => ({ revenue: s.revenue + w.revenue, wages: s.wages + w.wages }), { revenue: 0, wages: 0 });
   const totalMargin = totals.revenue - totals.wages;
@@ -631,47 +631,25 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
           <p className="mt-3 text-sm text-silver">{t('fin.marginEmpty')}</p>
         ) : (
           <>
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-2xs text-silver">
-              <span className="inline-flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-gold" aria-hidden="true" />
-                {t('fin.marginRevenue')}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="h-2 w-2 rounded-sm bg-silver/50" aria-hidden="true" />
-                {t('fin.marginWages')}
-              </span>
-              <span className="inline-flex items-center gap-1 text-success">% {t('fin.marginMargin')}</span>
+            <div
+              role="img"
+              aria-label={`${t('fin.marginTitle')}: ${weeks
+                .map(
+                  (w) =>
+                    `${md(w.weekEnd)}: ${t('fin.marginRevenue')} ${fmtMoney(w.revenue)} · ${t('fin.marginWages')} ${fmtMoney(w.wages)}${
+                      w.marginPct !== null ? ` · ${t('fin.marginMargin')} ${Math.round(w.marginPct * 100)}%` : ''
+                    }${w.inProgress ? ` (${t('fin.marginSoFar')})` : ''}`,
+                )
+                .join('; ')}`}
+              className="mt-2 h-44"
+            >
+              <MarginChart weeks={weeks} words={{ revenue: t('fin.marginRevenue'), wages: t('fin.marginWages'), soFar: t('fin.marginSoFar') }} />
             </div>
-            <div className="mt-2 flex h-36 items-end gap-2" role="list" aria-label={t('fin.marginTitle')}>
-              {weeks.map((w) => {
-                const label = `${md(w.weekEnd)}: ${t('fin.marginRevenue')} ${fmtMoney(w.revenue)} · ${t('fin.marginWages')} ${fmtMoney(w.wages)}${
-                  w.marginPct !== null ? ` · ${t('fin.marginMargin')} ${Math.round(w.marginPct * 100)}%` : ''
-                }${w.inProgress ? ` (${t('fin.marginSoFar')})` : ''}`;
-                return (
-                  <div key={w.weekStart} role="listitem" aria-label={label} title={label} className="flex h-full min-w-0 flex-1 flex-col justify-end">
-                    <div
-                      className={cn(
-                        'mb-1 text-center text-2xs font-semibold tabular-nums',
-                        w.marginPct === null ? 'text-silver/40' : w.marginPct < 0.1 ? 'text-warning' : 'text-success',
-                      )}
-                    >
-                      {w.marginPct === null ? '—' : `${Math.round(w.marginPct * 100)}%`}
-                    </div>
-                    <div className={cn('flex flex-1 items-end justify-center gap-0.5', w.inProgress && 'opacity-60')}>
-                      <div className="w-1/2 max-w-[18px] rounded-t-sm bg-gold" style={{ height: `${(w.revenue / max) * 100}%`, minHeight: w.revenue > 0 ? 2 : 0 }} />
-                      <div className="w-1/2 max-w-[18px] rounded-t-sm bg-silver/50" style={{ height: `${(w.wages / max) * 100}%`, minHeight: w.wages > 0 ? 2 : 0 }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-1 flex gap-2 border-t border-navy-secondary pt-1">
-              {weeks.map((w) => (
-                <div key={w.weekStart} className="min-w-0 flex-1 truncate text-center text-2xs tabular-nums text-silver/60">
-                  {w.inProgress ? t('fin.marginSoFar') : `${Number(w.weekEnd.slice(5, 7))}/${Number(w.weekEnd.slice(8, 10))}`}
-                </div>
-              ))}
-            </div>
+            <DetailsTable
+              label={t('fin.cashDetails')}
+              columns={[t('fin.cashWeekCol'), t('fin.marginRevenue'), t('fin.marginWages'), t('fin.marginMargin')]}
+              rows={weeks.map((w) => [w.inProgress ? t('fin.marginSoFar') : md(w.weekEnd), fmtMoney(w.revenue), fmtMoney(w.wages), w.marginPct === null ? '—' : `${Math.round(w.marginPct * 100)}%`])}
+            />
             <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
               <Money label={t('fin.marginRevenue')} value={totals.revenue} tone="text-gold-bright" />
               <Money label={t('fin.marginWages')} value={totals.wages} tone="text-white" />
@@ -712,9 +690,9 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
   const { t } = useI18n();
   const aging = receivables.aging ?? { current: receivables.outstandingTotal, d31: 0, d61: 0, d91: 0 };
   const total = aging.current + aging.d31 + aging.d61 + aging.d91;
-  const buckets: Array<{ key: string; label: string; amount: number; tone: string }> = [
-    { key: 'current', label: t('fin.arCurrent'), amount: aging.current, tone: 'bg-success/80' },
-    { key: 'd31', label: t('fin.ar31'), amount: aging.d31, tone: 'bg-warning/80' },
+  const buckets: Array<{ key: 'current' | 'd31' | 'd61' | 'd91'; label: string; amount: number; tone: string }> = [
+    { key: 'current', label: t('fin.arCurrent'), amount: aging.current, tone: 'bg-success' },
+    { key: 'd31', label: t('fin.ar31'), amount: aging.d31, tone: 'bg-warning' },
     { key: 'd61', label: t('fin.ar61'), amount: aging.d61, tone: 'bg-alert/60' },
     { key: 'd91', label: t('fin.ar91'), amount: aging.d91, tone: 'bg-alert' },
   ];
@@ -747,12 +725,8 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
                 .filter(Boolean)
                 .join(' · ')}
             </p>
-            <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-navy-secondary" aria-hidden="true">
-              {buckets
-                .filter((b) => b.amount > 0)
-                .map((b) => (
-                  <div key={b.key} className={b.tone} style={{ width: `${(b.amount / total) * 100}%` }} />
-                ))}
+            <div className="mt-3" aria-hidden="true">
+              <AgingBar buckets={buckets} />
             </div>
             <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
               {buckets.map((b) => (

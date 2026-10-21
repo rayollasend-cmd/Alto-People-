@@ -30,6 +30,8 @@ savedViewsRouter.use(requireAuth);
 /** Who may see a scope's views: whoever can see the list itself. */
 const SCOPE_CAPABILITY: Record<SavedViewScope, Capability> = {
   'recruiting.candidates': 'view:recruiting',
+  'people.directory': 'view:org',
+  'onboarding.applications': 'view:onboarding',
 };
 
 const MAX_VIEWS_PER_OWNER = 50;

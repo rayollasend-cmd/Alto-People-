@@ -159,6 +159,39 @@ describe('DataGrid', () => {
     expect(onRowClick).toHaveBeenCalledWith(ROWS[1]);
   });
 
+  it('j/k move from row to row and Enter opens the one the cursor is on', async () => {
+    const onRowClick = vi.fn();
+    renderGrid({ onRowClick, rowActionLabel: (r) => `Open ${r.name}` });
+    const table = screen.getByRole('table', { name: 'Test rows' });
+    within(table).getByRole('row', { name: 'Open Rosa Martinez' }).focus();
+    await userEvent.keyboard('j');
+    expect(document.activeElement).toBe(within(table).getByRole('row', { name: 'Open Dee Kpakpo' }));
+    expect(document.activeElement).toHaveAttribute('data-kb-cursor', 'true');
+    await userEvent.keyboard('{ArrowDown}k');
+    expect(document.activeElement).toBe(within(table).getByRole('row', { name: 'Open Dee Kpakpo' }));
+    await userEvent.keyboard('{Enter}');
+    expect(onRowClick).toHaveBeenLastCalledWith(ROWS[1]);
+  });
+
+  it('a selectable list without row clicks: the table takes focus, j moves, x selects', async () => {
+    const actions = vi.fn((ids: string[]) => <span>acting on {ids.length}</span>);
+    renderGrid({ selectable: { actions } });
+    screen.getByRole('group', { name: /Test rows — j and k move/ }).focus();
+    await userEvent.keyboard('jjx');
+    expect(actions).toHaveBeenLastCalledWith(['b'], expect.any(Function));
+  });
+
+  it('shift-click takes every row between the two boxes', async () => {
+    const actions = vi.fn((ids: string[]) => <span>acting on {ids.length}</span>);
+    renderGrid({ selectable: { actions } });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('checkbox', { name: 'Select Rosa Martinez' }));
+    await user.keyboard('{Shift>}');
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alan Darison' }));
+    await user.keyboard('{/Shift}');
+    expect(screen.getByText('3 selected')).toBeInTheDocument();
+  });
+
   it('on a phone mounts the card stack and no table — never both', async () => {
     // Hiding the inactive layout with CSS would still commit every row
     // twice; the grid reads the breakpoint and renders one layout only.

@@ -563,6 +563,25 @@ export const cancelRide = (id: string, reason: string) =>
 /** Waive a no-show fee (a ride taken is never waived). */
 export const waiveRide = (id: string, reason: string) =>
   apiFetch<{ ok: true }>(`/transport/rides/${id}/waive`, { method: 'POST', body: { reason } });
+/** Waive several no-show fees with one reason. Rides someone took (and anything already waived or paid) come back in `skipped`. */
+export const waiveRides = (rideIds: string[], reason: string) =>
+  apiFetch<{ waived: number; waivedIds: string[]; skipped: Array<{ id: string; code: string; message: string }> }>('/transport/rides/waive', { method: 'POST', body: { rideIds, reason } });
+
+export interface TransportTrendWeek {
+  /** Monday, YYYY-MM-DD. */
+  start: string;
+  /** This week, still running. */
+  partial: boolean;
+  riders: number;
+  noShows: number;
+  noShowPct: number | null;
+  onTimePct: number | null;
+  revenueCents: number;
+  costCents: number;
+}
+/** The last `weeks` weeks (this one last): riders, on-time pickups, no-shows, revenue against cost. */
+export const getTransportTrends = (weeks = 8) => apiFetch<{ weeks: TransportTrendWeek[]; note: string }>(`/transport/trends?weeks=${weeks}`);
+
 /** Undo a waiver: the charge is owed again (held until they sign, when no authorization covers it). */
 export const unwaiveRide = (id: string, reason: string) =>
   apiFetch<{ ride: Ride }>(`/transport/rides/${id}/unwaive`, { method: 'POST', body: { reason } });

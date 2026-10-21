@@ -1319,3 +1319,100 @@ transportOpsRouter.get('/costs', VIEW, async (req, res) => {
   const totals = finish(list.reduce<Row>((t, r) => ({ ...t, runs: t.runs + r.runs, seats: t.seats + r.seats, noShows: t.noShows + r.noShows, faresCents: t.faresCents + r.faresCents, driverCents: t.driverCents + r.driverCents, fuelCents: t.fuelCents + r.fuelCents, maintenanceCents: t.maintenanceCents + r.maintenanceCents }), { clientId: null, client: 'All', runs: 0, seats: 0, noShows: 0, faresCents: 0, driverCents: 0, fuelCents: 0, maintenanceCents: 0 }));
   res.json({ from: q.from, to: q.to, rows: list, totals, note: 'Driver cost is run hours at each driver’s hourly rate; fuel and maintenance are the period’s service-log entries spread over the van’s runs.' });
 });
+
+/* ===== Eight weeks, week by week =========================================== */
+
+/** Monday of the week a YYYY-MM-DD falls in (service dates are store-local days). */
+function mondayOf(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+const addDaysYmd = (ymd: string, n: number) => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/** A pickup counts as on time when the van got there (or the rider boarded) within five minutes of the planned time. */
+const ON_TIME_GRACE_MS = 5 * 60_000;
+
+/**
+ * The director's trend lines: riders carried, on-time pickups, no-shows,
+ * and what the vans earned against what they cost — Monday to Sunday, the
+ * last `weeks` weeks with this one (still running) last. Cost is the same
+ * reckoning as /costs: run hours at each driver's rate, plus the week's
+ * fuel and upkeep from the service log.
+ */
+transportOpsRouter.get('/trends', VIEW, async (req, res) => {
+  const weeks = z.coerce.number().int().min(2).max(26).default(8).parse(req.query.weeks ?? 8);
+  const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const thisWeek = mondayOf(today);
+  const starts = Array.from({ length: weeks }, (_, i) => addDaysYmd(thisWeek, (i - weeks + 1) * 7));
+  const from = starts[0]!;
+  const to = addDaysYmd(thisWeek, 6);
+  const [rides, runs, service] = await Promise.all([
+    prisma.ride.findMany({
+      where: { serviceDate: { gte: from, lte: to }, status: { in: ['BOARDED', 'COMPLETED', 'NO_SHOW'] } },
+      select: { serviceDate: true, status: true, chargeCents: true, waivedAt: true, pickupAt: true, vanArrivedAt: true, boardedAt: true },
+    }),
+    prisma.rideRun.findMany({
+      where: { serviceDate: { gte: from, lte: to }, status: 'COMPLETED' },
+      select: { serviceDate: true, driverUserId: true, startedAt: true, endedAt: true },
+    }),
+    prisma.vanServiceEntry.findMany({
+      where: { occurredAt: { gte: toDate(from)!, lt: toDate(addDaysYmd(to, 1))! } },
+      select: { occurredAt: true, costCents: true },
+    }),
+  ]);
+  // Driver rates, in one read.
+  const driverIds = [...new Set(runs.map((r) => r.driverUserId))];
+  const drivers = driverIds.length ? await prisma.user.findMany({ where: { id: { in: driverIds } }, select: { id: true, associateId: true } }) : [];
+  const assocIds = drivers.map((d) => d.associateId).filter((x): x is string => !!x);
+  const comps = assocIds.length
+    ? await prisma.compensationRecord.findMany({ where: { associateId: { in: assocIds }, payType: 'HOURLY', effectiveTo: null }, orderBy: { effectiveFrom: 'desc' }, select: { associateId: true, amount: true } })
+    : [];
+  const rateByAssoc = new Map<string, number>();
+  for (const c of comps) if (!rateByAssoc.has(c.associateId)) rateByAssoc.set(c.associateId, Number(c.amount));
+  const rateOf = new Map(drivers.map((d) => [d.id, (d.associateId && rateByAssoc.get(d.associateId)) || env.DEFAULT_ASSOCIATE_PAY_RATE]));
+
+  const buckets = new Map(starts.map((s) => [s, { riders: 0, noShows: 0, timed: 0, onTime: 0, revenueCents: 0, costCents: 0 }]));
+  for (const r of rides) {
+    const b = buckets.get(mondayOf(r.serviceDate));
+    if (!b) continue;
+    if (r.status === 'NO_SHOW') b.noShows += 1;
+    else b.riders += 1;
+    if (!r.waivedAt) b.revenueCents += r.chargeCents;
+    const reached = r.vanArrivedAt ?? r.boardedAt;
+    if (r.status !== 'NO_SHOW' && r.pickupAt && reached) {
+      b.timed += 1;
+      if (reached.getTime() <= r.pickupAt.getTime() + ON_TIME_GRACE_MS) b.onTime += 1;
+    }
+  }
+  for (const run of runs) {
+    const b = buckets.get(mondayOf(run.serviceDate));
+    if (!b) continue;
+    const hours = run.startedAt && run.endedAt ? (run.endedAt.getTime() - run.startedAt.getTime()) / 3_600_000 : 2;
+    b.costCents += Math.round(hours * (rateOf.get(run.driverUserId) ?? env.DEFAULT_ASSOCIATE_PAY_RATE) * 100);
+  }
+  for (const s of service) {
+    const b = buckets.get(mondayOf(s.occurredAt.toISOString().slice(0, 10)));
+    if (b) b.costCents += s.costCents;
+  }
+  res.json({
+    weeks: starts.map((start) => {
+      const b = buckets.get(start)!;
+      return {
+        start,
+        partial: start === thisWeek,
+        riders: b.riders,
+        noShows: b.noShows,
+        noShowPct: b.riders + b.noShows > 0 ? Math.round((b.noShows / (b.riders + b.noShows)) * 1000) / 10 : null,
+        onTimePct: b.timed > 0 ? Math.round((b.onTime / b.timed) * 1000) / 10 : null,
+        revenueCents: b.revenueCents,
+        costCents: b.costCents,
+      };
+    }),
+    note: 'On time: the van arrived (or the rider boarded) within 5 minutes of the planned pickup. Revenue is fares and no-show fees charged, less waivers. Cost is run hours at each driver’s rate plus fuel and upkeep from the service log.',
+  });
+});

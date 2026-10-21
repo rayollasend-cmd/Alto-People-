@@ -17,6 +17,8 @@ const api = vi.hoisted(() => ({
   importBankFile: vi.fn(),
   syncBankAccount: vi.fn(),
   getTxnSuggestions: vi.fn(),
+  getTxnSuggestionsBatch: vi.fn(),
+  bulkDecideTxns: vi.fn(),
   categorizeTxn: vi.fn(),
   matchTxn: vi.fn(),
   excludeTxn: vi.fn(),
@@ -40,6 +42,16 @@ const api = vi.hoisted(() => ({
   openPlaidLink: vi.fn(),
 }));
 vi.mock('@/lib/books/bankApi', () => api);
+
+const recv = vi.hoisted(() => ({ getReceivablesAging: vi.fn(), recordClientPayment: vi.fn(), listDepositAccounts: vi.fn() }));
+vi.mock('@/lib/books/receivablesApi', async (orig) => ({ ...(await orig<typeof import('@/lib/books/receivablesApi')>()), ...recv }));
+
+type Sugg = Awaited<ReturnType<typeof import('@/lib/books/bankApi').getTxnSuggestions>>;
+/** The page asks for its suggestions in one call: answer it from a per-transaction function. */
+function suggest(fn: (id: string) => Sugg) {
+  api.getTxnSuggestionsBatch.mockImplementation(async (ids: string[]) => ({ suggestions: Object.fromEntries(ids.map((id) => [id, fn(id)])) }));
+}
+const NONE: Sugg = { matches: [], rule: null, lastTime: null, exactLineId: null, client: null };
 
 import { BankPage } from '@/pages/books/bank/BankPage';
 import { BankAccountPage } from '@/pages/books/bank/BankAccountPage';
@@ -142,12 +154,12 @@ describe('reviewing an account’s transactions', () => {
     const fuel = txn({ id: 't2' });
     const other = txn({ id: 't3', amount: -19.99, description: 'MYSTERY' });
     api.listBankTransactions.mockResolvedValue({ transactions: [deposit, fuel, other], counts: { UNMATCHED: 3, MATCHED: 0, CATEGORIZED: 4, EXCLUDED: 0 } });
-    api.getTxnSuggestions.mockImplementation(async (id: string) =>
+    suggest((id) =>
       id === 't1'
-        ? { matches: [{ lineId: 'l1', entryId: 'e1', entryNumber: 12, date: '2026-10-02', memo: 'Coastal statement 12', source: 'CLIENT_PAYMENT', amount: 4200, daysApart: 1 }], rule: null, lastTime: null }
+        ? { ...NONE, matches: [{ lineId: 'l1', entryId: 'e1', entryNumber: 12, date: '2026-10-02', memo: 'Coastal statement 12', source: 'CLIENT_PAYMENT', amount: 4200, daysApart: 1 }], exactLineId: 'l1' }
         : id === 't2'
-          ? { matches: [], rule: { ruleId: 'r1', name: 'Fuel', accountId: FUEL, accountCode: '6200', accountName: 'Vehicle fuel', vendorId: null, clientId: null, departmentId: null }, lastTime: null }
-          : { matches: [], rule: null, lastTime: null },
+          ? { ...NONE, rule: { ruleId: 'r1', name: 'Fuel', accountId: FUEL, accountCode: '6200', accountName: 'Vehicle fuel', vendorId: null, clientId: null, departmentId: null } }
+          : NONE,
     );
     api.matchTxn.mockResolvedValue({ transaction: { ...deposit, status: 'MATCHED' } });
     api.categorizeTxn.mockResolvedValue({ transaction: { ...fuel, status: 'CATEGORIZED' } });
@@ -172,6 +184,81 @@ describe('reviewing an account’s transactions', () => {
     await waitFor(() => expect(api.categorizeTxn).toHaveBeenCalledWith('t3', { accountId: FUEL }));
     // Counts on the tabs.
     expect(screen.getByRole('tab', { name: /Categorized/ })).toHaveTextContent('4');
+    // One request for the page's suggestions, not one per row.
+    expect(api.getTxnSuggestionsBatch).toHaveBeenCalledWith(['t1', 't2', 't3']);
+    expect(api.getTxnSuggestions).not.toHaveBeenCalled();
+  });
+
+  it('accepts every suggestion and matches every exact one in one click — or just the selection', async () => {
+    const rows = [txn({ id: 't1', amount: 4200, description: 'COASTAL RESORT ACH' }), txn({ id: 't2' }), txn({ id: 't3', description: 'SHELL OIL 99' }), txn({ id: 't4', description: 'MYSTERY' })];
+    api.listBankTransactions.mockResolvedValue({ transactions: rows, counts: { UNMATCHED: 4, MATCHED: 0, CATEGORIZED: 0, EXCLUDED: 0 } });
+    const rule = { ruleId: 'r1', name: 'Fuel', accountId: FUEL, accountCode: '6200', accountName: 'Vehicle fuel', vendorId: null, clientId: null, departmentId: null };
+    suggest((id) =>
+      id === 't1' ? { ...NONE, matches: [{ lineId: 'l1', entryId: 'e1', entryNumber: 12, date: '2026-10-02', memo: null, source: 'CLIENT_PAYMENT', amount: 4200, daysApart: 0 }], exactLineId: 'l1' } : id === 't4' ? NONE : { ...NONE, rule },
+    );
+    api.bulkDecideTxns.mockImplementation(async (action: string, ids: string[]) => ({ action, done: ids, skipped: [] }));
+    const user = userEvent.setup();
+    renderAccount();
+
+    await user.click(await screen.findByRole('button', { name: 'Accept all suggested (2)' }));
+    await waitFor(() => expect(api.bulkDecideTxns).toHaveBeenCalledWith('ACCEPT', ['t2', 't3']));
+    await user.click(screen.getByRole('button', { name: 'Match all exact (1)' }));
+    await waitFor(() => expect(api.bulkDecideTxns).toHaveBeenCalledWith('MATCH', ['t1']));
+
+    // With a selection, the buttons act on it — and it can be excluded together.
+    await user.click(screen.getByRole('checkbox', { name: 'Select SHELL OIL 99' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select MYSTERY' }));
+    expect(screen.getByRole('button', { name: 'Accept suggested (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Match exact (0)' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Exclude (2)' }));
+    await waitFor(() => expect(api.bulkDecideTxns).toHaveBeenCalledWith('EXCLUDE', ['t3', 't4']));
+  });
+
+  it('works from the keyboard: j moves, a takes the suggestion, x excludes, u undoes', async () => {
+    const rows = [txn({ id: 't1' }), txn({ id: 't2', description: 'MYSTERY' })];
+    api.listBankTransactions.mockResolvedValue({ transactions: rows, counts: { UNMATCHED: 2, MATCHED: 0, CATEGORIZED: 0, EXCLUDED: 0 } });
+    suggest((id) => (id === 't1' ? { ...NONE, lastTime: { accountId: FUEL, accountCode: '6200', accountName: 'Vehicle fuel' } } : NONE));
+    api.categorizeTxn.mockResolvedValue({ transaction: { ...rows[0]!, status: 'CATEGORIZED' } });
+    api.excludeTxn.mockResolvedValue({ transaction: { ...rows[1]!, status: 'EXCLUDED' } });
+    api.undoTxn.mockResolvedValue({ transaction: rows[1]! });
+    const user = userEvent.setup();
+    renderAccount();
+    expect(await screen.findByText(/Same as last time → 6200 Vehicle fuel/)).toBeInTheDocument();
+    await user.keyboard('j');
+    await user.keyboard('a');
+    await waitFor(() => expect(api.categorizeTxn).toHaveBeenCalledWith('t1', { accountId: FUEL }));
+    // The cursor moved on to the next row.
+    await user.keyboard('x');
+    await waitFor(() => expect(api.excludeTxn).toHaveBeenCalledWith('t2'));
+    await user.keyboard('u');
+    await waitFor(() => expect(api.undoTxn).toHaveBeenCalledWith('t2'));
+  });
+
+  it('records a deposit as the client’s payment, prefilled, and matches it', async () => {
+    const deposit = txn({ id: 't1', amount: 4200, postedOn: '2026-10-03', description: 'COASTAL RESORT HOLDINGS ACH', reference: 'TRC-88' });
+    api.listBankTransactions.mockResolvedValue({ transactions: [deposit], counts: { UNMATCHED: 1, MATCHED: 0, CATEGORIZED: 0, EXCLUDED: 0 } });
+    suggest(() => ({ ...NONE, client: { id: 'c1', name: 'Coastal Resort' } }));
+    recv.getReceivablesAging.mockResolvedValue({
+      asOf: '2026-10-20',
+      rows: [{ clientId: 'c1', clientName: 'Coastal Resort', buckets: { current: 0, days1to30: 4200, days31to60: 0, days61to90: 0, over90: 0 }, open: 4200, unapplied: 0, statements: 1, oldestDaysPastDue: 8 }],
+      statements: [{ statementId: 's1', clientId: 'c1', clientName: 'Coastal Resort', number: 7, periodStart: '2026-09-21', periodEnd: '2026-09-27', dueOn: '2026-10-12', daysPastDue: 8, bucket: 'days1to30', total: 4200, applied: 0, open: 4200 }],
+      totals: { buckets: { current: 0, days1to30: 4200, days31to60: 0, days61to90: 0, over90: 0 }, open: 4200 },
+    });
+    recv.listDepositAccounts.mockResolvedValue({ accounts: [] });
+    recv.recordClientPayment.mockResolvedValue({ payment: { id: 'p1', amount: 4200, clientName: 'Coastal Resort', unapplied: 0 }, bankTransaction: { ...deposit, status: 'MATCHED' } });
+    const user = userEvent.setup();
+    renderAccount();
+    await user.click(await screen.findByRole('button', { name: /Payment from Coastal Resort/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Record the deposit as a payment')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Amount received')).toHaveValue('4200.00');
+    expect(within(dialog).getByLabelText('Reference')).toHaveValue('TRC-88');
+    await user.click(within(dialog).getByRole('button', { name: /Record \$4,200/ }));
+    await waitFor(() =>
+      expect(recv.recordClientPayment).toHaveBeenCalledWith(
+        expect.objectContaining({ clientId: 'c1', amount: 4200, receivedOn: '2026-10-03', reference: 'TRC-88', depositAccountId: CASH, bankTransactionId: 't1', applications: [{ statementId: 's1', amount: 4200 }] }),
+      ),
+    );
   });
 
   it('a decided transaction can be undone', async () => {

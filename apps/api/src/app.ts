@@ -155,6 +155,7 @@ import { messagesRouter } from './routes/messages.js';
 import { regionRouter, regionsAdminRouter } from './routes/region.js';
 import { kiosk99Router } from './routes/kiosk99.js';
 import { punchPhotosRouter } from './routes/punchPhotos.js';
+import { attendanceInsightsRouter } from './routes/attendanceInsights.js';
 import { celebrationsRouter } from './routes/celebrations107.js';
 import { assetsRouter } from './routes/assets108.js';
 import { pulseSurveysRouter } from './routes/pulseSurveys109.js';
@@ -523,6 +524,8 @@ export function createApp() {
   // Photo at punch: who must be photographed at the kiosk (lib/punchPhotoPolicy).
   app.use('/time/punch-photos', requireCapability('view:time'), punchPhotosRouter);
   app.use('/time', requireCapability('view:time'), timeRouter);
+  // Attendance trends, heatmap, not-in-yet and team hours (each route gates itself).
+  app.use('/attendance', attendanceInsightsRouter);
   // Policies before the catch-all: /time-off/policies/* is its own router.
   app.use('/time-off/policies', requireCapability('view:time'), timeOffPoliciesRouter);
   app.use('/time-off', requireCapability('view:time'), timeOffRouter);

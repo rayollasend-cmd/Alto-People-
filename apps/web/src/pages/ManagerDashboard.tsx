@@ -55,6 +55,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { TeamHoursCard } from '@/components/attendance/TeamHoursCard';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
 
@@ -200,6 +201,8 @@ export function ManagerDashboard() {
           outToday={home ? home.today.out.length : null}
         />
         <TodayOnYourTeam home={home} error={Boolean(homeQuery.error)} onRetry={() => void homeQuery.refetch()} />
+        {/* Hours per person this week against 40 — who's heading into overtime. */}
+        <TeamHoursCard />
         <DueOnYourTeam home={home} />
         <MyPlanCard />
         <TeamRoster

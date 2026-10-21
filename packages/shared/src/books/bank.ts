@@ -16,6 +16,8 @@ import { z } from 'zod';
  *   POST   /books/bank/accounts/:id/import/preview       BankImportPreviewInput → BankImportPreview
  *   POST   /books/bank/accounts/:id/import               BankImportInput → BankImportResult
  *   GET    /books/bank/transactions/:id/suggestions      → BankTxnSuggestions
+ *   POST   /books/bank/transactions/suggestions          { ids } → BankSuggestionsBatch
+ *   POST   /books/bank/transactions/bulk                 BankBulkInput → BankBulkResult
  *   POST   /books/bank/transactions/:id/categorize       BankCategorizeInput → { transaction }
  *   POST   /books/bank/transactions/:id/match            { lineId } → { transaction }
  *   POST   /books/bank/transactions/:id/exclude          → { transaction }
@@ -185,6 +187,34 @@ export interface BankTxnSuggestions {
   rule: { ruleId: string; name: string; accountId: string; accountCode: string; accountName: string; vendorId: string | null; clientId: string | null; departmentId: string | null } | null;
   /** What it was categorized as the last time this payee appeared. */
   lastTime: { accountId: string; accountCode: string; accountName: string } | null;
+  /**
+   * The match that's unambiguous — the only candidate, or the only one on
+   * the same day — which "Match all exact" takes without asking.
+   */
+  exactLineId?: string | null;
+  /** Money in: who it's most likely from (a rule's client, or a client named in the description) — for "Record as payment from …". */
+  client?: { id: string; name: string } | null;
+}
+
+/** Several transactions' suggestions in one call (the review list asks once per page). */
+export const BankSuggestionsBatchInputSchema = /* @__PURE__ */ (() => z.object({ ids: z.array(z.string().uuid()).min(1).max(200) }))();
+export interface BankSuggestionsBatch {
+  suggestions: Record<string, BankTxnSuggestions>;
+}
+
+/**
+ * Decide many at once — each still its own decision (and, accepted, its own
+ * entry). ACCEPT takes the rule's (or last time's) category where there's no
+ * match in the books; MATCH takes the exact match; EXCLUDE excludes. Already
+ * decided, or nothing to take: skipped, with why. Safe to send twice.
+ */
+export const BANK_BULK_ACTIONS = ['ACCEPT', 'MATCH', 'EXCLUDE'] as const;
+export type BankBulkAction = (typeof BANK_BULK_ACTIONS)[number];
+export const BankBulkInputSchema = /* @__PURE__ */ (() => z.object({ action: z.enum(BANK_BULK_ACTIONS), ids: z.array(z.string().uuid()).min(1).max(200) }))();
+export interface BankBulkResult {
+  action: BankBulkAction;
+  done: string[];
+  skipped: Array<{ id: string; reason: string }>;
 }
 
 export const BankCategorizeInputSchema = /* @__PURE__ */ (() =>

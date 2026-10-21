@@ -156,7 +156,7 @@ describe('the finance cockpit', () => {
     expect(screen.getByText('Billing · week ending 09/18/2026')).toBeInTheDocument();
     expect(screen.getByText('Plus 1 rejected in earlier weeks — $720.00 waiting')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Enter in Fieldglass \(3\)/ })).toBeInTheDocument();
-    expect(screen.getByRole('list', { name: 'Revenue, wages & margin' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /^Revenue, wages & margin:/ })).toBeInTheDocument();
     expect(screen.getByText('1 paid at the $15.00 fallback — no hourly pay on file')).toBeInTheDocument();
     expect(screen.getByText('31–60 days')).toBeInTheDocument();
   });

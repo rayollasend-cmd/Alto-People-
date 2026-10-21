@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { SavedViewsMenu } from '@/components/SavedViewsMenu';
 import { ProgramSection } from './ProgramSection';
 import { WhatsAppStatusLine } from './WhatsAppStatusLine';
 import {
@@ -111,6 +112,7 @@ import {
   getAssociateW4,
   getEmploymentHistory,
   listDepartments,
+  listJobProfiles,
   patchAssociateProfile,
   reactivateAssociate,
   revealAssociatePayoutMethod,
@@ -126,6 +128,7 @@ import {
 import { listClientLocations } from '@/lib/clientsApi';
 import { emailKioskPin, getAssociateKioskPin } from '@/lib/kiosk99Api';
 import { useConfirm } from '@/lib/confirm';
+import { AssociatePicker } from '@/components/ui/AssociatePicker';
 import type { LocationSummary } from '@alto-people/shared';
 import {
   Avatar,
@@ -474,7 +477,31 @@ export function PeopleDirectory() {
     q || status || clientId || locationId || departmentId || employmentType,
   );
 
+  // Saved views: the filters on screen as a named set (components/SavedViewsMenu).
+  const [savedViewId, setSavedViewId] = useState<string | null>(null);
+  const viewQuery = useMemo(() => {
+    const v: Record<string, string> = {};
+    if (q) v.q = q;
+    if (status) v.status = status;
+    if (clientId) v.clientId = clientId;
+    if (locationId) v.locationId = locationId;
+    if (departmentId) v.departmentId = departmentId;
+    if (employmentType) v.employmentType = employmentType;
+    return v;
+  }, [q, status, clientId, locationId, departmentId, employmentType]);
+  const applySavedView = (id: string | null, v: Record<string, string>) => {
+    setSavedViewId(id);
+    setSearch(v.q ?? '');
+    setQ(v.q ?? '');
+    setStatus(isStatusFilter(v.status) ? v.status : '');
+    setClientId(v.clientId ?? '');
+    setLocationId(v.locationId ?? '');
+    setDepartmentId(v.departmentId ?? '');
+    setEmploymentType(isEmploymentTypeFilter(v.employmentType) ? v.employmentType : '');
+  };
+
   const clearAllFilters = () => {
+    setSavedViewId(null);
     setSearch('');
     setQ('');
     setStatus('');
@@ -635,6 +662,13 @@ export function PeopleDirectory() {
                 aria-label="Search people"
               />
             </div>
+            <SavedViewsMenu
+              scope="people.directory"
+              current={viewQuery}
+              activeId={savedViewId}
+              onApply={applySavedView}
+              allLabel={`All ${term('nav.people').toLowerCase()}`}
+            />
             {(['ACTIVE', 'PENDING', 'INACTIVE'] as const).map((s) => (
               <FilterChip
                 key={s}
@@ -1489,24 +1523,9 @@ export function ProfileTab({
       </Section>
 
       <Section title="Org assignment">
-        <InfoRow
-          label="Manager"
-          value={
-            a.managerName ? (
-              a.managerId ? (
-                <Link
-                  to={`/people?associateId=${a.managerId}`}
-                  className="text-gold hover:text-gold-bright"
-                >
-                  {a.managerName}
-                </Link>
-              ) : (
-                a.managerName
-              )
-            ) : (
-              '—'
-            )
-          }
+        <ManagerField
+          associate={a}
+          onSaved={(managerId, managerName) => onAssociateChange({ managerId, managerName })}
         />
         <DepartmentField
           associate={a}
@@ -1514,7 +1533,10 @@ export function ProfileTab({
             onAssociateChange({ departmentId, departmentName })
           }
         />
-        <InfoRow label="Job profile" value={a.jobProfileTitle ?? '—'} />
+        <JobProfileField
+          associate={a}
+          onSaved={(jobProfileId, jobProfileTitle) => onAssociateChange({ jobProfileId, jobProfileTitle })}
+        />
       </Section>
 
       <PayoutMethodSection associateId={a.id} />
@@ -2275,6 +2297,182 @@ function DepartmentField({
           >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
+        </div>
+      }
+    />
+  );
+}
+
+/** The pencil beside an org field — shown on hover where there is hover. */
+function EditPencil({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      onClick={onClick}
+      aria-label={label}
+      title="Edit"
+      className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+    >
+      <Pencil className="h-3.5 w-3.5" />
+    </Button>
+  );
+}
+
+/**
+ * Manager, set in place: search the directory, pick, saved. Same rule as
+ * the org chart's PUT — active, in your reach, never a cycle — and the
+ * server says which when it refuses.
+ */
+function ManagerField({
+  associate: a,
+  onSaved,
+}: {
+  associate: DirectoryEntry;
+  onSaved: (managerId: string | null, managerName: string | null) => void;
+}) {
+  const { can } = useAuth();
+  const canEdit = can('manage:org');
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  async function save(next: { id: string; name: string } | null) {
+    if (saving) return;
+    if ((next?.id ?? null) === (a.managerId ?? null)) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await assignOrgFields(a.id, { managerId: next?.id ?? null });
+      onSaved(next?.id ?? null, next?.name ?? null);
+      toast.success(next ? `${next.name} is now ${a.firstName}’s manager.` : 'Manager removed.');
+      setEditing(false);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+    } finally {
+      setSaving(false);
+    }
+  }
+  if (editing) {
+    return (
+      <div className="flex items-start gap-3 text-sm">
+        <div className="w-32 text-silver text-xs flex items-center pt-2">
+          <span>Manager</span>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <AssociatePicker value={null} onChange={(v) => v && void save(v)} placeholder="Search for their manager…" className="h-8" />
+          </div>
+          {a.managerId && (
+            <Button variant="ghost" size="xs" onClick={() => void save(null)} disabled={saving}>
+              No manager
+            </Button>
+          )}
+          <Button variant="ghost" size="icon-sm" onClick={() => setEditing(false)} disabled={saving} aria-label="Cancel" title="Cancel">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <InfoRow
+      label="Manager"
+      value={
+        <div className="flex items-center gap-2 group">
+          <span className="flex-1 min-w-0">
+            {a.managerName ? (
+              a.managerId ? (
+                <Link to={`/people?associateId=${a.managerId}`} className="text-gold hover:text-gold-bright">
+                  {a.managerName}
+                </Link>
+              ) : (
+                a.managerName
+              )
+            ) : (
+              '—'
+            )}
+          </span>
+          {canEdit && <EditPencil label="Edit manager" onClick={() => setEditing(true)} />}
+        </div>
+      }
+    />
+  );
+}
+
+/** Job profile, set in place from the profiles of their workplace. */
+function JobProfileField({
+  associate: a,
+  onSaved,
+}: {
+  associate: DirectoryEntry;
+  onSaved: (jobProfileId: string | null, jobProfileTitle: string | null) => void;
+}) {
+  const { can } = useAuth();
+  const canEdit = can('manage:org');
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const profiles = useQuery({
+    queryKey: ['org', 'job-profiles', a.workplaceClientId ?? 'all'],
+    queryFn: () => listJobProfiles(a.workplaceClientId ?? undefined),
+    enabled: editing,
+    staleTime: 5 * 60_000,
+  });
+  async function save(next: string) {
+    if (saving) return;
+    const nextId = next || null;
+    if (nextId === (a.jobProfileId ?? null)) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await assignOrgFields(a.id, { jobProfileId: nextId });
+      onSaved(nextId, profiles.data?.jobProfiles.find((p) => p.id === nextId)?.title ?? null);
+      toast.success('Job profile updated.');
+      setEditing(false);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+    } finally {
+      setSaving(false);
+    }
+  }
+  if (editing) {
+    return (
+      <div className="flex items-start gap-3 text-sm">
+        <div className="w-32 text-silver text-xs flex items-center pt-2">
+          <span>Job profile</span>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-1">
+          {profiles.isPending ? (
+            <Skeleton className="h-8 flex-1" />
+          ) : profiles.isError ? (
+            <span className="text-xs text-alert pt-2">Could not load the job profiles.</span>
+          ) : (
+            <Select size="sm" value={a.jobProfileId ?? ''} onChange={(e) => void save(e.target.value)} disabled={saving} aria-label="Job profile" autoFocus>
+              <option value="">— No job profile —</option>
+              {profiles.data.jobProfiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                  {p.level ? ` · ${p.level}` : ''}
+                </option>
+              ))}
+            </Select>
+          )}
+          <Button variant="ghost" size="icon-sm" onClick={() => setEditing(false)} disabled={saving} aria-label="Cancel" title="Cancel">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <InfoRow
+      label="Job profile"
+      value={
+        <div className="flex items-center gap-2 group">
+          <span className="flex-1 min-w-0">{a.jobProfileTitle ?? '—'}</span>
+          {canEdit && <EditPencil label="Edit job profile" onClick={() => setEditing(true)} />}
         </div>
       }
     />

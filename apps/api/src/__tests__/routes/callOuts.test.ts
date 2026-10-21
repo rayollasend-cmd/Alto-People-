@@ -77,6 +77,10 @@ describe('from the app', () => {
     await flushPendingNotifications();
     const told = await prisma.notification.findFirst({ where: { recipientUserId: w.lead.id, subject: { contains: 'Call-out: Ana Lopez' } } });
     expect(told?.body).toMatch(/Cover is under way/);
+    // The bell opens this call-out, not the whole list.
+    const row = await prisma.callOut.findFirstOrThrow({ where: { shiftId: w.shift.id } });
+    const bell = await prisma.notification.findFirst({ where: { recipientUserId: w.lead.id, channel: 'IN_APP', subject: { contains: 'Call-out: Ana Lopez' } } });
+    expect(bell?.linkUrl).toBe(`/call-outs?callout=${row.id}`);
   });
 
   it('bereavement and accrued sick time are excused; a call-out inside two hours is late', async () => {

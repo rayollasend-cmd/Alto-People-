@@ -68,6 +68,7 @@ import { useStoreScope } from '@/lib/storeScope';
 import { cn } from '@/lib/cn';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useListKeyboard } from '@/lib/shortcuts';
 import { useSelection } from '@/lib/useSelection';
 import { TIME_ANOMALY_LABELS, timeAnomalyLabel } from '@/lib/timeLabels';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -336,6 +337,37 @@ function startOfSaturdayWeek(d: Date): Date {
   x.setDate(x.getDate() - ((x.getDay() + 1) % 7)); // Sat→0, Sun→1 … Fri→6
   return x;
 }
+
+/**
+ * The pay period the approval queue opens on: the current one — or, in the
+ * days between a period closing and its payday (paid the Friday after, a
+ * week on), the just-closed one while it still has no payroll run, because
+ * that is the time somebody must approve before the money goes out.
+ * `periods` is newest first, as the API sends them. Exported for tests.
+ */
+export function defaultQueuePeriod(periods: readonly PayPeriod[], today: string): { period: PayPeriod; which: 'CURRENT' | 'LAST' } | null {
+  const current = periods.find((p) => p.current) ?? periods.find((p) => p.start <= today && today <= p.end) ?? null;
+  const closed = latestClosedPeriod(periods, today);
+  if (closed && !closed.hasRun) {
+    const payday = parseYmd(closed.end);
+    if (payday) {
+      payday.setDate(payday.getDate() + 7);
+      if (today <= ymdLocal(payday)) return { period: closed, which: 'LAST' };
+    }
+  }
+  if (current) return { period: current, which: 'CURRENT' };
+  return closed ? { period: closed, which: 'LAST' } : null;
+}
+
+/** The most recent period that has ended before `today`. */
+function latestClosedPeriod(periods: readonly PayPeriod[], today: string): PayPeriod | null {
+  return periods.filter((p) => p.end < today).sort((a, b) => (a.end < b.end ? 1 : -1))[0] ?? null;
+}
+
+/** The queue's remembered window: a pay period (relative, so it rolls
+ *  forward), a quick-range chip, or AUTO (the rule above). */
+type RangeChoice = 'AUTO' | 'CURRENT_PERIOD' | 'LAST_PERIOD' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
+const RANGE_CHOICES: readonly RangeChoice[] = ['AUTO', 'CURRENT_PERIOD', 'LAST_PERIOD', 'THIS_WEEK', 'LAST_WEEK', 'LAST14'];
 
 // Quick-range chips over the From/To inputs. Same stateful-chip semantics
 // as MyTimesheet: hand-editing a date clears the active chip so it never
@@ -643,6 +675,19 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   // Pay-period picker: choosing a period drives From/To; hand-editing
   // either date drops back to "Custom range" (stateful-chip pattern).
   const [periodKey, setPeriodKey] = useState('');
+  // The window the queue opens on, remembered between visits as a choice
+  // ("the current pay period", "last week") rather than as dates, so it
+  // rolls forward. AUTO = the current period, or the just-closed one until
+  // its payday. A deep link that names a window (?from/?to, ?entry) wins,
+  // and otherwise the queue waits for the pay periods before it loads.
+  const [rangeChoice, setRangeChoice] = usePersistentState<RangeChoice>(
+    'alto:list.time.range.v1',
+    'AUTO',
+    (v): v is RangeChoice => RANGE_CHOICES.includes(v as RangeChoice),
+  );
+  const [rangeReady, setRangeReady] = useState(
+    () => liveOnly || Boolean(tabParams.get('from') || tabParams.get('to') || tabParams.get('entry')),
+  );
   // Triage lens: show only flagged entries (client-side over the loaded
   // window — same scope as everything else on this tab). Persisted — the
   // lit toggle button keeps the active lens obvious across visits.
@@ -798,7 +843,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         ...(clientFilter ? { clientId: clientFilter } : {}),
         ...(locationFilter ? { locationId: locationFilter } : {}),
       }),
-    enabled: tab === 'queue',
+    enabled: tab === 'queue' && rangeReady,
     placeholderData: keepPreviousData,
   });
   const entries: TimeEntry[] | null = entriesQuery.data?.entries ?? null;
@@ -1106,10 +1151,14 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     setActivePreset(null);
     setFromYmd(p.start);
     setToYmd(p.end);
+    const today = ymdLocal(new Date());
+    if (p.current) setRangeChoice('CURRENT_PERIOD');
+    else if (latestClosedPeriod(payPeriods ?? [], today) === p) setRangeChoice('LAST_PERIOD');
   };
 
   const applyPreset = (p: RangePreset) => {
     setActivePreset(p);
+    setRangeChoice(p);
     setPeriodKey('');
     const now = new Date();
     if (p === 'LAST14') {
@@ -1130,6 +1179,31 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
       setToYmd(ymdLocal(lastEnd));
     }
   };
+
+  // First visit to the queue: open on the remembered window once the pay
+  // periods are known (with none, the last 14 days stay).
+  useEffect(() => {
+    if (rangeReady || payPeriods === null) return;
+    setRangeReady(true);
+    if (rangeChoice === 'THIS_WEEK' || rangeChoice === 'LAST_WEEK' || rangeChoice === 'LAST14') {
+      applyPreset(rangeChoice);
+      return;
+    }
+    const today = ymdLocal(new Date());
+    const target =
+      (rangeChoice === 'CURRENT_PERIOD'
+        ? payPeriods.find((p) => p.current)
+        : rangeChoice === 'LAST_PERIOD'
+          ? latestClosedPeriod(payPeriods, today)
+          : null) ?? defaultQueuePeriod(payPeriods, today)?.period;
+    if (!target) return;
+    setActivePreset(null);
+    setPeriodKey(`${target.start}|${target.end}`);
+    setFromYmd(target.start);
+    setToYmd(target.end);
+    // Runs once, when the periods arrive; the choice is read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeReady, payPeriods]);
 
   // Ref-mirrored guard so this callback stays identity-stable across
   // pendingId flips — a stable handler is what lets the memoised queue rows
@@ -1574,6 +1648,23 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   useEffect(() => {
     clearSelection();
   }, [entries, clearSelection]);
+
+  // Keyboard triage over the queue table: j/k (or ↑/↓) move, Enter opens
+  // the entry, a approves it, d opens the reject note. Stands down while a
+  // drawer or dialog has the keyboard, and in one person's timesheet view
+  // (that view has its own buttons).
+  const queueKb = useListKeyboard<TimeEntry>({
+    items: tab === 'queue' && !focusAssociate ? sortedEntries : [],
+    idOf: (e) => e.id,
+    onOpen: openDrawer,
+    onApprove: canManage ? (e) => { if (e.status === 'COMPLETED') void onApprove(e.id); } : undefined,
+    onDecline: canManage ? (e) => { if (e.status === 'COMPLETED') openRejectOne(e.id); } : undefined,
+    enabled: tab === 'queue' && !drawerTarget && !editTarget && !createOpen && rejectOpen === null,
+  });
+  const queueCursor = queueKb.cursor;
+  useEffect(() => {
+    if (queueCursor) document.getElementById(`time-row-${queueCursor}`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [queueCursor]);
 
   // The live board's columns. Client only for cross-client viewers, Job and
   // Geofence only when some row carries one (see liveCols).
@@ -2712,6 +2803,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               <>
                 <DataGrid<TimeEntry>
                   id="time-queue"
+                  keyboard={false}
                   caption="Time entries"
                   rows={sortedEntries}
                   columns={queueColumns}
@@ -2719,7 +2811,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                   urlState={false}
                   search={false}
                   exportCsv={false}
-                  rowClassName={() => 'group'}
+                  rowId={(e) => `time-row-${e.id}`}
+                  rowClassName={(e) => cn('group', queueCursor === e.id && 'bg-gold/[0.08] shadow-[inset_3px_0_0_0_rgb(var(--color-gold))]')}
                   onRowClick={openDrawer}
                   rowActionLabel={(e) => `Open entry for ${e.associateName ?? 'associate'}`}
                   // The page keeps the order: the drawer's "approve and

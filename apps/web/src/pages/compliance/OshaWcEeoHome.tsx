@@ -49,13 +49,16 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
-import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtMonthShortYear, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { toast } from 'sonner';
 import { ListTemplate } from '@/components/templates';
 import { statusTone } from '@/lib/status';
 import { useTerm } from '@/lib/auth';
 import { pickOne } from '@/lib/validationCopy';
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 
 type Tab = 'osha' | 'wc' | 'eeo';
 
@@ -204,6 +207,13 @@ function OshaTab({ clientId }: { clientId: string }) {
                 <Stat label="Days away total" value={summary?.totalDaysAway ?? '—'} />
                 <Stat label="Days restricted total" value={summary?.totalDaysRestricted ?? '—'} />
               </div>
+              {summary && (summary.hoursWorked ?? 0) > 0 && (
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 md:grid-cols-7">
+                  <Stat label="Hours worked" value={(summary.hoursWorked ?? 0).toLocaleString('en-US')} />
+                  <Stat label="Injury rate (TRIR)" value={summary.trir ?? '—'} />
+                  <Stat label="Days away/restricted (DART)" value={summary.dart ?? '—'} />
+                </div>
+              )}
             </div>
             <div className="flex items-end gap-3">
               <div>
@@ -222,6 +232,7 @@ function OshaTab({ clientId }: { clientId: string }) {
           </div>
         </CardContent>
       </Card>
+      {rows && rows.length > 0 && <OshaCharts rows={rows} />}
       <div className="flex justify-end">
         <Button onClick={() => setShowNew(true)}>
           <Plus className="mr-2 h-4 w-4" /> Report incident
@@ -291,6 +302,99 @@ function OshaTab({ clientId }: { clientId: string }) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+const SEVERITY_ORDER: OshaSeverity[] = ['FIRST_AID', 'MEDICAL_TREATMENT', 'RESTRICTED_DUTY', 'DAYS_AWAY', 'FATAL'];
+const SEVERITY_FILL: Record<OshaSeverity, string> = {
+  FIRST_AID: PALETTE.other,
+  MEDICAL_TREATMENT: PALETTE.series[1],
+  RESTRICTED_DUTY: PALETTE.warn,
+  DAYS_AWAY: PALETTE.bad,
+  FATAL: PALETTE.series[4],
+};
+
+/** The last twelve months of incidents by kind, and the body parts hurt most — from the log below. */
+function OshaCharts({ rows }: { rows: OshaIncident[] }) {
+  const now = new Date();
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
+    // Mid-month, so the label can't slip into the month before in another timezone.
+    return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: fmtMonthShortYear(new Date(d.getFullYear(), d.getMonth(), 15)) };
+  });
+  const byMonth = months.map((m) => {
+    const row: Record<string, string | number> = { month: m.label };
+    for (const sev of SEVERITY_ORDER) row[sev] = 0;
+    return row;
+  });
+  const monthIndex = new Map(months.map((m, i) => [m.key, i]));
+  const parts = new Map<string, number>();
+  let inWindow = 0;
+  for (const r of rows) {
+    const d = new Date(r.occurredAt);
+    const i = monthIndex.get(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    if (i === undefined) continue;
+    inWindow += 1;
+    byMonth[i]![r.severity] = Number(byMonth[i]![r.severity]) + 1;
+    const part = (r.bodyPart ?? '').trim();
+    const key = part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : 'Not recorded';
+    parts.set(key, (parts.get(key) ?? 0) + 1);
+  }
+  if (inWindow === 0) return null;
+  const partRows = [...parts.entries()].map(([part, count]) => ({ part, count })).sort((a, b) => b.count - a.count);
+  const topParts = partRows.slice(0, 8);
+  const used = SEVERITY_ORDER.filter((sev) => byMonth.some((m) => Number(m[sev]) > 0));
+  return (
+    <div className="grid gap-4 xl:grid-cols-5">
+      <div className="min-w-0 xl:col-span-3">
+        <ChartFrame
+          title="Incidents, month by month"
+          description="The last 12 months, by how serious each one was."
+          summary={`${inWindow} incident${inWindow === 1 ? '' : 's'} in the last 12 months.`}
+          csvName="osha-incidents-by-month"
+          height={240}
+          columns={[{ key: 'month', label: 'Month' }, ...used.map((sev) => ({ key: sev, label: SEVERITY_LABELS[sev], numeric: true }))]}
+          rows={byMonth}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={byMonth} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+              <CartesianGrid stroke={PALETTE.grid} vertical={false} />
+              <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
+              <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width={40} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              {used.map((sev) => (
+                <Bar key={sev} dataKey={sev} name={SEVERITY_LABELS[sev]} stackId="sev" fill={SEVERITY_FILL[sev]} maxBarSize={26} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      </div>
+      <div className="min-w-0 xl:col-span-2">
+        <ChartFrame
+          title="By body part"
+          description={partRows.length > topParts.length ? `The ${topParts.length} most often hurt — the table has all ${partRows.length}.` : 'The last 12 months.'}
+          summary={`${topParts[0]!.part} is hurt most often: ${topParts[0]!.count}.`}
+          csvName="osha-incidents-by-body-part"
+          height={Math.max(160, topParts.length * 28 + 24)}
+          columns={[
+            { key: 'part', label: 'Body part' },
+            { key: 'count', label: 'Incidents', numeric: true },
+          ]}
+          rows={partRows}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={topParts} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+              <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
+              <YAxis type="category" dataKey="part" width={100} tick={TICK} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
+              <Bar dataKey="count" name="Incidents" fill={PALETTE.series[0]} radius={[0, 3, 3, 0]} maxBarSize={18} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      </div>
     </div>
   );
 }

@@ -4362,7 +4362,7 @@ export type CandidateBoardResponse = z.infer<typeof CandidateBoardResponseSchema
 
 /* ----- Saved views ---------------------------------------------------------- */
 
-export const SavedViewScopeSchema = /* @__PURE__ */ (() => z.enum(['recruiting.candidates']))();
+export const SavedViewScopeSchema = /* @__PURE__ */ (() => z.enum(['recruiting.candidates', 'people.directory', 'onboarding.applications']))();
 export type SavedViewScope = z.infer<typeof SavedViewScopeSchema>;
 
 /** A view's query: the list's own URL params — short strings only. */

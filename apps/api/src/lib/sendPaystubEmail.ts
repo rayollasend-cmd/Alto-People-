@@ -120,7 +120,7 @@ export async function sendPaystubEmail(
       firstName: item.associate.firstName,
       periodLabel: period,
       netPay: fmtMoney(netPay),
-      payrollUrl: `${publicBaseUrl()}/payroll`,
+      payrollUrl: `${publicBaseUrl()}/payroll?item=${item.id}`,
     });
     const subject = data.amendment
       ? `[For Your Records] Amended paystub for ${period}`
@@ -211,7 +211,7 @@ export async function sendPaystubEmail(
           subject,
           body: `Net pay: ${fmtMoney(netPay)} for ${period}. Check your inbox or open /payroll.`,
           category: 'payroll.paystub_emailed',
-          linkUrl: '/payroll',
+          linkUrl: `/payroll?item=${input.payrollItemId}`,
           sentAt: new Date(),
         },
       });

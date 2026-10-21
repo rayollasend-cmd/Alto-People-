@@ -1,6 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import { PieChart as PieIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { EXTENDED_SERIES, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './charts/palette';
+import { EmptyState } from './EmptyState';
 
 export interface DonutDatum {
   name: string;
@@ -22,20 +25,13 @@ interface DonutChartProps {
   /** Formats slice values in the tooltip + legend (e.g. money). Defaults
    *  to toLocaleString. */
   valueFormatter?: (n: number) => string;
+  /** Shown when every slice is zero. Pass null to render nothing. */
+  empty?: ReactNode;
   className?: string;
 }
 
-// Bound to CSS vars so the donut tracks light/dark mode automatically
-// instead of freezing the dark-mode hexes into the chart.
-const FALLBACK_COLORS = [
-  'rgb(var(--color-gold))',
-  'rgb(var(--color-success))',
-  'rgb(var(--color-steel))',
-  'rgb(var(--color-alert))',
-  'rgb(var(--color-silver))',
-  'rgb(var(--color-warning))',
-  'rgb(var(--color-teal))',
-];
+// The kit's categorical order (CSS vars, so the donut tracks light/dark).
+const FALLBACK_COLORS = EXTENDED_SERIES;
 
 export function DonutChart({
   data,
@@ -44,6 +40,7 @@ export function DonutChart({
   centerLabel,
   centerSublabel,
   valueFormatter,
+  empty,
   className,
 }: DonutChartProps) {
   const fmt = valueFormatter ?? ((n: number) => n.toLocaleString());
@@ -59,7 +56,7 @@ export function DonutChart({
   }, [data]);
 
   if (total === 0) {
-    return null;
+    return empty === undefined ? <EmptyState size="sm" icon={PieIcon} title="Nothing to break down yet" className={className} /> : <>{empty}</>;
   }
 
   const inner = Math.round(size * 0.34);
@@ -101,15 +98,8 @@ export function DonutChart({
             <Tooltip
               cursor={false}
               wrapperStyle={{ outline: 'none' }}
-              contentStyle={{
-                background: 'rgb(var(--color-navy))',
-                border: '1px solid rgb(var(--color-navy-secondary))',
-                borderRadius: 6,
-                fontSize: 12,
-                color: 'rgb(var(--color-fg))',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-              }}
-              labelStyle={{ color: 'rgb(var(--color-silver))' }}
+              contentStyle={TOOLTIP_STYLE}
+              labelStyle={TOOLTIP_LABEL_STYLE}
               formatter={(value, name) => {
                 const n = typeof value === 'number' ? value : Number(value) || 0;
                 return [

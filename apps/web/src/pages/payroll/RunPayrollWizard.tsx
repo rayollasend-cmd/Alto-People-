@@ -27,7 +27,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
   FileText,
   HelpCircle,
   Info,
@@ -48,12 +47,14 @@ import type {
 } from '@alto-people/shared';
 import {
   createPayrollRun,
+  finalizePayrollRun,
   listPayrollExceptions,
   listPayrollSchedules,
   previewPayrollRun,
 } from '@/lib/payrollApi';
 import { getPayScheduleCalendarForFlow, listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type FlowSchedule } from '@/lib/payScheduleFlowApi';
 import { ApiError } from '@/lib/api';
+import { EXCEPTION_COPY, ExceptionStrip, SeverityDot } from './PayrollExceptionStrip';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -376,6 +377,27 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     }
   };
 
+  // Fixes happen in other tabs (each Fix link opens one): coming back to
+  // the wizard re-runs the scan, at most every 10 seconds.
+  const recheckRef = useRef(recheckExceptions);
+  recheckRef.current = recheckExceptions;
+  const hasScan = exceptions !== null;
+  useEffect(() => {
+    if (!open || !hasScan) return;
+    let last = Date.now();
+    const onFocus = () => {
+      if (document.visibilityState === 'hidden' || Date.now() - last < 10_000) return;
+      last = Date.now();
+      void recheckRef.current();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [open, hasScan]);
+
   const next = async () => {
     if (!canAdvance[step]) return;
     if (step === 1) {
@@ -406,11 +428,14 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     onOpenChange(false);
   };
 
-  const submit = async () => {
+  // Nothing blocks and it's a regular run: create and finalize in one step.
+  const canCreateAndFinalize = runKind === 'REGULAR' && canSubmit && blockingCount === 0 && !!preview && preview.items.length > 0;
+
+  const submit = async (andFinalize = false) => {
     if (submitting || !canSubmit) return;
     setSubmitting(true);
     try {
-      const detail = await createPayrollRun({
+      const created = await createPayrollRun({
         clientId: activeSchedule?.clientId ?? null,
         periodStart,
         periodEnd,
@@ -419,11 +444,22 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
         notes: notes || undefined,
         ...(runKind === 'OFF_CYCLE' ? { kind: 'OFF_CYCLE' as const } : {}),
       });
-      toast.success(
-        runKind === 'OFF_CYCLE'
-          ? 'Off-cycle run created — add earning lines on the run page to build the paychecks.'
-          : `Run created — ${detail.items.length} paystubs aggregated.`
-      );
+      let detail = created;
+      if (andFinalize) {
+        try {
+          detail = await finalizePayrollRun(created.id);
+          toast.success(`Run created and finalized — ${detail.items.length} paystubs, ready to pay.`);
+        } catch (err) {
+          // The run exists either way: open it as a draft and say why it stopped there.
+          toast.error(`Run created, not finalized: ${err instanceof ApiError ? err.message : 'finalize failed'}.`);
+        }
+      } else {
+        toast.success(
+          runKind === 'OFF_CYCLE'
+            ? 'Off-cycle run created — add earning lines on the run page to build the paychecks.'
+            : `Run created — ${detail.items.length} paystubs aggregated.`
+        );
+      }
       sessionKeyRef.current = null; // done — the next open starts fresh
       onCreated(detail);
     } catch (err) {
@@ -579,7 +615,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               </button>
               <Button
                 type="button"
-                onClick={submit}
+                variant={canCreateAndFinalize ? 'secondary' : 'primary'}
+                onClick={() => void submit()}
                 loading={submitting}
                 disabled={
                   previewLoading || quickPending || !!previewError || !canSubmit
@@ -589,6 +626,18 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
                 <CheckCircle2 className="mr-1.5 h-4 w-4" />
                 Create run
               </Button>
+              {canCreateAndFinalize && (
+                <Button
+                  type="button"
+                  onClick={() => void submit(true)}
+                  loading={submitting}
+                  disabled={previewLoading || quickPending || !!previewError}
+                  title="Nothing blocks this run: create it and finalize it in one step"
+                >
+                  <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                  Create &amp; finalize
+                </Button>
+              )}
             </div>
           ) : step < 4 ? (
             <Button
@@ -601,16 +650,30 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               <ArrowRight className="ml-1.5 h-4 w-4" />
             </Button>
           ) : (
-            <Button
-              type="button"
-              onClick={submit}
-              loading={submitting}
-              disabled={!canSubmit}
-              title={blockReason}
-            >
-              <CheckCircle2 className="mr-1.5 h-4 w-4" />
-              Approve &amp; create run
-            </Button>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant={canCreateAndFinalize ? 'secondary' : 'primary'}
+                onClick={() => void submit()}
+                loading={submitting}
+                disabled={!canSubmit}
+                title={blockReason}
+              >
+                <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                Approve &amp; create run
+              </Button>
+              {canCreateAndFinalize && (
+                <Button
+                  type="button"
+                  onClick={() => void submit(true)}
+                  loading={submitting}
+                  title="Nothing blocks this run: create it and finalize it in one step"
+                >
+                  <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                  Create &amp; finalize
+                </Button>
+              )}
+            </div>
           )}
         </DialogFooter>
       </DialogContent>
@@ -1037,196 +1100,6 @@ function PreviewStateBanner({
 }
 
 /* -------------------------------------------------------------------------- *
- *  Wave 8 — Exception strip
- *
- *  Renders blocking → warning → info severities as a compact, expandable
- *  banner above the per-paycheck cards. Mirrors the QBO behavior of
- *  preventing run submission until blockers are dismissed/resolved.
- * -------------------------------------------------------------------------- */
-
-const EXCEPTION_COPY: Partial<Record<string, { label: string }>> = {
-  MISSING_W4: { label: 'Missing W-4' },
-  MISSING_BANK_ACCOUNT: { label: 'No payout method' },
-  TERMINATED_IN_RUN: { label: 'Terminated in period' },
-  OT_SPIKE: { label: 'OT spike' },
-  UNSUPPORTED_STATE: { label: 'State tax not supported' },
-  UNAPPROVED_TIME: { label: 'Unapproved time' },
-  MISSING_COMP_RECORD: { label: 'No comp record' },
-  RETRO_PAY: { label: 'Retroactive pay' },
-  STATE_W4_INCOMPLETE: { label: 'State certificate incomplete' },
-  LOCAL_TAX_REVIEW: { label: 'Local tax not reviewed' },
-  LOCAL_TAX_UNRESOLVED: { label: 'Home jurisdiction unknown' },
-  BELOW_PREVAILING_WAGE: { label: 'Below prevailing wage' },
-  APPRENTICE_RATIO: { label: 'Apprentice ratio' },
-  WAGE_STATEMENT_INCOMPLETE: { label: 'Paystub missing a state item' },
-  ROTH_CATCH_UP: { label: 'Catch-up must be Roth' },
-  DEFERRAL_LIMIT: { label: 'Annual limit reached' },
-};
-
-/**
- * Best fix surface per exception kind: unapproved time is resolved on the
- * Time page (approve the entries there), everything else on the associate
- * profile. Opened in a new tab so the in-progress wizard survives.
- */
-const fixHref = (ex: PayrollException) =>
-  ex.kind === 'UNAPPROVED_TIME'
-    ? `/time-attendance?associate=${ex.associateId}`
-    : ex.kind === 'WAGE_STATEMENT_INCOMPLETE'
-      ? '/payroll/compliance?tab=paystubs'
-      : ex.kind === 'ROTH_CATCH_UP' || ex.kind === 'DEFERRAL_LIMIT'
-        ? '/payroll/compliance?tab=roth'
-        : ex.kind === 'LOCAL_TAX_REVIEW'
-          ? '/payroll/tax-jurisdictions'
-          : `/people?associateId=${ex.associateId}`;
-
-function ExceptionStrip({
-  exceptions,
-  loading,
-  onRecheck,
-  paychecks,
-}: {
-  exceptions: PayrollExceptionsResponse | null;
-  loading: boolean;
-  onRecheck?: () => void;
-  /** People with a paycheck in this run: the all-clear is only said about real people. */
-  paychecks: number;
-}) {
-  const [open, setOpen] = useState(false);
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-xs2 text-silver/70 py-2">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Checking pre-flight exceptions…
-      </div>
-    );
-  }
-  if (!exceptions || exceptions.exceptions.length === 0) {
-    if (paychecks === 0) return null;
-    return (
-      <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-xs2 text-success">
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        <span className="flex-1">
-          No exceptions for the {paychecks} {paychecks === 1 ? 'person' : 'people'} in this run — each has a W-4, a payout method and a supported state.
-        </span>
-        {onRecheck && exceptions && (
-          <button
-            type="button"
-            onClick={onRecheck}
-            className="shrink-0 text-2xs text-gold hover:underline"
-            title="Re-run the pre-flight scan"
-          >
-            Re-check
-          </button>
-        )}
-      </div>
-    );
-  }
-  const { blocking, warning, info } = exceptions.counts;
-  const tone = blocking > 0
-    ? 'border-alert/40 bg-alert/5 text-alert'
-    : warning > 0
-    ? 'border-warning/30 bg-warning/5 text-warning'
-    : 'border-silver/20 bg-black/40 text-silver';
-  const Icon = blocking > 0 ? ShieldAlert : warning > 0 ? AlertTriangle : Info;
-
-  return (
-    <div className={cn('rounded border', tone.split(' ').slice(0, 2).join(' '))}>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex-1 flex items-center justify-between gap-2 px-3 py-2 text-left"
-          aria-expanded={open}
-        >
-          <span className={cn('flex items-center gap-2 text-xs', tone.split(' ')[2])}>
-            <Icon className="h-4 w-4" />
-            <span className="font-medium">
-              {blocking > 0
-                ? `${blocking} blocking ${blocking === 1 ? 'issue' : 'issues'}`
-                : `${exceptions.exceptions.length} ${exceptions.exceptions.length === 1 ? 'issue' : 'issues'} to review`}
-            </span>
-            <span className="text-silver/70">
-              {warning > 0 && ` · ${warning} warning${warning === 1 ? '' : 's'}`}
-              {info > 0 && ` · ${info} info`}
-            </span>
-          </span>
-          {open ? <ChevronDown className="h-4 w-4 text-silver/70" /> : <ChevronRight className="h-4 w-4 text-silver/70" />}
-        </button>
-        {onRecheck && (
-          <button
-            type="button"
-            onClick={onRecheck}
-            className="shrink-0 px-2 py-2 text-2xs text-gold hover:underline"
-            title="Re-run the pre-flight scan after fixing issues in another tab"
-          >
-            Re-check
-          </button>
-        )}
-      </div>
-      {open && (
-        <ul className="border-t border-silver/10 divide-y divide-silver/5 max-h-56 overflow-y-auto">
-          {exceptions.exceptions.map((ex, i) => (
-            <li
-              key={`${ex.associateId}-${ex.kind}-${i}`}
-              className="px-3 py-2 text-xs"
-            >
-              <div className="flex items-center gap-2">
-                <SeverityDot severity={ex.severity} />
-                <span className="text-white">{ex.associateName}</span>
-                <Badge
-                  variant={
-                    ex.severity === 'BLOCKING'
-                      ? 'destructive'
-                      : ex.severity === 'WARNING'
-                      ? 'pending'
-                      : 'default'
-                  }
-                  className="text-2xs"
-                >
-                  {EXCEPTION_COPY[ex.kind]?.label ?? ex.kind}
-                </Badge>
-                <Link
-                  to={fixHref(ex)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="ml-auto inline-flex items-center gap-1 text-2xs text-gold hover:underline"
-                  title="Fix in a new tab — the wizard stays where it is"
-                >
-                  Fix <ExternalLink className="h-2.5 w-2.5" />
-                </Link>
-              </div>
-              <div className="text-silver/70 mt-0.5 ml-4">{ex.message}</div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-const SEVERITY_LABEL: Record<PayrollException['severity'], string> = {
-  BLOCKING: 'Blocks the run',
-  WARNING: 'Warning',
-  INFO: 'Note',
-};
-
-/** Colour carries the severity for sighted readers; the label is spoken for everyone else. */
-function SeverityDot({ severity }: { severity: PayrollException['severity'] }) {
-  const cls =
-    severity === 'BLOCKING'
-      ? 'bg-alert'
-      : severity === 'WARNING'
-      ? 'bg-warning'
-      : 'bg-silver/50';
-  return (
-    <span className="inline-flex items-center" title={SEVERITY_LABEL[severity] ?? severity}>
-      <span className={cn('h-2 w-2 rounded-full inline-block', cls)} aria-hidden="true" />
-      <span className="sr-only">{SEVERITY_LABEL[severity] ?? severity}</span>
-    </span>
-  );
-}
-
-/* -------------------------------------------------------------------------- *
  *  Wave 8 — Per-paycheck cards
  *
  *  QBO-style expandable card per associate. Step 2 emphasizes hours
@@ -1637,7 +1510,7 @@ function Step2({
     <div className="space-y-3 text-sm">
       <RunTruthPanel truth={truth} preview={preview} periodStart={periodStart} periodEnd={periodEnd} unassigned={unassigned} />
 
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd }} onTimeApproved={onRetry} />
 
       <p className="text-silver/70 text-xs">
         Hours come from <strong>APPROVED</strong> time entries in this period.
@@ -1701,7 +1574,7 @@ function Step3({
   }
   return (
     <div className="space-y-3 text-sm">
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd }} onTimeApproved={onRetry} />
 
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
 
@@ -1805,6 +1678,8 @@ function QuickReview({
         loading={exceptionsLoading}
         onRecheck={onRecheck}
         paychecks={preview?.items.length ?? 0}
+        period={{ start: periodStart, end: periodEnd }}
+        onTimeApproved={onRetry}
       />
 
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />

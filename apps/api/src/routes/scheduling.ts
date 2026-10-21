@@ -544,9 +544,16 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
     const locationId = req.query.locationId?.toString();
     const from = parseDateParam(req.query.from?.toString(), 'from');
     const to = parseDateParam(req.query.to?.toString(), 'to');
+    // ?id=<uuid> — one shift, for a link that names it (/scheduling?shift=)
+    // when it sits outside the window on screen. Same scope as the list.
+    const id = req.query.id?.toString();
+    if (id !== undefined && !z.string().uuid().safeParse(id).success) {
+      throw new HttpError(400, 'invalid_id', '`id` must be a shift id');
+    }
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
+      ...(id ? { id } : {}),
       // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
       tenantId: tenantIdForWrite(),
       ...(status ? { status: status as Prisma.ShiftWhereInput['status'] } : {}),
@@ -4137,7 +4144,7 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
         timezone: tz,
       })}\nApprove or reject it from the Scheduling page.`,
       category: 'scheduling',
-      linkUrl: '/approvals',
+      linkUrl: `/approvals?tab=pickups&pickup=${claim.id}`,
       excludeUserId: user.id,
     };
     void notifyAllAdmins(pickupNotice);
@@ -4942,7 +4949,7 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       body: mgrSwapTpl.text,
       html: mgrSwapTpl.html,
       category: 'scheduling',
-      linkUrl: '/approvals',
+      linkUrl: `/approvals?tab=swaps&swap=${created.id}`,
       at: { locationId: created.shift.locationId, startsAt: created.shift.startsAt },
     });
 

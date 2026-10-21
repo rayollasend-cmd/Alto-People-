@@ -65,6 +65,8 @@ interface ShiftListFilters {
   locationId?: string;
   from?: string;
   to?: string;
+  /** One shift by id (still scoped to what the caller may see). */
+  id?: string;
 }
 
 function qs(filters: ShiftListFilters): string {
@@ -74,6 +76,7 @@ function qs(filters: ShiftListFilters): string {
   if (filters.locationId) p.set('locationId', filters.locationId);
   if (filters.from) p.set('from', filters.from);
   if (filters.to) p.set('to', filters.to);
+  if (filters.id) p.set('id', filters.id);
   const s = p.toString();
   return s ? `?${s}` : '';
 }

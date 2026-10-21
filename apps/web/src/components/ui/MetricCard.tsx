@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from './Card';
+import { Sparkline as KitSparkline } from './charts/Sparkline';
 
 export interface MetricTrend {
   /** Weekly values, oldest first (last bucket = in-progress week). */
@@ -9,7 +10,14 @@ export interface MetricTrend {
   delta: number;
   /** Appended after the delta number, e.g. "vs last wk". */
   deltaLabel?: string;
+  /** Formats the delta's size ("$1.2k", "3.5h"); defaults to a plain number. */
+  format?: (n: number) => string;
+  /** What one point is, for the screen-reader summary ("week"). */
+  unit?: string;
 }
+
+/** Which direction is good news: 'down' for lateness, cost, open issues. */
+export type TrendGood = 'up' | 'down' | 'neutral';
 
 export interface MetricCardProps {
   label: string;
@@ -22,6 +30,9 @@ export interface MetricCardProps {
   /** Direction color is contextual: for metrics where growth is bad
    *  (pending reviews, anomalies), pass false so ↑ renders as alert. */
   deltaPositiveIsGood?: boolean;
+  /** Which direction is good — colors the line and the chip. Overrides
+   *  deltaPositiveIsGood; 'neutral' keeps both in the quiet tone. */
+  trendGood?: TrendGood;
   /** Wraps the card in a link with hover affordance. Pair with React Router's Link via asChild patterns. */
   href?: string;
   /** Render-prop wrapper for non-anchor links (Router Link, button, etc.). */
@@ -121,87 +132,62 @@ export function CountUpValue({ value }: { value: React.ReactNode }) {
 
 /* ---------------------------------------------------------- sparkline */
 
-// 88×24 — the old 64×20 at opacity-40 was invisible at arm's length,
-// which made the executive dashboard's only data-viz read as decoration.
-const SPARK_W = 88;
-const SPARK_H = 24;
-
-/**
- * Dependency-free micro-sparkline: a bare polyline in currentColor at low
- * opacity. Decorative only (`aria-hidden`) — the delta chip carries the
- * accessible summary of the trend.
- */
-export function Sparkline({
-  series,
-  className,
-}: {
-  series: number[];
-  className?: string;
-}) {
-  if (series.length < 2) return null;
-  const min = Math.min(...series);
-  const max = Math.max(...series);
-  const range = max - min || 1;
-  const points = series
-    .map((v, i) => {
-      const x = (i / (series.length - 1)) * (SPARK_W - 2) + 1;
-      const y = SPARK_H - 1.5 - ((v - min) / range) * (SPARK_H - 3);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-  const areaPoints = `1,${SPARK_H - 1} ${points} ${SPARK_W - 1},${SPARK_H - 1}`;
-  return (
-    <svg
-      width={SPARK_W}
-      height={SPARK_H}
-      viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
-      aria-hidden="true"
-      className={cn('shrink-0 opacity-90 text-gold/70', className)}
-    >
-      {/* Soft area fill under the line — the thing that makes a KPI tile
-          read "premium" instead of "a number in a box". */}
-      <polygon points={areaPoints} fill="currentColor" opacity="0.12" />
-      <polyline
-        points={points}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+// The micro-sparkline now lives in the chart kit (padded domain, tone by
+// meaning); re-exported here so existing imports keep working.
+export { Sparkline } from './charts/Sparkline';
 
 /* --------------------------------------------------------- delta chip */
 
 const fmtDelta = (n: number) =>
   Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 1 });
 
+/** Good, bad or flat — the meaning of a change given which way is good. */
+export function trendMeaning(delta: number, good: TrendGood): 'good' | 'bad' | 'flat' {
+  if (delta === 0 || good === 'neutral') return 'flat';
+  return (delta > 0) === (good === 'up') ? 'good' : 'bad';
+}
+
 /** "↑ 6 vs last wk" / "↓ 3" / "—". Zero always renders the neutral dash. */
 export function DeltaChip({
   delta,
   deltaLabel,
   positiveIsGood = true,
+  good,
+  format,
 }: {
   delta: number;
   deltaLabel?: string;
   positiveIsGood?: boolean;
+  good?: TrendGood;
+  format?: (n: number) => string;
 }) {
   const flat = delta === 0;
-  const good = (delta > 0) === positiveIsGood;
-  const tone = flat ? 'text-silver' : good ? 'text-success' : 'text-alert';
+  const meaning = trendMeaning(delta, good ?? (positiveIsGood ? 'up' : 'down'));
+  const tone =
+    meaning === 'good' ? 'bg-success/10 text-success' : meaning === 'bad' ? 'bg-alert/10 text-alert' : 'bg-silver/10 text-silver';
   const arrow = flat ? '—' : delta > 0 ? '↑' : '↓';
   return (
-    <span className={cn('text-xs2 tabular-nums whitespace-nowrap', tone)}>
-      <span aria-hidden="true">{arrow}</span>
-      <span className="sr-only">
-        {flat ? 'unchanged' : delta > 0 ? 'up' : 'down'}
+    <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs2 tabular-nums">
+      <span className={cn('inline-flex items-center gap-0.5 rounded-full px-1.5 py-px font-medium', tone)}>
+        <span aria-hidden="true">{arrow}</span>
+        <span className="sr-only">{flat ? 'unchanged' : delta > 0 ? 'up' : 'down'}</span>
+        {!flat && <>{format ? format(Math.abs(delta)) : fmtDelta(delta)}</>}
       </span>
-      {!flat && <> {fmtDelta(delta)}</>}
-      {deltaLabel && <span className="text-silver/70"> {deltaLabel}</span>}
+      {deltaLabel && <span className="text-silver/70">{deltaLabel}</span>}
     </span>
   );
+}
+
+/** One sentence for a screen reader: where the line started, where it is, and the change. */
+export function trendSummary(trend: MetricTrend, good: TrendGood): string {
+  const pts = trend.series.filter((v) => Number.isFinite(v));
+  if (pts.length < 2) return '';
+  const f = (n: number) => (trend.format ? trend.format(n) : n.toLocaleString('en-US', { maximumFractionDigits: 1 }));
+  const unit = trend.unit ?? 'week';
+  const meaning = trendMeaning(trend.delta, good);
+  const change =
+    trend.delta === 0 ? 'unchanged' : `${trend.delta > 0 ? 'up' : 'down'} ${f(Math.abs(trend.delta))}${trend.deltaLabel ? ` ${trend.deltaLabel}` : ''}`;
+  return `Over the last ${pts.length} ${unit}s: from ${f(pts[0]!)} to ${f(pts[pts.length - 1]!)}, ${change}${meaning === 'flat' ? '' : meaning === 'good' ? ' (better)' : ' (worse)'}.`;
 }
 
 /* --------------------------------------------------------- metric card */
@@ -220,11 +206,13 @@ export function MetricCard({
   accent,
   trend,
   deltaPositiveIsGood = true,
+  trendGood,
   href,
   wrap,
   className,
 }: MetricCardProps) {
   const isInteractive = Boolean(href || wrap);
+  const good: TrendGood = trendGood ?? (deltaPositiveIsGood ? 'up' : 'down');
   const card = (
     <Card interactive={isInteractive} className={cn('group', className)}>
       <CardContent className="pt-[var(--d-tile)]">
@@ -242,12 +230,9 @@ export function MetricCard({
         </div>
         {trend && (
           <div className="mt-2 flex items-center gap-2 text-silver">
-            <Sparkline series={trend.series} />
-            <DeltaChip
-              delta={trend.delta}
-              deltaLabel={trend.deltaLabel}
-              positiveIsGood={deltaPositiveIsGood}
-            />
+            <KitSparkline series={trend.series} tone={sparkTone(trend.delta, good)} />
+            <DeltaChip delta={trend.delta} deltaLabel={trend.deltaLabel} good={good} format={trend.format} />
+            <span className="sr-only">{trendSummary(trend, good)}</span>
           </div>
         )}
         {hint && <div className="text-xs text-silver mt-2">{hint}</div>}
@@ -265,4 +250,10 @@ export function MetricCard({
   if (wrap) return wrap(card);
   if (href) return <a href={href}>{card}</a>;
   return card;
+}
+
+/** The line wears the change's meaning; a flat or neutral trend stays quiet gold. */
+function sparkTone(delta: number, good: TrendGood): 'good' | 'bad' | 'current' {
+  const m = trendMeaning(delta, good);
+  return m === 'good' ? 'good' : m === 'bad' ? 'bad' : 'current';
 }

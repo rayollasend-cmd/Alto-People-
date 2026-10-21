@@ -1,18 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import { Activity, AlertTriangle, Gauge, TrendingUp, Users } from 'lucide-react';
 import type { WebVitalMetric, WebVitalRating, WebVitalRouteRow } from '@alto-people/shared';
 import {
@@ -24,7 +11,9 @@ import {
 } from '@/lib/productAnalyticsApi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricCard, type MetricTrend } from '@/components/ui/MetricCard';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { PALETTE, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
 import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -114,6 +103,14 @@ export function ProductAnalytics() {
     [adoption.data],
   );
 
+  // The day-by-day line behind the daily-active figure: the window's
+  // series, its change against the day before.
+  const dailyTrend = useMemo<MetricTrend | undefined>(() => {
+    const series = activeSeries.map((p) => p.activeUsers);
+    if (series.length < 2) return undefined;
+    return { series, delta: series[series.length - 1]! - series[series.length - 2]!, deltaLabel: 'vs the day before', unit: 'day' };
+  }, [activeSeries]);
+
   const totalRequests = useMemo(
     () => (traffic.data?.series ?? []).reduce((s, p) => s + p.requests, 0),
     [traffic.data],
@@ -146,6 +143,7 @@ export function ProductAnalytics() {
             label="Daily active"
             value={active.isLoading ? '—' : String(active.data?.dau ?? 0)}
             hint="Signed in today"
+            trend={dailyTrend}
           />
           <MetricCard
             label="Weekly active"
@@ -165,44 +163,24 @@ export function ProductAnalytics() {
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-gold" aria-hidden="true" />
-            Active users a day
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {active.isLoading ? (
-            <Skeleton className="h-56" />
-          ) : activeSeries.every((p) => p.activeUsers === 0) ? (
-            <EmptyState
-              icon={Users}
-              title="Nothing recorded yet"
-              description="Activity is counted from the first authenticated request after this shipped."
-            />
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={activeSeries}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                <Tooltip
-                  contentStyle={{ background: '#0f1729', border: '1px solid #2a3550' }}
-                  labelStyle={{ color: '#fff' }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="activeUsers"
-                  name="Active users"
-                  stroke="#c8a24a"
-                  fill="#c8a24a33"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+      {active.isLoading ? (
+        <Skeleton className="h-72" />
+      ) : (
+        <ChartFrame
+          title="Active users a day"
+          summary={`Active users a day over ${activeSeries.length} days: ${activeSeries[0]?.activeUsers ?? 0} at the start, ${activeSeries.at(-1)?.activeUsers ?? 0} on the latest day.`}
+          columns={[
+            { key: 'day', label: 'Day' },
+            { key: 'activeUsers', label: 'Active users', numeric: true },
+          ]}
+          rows={activeSeries.every((p) => p.activeUsers === 0) ? [] : activeSeries}
+          csvName="active-users"
+          height={220}
+          empty={<EmptyState icon={Users} title="Nothing recorded yet" description="Activity is counted from the first authenticated request after this shipped." />}
+        >
+          <TrendLineChart data={activeSeries} x="label" yLabel="People" heading={(l) => `Day ${l}`} series={[{ key: 'activeUsers', name: 'Active users', area: true }]} />
+        </ChartFrame>
+      )}
 
       {/* ---- Adoption ------------------------------------------------ */}
       {adoption.isError ? (
@@ -235,32 +213,24 @@ export function ProductAnalytics() {
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-gold" aria-hidden="true" />
-              New accounts
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {adoption.isLoading ? (
-              <Skeleton className="h-48" />
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={signupSeries}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                  <Tooltip
-                    contentStyle={{ background: '#0f1729', border: '1px solid #2a3550' }}
-                    labelStyle={{ color: '#fff' }}
-                  />
-                  <Bar dataKey="accounts" name="Accounts" fill="#c8a24a" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
+        {adoption.isLoading ? (
+          <Skeleton className="h-64" />
+        ) : (
+          <ChartFrame
+            title="New accounts"
+            summary={`${signupSeries.reduce((n, p) => n + p.accounts, 0)} new accounts over ${signupSeries.length} days.`}
+            columns={[
+              { key: 'day', label: 'Day' },
+              { key: 'accounts', label: 'Accounts', numeric: true },
+            ]}
+            rows={signupSeries.every((p) => p.accounts === 0) ? [] : signupSeries}
+            csvName="new-accounts"
+            height={200}
+            empty={<EmptyState icon={TrendingUp} title="No new accounts in this window" size="sm" />}
+          >
+            <StackedBarChart data={signupSeries} x="label" yLabel="Accounts" heading={(l) => `Day ${l}`} series={[{ key: 'accounts', name: 'Accounts' }]} />
+          </ChartFrame>
+        )}
 
         <Card>
           <CardHeader>
@@ -302,39 +272,40 @@ export function ProductAnalytics() {
       {traffic.isError ? (
         <QueryError what="traffic" query={traffic} />
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-gold" aria-hidden="true" />
-              Requests a day
-              <span className="ml-auto text-xs font-normal text-silver">
+        traffic.isLoading ? (
+          <Skeleton className="h-72" />
+        ) : (
+          <ChartFrame
+            title="Requests a day"
+            description={
+              <>
                 {totalRequests.toLocaleString()} total ·{' '}
-                <span className={totalServerErrors > 0 ? 'text-alert' : ''}>
-                  {totalServerErrors.toLocaleString()} server errors
-                </span>
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {traffic.isLoading ? (
-              <Skeleton className="h-56" />
-            ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={trafficSeries}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                  <YAxis tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                  <Tooltip
-                    contentStyle={{ background: '#0f1729', border: '1px solid #2a3550' }}
-                    labelStyle={{ color: '#fff' }}
-                  />
-                  <Line type="monotone" dataKey="requests" name="Requests" stroke="#c8a24a" dot={false} />
-                  <Line type="monotone" dataKey="serverError" name="Server errors" stroke="#e05260" dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
+                <span className={totalServerErrors > 0 ? 'text-alert' : ''}>{totalServerErrors.toLocaleString()} server errors</span>
+              </>
+            }
+            summary={`${totalRequests.toLocaleString()} requests and ${totalServerErrors.toLocaleString()} server errors over ${trafficSeries.length} days.`}
+            columns={[
+              { key: 'day', label: 'Day' },
+              { key: 'requests', label: 'Requests', numeric: true },
+              { key: 'serverError', label: 'Server errors', numeric: true },
+            ]}
+            rows={trafficSeries}
+            csvName="requests"
+            height={240}
+            empty={<EmptyState icon={Activity} title="No requests recorded in this window" size="sm" />}
+          >
+            <TrendLineChart
+              data={trafficSeries}
+              x="label"
+              yLabel="Requests"
+              heading={(l) => `Day ${l}`}
+              series={[
+                { key: 'requests', name: 'Requests' },
+                { key: 'serverError', name: 'Server errors', color: PALETTE.bad },
+              ]}
+            />
+          </ChartFrame>
+        )
       )}
 
       {/* ---- Web vitals ---------------------------------------------- */}

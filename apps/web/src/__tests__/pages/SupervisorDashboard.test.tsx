@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { minuteOfDayInZone } from '@alto-people/shared';
 import { MemoryRouter } from 'react-router-dom';
@@ -80,6 +80,7 @@ function renderPage(
     flags?: Array<Record<string, unknown>>;
     handover?: Array<Record<string, unknown>>;
     week?: Array<Record<string, unknown>>;
+    lateNow?: Array<Record<string, unknown>>;
   } = {},
 ) {
   const role = opts.role ?? 'SHIFT_SUPERVISOR';
@@ -119,6 +120,16 @@ function renderPage(
     if (path === '/floor/week') return { today: '2026-10-17', timezone: tz, days: opts.week ?? [] };
     if (path === '/approvals/count')
       return { swaps: 1, pickups: 2, timeOff: 2, timesheets: 6, clockIns: 1, total: 12 };
+    // Attendance insights: who isn't in, and eight weeks of fill.
+    if (path.startsWith('/attendance/late-now'))
+      return { generatedAt: at(0), graceMinutes: 7, noShowRiskMinutes: 30, canText: role === 'SHIFT_SUPERVISOR', people: opts.lateNow ?? [] };
+    if (path.startsWith('/attendance/trends'))
+      return {
+        generatedAt: at(0),
+        siteId: null,
+        fillTargetPct: 95,
+        weeks: ['2026-10-03', '2026-10-10', '2026-10-17'].map((weekStart, i) => ({ weekStart, inProgress: i === 2, scheduledShifts: 20, filledShifts: 18 + i, fillRatePct: 90 + i * 5, noCallNoShows: 0, callOuts: 0, lates: 0, overtimeHours: 0 })),
+      };
     throw new Error(`unexpected ${path}`);
   });
   vi.mocked(listShifts).mockResolvedValue({ shifts: [] } as never);
@@ -480,6 +491,50 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
       },
     });
     expect(await screen.findByText("You're running Dana's Swing SOP")).toBeInTheDocument();
+  });
+});
+
+const late = (id: string, name: string, minutesLate: number, status: string, phone: string | null) => ({
+  shiftId: id,
+  associateId: `a-${id}`,
+  name,
+  position: 'Server',
+  clientId: 'c1',
+  siteId: 'l1',
+  siteName: 'Front Beach 218',
+  startsAt: at(-minutesLate / 60),
+  endsAt: at(6),
+  timezone: tz,
+  minutesLate,
+  status,
+  hasPhone: phone !== null,
+  phone,
+});
+
+describe('<SupervisorDashboard> — who isn\u2019t in, and the fill line', () => {
+  it('lists who hasn\u2019t punched in with Call and Text, texts them all at once, and sends a no-show to cover', async () => {
+    vi.clearAllMocks();
+    renderPage({ lateNow: [late('n1', 'Gus Hale', 42, 'no-show-risk', '+15555550111'), late('n2', 'Ivy Moss', 11, 'late', '+15555550112')] });
+    const list = await screen.findByRole('list', { name: 'Not in yet' });
+    expect(within(list).getByText('42 min late')).toBeInTheDocument();
+    expect(within(list).getByRole('link', { name: 'Call Gus Hale' })).toHaveAttribute('href', 'tel:+15555550111');
+    expect(within(list).getByRole('link', { name: 'Text Ivy Moss' })).toHaveAttribute('href', 'sms:+15555550112');
+    expect(within(list).getByRole('link', { name: /No-show → find cover/ })).toHaveAttribute('href', '/scheduling?shift=n1');
+    expect(screen.getByRole('button', { name: 'Text the 2 not in' })).toBeInTheDocument();
+    // Eight weeks of fill against the 95% line — and never a labor budget.
+    expect(await screen.findByRole('heading', { name: 'Fill rate · 8 weeks' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /met the 95% target in 2 of 3 weeks/ })).toBeInTheDocument();
+    expect(screen.queryByText(/budget/i)).not.toBeInTheDocument();
+  });
+
+  it('the watch-only lead sees who is missing, without numbers, texts, cover or the fill chart', async () => {
+    vi.clearAllMocks();
+    renderPage({ role: 'FLOOR_SUPERVISOR', floorTeam: floorTeam(), lateNow: [late('n1', 'Gus Hale', 42, 'no-show-risk', null)] });
+    const list = await screen.findByRole('list', { name: 'Not in yet' });
+    expect(within(list).getByText('Gus Hale')).toBeInTheDocument();
+    expect(within(list).queryByRole('link', { name: /Call|find cover/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Text the/ })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Fill rate · 8 weeks' })).toBeNull();
   });
 });
 

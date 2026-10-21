@@ -79,9 +79,13 @@ export function SectionTitle({
         </div>
         {trailing && <div className="shrink-0">{trailing}</div>}
       </div>
-      {description && (
-        <p className="text-sm text-silver mt-1">{description}</p>
-      )}
+      {description &&
+        (typeof description === 'string' || typeof description === 'number' ? (
+          <p className="text-sm text-silver mt-1">{description}</p>
+        ) : (
+          // A control or block passed as the description can't sit inside a <p>.
+          <div className="text-sm text-silver mt-1">{description}</div>
+        ))}
     </div>
   );
 }

@@ -136,12 +136,44 @@ describe('<PayrollReviewPage>', () => {
 describe('<PayrollReviewsPage>', () => {
   it('lists the runs waiting on a sign-off, oldest first, each opening its report', async () => {
     getReviewQueue.mockResolvedValue({
-      waiting: [{ id: 'run1', status: 'FINALIZED', kind: 'REGULAR', clientName: 'Coastal', periodStart: '2026-04-13', periodEnd: '2026-04-19', people: 2, totalGross: 760, totalNet: 650, createdByName: 'maker@example.com', changedSinceSignoff: true }],
+      waiting: [
+        { id: 'run1', status: 'FINALIZED', kind: 'REGULAR', clientName: 'Coastal', periodStart: '2026-04-13', periodEnd: '2026-04-19', people: 2, totalGross: 760, totalNet: 650, createdByName: 'maker@example.com', changedSinceSignoff: true },
+        { id: 'run2', status: 'DRAFT', kind: 'REGULAR', clientName: 'Harbor', periodStart: '2026-04-13', periodEnd: '2026-04-19', people: 1, totalGross: 300, totalNet: 260, createdByName: 'maker@example.com', changedSinceSignoff: false },
+      ],
       recent: [],
     });
     renderAs('FINANCE_ACCOUNTANT', <PayrollReviewsPage />, '/payroll/review');
     const link = await screen.findByRole('link', { name: /Coastal · 2 paychecks/ });
     expect(link).toHaveAttribute('href', '/payroll/runs/run1/review');
     expect(within(link).getByText('Changed since sign-off')).toBeInTheDocument();
+  });
+
+  it('one run waiting opens its report straight away', async () => {
+    getReviewQueue.mockResolvedValue({
+      waiting: [{ id: 'run1', status: 'FINALIZED', kind: 'REGULAR', clientName: 'Coastal', periodStart: '2026-04-13', periodEnd: '2026-04-19', people: 2, totalGross: 760, totalNet: 650, createdByName: 'maker@example.com', changedSinceSignoff: false }],
+      recent: [],
+    });
+    renderAs(
+      'FINANCE_ACCOUNTANT',
+      <Routes>
+        <Route path="/payroll/review" element={<PayrollReviewsPage />} />
+        <Route path="/payroll/runs/:id/review" element={<p>the report for run1</p>} />
+      </Routes>,
+      '/payroll/review',
+    );
+    expect(await screen.findByText('the report for run1')).toBeInTheDocument();
+  });
+});
+
+describe('after sign-off', () => {
+  it('offers to pay the run, and the breadcrumb returns to it', async () => {
+    const s = { id: 's1', signedByName: 'checker@example.com', signedAt: '2026-04-20T16:00:00Z', note: null, soleReviewer: false };
+    getPayrollReview.mockResolvedValue({ report: REPORT, signoff: state({ current: s, history: [s], canSign: false, cannotSignReason: 'These numbers are already signed off.' }) });
+    renderReview();
+    const pay = await screen.findByRole('link', { name: /Disburse \$650\.00/ });
+    expect(pay).toHaveAttribute('href', '/payroll?run=run1&next=pay');
+    expect(screen.getByRole('link', { name: 'Payroll' })).toHaveAttribute('href', '/payroll?run=run1');
+    // The waterfall's table twin carries every step.
+    expect(screen.getByRole('img', { name: /Gross pay \$760\.00 becomes net pay \$650\.00/ })).toBeInTheDocument();
   });
 });

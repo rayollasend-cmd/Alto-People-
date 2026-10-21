@@ -10,6 +10,7 @@ import {
   Building2,
   CalendarDays,
   CheckCheck,
+  ChevronRight,
   ClipboardCheck,
   FileText,
   Inbox,
@@ -49,6 +50,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { FilterChip } from '@/components/ui/FilterBar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
@@ -106,6 +109,64 @@ function categoryMeta(raw: string | null): {
 
 const SHOW_LIMIT = 50;
 
+/* ---- "Only what needs me", and grouping ------------------------------- */
+
+/** Told, not asked: digests, announcements, earnings, the store's daily reads. */
+const FYI_CATEGORY = /digest|earnings|broadcast|announce|celebrat|kudos|week_ahead|whats_new|newsletter|recap/;
+const FYI_BUCKETS: ReadonlySet<NotificationCategory> = new Set(['broadcast', 'growth', 'store_daily', 'store_reports']);
+
+/**
+ * Does this one ask something of the person? Anything urgent does; an
+ * unread item with somewhere to go does, unless it is the kind that only
+ * informs. Read items have been dealt with.
+ */
+export function needsMe(n: Notification): boolean {
+  if (isUrgentCategory(n.category)) return true;
+  if (n.readAt || !n.linkUrl) return false;
+  const bucket = bucketForCategory(n.category);
+  if (bucket && FYI_BUCKETS.has(bucket)) return false;
+  return !FYI_CATEGORY.test(n.category ?? '');
+}
+
+export type BellRow = { kind: 'one'; n: Notification } | { kind: 'group'; key: string; items: Notification[] };
+
+/**
+ * Three or more of the same kind fold into one row ("12 schedule changes"),
+ * placed where the newest of them falls; fewer stay as they are.
+ */
+export function groupNotifications(list: readonly Notification[], min = 3): BellRow[] {
+  const keyOf = (n: Notification) => n.category ?? 'other';
+  const counts = new Map<string, number>();
+  for (const n of list) counts.set(keyOf(n), (counts.get(keyOf(n)) ?? 0) + 1);
+  const groups = new Map<string, Notification[]>();
+  const out: BellRow[] = [];
+  for (const n of list) {
+    const k = keyOf(n);
+    if ((counts.get(k) ?? 0) < min) {
+      out.push({ kind: 'one', n });
+      continue;
+    }
+    const g = groups.get(k);
+    if (g) g.push(n);
+    else {
+      const items = [n];
+      groups.set(k, items);
+      out.push({ kind: 'group', key: k, items });
+    }
+  }
+  return out;
+}
+
+type BellFilter = 'all' | 'mine';
+const FILTER_KEY = 'alto.bell.filter.v1';
+function readFilter(): BellFilter {
+  try {
+    return window.localStorage.getItem(FILTER_KEY) === 'mine' ? 'mine' : 'all';
+  } catch {
+    return 'all';
+  }
+}
+
 export function NotificationsBell() {
   // The full inbox page is a communications screen; portal accounts read
   // their notifications here in the panel only.
@@ -121,6 +182,17 @@ export function NotificationsBell() {
   // One-shot swing on arrival; cleared by onAnimationEnd so a later
   // arrival can replay it.
   const [swing, setSwing] = useState(false);
+  // Everything, or only what asks something of you — remembered per browser.
+  const [filter, setFilterState] = useState<BellFilter>(readFilter);
+  const setFilter = (f: BellFilter) => {
+    setFilterState(f);
+    try {
+      window.localStorage.setItem(FILTER_KEY, f);
+    } catch {
+      /* a per-viewer convenience */
+    }
+  };
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(new Set());
 
   const inboxQuery = useQuery({
     queryKey: ['NotificationsBell', 'inbox'],
@@ -245,7 +317,160 @@ export function NotificationsBell() {
     }
   };
 
-  const shown = (items ?? []).slice(0, SHOW_LIMIT);
+  const onMarkGroupRead = (group: Notification[]) => {
+    const unread = group.filter((x) => !x.readAt);
+    if (unread.length === 0) return;
+    const ids = new Set(unread.map((x) => x.id));
+    const now = new Date().toISOString();
+    setItems((prev) => prev?.map((x) => (ids.has(x.id) ? { ...x, readAt: now, seenAt: x.seenAt ?? now } : x)) ?? null);
+    Promise.all(unread.map((x) => markRead(x.id))).catch(() => {
+      toast.error('Could not mark as read');
+      refresh();
+    });
+  };
+
+  const filtered = filter === 'mine' ? (items ?? []).filter(needsMe) : (items ?? []);
+  const shown = filtered.slice(0, SHOW_LIMIT);
+  const rows = groupNotifications(shown);
+  const needsMeCount = (items ?? []).filter(needsMe).length;
+
+  const renderItem = (n: Notification, nested = false) => {
+    const meta = categoryMeta(n.category);
+    return (
+      <DropdownMenuItem
+        key={n.id}
+        onSelect={(e) => {
+          // No deeplink → keep the panel open; the click only
+          // marks the row read.
+          if (!n.linkUrl) e.preventDefault();
+          onItemClick(n);
+        }}
+        className={cn(
+          'w-full items-start rounded-none px-3 py-2.5 cursor-pointer',
+          'focus:bg-navy-secondary data-[highlighted]:bg-navy-secondary/60',
+          nested && 'pl-8',
+          !n.readAt && 'bg-gold/5'
+        )}
+      >
+        <div className="flex items-start gap-2.5 w-full min-w-0">
+          <span
+            className={cn(
+              'mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full',
+              meta.urgent
+                ? 'bg-alert/15 text-alert'
+                : 'bg-navy-secondary/70 text-silver'
+            )}
+            aria-hidden="true"
+          >
+            <meta.Icon className="h-3.5 w-3.5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            {n.subject && (
+              <div
+                className={cn(
+                  'text-sm truncate',
+                  meta.urgent ? 'text-alert font-medium' : 'text-white',
+                  !n.readAt && !meta.urgent && 'font-medium'
+                )}
+              >
+                {n.subject}
+              </div>
+            )}
+            <div
+              className={cn(
+                'text-xs leading-snug line-clamp-2',
+                n.readAt ? 'text-silver/70' : 'text-silver'
+              )}
+            >
+              {n.body}
+            </div>
+            <div className="text-2xs text-silver/80 mt-0.5 tabular-nums flex items-center gap-1.5">
+              <span title={fmtDateTime(n.createdAt)}>{fmt(n.createdAt)}</span>
+              {meta.label && !nested && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>{meta.label}</span>
+                </>
+              )}
+            </div>
+          </div>
+          {!n.readAt && (
+            <span
+              className="mt-1.5 h-2 w-2 rounded-full shrink-0 bg-gold"
+              aria-hidden="true"
+            />
+          )}
+        </div>
+      </DropdownMenuItem>
+    );
+  };
+
+  const renderGroup = (key: string, group: Notification[]) => {
+    const newest = group[0]!;
+    const meta = categoryMeta(newest.category);
+    const isOpen = openGroups.has(key);
+    const unread = group.filter((x) => !x.readAt).length;
+    const title = meta.label ? `${group.length} ${meta.label.toLowerCase()}` : `${group.length} like “${newest.subject ?? 'this'}”`;
+    return (
+      <div key={`group:${key}`}>
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault();
+            setOpenGroups((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            });
+          }}
+          aria-expanded={isOpen}
+          className={cn(
+            'w-full items-start rounded-none px-3 py-2.5 cursor-pointer',
+            'focus:bg-navy-secondary data-[highlighted]:bg-navy-secondary/60',
+            unread > 0 && 'bg-gold/5'
+          )}
+        >
+          <div className="flex items-start gap-2.5 w-full min-w-0">
+            <span
+              className={cn(
+                'mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full',
+                meta.urgent ? 'bg-alert/15 text-alert' : 'bg-navy-secondary/70 text-silver'
+              )}
+              aria-hidden="true"
+            >
+              <meta.Icon className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className={cn('text-sm truncate', meta.urgent ? 'text-alert' : 'text-ink', unread > 0 && 'font-medium')}>{title}</div>
+              <div className="text-xs leading-snug text-silver truncate">Latest: {newest.subject ?? newest.body}</div>
+              <div className="text-2xs text-silver/80 mt-0.5 tabular-nums">
+                {fmt(newest.createdAt)}
+                {unread > 0 ? ` · ${unread} unread` : ''}
+              </div>
+            </div>
+            <ChevronRight className={cn('mt-1 h-4 w-4 shrink-0 text-silver transition-transform', isOpen && 'rotate-90')} aria-hidden="true" />
+          </div>
+        </DropdownMenuItem>
+        {isOpen && (
+          <>
+            {unread > 0 && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  onMarkGroupRead(group);
+                }}
+                className="w-full rounded-none py-1.5 pl-8 pr-3 text-2xs text-gold cursor-pointer focus:bg-navy-secondary data-[highlighted]:bg-navy-secondary/60"
+              >
+                <CheckCheck className="mr-1 h-3 w-3" aria-hidden="true" />
+                Mark these {unread} read
+              </DropdownMenuItem>
+            )}
+            {group.map((n) => renderItem(n, true))}
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
@@ -319,6 +544,16 @@ export function NotificationsBell() {
             </button>
           )}
         </DropdownMenuLabel>
+        {items && items.length > 0 && (
+          <div className="flex gap-1 px-3 pb-2" role="group" aria-label="Which notifications">
+            <FilterChip active={filter === 'mine'} onClick={() => setFilter('mine')}>
+              Needs me{needsMeCount ? ` (${needsMeCount})` : ''}
+            </FilterChip>
+            <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
+              Everything
+            </FilterChip>
+          </div>
+        )}
         <DropdownMenuSeparator className="m-0" />
 
         {/* 28rem (448px) on tall screens, but clamp to the dynamic
@@ -351,83 +586,30 @@ export function NotificationsBell() {
               </p>
             </div>
           )}
-          {items && items.length > 0 && (
+          {items && items.length > 0 && filter === 'mine' && shown.length === 0 && (
+            <EmptyState
+              size="sm"
+              className="p-6"
+              title="Nothing is waiting on you here"
+              description={
+                <>
+                  Everything is read or for your information.{' '}
+                  <button type="button" className="text-gold hover:underline" onClick={() => setFilter('all')}>
+                    Show everything
+                  </button>
+                </>
+              }
+            />
+          )}
+          {items && shown.length > 0 && (
             <div className="divide-y divide-navy-secondary">
               {/* DropdownMenuItem (not bare <button>) so Radix's roving
                   focus gives arrow-key traversal + typeahead for free. */}
-              {shown.map((n) => {
-                const meta = categoryMeta(n.category);
-                return (
-                  <DropdownMenuItem
-                    key={n.id}
-                    onSelect={(e) => {
-                      // No deeplink → keep the panel open; the click only
-                      // marks the row read.
-                      if (!n.linkUrl) e.preventDefault();
-                      onItemClick(n);
-                    }}
-                    className={cn(
-                      'w-full items-start rounded-none px-3 py-2.5 cursor-pointer',
-                      'focus:bg-navy-secondary data-[highlighted]:bg-navy-secondary/60',
-                      !n.readAt && 'bg-gold/5'
-                    )}
-                  >
-                    <div className="flex items-start gap-2.5 w-full min-w-0">
-                      <span
-                        className={cn(
-                          'mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full',
-                          meta.urgent
-                            ? 'bg-alert/15 text-alert'
-                            : 'bg-navy-secondary/70 text-silver'
-                        )}
-                        aria-hidden="true"
-                      >
-                        <meta.Icon className="h-3.5 w-3.5" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        {n.subject && (
-                          <div
-                            className={cn(
-                              'text-sm truncate',
-                              meta.urgent ? 'text-alert font-medium' : 'text-white',
-                              !n.readAt && !meta.urgent && 'font-medium'
-                            )}
-                          >
-                            {n.subject}
-                          </div>
-                        )}
-                        <div
-                          className={cn(
-                            'text-xs leading-snug line-clamp-2',
-                            n.readAt ? 'text-silver/70' : 'text-silver'
-                          )}
-                        >
-                          {n.body}
-                        </div>
-                        <div className="text-2xs text-silver/80 mt-0.5 tabular-nums flex items-center gap-1.5">
-                          <span title={fmtDateTime(n.createdAt)}>{fmt(n.createdAt)}</span>
-                          {meta.label && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span>{meta.label}</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      {!n.readAt && (
-                        <span
-                          className="mt-1.5 h-2 w-2 rounded-full shrink-0 bg-gold"
-                          aria-hidden="true"
-                        />
-                      )}
-                    </div>
-                  </DropdownMenuItem>
-                );
-              })}
+              {rows.map((r) => (r.kind === 'one' ? renderItem(r.n) : renderGroup(r.key, r.items)))}
             </div>
           )}
         </div>
-        {items && total > shown.length && !hasInboxPage && (
+        {items && filter === 'all' && total > shown.length && !hasInboxPage && (
           <>
             <DropdownMenuSeparator className="m-0" />
             <p className="px-3 py-2 text-center text-2xs text-silver/60">
@@ -435,7 +617,7 @@ export function NotificationsBell() {
             </p>
           </>
         )}
-        {items && total > shown.length && hasInboxPage && (
+        {items && filter === 'all' && total > shown.length && hasInboxPage && (
           <>
             <DropdownMenuSeparator className="m-0" />
             <button

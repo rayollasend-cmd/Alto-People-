@@ -47,7 +47,8 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
-import { DetailsTable, PortalTooltip, SERIES } from '@/pages/portal/portalCharts';
+import { DetailsTable, PALETTE, PortalTooltip, TICK } from '@/components/ui/charts';
+import { SERIES } from '@/pages/portal/portalCharts';
 import { TaskDemandEditor, linesOf, mixLine, spreadLines } from './TaskDemandEditor';
 import { fmtMoney } from '@/lib/format';
 
@@ -450,11 +451,11 @@ function PlanView({ id }: { id: string }) {
                 <>
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={weekly}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                      <Tooltip content={<PortalTooltip series={{ associatesNeeded: { name: 'Associates', color: SERIES.primary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                      <Bar dataKey="associatesNeeded" name="Associates" fill={SERIES.primary} radius={[3, 3, 0, 0]} />
+                      <CartesianGrid stroke={PALETTE.grid} vertical={false} />
+                      <XAxis dataKey="label" tick={TICK} />
+                      <YAxis allowDecimals={false} tick={TICK} />
+                      <Tooltip content={<PortalTooltip series={{ associatesNeeded: { name: 'Associates', color: SERIES.primary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: PALETTE.cursor }} />
+                      <Bar dataKey="associatesNeeded" name="Associates" fill={SERIES.primary} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                   <DetailsTable
@@ -890,12 +891,12 @@ function CompareView({ a, b }: { a: string; b: string }) {
             <CardContent>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={series}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a3550" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#8b97b3' }} />
-                  <Tooltip content={<PortalTooltip series={{ a: { name: q.data.a.name, color: SERIES.primary }, b: { name: q.data.b.name, color: SERIES.secondary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                  <Bar dataKey="a" name={q.data.a.name} fill={SERIES.primary} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="b" name={q.data.b.name} fill={SERIES.secondary} radius={[3, 3, 0, 0]} />
+                  <CartesianGrid stroke={PALETTE.grid} vertical={false} />
+                  <XAxis dataKey="label" tick={TICK} />
+                  <YAxis allowDecimals={false} tick={TICK} />
+                  <Tooltip content={<PortalTooltip series={{ a: { name: q.data.a.name, color: SERIES.primary }, b: { name: q.data.b.name, color: SERIES.secondary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: PALETTE.cursor }} />
+                  <Bar dataKey="a" name={q.data.a.name} fill={SERIES.primary} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="b" name={q.data.b.name} fill={SERIES.secondary} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
               <DetailsTable label="Details" columns={['Week of', q.data.a.name, q.data.b.name, 'Difference']} rows={series.map((s) => [s.label, s.a, s.b, s.b - s.a])} />

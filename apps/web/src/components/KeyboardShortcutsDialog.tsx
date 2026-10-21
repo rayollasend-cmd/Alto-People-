@@ -33,6 +33,10 @@ const SHORTCUTS: ShortcutGroup[] = [
       { keys: ['g', 's'], description: 'Go to Schedule' },
       { keys: ['g', 'p'], description: 'Go to People' },
       { keys: ['g', 'a'], description: 'Go to Approvals' },
+      { keys: ['g', 't'], description: 'Go to Timesheets' },
+      { keys: ['g', 'y'], description: 'Go to Payroll' },
+      { keys: ['g', 'b'], description: 'Go to Books' },
+      { keys: ['g', 'o'], description: 'Go to Onboarding' },
       { keys: ['g', ','], description: 'Go to Settings' },
       { keys: ['Esc'], description: 'Close dialogs and overlays' },
       { keys: ['?'], description: 'Show this overlay' },
@@ -50,6 +54,10 @@ const SHORTCUTS: ShortcutGroup[] = [
   {
     label: 'Tables',
     items: [
+      { keys: ['j', 'k'], description: 'Move the cursor down / up a row (click a row first)' },
+      { keys: ['Enter'], description: 'Open the row under the cursor' },
+      { keys: ['x'], description: 'Select the row under the cursor' },
+      { keys: ['Shift', 'click'], description: 'Select every row between two checkboxes' },
       { keys: ['↑', '↓'], description: 'Move between table tabs' },
       { keys: ['←', '→'], description: 'Switch tabs (in tab strips)' },
     ],

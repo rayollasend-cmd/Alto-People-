@@ -64,10 +64,8 @@ export function ClosePeriodPage() {
     const note = await prompt({ title: `Skip “${t.title}”?`, description: 'The reason stays on the close for whoever signs it off.', reasonLabel: 'Why', confirmLabel: 'Skip step' });
     if (note) setTask.mutate({ key: t.key, status: 'SKIPPED', note });
   };
-  const done = async (t: CloseTaskView) => {
-    const note = await prompt({ title: t.title, description: t.detail ?? undefined, reasonLabel: 'Note (optional)', confirmLabel: 'Mark done', required: false });
-    if (note !== null) setTask.mutate({ key: t.key, status: 'DONE', note: note || null });
-  };
+  // One click; a note only when there's something to say (inline on the row).
+  const done = (t: CloseTaskView, note?: string) => setTask.mutate({ key: t.key, status: 'DONE', note: note?.trim() || null }, { onSuccess: () => toast.success(`“${t.title}” done.`) });
   const askReopen = async () => {
     const reason = await prompt({ title: `Reopen ${d.label}?`, description: 'Entries can post to it again until it’s closed again. Someone else with the books approves.', reasonLabel: 'Why it needs to reopen', confirmLabel: 'Ask to reopen' });
     if (reason) reopen.mutate(reason);
@@ -148,7 +146,7 @@ export function ClosePeriodPage() {
               {!d.can.edit && d.can.why && d.status === 'OPEN' && <p className="text-sm text-ink-muted">{d.can.why}</p>}
               <ol className="space-y-2">
                 {d.tasks.map((t) => (
-                  <TaskRow key={t.key} task={t} editable={d.can.edit} busy={setTask.isPending} onDone={() => void done(t)} onSkip={() => void skip(t)} onReopen={() => setTask.mutate({ key: t.key, status: 'OPEN' })} />
+                  <TaskRow key={t.key} task={t} editable={d.can.edit} busy={setTask.isPending} onDone={(note) => done(t, note)} onSkip={() => void skip(t)} onReopen={() => setTask.mutate({ key: t.key, status: 'OPEN' })} />
                 ))}
               </ol>
             </div>
@@ -189,7 +187,9 @@ export function ClosePeriodPage() {
   );
 }
 
-function TaskRow({ task: t, editable, busy, onDone, onSkip, onReopen }: { task: CloseTaskView; editable: boolean; busy: boolean; onDone: () => void; onSkip: () => void; onReopen: () => void }) {
+function TaskRow({ task: t, editable, busy, onDone, onSkip, onReopen }: { task: CloseTaskView; editable: boolean; busy: boolean; onDone: (note?: string) => void; onSkip: () => void; onReopen: () => void }) {
+  const [noting, setNoting] = useState(false);
+  const [note, setNote] = useState('');
   const Icon = t.status === 'DONE' ? CheckCircle2 : t.status === 'SKIPPED' ? CircleSlash : Circle;
   return (
     <li className={cn('rounded-lg border bg-surface p-4', t.status === 'OPEN' ? 'border-line' : 'border-line/60')}>
@@ -241,10 +241,16 @@ function TaskRow({ task: t, editable, busy, onDone, onSkip, onReopen }: { task: 
               <Link to={t.link}>Open</Link>
             </Button>
           )}
-          {editable && t.status === 'OPEN' && !t.auto && (
-            <Button size="sm" variant="secondary" onClick={onDone} disabled={busy}>
-              Mark done
-            </Button>
+          {editable && t.status === 'OPEN' && !t.auto && !noting && (
+            <>
+              <Button size="sm" variant="secondary" onClick={() => onDone()} disabled={busy}>
+                <Check className="h-4 w-4" aria-hidden="true" />
+                Mark done
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setNoting(true)} disabled={busy}>
+                Add a note
+              </Button>
+            </>
           )}
           {editable && t.status === 'OPEN' && (
             <Button size="sm" variant="ghost" onClick={onSkip} disabled={busy}>
@@ -258,6 +264,23 @@ function TaskRow({ task: t, editable, busy, onDone, onSkip, onReopen }: { task: 
           )}
         </div>
       </div>
+      {noting && editable && t.status === 'OPEN' && (
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2 pl-8"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onDone(note);
+          }}
+        >
+          <Input aria-label={`Note for “${t.title}”`} className="min-w-[16rem] flex-1" autoFocus maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Tied to the statement; nothing outstanding" onKeyDown={(e) => e.key === 'Escape' && setNoting(false)} />
+          <Button size="sm" type="submit" disabled={busy}>
+            Mark done
+          </Button>
+          <Button size="sm" variant="ghost" type="button" onClick={() => setNoting(false)}>
+            Cancel
+          </Button>
+        </form>
+      )}
     </li>
   );
 }

@@ -22,3 +22,14 @@ export function useInbox() {
     staleTime: 30_000,
   });
 }
+
+/**
+ * A queue's link from the Inbox: it carries `from=inbox` and the queue's key
+ * so the page it opens shows the slim "Back to inbox" bar (InboxReturnBar),
+ * and offers the next queue once this one is empty.
+ */
+export function inboxLink(path: string, key: string): string {
+  const [beforeHash, hash] = path.split('#', 2) as [string, string | undefined];
+  const sep = beforeHash.includes('?') ? '&' : '?';
+  return `${beforeHash}${sep}from=inbox&inbox=${encodeURIComponent(key)}${hash !== undefined ? `#${hash}` : ''}`;
+}

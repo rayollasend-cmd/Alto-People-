@@ -300,7 +300,7 @@ export async function confirmCallOut(id: string, now: Date = new Date(), db: Db 
         `${name} can't make ${shift.position} at ${placeOf(shift)}, ${when} (${reasonWords}${row.late ? `, ${row.minutesBeforeStart} minutes' notice` : ''}). ` +
         `Cover is under way: ${steps.map((s) => s.detail).join(' ')}`,
       category: 'scheduling',
-      linkUrl: '/call-outs',
+      linkUrl: `/call-outs?callout=${row.id}`,
       at: { locationId: shift.locationId, startsAt: shift.startsAt },
       aboutAssociateId: row.associateId,
     }),
@@ -314,7 +314,7 @@ export async function confirmCallOut(id: string, now: Date = new Date(), db: Db 
       subject: CALL_OUT_TEXT.confirmed(lang, placeOf(shift), whenLabel(shift.startsAt, tz, lang)).split(' — ')[0] ?? 'Call-out recorded',
       body: CALL_OUT_TEXT.confirmed(lang, placeOf(shift), whenLabel(shift.startsAt, tz, lang)),
       category: 'scheduling',
-      linkUrl: '/',
+      linkUrl: '/scheduling',
     }),
   );
 

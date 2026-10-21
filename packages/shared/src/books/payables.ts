@@ -14,6 +14,7 @@ import { z } from 'zod';
  *   GET    /books/bills/:id                          → { bill }
  *   PATCH  /books/bills/:id                          BooksBillInput → { bill }        (DRAFT only)
  *   POST   /books/bills/:id/submit                   → 202 { pending, approvalId }    (BILL_APPROVAL)
+ *   POST   /books/bills/approve                      { ids } → BooksBillsApproveResult (each still second-person)
  *   POST   /books/bills/:id/withdraw                 → { bill }                       (back to DRAFT)
  *   POST   /books/bills/:id/reopen                   { reason } → { bill }            (APPROVED, unpaid → DRAFT; entry voided)
  *   POST   /books/bills/:id/void                     { reason } → { bill }
@@ -168,6 +169,17 @@ export const BooksBillSchema = z.object({
   createdAt: z.string(),
 });
 export type BooksBill = z.infer<typeof BooksBillSchema>;
+
+/**
+ * Approve several bills at once (Bills → To approve → "Approve selected").
+ * Each is its own decision on its own approval — still never by the person
+ * who entered it: those come back skipped, with why.
+ */
+export const BooksBillsApproveInputSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(100) });
+export interface BooksBillsApproveResult {
+  approved: Array<{ id: string; total: number; vendorName: string }>;
+  skipped: Array<{ id: string; reason: string }>;
+}
 
 export const BooksBillPaymentInputSchema = z.object({
   vendorId: z.string().uuid(),

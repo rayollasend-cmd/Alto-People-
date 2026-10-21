@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Command } from 'cmdk';
 import {
@@ -8,6 +8,8 @@ import {
   CalendarDays,
   CalendarPlus,
   ClipboardCheck,
+  Clock,
+  CornerDownRight,
   FileText,
   HelpCircle,
   Inbox,
@@ -155,6 +157,13 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const navigate = useNavigate();
   const { signOut, can, user } = useAuth();
+  // Where a person result goes next, by what this login may open there.
+  const personActions = (id: string): Array<{ key: string; label: string; to: string; icon: LucideIcon }> => [
+    ...(can('manage:time') ? [{ key: 'time', label: 'Timesheet', to: `/people/${id}?tab=time`, icon: Clock }] : []),
+    ...(can('manage:scheduling') || can('view:scheduling') ? [{ key: 'schedule', label: 'Schedule', to: `/scheduling?view=week&associate=${id}`, icon: CalendarDays }] : []),
+    ...(can('view:comp') ? [{ key: 'pay', label: 'Change pay', to: `/people/${id}?tab=pay`, icon: Banknote }] : []),
+    { key: 'documents', label: 'Documents', to: `/people/${id}?tab=documents`, icon: FileText },
+  ];
   const assistant = useAssistant();
   const tenant = useTenant();
   const term = useTerm();
@@ -316,7 +325,7 @@ export function CommandPalette({
             keywords: 'pay disburse wages',
             group: 'Actions',
             perform: ({ navigate, close }: PerformCtx) => {
-              navigate('/payroll');
+              navigate('/payroll?new=run');
               close();
             },
           } satisfies PaletteItem,
@@ -473,14 +482,14 @@ export function CommandPalette({
 
             {showPeopleGroup && (
               <Command.Group heading="People" className={GROUP_CLASS}>
-                {people.map((p) => {
+                {people.map((p, i) => {
                   const fullName = `${p.firstName} ${p.lastName}`.trim();
                   const hint = [p.workplaceClientName, p.position]
                     .filter(Boolean)
                     .join(' · ');
                   return (
+                    <Fragment key={p.id}>
                     <Command.Item
-                      key={p.id}
                       value={`person-${p.id}`}
                       onSelect={() => {
                         // Straight to their profile drawer — landing on a
@@ -507,6 +516,28 @@ export function CommandPalette({
                         )}
                       </div>
                     </Command.Item>
+                    {/* The best match also offers where people usually go next. */}
+                    {i === 0 &&
+                      personActions(p.id).map((act) => (
+                        <Command.Item
+                          key={act.key}
+                          value={`person-${p.id}-${act.key}`}
+                          keywords={[fullName, act.label]}
+                          onSelect={() => {
+                            navigate(act.to);
+                            close();
+                          }}
+                          className={cn(ITEM_CLASS, 'pl-8')}
+                        >
+                          <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-silver/60" aria-hidden="true" />
+                          <act.icon className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+                          <span className="flex-1 truncate">
+                            {act.label}
+                            <span className="text-silver/60"> · {fullName}</span>
+                          </span>
+                        </Command.Item>
+                      ))}
+                    </Fragment>
                   );
                 })}
                 {/* Same height as an item row so results replacing it don't

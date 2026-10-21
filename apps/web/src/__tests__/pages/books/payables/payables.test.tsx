@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   createBill: vi.fn(),
   updateBill: vi.fn(),
   submitBill: vi.fn(),
+  approveBills: vi.fn(),
   withdrawBill: vi.fn(),
   reopenBill: vi.fn(),
   voidBill: vi.fn(),
@@ -154,6 +155,25 @@ describe('<BillsPage>', () => {
   });
 });
 
+describe('<BillsPage> — To approve', () => {
+  const pending = (id: string, total: number, mayDecide: boolean) =>
+    bill({ id, total, balance: total, status: 'PENDING_APPROVAL', approvedAt: null, approvedByName: null, journalEntryId: null, approval: { id: `a-${id}`, status: 'PENDING', requesterName: mayDecide ? 'Fin Person' : 'You', decidedByName: null, reason: null, mayDecide, createdAt: '2026-10-02T12:00:00.000Z' } });
+
+  it('opens on ?tab=approve, approves the selection in one go, and says why the requester’s own can’t be picked', async () => {
+    const one = pending('00000000-0000-4000-8000-00000000b011', 100, true);
+    const two = pending('00000000-0000-4000-8000-00000000b012', 250, true);
+    const mine = pending('00000000-0000-4000-8000-00000000b013', 75, false);
+    api.listBills.mockImplementation(async ({ tab }: { tab?: string }) => ({ bills: tab === 'approve' ? [one, two, mine] : [] }));
+    api.approveBills.mockResolvedValue({ approved: [{ id: one.id, total: 100, vendorName: 'Shell Fleet' }, { id: two.id, total: 250, vendorName: 'Shell Fleet' }], skipped: [] });
+    const user = userEvent.setup();
+    renderPage(<BillsPage />, '/books/bills?tab=approve', '/books/bills');
+    expect(await screen.findByText(/One bill here isn’t yours to approve/)).toBeInTheDocument();
+    await user.click(await screen.findByRole('checkbox', { name: /Select every bill you can approve/i }));
+    await user.click(await screen.findByRole('button', { name: /Approve 2 bills · \$350\.00/ }));
+    await waitFor(() => expect(api.approveBills).toHaveBeenCalledWith([one.id, two.id]));
+  });
+});
+
 describe('<BillDetailPage>', () => {
   it('a new bill takes the vendor’s usual account and goes to a second person', async () => {
     api.createBill.mockResolvedValue({ bill: bill({ status: 'DRAFT' }) });
@@ -169,6 +189,49 @@ describe('<BillDetailPage>', () => {
     await user.click(screen.getByRole('button', { name: 'Send for approval' }));
     await waitFor(() => expect(api.createBill).toHaveBeenCalledWith(expect.objectContaining({ vendorId: SHELL, lines: [expect.objectContaining({ accountId: FUEL, amount: 412.5 })] })));
     await waitFor(() => expect(api.submitBill).toHaveBeenCalled());
+  });
+
+  it('“Send & enter another” keeps the vendor and clears the rest', async () => {
+    api.createBill.mockResolvedValue({ bill: bill({ status: 'DRAFT' }) });
+    api.submitBill.mockResolvedValue({ pending: true, approvalId: 'a1', title: 'x' });
+    const user = userEvent.setup();
+    renderPage(<BillDetailPage />, '/books/bills/new', '/books/bills/:id');
+    const vendorSelect = await screen.findByLabelText('Vendor');
+    await waitFor(() => expect(within(vendorSelect as HTMLElement).getByRole('option', { name: 'Shell Fleet' })).toBeInTheDocument());
+    fireEvent.change(vendorSelect, { target: { value: SHELL } });
+    await user.type(screen.getByLabelText('Invoice number'), 'SF-9');
+    await user.type(screen.getByLabelText('Amount'), '80');
+    await user.click(screen.getByRole('button', { name: 'Send & enter another' }));
+    await waitFor(() => expect(api.submitBill).toHaveBeenCalled());
+    expect(await screen.findByText(/1 sent for approval this sitting/)).toBeInTheDocument();
+    expect(screen.queryByText('Navigated away')).toBeNull();
+    expect((screen.getByLabelText('Vendor') as HTMLSelectElement).value).toBe(SHELL);
+    expect(screen.getByLabelText('Invoice number')).toHaveValue('');
+    expect(screen.getByLabelText('Amount')).toHaveValue(null);
+    expect((screen.getByLabelText('Line 1 — account') as HTMLSelectElement).value).toBe(FUEL);
+  });
+
+  it('“Approve & next” approves and opens the next bill waiting on this person', async () => {
+    const waiting = (id: string, total: number) =>
+      bill({ id, total, status: 'PENDING_APPROVAL', approvedAt: null, approvedByName: null, journalEntryId: null, approval: { id: `a-${id}`, status: 'PENDING', requesterName: 'Fin Person', decidedByName: null, reason: null, mayDecide: true, createdAt: '2026-10-02T12:00:00.000Z' } });
+    const here = waiting('00000000-0000-4000-8000-00000000b021', 300);
+    const next = waiting('00000000-0000-4000-8000-00000000b022', 90);
+    api.getBill.mockResolvedValue({ bill: here });
+    api.listBills.mockResolvedValue({ bills: [here, next] });
+    approvals.decideApprovalRequest.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderAs(
+      'FINANCE_ACCOUNTANT',
+      <TooltipProvider>
+        <Routes>
+          <Route path="/books/bills/:id" element={<BillDetailPage />} />
+        </Routes>
+      </TooltipProvider>,
+      `/books/bills/${here.id}`,
+    );
+    await user.click(await screen.findByRole('button', { name: /Approve & next/ }));
+    await waitFor(() => expect(approvals.decideApprovalRequest).toHaveBeenCalledWith(`a-${here.id}`, { decision: 'APPROVE' }));
+    await waitFor(() => expect(api.getBill).toHaveBeenCalledWith(next.id));
   });
 
   it('the second person approves it from the bill', async () => {

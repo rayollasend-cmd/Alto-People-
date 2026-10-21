@@ -1,20 +1,21 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, Ban, CheckCheck, Download, FileSpreadsheet, ListChecks, MoreHorizontal, Pencil, Plus, RefreshCw, Scale, Search, Sparkles, Trash2, Undo2, Wand2 } from 'lucide-react';
-import type { BankFeedAccountView, BankRuleInput, BankRuleView, BankTxnStatus, BankTxnView } from '@alto-people/shared';
+import { ArrowLeftRight, Ban, CheckCheck, Download, FileSpreadsheet, HandCoins, ListChecks, MoreHorizontal, Pencil, Plus, RefreshCw, Scale, Search, Sparkles, Trash2, Undo2, Wand2 } from 'lucide-react';
+import type { BankBulkAction, BankCategorizeInput, BankFeedAccountView, BankRuleInput, BankRuleView, BankTxnStatus, BankTxnSuggestions, BankTxnView } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import {
   BANK_KEY,
   applyBankRules,
+  bulkDecideTxns,
   categorizeTxn,
   createBankRule,
   deleteBankRule,
   excludeTxn,
   getBankAccount,
-  getTxnSuggestions,
+  getTxnSuggestionsBatch,
   listBankRules,
   listBankTransactions,
   listReconciliations,
@@ -24,7 +25,9 @@ import {
   undoTxn,
   updateBankRule,
 } from '@/lib/books/bankApi';
+import { RECEIVABLES_KEY, getReceivablesAging } from '@/lib/books/receivablesApi';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { isTypingTarget, useListKeyboard } from '@/lib/shortcuts';
 import { cn } from '@/lib/cn';
 import { RecordTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
@@ -40,6 +43,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
+import { PaymentDialog, useWho } from '../receivables/receivablesKit';
 import { AccountSelect, Amount, ImportButton, money } from './bankKit';
 
 /**
@@ -173,9 +177,15 @@ function TxnList({ feed, status, manage }: { feed: BankFeedAccountView; status: 
         />
       ) : (
         <>
-          <ul className="divide-y divide-navy-secondary rounded-lg border border-navy-secondary bg-navy">
-            {rows.slice(0, shown).map((t) => (status === 'UNMATCHED' ? <ReviewRow key={t.id} t={t} feed={feed} manage={manage} /> : <DecidedRow key={t.id} t={t} manage={manage} />))}
-          </ul>
+          {status === 'UNMATCHED' ? (
+            <ReviewList rows={rows.slice(0, shown)} feed={feed} manage={manage} />
+          ) : (
+            <ul className="divide-y divide-navy-secondary rounded-lg border border-navy-secondary bg-navy">
+              {rows.slice(0, shown).map((t) => (
+                <DecidedRow key={t.id} t={t} manage={manage} />
+              ))}
+            </ul>
+          )}
           {rows.length > shown && (
             <Button variant="ghost" onClick={() => setShown((n) => n + PAGE)}>
               Show {Math.min(PAGE, rows.length - shown)} more of {rows.length - shown}
@@ -215,24 +225,260 @@ function useTxnMutation<T>(fn: (v: T) => Promise<unknown>, done: string) {
   });
 }
 
-function ReviewRow({ t, feed, manage }: { t: BankTxnView; feed: BankFeedAccountView; manage: boolean }) {
-  const s = useQuery({ queryKey: [...BANK_KEY, 'suggest', t.id], queryFn: () => getTxnSuggestions(t.id), staleTime: 60_000 });
+/** The category a row would take on "Accept": the rule's, else last time's — none while there's a match in the books. */
+function acceptable(s: BankTxnSuggestions | undefined): BankCategorizeInput | null {
+  if (!s || s.matches.length > 0) return null;
+  if (s.rule) return { accountId: s.rule.accountId, vendorId: s.rule.vendorId, clientId: s.rule.clientId, departmentId: s.rule.departmentId };
+  if (s.lastTime) return { accountId: s.lastTime.accountId };
+  return null;
+}
+
+type RowAction = { id: string; kind: 'categorize'; input: BankCategorizeInput } | { id: string; kind: 'match'; lineId: string } | { id: string; kind: 'exclude' };
+
+/**
+ * For review: the page's suggestions in one request, a checkbox per row,
+ * "Accept all suggested" / "Match all exact" (the selection, or every row
+ * shown), and the keys — j/k move, a takes the row's suggestion, m matches,
+ * x excludes, space selects, u undoes the last decision.
+ */
+function ReviewList({ rows, feed, manage }: { rows: BankTxnView[]; feed: BankFeedAccountView; manage: boolean }) {
+  const qc = useQueryClient();
+  const ids = rows.map((r) => r.id);
+  const batch = useQuery({
+    queryKey: [...BANK_KEY, 'suggest', feed.id, ids],
+    queryFn: () => getTxnSuggestionsBatch(ids),
+    enabled: ids.length > 0,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+  const sugg = batch.data?.suggestions ?? {};
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [paying, setPaying] = useState<BankTxnView | null>(null);
+  // The last decisions, newest last — `u` (or the toast) takes them back.
+  const undoStack = useRef<string[][]>([]);
+  const live = new Set(ids);
+  const picked = ids.filter((id) => selected.has(id));
+  const scope = picked.length > 0 ? rows.filter((r) => selected.has(r.id)) : rows;
+  const toAccept = scope.filter((r) => acceptable(sugg[r.id]));
+  const toMatch = scope.filter((r) => sugg[r.id]?.exactLineId);
+
+  const refresh = () => void qc.invalidateQueries({ queryKey: BANK_KEY });
+  const undoLast = useMutation({
+    mutationFn: async (batchIds: string[]) => {
+      for (const id of batchIds) await undoTxn(id);
+      return batchIds.length;
+    },
+    onSuccess: (n) => {
+      toast.success(n === 1 ? 'Back in For review.' : `${n} back in For review.`);
+      refresh();
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Couldn’t undo it.');
+      refresh();
+    },
+  });
+  const remember = (decided: string[], message: string) => {
+    if (decided.length === 0) return;
+    undoStack.current.push(decided);
+    if (undoStack.current.length > 20) undoStack.current.shift();
+    toast.success(message, { action: { label: 'Undo', onClick: () => takeBack(decided) } });
+  };
+  const takeBack = (decided: string[]) => {
+    undoStack.current = undoStack.current.filter((b) => b !== decided);
+    undoLast.mutate(decided);
+  };
+
+  const act = useMutation({
+    mutationFn: (a: RowAction) => (a.kind === 'categorize' ? categorizeTxn(a.id, a.input) : a.kind === 'match' ? matchTxn(a.id, a.lineId) : excludeTxn(a.id)),
+    onSuccess: (_r, a) => {
+      remember([a.id], a.kind === 'categorize' ? 'Categorized.' : a.kind === 'match' ? 'Matched to the entry in the books.' : 'Excluded.');
+      refresh();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'That didn’t go through.'),
+  });
+  const bulk = useMutation({
+    mutationFn: (v: { action: BankBulkAction; ids: string[] }) => bulkDecideTxns(v.action, v.ids),
+    onSuccess: (r) => {
+      const verb = r.action === 'ACCEPT' ? 'categorized' : r.action === 'MATCH' ? 'matched' : 'excluded';
+      const left = r.skipped.length ? ` · ${r.skipped.length} left for you — ${r.skipped[0]!.reason.replace(/\.$/, '').toLowerCase()}${r.skipped.length > 1 ? ', and others' : ''}` : '';
+      if (r.done.length) remember(r.done, `${r.done.length} ${verb}${left}.`);
+      else toast.info(`None ${verb}${left}.`);
+      setSelected(new Set());
+      refresh();
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'That didn’t go through.'),
+  });
+  const busyId = act.isPending ? act.variables?.id : null;
+  const busyAll = bulk.isPending || undoLast.isPending;
+
+  // Keyboard: the shared list hook moves and accepts; m / x / space / u here.
+  const after = (id: string) => {
+    const at = ids.indexOf(id);
+    return ids[at + 1] ?? ids[at - 1] ?? null;
+  };
+  const primary = (t: BankTxnView) => {
+    const s = sugg[t.id];
+    const best = s?.matches[0];
+    const cat = acceptable(s);
+    if (best) act.mutate({ id: t.id, kind: 'match', lineId: best.lineId });
+    else if (cat) act.mutate({ id: t.id, kind: 'categorize', input: cat });
+    else return false;
+    return true;
+  };
+  const kb = useListKeyboard({
+    items: rows,
+    idOf: (t) => t.id,
+    enabled: manage && !paying,
+    onApprove: (t) => {
+      if (busyId || busyAll) return;
+      if (primary(t)) kb.setCursor(after(t.id));
+      else toast.info('Nothing suggested for this one — pick a category.');
+    },
+  });
+  useEffect(() => {
+    if (!manage || paying) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return;
+      if (e.key === 'u') {
+        const last = undoStack.current.pop();
+        if (last) {
+          e.preventDefault();
+          undoLast.mutate(last);
+        }
+        return;
+      }
+      const t = rows.find((r) => r.id === kb.cursor);
+      if (!t || busyId || busyAll) return;
+      if (e.key === 'm') {
+        const best = sugg[t.id]?.matches[0];
+        e.preventDefault();
+        if (!best) return void toast.info('Nothing in the books to match it to.');
+        act.mutate({ id: t.id, kind: 'match', lineId: best.lineId });
+        kb.setCursor(after(t.id));
+      } else if (e.key === 'x') {
+        e.preventDefault();
+        act.mutate({ id: t.id, kind: 'exclude' });
+        kb.setCursor(after(t.id));
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        toggle(t.id, !selected.has(t.id));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  const toggle = (id: string, on: boolean) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const allOn = picked.length > 0 && picked.length === ids.length;
+
+  return (
+    <div className="space-y-2">
+      {manage && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-navy-secondary bg-navy px-3 py-2">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-gold"
+              checked={allOn}
+              ref={(el) => {
+                if (el) el.indeterminate = picked.length > 0 && !allOn;
+              }}
+              onChange={(e) => setSelected(e.target.checked ? new Set(ids) : new Set())}
+              aria-label="Select every transaction shown"
+            />
+            {picked.length > 0 ? `${picked.length} selected` : 'Select'}
+          </label>
+          <span className="flex-1" />
+          <Button size="sm" variant="secondary" disabled={busyAll || batch.isPending || toAccept.length === 0} loading={bulk.isPending && bulk.variables?.action === 'ACCEPT'} onClick={() => bulk.mutate({ action: 'ACCEPT', ids: toAccept.map((r) => r.id) })}>
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+            {picked.length > 0 ? 'Accept suggested' : 'Accept all suggested'} ({toAccept.length})
+          </Button>
+          <Button size="sm" variant="secondary" disabled={busyAll || batch.isPending || toMatch.length === 0} loading={bulk.isPending && bulk.variables?.action === 'MATCH'} onClick={() => bulk.mutate({ action: 'MATCH', ids: toMatch.map((r) => r.id) })}>
+            <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
+            {picked.length > 0 ? 'Match exact' : 'Match all exact'} ({toMatch.length})
+          </Button>
+          {picked.length > 0 && (
+            <Button size="sm" variant="ghost" disabled={busyAll} loading={bulk.isPending && bulk.variables?.action === 'EXCLUDE'} onClick={() => bulk.mutate({ action: 'EXCLUDE', ids: picked })}>
+              <Ban className="h-4 w-4" aria-hidden="true" />
+              Exclude ({picked.length})
+            </Button>
+          )}
+          <span className="hidden text-2xs text-silver lg:inline" aria-hidden="true">
+            j/k move · a accept · m match · x exclude · u undo
+          </span>
+        </div>
+      )}
+      <ul className="divide-y divide-navy-secondary rounded-lg border border-navy-secondary bg-navy" aria-label="Transactions for review" {...kb.listProps}>
+        {rows.map((t) => (
+          <ReviewRow
+            key={t.id}
+            t={t}
+            feed={feed}
+            manage={manage}
+            s={sugg[t.id]}
+            loading={batch.isPending}
+            busy={busyId === t.id || busyAll}
+            selected={selected.has(t.id) && live.has(t.id)}
+            onSelect={(on) => toggle(t.id, on)}
+            onAct={(a) => act.mutate(a)}
+            onRecordPayment={() => setPaying(t)}
+            rowProps={kb.rowProps(t.id)}
+          />
+        ))}
+      </ul>
+      {paying && <DepositPayment t={paying} clientId={sugg[paying.id]?.client?.id ?? null} feed={feed} onClose={() => setPaying(null)} onRecorded={(id) => remember([id], 'Deposit matched to the payment.')} />}
+    </div>
+  );
+}
+
+function ReviewRow({
+  t,
+  feed,
+  manage,
+  s,
+  loading,
+  busy,
+  selected,
+  onSelect,
+  onAct,
+  onRecordPayment,
+  rowProps,
+}: {
+  t: BankTxnView;
+  feed: BankFeedAccountView;
+  manage: boolean;
+  s: BankTxnSuggestions | undefined;
+  loading: boolean;
+  busy: boolean;
+  selected: boolean;
+  onSelect: (on: boolean) => void;
+  onAct: (a: RowAction) => void;
+  onRecordPayment: () => void;
+  rowProps: ReturnType<ReturnType<typeof useListKeyboard>['rowProps']>;
+}) {
+  const who = useWho();
   const [accountId, setAccountId] = useState('');
   const [ruleFrom, setRuleFrom] = useState(false);
-  const categorize = useTxnMutation((v: { accountId: string; vendorId?: string | null; clientId?: string | null; departmentId?: string | null }) => categorizeTxn(t.id, v), 'Categorized.');
-  const match = useTxnMutation((lineId: string) => matchTxn(t.id, lineId), 'Matched to the entry in the books.');
-  const exclude = useTxnMutation(() => excludeTxn(t.id), 'Excluded.');
-  const busy = categorize.isPending || match.isPending || exclude.isPending;
-  const best = s.data?.matches[0];
-  const suggestion = s.data?.rule ?? s.data?.lastTime ?? null;
+  const best = s?.matches[0];
+  const suggestion = s?.rule ?? s?.lastTime ?? null;
+  const cat = acceptable(s);
+  const deposit = t.amount > 0;
+  const payLabel = s?.client ? `Record as payment from ${s.client.name}` : `Record as a ${who.one} payment`;
   return (
-    <li className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center">
+    <li {...rowProps} className={cn('flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center', selected && 'bg-gold/[0.05]')}>
       <div className="flex min-w-0 flex-1 items-center gap-3">
+        {manage && <input type="checkbox" className="h-4 w-4 shrink-0 accent-gold" checked={selected} onChange={(e) => onSelect(e.target.checked)} aria-label={`Select ${t.description}`} />}
         <TxnFacts t={t} />
         <Amount value={t.amount} className="shrink-0 text-sm font-semibold" />
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2 lg:w-[34rem] lg:flex-nowrap lg:justify-end">
-        {s.isPending ? (
+        {loading && !s ? (
           <Skeleton className="h-8 w-60" />
         ) : best ? (
           <>
@@ -240,27 +486,23 @@ function ReviewRow({ t, feed, manage }: { t: BankTxnView; feed: BankFeedAccountV
               <ArrowLeftRight className="mr-1 inline h-3.5 w-3.5 text-gold" aria-hidden="true" />
               Entry #{best.entryNumber} · {best.memo ?? best.source.toLowerCase()} · {fmtDate(best.date)}
               {best.daysApart > 0 ? ` (${best.daysApart} ${best.daysApart === 1 ? 'day' : 'days'} apart)` : ''}
+              {s && s.matches.length > 1 && !s.exactLineId ? ` · ${s.matches.length - 1} more could be it` : ''}
             </span>
             {manage && (
-              <Button size="sm" onClick={() => match.mutate(best.lineId)} loading={match.isPending} disabled={busy}>
+              <Button size="sm" onClick={() => onAct({ id: t.id, kind: 'match', lineId: best.lineId })} loading={busy} disabled={busy}>
                 Match
               </Button>
             )}
           </>
-        ) : suggestion && !accountId ? (
+        ) : suggestion && cat && !accountId ? (
           <>
             <span className="min-w-0 flex-1 truncate text-xs text-silver lg:text-right">
               <Sparkles className="mr-1 inline h-3.5 w-3.5 text-gold" aria-hidden="true" />
-              {s.data?.rule ? `Rule “${s.data.rule.name}”` : 'Same as last time'} → {suggestion.accountCode} {suggestion.accountName}
+              {s?.rule ? `Rule “${s.rule.name}”` : 'Same as last time'} → {suggestion.accountCode} {suggestion.accountName}
             </span>
             {manage && (
               <>
-                <Button
-                  size="sm"
-                  onClick={() => categorize.mutate({ accountId: suggestion.accountId, ...(s.data?.rule ? { vendorId: s.data.rule.vendorId, clientId: s.data.rule.clientId, departmentId: s.data.rule.departmentId } : {}) })}
-                  loading={categorize.isPending}
-                  disabled={busy}
-                >
+                <Button size="sm" onClick={() => onAct({ id: t.id, kind: 'categorize', input: cat })} loading={busy} disabled={busy}>
                   Accept
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setAccountId(' ')} disabled={busy}>
@@ -271,10 +513,16 @@ function ReviewRow({ t, feed, manage }: { t: BankTxnView; feed: BankFeedAccountV
           </>
         ) : manage ? (
           <>
+            {deposit && !accountId.trim() && s?.client && (
+              <Button size="sm" variant="secondary" onClick={onRecordPayment} disabled={busy} title={payLabel}>
+                <HandCoins className="h-4 w-4" aria-hidden="true" />
+                <span className="max-w-[12rem] truncate">Payment from {s.client.name}</span>
+              </Button>
+            )}
             <div className="min-w-0 flex-1 lg:w-64 lg:flex-none">
               <AccountSelect value={accountId.trim()} onChange={setAccountId} exclude={feed.ledgerAccountId} placeholder="Categorize as…" />
             </div>
-            <Button size="sm" onClick={() => categorize.mutate({ accountId: accountId.trim() })} loading={categorize.isPending} disabled={busy || !accountId.trim()}>
+            <Button size="sm" onClick={() => onAct({ id: t.id, kind: 'categorize', input: { accountId: accountId.trim() } })} loading={busy} disabled={busy || !accountId.trim()}>
               Categorize
             </Button>
           </>
@@ -289,6 +537,12 @@ function ReviewRow({ t, feed, manage }: { t: BankTxnView; feed: BankFeedAccountV
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {deposit && (
+                <DropdownMenuItem onSelect={onRecordPayment}>
+                  <HandCoins className="h-4 w-4" aria-hidden="true" />
+                  {payLabel}
+                </DropdownMenuItem>
+              )}
               {best && (
                 <DropdownMenuItem onSelect={() => setAccountId(' ')}>
                   <Pencil className="h-4 w-4" aria-hidden="true" />
@@ -299,7 +553,7 @@ function ReviewRow({ t, feed, manage }: { t: BankTxnView; feed: BankFeedAccountV
                 <Wand2 className="h-4 w-4" aria-hidden="true" />
                 Make a rule from this
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => exclude.mutate(undefined)}>
+              <DropdownMenuItem onSelect={() => onAct({ id: t.id, kind: 'exclude' })}>
                 <Ban className="h-4 w-4" aria-hidden="true" />
                 Exclude (a duplicate, or booked another way)
               </DropdownMenuItem>
@@ -312,13 +566,45 @@ function ReviewRow({ t, feed, manage }: { t: BankTxnView; feed: BankFeedAccountV
           <div className="w-full lg:w-64">
             <AccountSelect value={accountId.trim()} onChange={setAccountId} exclude={feed.ledgerAccountId} placeholder="Categorize as…" />
           </div>
-          <Button size="sm" onClick={() => categorize.mutate({ accountId: accountId.trim() })} disabled={busy || !accountId.trim()}>
+          <Button size="sm" onClick={() => onAct({ id: t.id, kind: 'categorize', input: { accountId: accountId.trim() } })} disabled={busy || !accountId.trim()}>
             Categorize
           </Button>
         </div>
       )}
       {ruleFrom && <RuleDialog feed={feed} seed={seedFrom(t)} onClose={() => setRuleFrom(false)} />}
     </li>
+  );
+}
+
+/** A deposit recorded as a client payment: the receivables dialog, prefilled, and the deposit matched once it's recorded. */
+function DepositPayment({ t, clientId, feed, onClose, onRecorded }: { t: BankTxnView; clientId: string | null; feed: BankFeedAccountView; onClose: () => void; onRecorded: (txnId: string) => void }) {
+  const aging = useQuery({ queryKey: [...RECEIVABLES_KEY, 'aging', 'for-deposit'], queryFn: () => getReceivablesAging() });
+  if (aging.isPending) return null;
+  if (aging.isError) {
+    return (
+      <Dialog open onOpenChange={(o) => !o && onClose()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record the deposit as a payment</DialogTitle>
+            <DialogDescription>Couldn’t load who owes what.</DialogDescription>
+          </DialogHeader>
+          <QueryError what="what’s owed" query={aging} />
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  return (
+    <PaymentDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      initialClientId={clientId && aging.data.rows.some((r) => r.clientId === clientId) ? clientId : null}
+      rows={aging.data.rows}
+      statements={aging.data.statements}
+      deposit={{ transaction: t, ledgerAccountId: feed.ledgerAccountId, ledgerLabel: `${feed.ledgerCode} ${feed.ledgerName}` }}
+      onRecorded={(r) => {
+        if (r.bankTransaction?.status === 'MATCHED') onRecorded(t.id);
+      }}
+    />
   );
 }
 

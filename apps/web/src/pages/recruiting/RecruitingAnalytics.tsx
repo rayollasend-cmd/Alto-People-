@@ -42,6 +42,9 @@ import {
   TableRow,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 import { ListTemplate } from '@/components/templates';
 import { CANDIDATE_SOURCES, SOURCE_LABEL, STAGE_LABEL } from './recruitingLabels';
 
@@ -53,9 +56,9 @@ import { CANDIDATE_SOURCES, SOURCE_LABEL, STAGE_LABEL } from './recruitingLabels
  * store; here it is cut by the source a hire came from and by who hired
  * them, which is what a recruiter can act on.
  *
- * Mostly numbers and tables on purpose: a handful of ratios read best as
- * stat tiles, and seven sources or a dozen clients as rows. The funnel is
- * the one ordered series, drawn as one-hue bars with every step labeled.
+ * A handful of ratios read best as stat tiles and a dozen clients as rows;
+ * the funnel and the sources are drawn — one hue, every bar labeled — each
+ * with its table a click away (and always there for a screen reader).
  */
 
 type Preset = '30d' | '90d' | '12m' | 'ytd';
@@ -131,38 +134,118 @@ function Section({ title, hint, action, children }: { title: string; hint?: Reac
 }
 
 function Funnel({ funnel }: { funnel: Analytics['funnel'] }) {
-  if (funnel.applicants === 0) return <p className="text-sm text-silver/70">No one applied in this range.</p>;
-  const top = funnel.stages[0]!.reached;
+  const rows = funnel.stages.map((st, i) => {
+    const next = funnel.stages[i + 1];
+    return {
+      step: STAGE_LABEL[st.stage],
+      reached: st.reached,
+      movedOn: next && st.toNextPct !== null ? `${fmtPercent(st.toNextPct)} to ${STAGE_LABEL[next.stage].toLowerCase()}` : '',
+      label: `${st.reached}${next && st.toNextPct !== null ? ` · ${fmtPercent(st.toNextPct)} on` : ''}`,
+    };
+  });
+  const hired = funnel.stages[funnel.stages.length - 1]?.reached ?? 0;
   return (
-    <>
-      <ol aria-label="Hiring funnel" className="space-y-3">
-        {funnel.stages.map((s, i) => {
-          const next = funnel.stages[i + 1];
-          return (
-            <li key={s.stage}>
-              <div className="flex items-baseline justify-between gap-2 text-sm">
-                <span className="text-white">{STAGE_LABEL[s.stage]}</span>
-                <span className="tabular-nums text-white">{s.reached}</span>
-              </div>
-              <div
-                aria-hidden="true"
-                className="mt-1 h-2.5 rounded-r"
-                style={{ width: `${top ? Math.max((s.reached / top) * 100, s.reached ? 1 : 0) : 0}%`, background: MARK }}
-              />
-              {next && s.toNextPct !== null && (
-                <p className="mt-1 text-2xs text-silver">
-                  {fmtPercent(s.toNextPct)} moved on to {STAGE_LABEL[next.stage].toLowerCase()}
-                </p>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-      <p className="mt-3 text-xs text-silver">
-        Of {funnel.applicants}: {funnel.inProgress} still in progress, {funnel.rejected} rejected, {funnel.withdrawn}{' '}
-        withdrew.
-      </p>
-    </>
+    <ChartFrame
+      title="Funnel"
+      description={
+        <>
+          Everyone who applied in the range, and how far they got. Of {funnel.applicants}: {funnel.inProgress} still in progress, {funnel.rejected} rejected, {funnel.withdrawn}{' '}
+          withdrew.
+        </>
+      }
+      summary={`${funnel.applicants} applied and ${hired} reached ${STAGE_LABEL[funnel.stages[funnel.stages.length - 1]?.stage ?? 'HIRED'].toLowerCase()}.`}
+      csvName="hiring-funnel"
+      height={Math.max(180, rows.length * 40)}
+      columns={[
+        { key: 'step', label: 'Step' },
+        { key: 'reached', label: 'Reached', numeric: true },
+        { key: 'movedOn', label: 'Moved on' },
+      ]}
+      rows={funnel.applicants === 0 ? [] : rows}
+      empty={<p className="text-sm text-silver/70">No one applied in this range.</p>}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 96, bottom: 0, left: 0 }}>
+          <XAxis type="number" hide domain={[0, 'dataMax']} />
+          <YAxis type="category" dataKey="step" width={92} tick={TICK} tickLine={false} axisLine={false} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
+          <Bar dataKey="reached" name="Reached" fill={PALETTE.series[0]} radius={[0, 3, 3, 0]} maxBarSize={22} isAnimationActive={false}>
+            <LabelList dataKey="label" position="right" style={{ fill: TICK.fill, fontSize: 11 }} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartFrame>
+  );
+}
+
+/** Hires by source, and what each hire cost where spend was recorded — side by side. */
+function SourceCharts({ sources }: { sources: SourceRow[] }) {
+  const hires = sources
+    .filter((r) => r.hires > 0 || r.applicants > 0)
+    .map((r) => ({ source: sourceName(r.source), hires: r.hires, applicants: r.applicants }))
+    .sort((a, b) => b.hires - a.hires || b.applicants - a.applicants);
+  const cost = sources
+    .filter((r) => r.costPerHire !== null)
+    .map((r) => ({ source: sourceName(r.source), costPerHire: r.costPerHire as number, hires: r.hires }))
+    .sort((a, b) => b.costPerHire - a.costPerHire);
+  if (hires.length === 0 && cost.length === 0) return null;
+  const h = (n: number) => Math.max(140, n * 32 + 24);
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {hires.length > 0 && (
+        <ChartFrame
+          title="Hires by source"
+          summary={`${hires[0]!.source} brought the most hires: ${hires[0]!.hires}.`}
+          csvName="hires-by-source"
+          height={h(hires.length)}
+          columns={[
+            { key: 'source', label: 'Source' },
+            { key: 'applicants', label: 'Applied', numeric: true },
+            { key: 'hires', label: 'Hired', numeric: true },
+          ]}
+          rows={hires}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={hires} layout="vertical" margin={{ top: 0, right: 32, bottom: 0, left: 0 }}>
+              <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
+              <YAxis type="category" dataKey="source" width={110} tick={TICK} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
+              <Bar dataKey="hires" name="Hired" fill={PALETTE.series[0]} radius={[0, 3, 3, 0]} maxBarSize={20}>
+                <LabelList dataKey="hires" position="right" style={{ fill: TICK.fill, fontSize: 11 }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      )}
+      {cost.length > 0 && (
+        <ChartFrame
+          title="Cost per hire, by source"
+          description="Only sources with spend recorded and at least one hire."
+          summary={`${cost[0]!.source} cost the most per hire.`}
+          csvName="cost-per-hire-by-source"
+          height={h(cost.length)}
+          columns={[
+            { key: 'source', label: 'Source' },
+            { key: 'hires', label: 'Hired', numeric: true },
+            { key: 'costPerHire', label: 'Per hire', numeric: true, format: (v) => fmtMoney(v as number) },
+          ]}
+          rows={cost}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={cost} layout="vertical" margin={{ top: 0, right: 64, bottom: 0, left: 0 }}>
+              <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
+              <XAxis type="number" tick={TICK} tickLine={false} axisLine={false} tickFormatter={(v: number) => `$${v}`} />
+              <YAxis type="category" dataKey="source" width={110} tick={TICK} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v) => fmtMoney(Number(v))} />
+              <Bar dataKey="costPerHire" name="Per hire" fill={PALETTE.series[1]} radius={[0, 3, 3, 0]} maxBarSize={20}>
+                <LabelList dataKey="costPerHire" position="right" formatter={(v: unknown) => fmtMoney(Number(v))} style={{ fill: TICK.fill, fontSize: 11 }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartFrame>
+      )}
+    </div>
   );
 }
 
@@ -431,9 +514,7 @@ export function RecruitingAnalytics() {
 
           <div className="grid gap-4 2xl:grid-cols-5">
             <div className="2xl:col-span-2">
-              <Section title="Funnel" hint="Everyone who applied in the range, and how far they got.">
-                <Funnel funnel={data.funnel} />
-              </Section>
+              <Funnel funnel={data.funnel} />
             </div>
             <div className="min-w-0 2xl:col-span-3">
               <Section
@@ -480,6 +561,8 @@ export function RecruitingAnalytics() {
               </Section>
             </div>
           </div>
+
+          <SourceCharts sources={data.sources} />
 
           <Section
             title="By client"

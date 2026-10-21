@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  Clock,
   DollarSign,
   FileSearch,
   FileText,
@@ -82,6 +83,7 @@ const SUBTITLE_BY_ROLE: Partial<Record<Role, MessageKey>> = {
 // has no integer formatter; Intl directly, since toLocale* is lint-banned.
 const INT_FMT = new Intl.NumberFormat('en-US');
 const fmtInt = (n: number): string => INT_FMT.format(n);
+const fmtHours = (n: number): string => `${INT_FMT.format(Math.round(n))}h`;
 
 /**
  * Friendly verbs for audit `action` codes. The audit log emits dotted
@@ -521,7 +523,7 @@ interface Kpi {
   to?: string;
   /** 8-week micro-trend (sparkline + week-over-week delta chip),
    *  present only when the API computed a matching series. */
-  trend?: KpiTrend & { deltaLabel: string };
+  trend?: KpiTrend & { deltaLabel: string; format?: (n: number) => string };
 }
 
 function KpiSection({
@@ -533,14 +535,15 @@ function KpiSection({
 }) {
   const { t } = useI18n();
   const term = useTerm();
+  const tiles = kpis ? buildKpis(kpis, role, term) : null;
   return (
     <section aria-label={t('adminHome.workforceSnapshot')} className="space-y-3">
       <SectionTitle icon={Activity} title={t('adminHome.workforceSnapshot')} />
       {/* Two across in the home's main column until xl: four tiles at lg
           clipped their sparkline captions (second design walk). */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        {kpis ? (
-          buildKpis(kpis, role, term).map((kpi) => (
+      <div className={cn('grid grid-cols-1 sm:grid-cols-2 gap-3', tiles && tiles.length >= 5 ? 'xl:grid-cols-3' : 'xl:grid-cols-4')}>
+        {tiles ? (
+          tiles.map((kpi) => (
             <KpiTile key={kpi.label} kpi={kpi} />
           ))
         ) : (
@@ -600,6 +603,21 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
       trend: withLabel(k.trends?.shiftsScheduled, 'scheduled vs last wk'),
     },
   ];
+  // Hours worked: the last complete week as the figure, the week so far
+  // in the hint, eight weeks on the line.
+  const hours = k.trends?.hoursWorked;
+  if (hours && hours.series.length >= 2 && has('view:time')) {
+    const lastWeek = hours.series[hours.series.length - 2] ?? 0;
+    const soFar = hours.series[hours.series.length - 1] ?? 0;
+    xs.push({
+      label: 'Hours worked · last week',
+      value: fmtHours(lastWeek),
+      hint: soFar > 0 ? `${fmtHours(soFar)} so far this week` : 'None clocked yet this week',
+      icon: Clock,
+      to: linkTo('/time-attendance', 'view:time'),
+      trend: { ...hours, deltaLabel: 'vs the week before', format: fmtHours },
+    });
+  }
   // Onboarding pipeline (and its I-9 Section 2 hint — compliance-adjacent)
   // only for roles that can see onboarding; the API zeroes these counts for
   // bounded roles anyway, but a permanent "0" tile is just noise.

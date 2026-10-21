@@ -104,7 +104,7 @@ async function notifyIfThresholdCrossed(
       subject: `Attendance threshold: ${opts.associateName}`,
       body: `${opts.associateName} is at ${opts.scoreAfter} attendance points (rolling 90 days) — policy calls for a ${crossed.step}. Review their attendance record and issue the step if warranted.`,
       category: 'attendance',
-      linkUrl: '/time-attendance',
+      linkUrl: `/people/${opts.associateId}?tab=time`,
       sentAt: now,
     })),
   });

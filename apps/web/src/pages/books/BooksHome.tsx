@@ -9,7 +9,9 @@ import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { MetricCard } from '@/components/ui/MetricCard';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { StackedBarChart } from '@/components/ui/charts';
+import { MetricCard, type MetricTrend } from '@/components/ui/MetricCard';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -67,7 +69,7 @@ export function BooksHome() {
             <MetricCard label="Cash" value={fmtMoney(o.cash.total)} hint={`${o.cash.accounts.length} bank and card ${o.cash.accounts.length === 1 ? 'account' : 'accounts'}`} href="/books/bank" />
             <MetricCard label={`${who.Many} owe`} value={fmtMoney(o.receivables.total)} hint={o.receivables.aging.over90 > 0 ? `${fmtMoney(o.receivables.aging.over90)} over 90 days` : 'nothing over 90 days'} accent={o.receivables.aging.over90 > 0} href="/books/receivables" />
             <MetricCard label="You owe" value={fmtMoney(o.payables.total)} hint={o.payables.overdue > 0 ? `${fmtMoney(o.payables.overdue)} past due` : `${fmtMoney(o.payables.dueIn7Days)} due this week`} accent={o.payables.overdue > 0} href="/books/bills" />
-            <MetricCard label="Profit this month" value={fmtMoney(o.profit.month.netIncome)} hint={`${fmtMoney(o.profit.yearToDate.netIncome)} this year`} href="/books/reports" />
+            <MetricCard label="Profit this month" value={fmtMoney(o.profit.month.netIncome)} hint={`${fmtMoney(o.profit.yearToDate.netIncome)} this year`} href="/books/reports" trend={profitTrend(o)} />
           </div>
         ) : q.isLoading ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -148,44 +150,54 @@ function NeedsYou({ items }: { items: BooksOverview['needsYou'] }) {
 }
 
 function ProfitTrend({ o }: { o: BooksOverview }) {
-  const max = Math.max(1, ...o.profit.trend.map((t) => Math.max(Math.abs(t.income), Math.abs(t.netIncome))));
   const ytd = o.profit.yearToDate;
+  const rows = o.profit.trend.map((t) => ({ month: t.label, income: t.income, netIncome: t.netIncome }));
+  const best = [...o.profit.trend].sort((x, y) => y.netIncome - x.netIncome)[0];
+  const losing = o.profit.trend.filter((t) => t.netIncome < 0).length;
+  const summary = o.profit.trend.length
+    ? `Income and net income, the last ${o.profit.trend.length === 1 ? 'month' : `${o.profit.trend.length} months`}. Best: ${best!.label}, ${fmtMoney(best!.netIncome)} kept${losing ? `; ${losing} ${losing === 1 ? 'month' : 'months'} at a loss` : ''}.`
+    : 'No months to show yet.';
   return (
-    <Card>
-      <CardContent className="p-4">
-        <SectionTitle
-          as="h3"
-          title="Profit"
-          description={`This year: ${fmtMoney(ytd.income)} in, ${fmtMoney(ytd.netIncome)} kept${ytd.grossMarginPct == null ? '' : ` · ${ytd.grossMarginPct}% gross margin`}`}
-          trailing={
-            <Link to="/books/reports" className="text-sm text-accent hover:underline">
-              Profit and loss
-            </Link>
-          }
-        />
-        <ol className="mt-4 grid grid-cols-6 items-end gap-2" aria-label="Income and net income, the last six months">
-          {o.profit.trend.map((t) => (
-            <li key={t.key} className="flex flex-col items-center gap-1">
-              <div className="flex h-28 w-full items-end justify-center gap-1">
-                <span className="w-3 rounded-t bg-accent/40" style={{ height: `${Math.max(2, (Math.max(0, t.income) / max) * 100)}%` }} title={`Income ${fmtMoney(t.income)}`} />
-                <span className={cn('w-3 rounded-t', t.netIncome < 0 ? 'bg-alert/70' : 'bg-success/70')} style={{ height: `${Math.max(2, (Math.abs(t.netIncome) / max) * 100)}%` }} title={`Net income ${fmtMoney(t.netIncome)}`} />
-              </div>
-              <span className="text-2xs text-ink-muted">{t.label.split(' ')[0]}</span>
-              <span className={cn('text-2xs tabular-nums', t.netIncome < 0 ? 'text-alert' : 'text-ink')}>{fmtMoneyCompact(t.netIncome)}</span>
-            </li>
-          ))}
-        </ol>
-        <p className="mt-2 flex gap-4 text-2xs text-ink-muted">
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm bg-accent/40" aria-hidden="true" /> Income
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm bg-success/70" aria-hidden="true" /> Net income
-          </span>
-        </p>
-      </CardContent>
-    </Card>
+    <ChartFrame
+      title="Profit"
+      description={
+        <>
+          This year: {fmtMoney(ytd.income)} in, {fmtMoney(ytd.netIncome)} kept{ytd.grossMarginPct == null ? '' : ` · ${ytd.grossMarginPct}% gross margin`} ·{' '}
+          <Link to="/books/reports" className="text-accent hover:underline">
+            Profit and loss
+          </Link>
+        </>
+      }
+      summary={summary}
+      columns={[
+        { key: 'month', label: 'Month' },
+        { key: 'income', label: 'Income', numeric: true, format: (v) => fmtMoney(Number(v)) },
+        { key: 'netIncome', label: 'Net income', numeric: true, format: (v) => fmtMoney(Number(v)) },
+      ]}
+      rows={rows}
+      csvName="profit-by-month"
+      height={220}
+    >
+      <StackedBarChart
+        data={rows}
+        x="month"
+        stacked={false}
+        series={[
+          { key: 'income', name: 'Income' },
+          { key: 'netIncome', name: 'Net income' },
+        ]}
+        format={(v) => fmtMoneyCompact(v)}
+        highlight={rows[rows.length - 1]?.month}
+      />
+    </ChartFrame>
   );
+}
+
+/** The profit card's sparkline: net income by month; the change is last month against the one before (this month is still going). */
+function profitTrend(o: BooksOverview): MetricTrend | undefined {
+  const series = o.profit.trend.map((t) => t.netIncome);
+  if (series.length < 3) return undefined;
+  return { series, delta: series[series.length - 2]! - series[series.length - 3]!, deltaLabel: 'last month', format: (n) => fmtMoneyCompact(n), unit: 'month' };
 }
 
 const AGING: Array<{ key: keyof BooksOverview['receivables']['aging']; label: string; tone: string }> = [

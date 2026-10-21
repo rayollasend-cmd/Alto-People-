@@ -216,7 +216,7 @@ export async function runScheduleDigestSweep(
         subject,
         body,
         category: DIGEST_CATEGORY,
-        linkUrl: '/scheduling',
+        linkUrl: `/scheduling?view=day&date=${todayKey}`,
         sentAt: now,
       })),
     });
@@ -236,7 +236,7 @@ export async function runScheduleDigestSweep(
       subject,
       body,
       category: DIGEST_CATEGORY,
-      linkUrl: '/scheduling',
+      linkUrl: `/scheduling?view=day&date=${todayKey}`,
     });
   }
   return { sent: true, recipients: recipients.length, shifts: shifts.length };

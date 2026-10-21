@@ -101,14 +101,23 @@ describe('<RecruitingAnalytics>', () => {
     expect(screen.getByText('6 days')).toBeInTheDocument();
   });
 
-  it('draws the funnel with every step labeled', async () => {
+  it('draws the funnel with every step in its table', async () => {
     renderPage();
-    const funnel = await screen.findByRole('list', { name: 'Hiring funnel' });
-    const steps = within(funnel).getAllByRole('listitem');
+    const funnel = await screen.findByRole('table', { name: 'Funnel' });
+    const steps = within(funnel).getAllByRole('row').slice(1);
     expect(steps).toHaveLength(5);
     expect(steps[1]).toHaveTextContent('Screening3');
-    expect(steps[1]).toHaveTextContent('67% moved on to interview');
+    expect(steps[1]).toHaveTextContent('67% to interview');
     expect(screen.getByText(/Of 4: 1 still in progress, 1 rejected, 1\s+withdrew/)).toBeInTheDocument();
+  });
+
+  it('charts hires and cost per hire by source', async () => {
+    renderPage();
+    const hires = await screen.findByRole('table', { name: 'Hires by source' });
+    expect(within(hires).getByRole('row', { name: /Indeed/ })).toHaveTextContent('32');
+    const cost = screen.getByRole('table', { name: 'Cost per hire, by source' });
+    expect(within(cost).getAllByRole('row')).toHaveLength(2);
+    expect(within(cost).getByRole('row', { name: /Indeed/ })).toHaveTextContent('$200.00');
   });
 
   it('prices each source, and says so when money bought no hires', async () => {

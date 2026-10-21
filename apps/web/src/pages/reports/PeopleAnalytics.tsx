@@ -298,6 +298,8 @@ export function PeopleAnalytics() {
             </ChartFrame>
           </div>
 
+          <CohortGrid cohorts={d.cohorts} />
+
           <div className="grid gap-5 lg:grid-cols-2">
             <ChartFrame
               title={hasClients ? `Time to fill, by ${term('label.client').toLowerCase()}` : 'Time to fill, by department'}
@@ -391,5 +393,76 @@ export function PeopleAnalytics() {
         </div>
       ) : null}
     </ListTemplate>
+  );
+}
+
+/* ----- Hiring cohorts: who is still here at 30, 60, 90 and 180 days ------ */
+
+const HORIZONS = [
+  { key: 's30', label: '30 days' },
+  { key: 's60', label: '60 days' },
+  { key: 's90', label: '90 days' },
+  { key: 's180', label: '180 days' },
+] as const;
+
+/**
+ * The classic cohort triangle: one row per hiring month, the share of that
+ * month's hires still here at each milestone. A cell stays empty until the
+ * whole cohort is old enough to count; the stronger the tint, the more stayed.
+ */
+function CohortGrid({ cohorts }: { cohorts: PeopleAnalyticsData['cohorts'] }) {
+  const rows = cohorts.filter((c) => c.hires > 0).map((c) => ({ month: monthLabel(c.month), hires: c.hires, s30: c.s30, s60: c.s60, s90: c.s90, s180: c.s180 }));
+  const latest90 = [...rows].reverse().find((r) => r.s90 !== null);
+  return (
+    <ChartFrame
+      title="Hiring cohorts"
+      description="Each hiring month, and the share still here at 30, 60, 90 and 180 days. Blank until the whole month’s hires are old enough to count."
+      summary={latest90 ? `Of ${latest90.month}’s ${latest90.hires} hires, ${pct(latest90.s90)} were still here at 90 days.` : 'No cohort is 90 days old yet.'}
+      csvName="hiring-cohorts"
+      height={Math.max(120, rows.length * 32 + 36)}
+      columns={[
+        { key: 'month', label: 'Hired in' },
+        { key: 'hires', label: 'Hires', numeric: true },
+        ...HORIZONS.map((h) => ({ key: h.key, label: h.label, numeric: true, format: (v: unknown) => pct(v as number | null) })),
+      ]}
+      rows={rows}
+      empty={<p className="text-sm text-ink-muted">Nobody was hired in this window.</p>}
+    >
+      <div className="h-full overflow-auto" aria-hidden="true">
+        <div className="grid min-w-[28rem] grid-cols-[minmax(6rem,1fr)_4rem_repeat(4,minmax(4.5rem,1fr))] gap-1 text-xs">
+          <span className="px-2 py-1 text-ink-muted">Hired in</span>
+          <span className="px-2 py-1 text-right text-ink-muted">Hires</span>
+          {HORIZONS.map((h) => (
+            <span key={h.key} className="px-2 py-1 text-center text-ink-muted">
+              {h.label}
+            </span>
+          ))}
+          {rows.map((r) => (
+            <CohortRow key={r.month} row={r} />
+          ))}
+        </div>
+      </div>
+    </ChartFrame>
+  );
+}
+
+function CohortRow({ row }: { row: { month: string; hires: number; s30: number | null; s60: number | null; s90: number | null; s180: number | null } }) {
+  return (
+    <>
+      <span className="truncate px-2 py-1.5 text-ink">{row.month}</span>
+      <span className="px-2 py-1.5 text-right tabular-nums text-ink-muted">{row.hires}</span>
+      {HORIZONS.map((h) => {
+        const v = row[h.key];
+        return (
+          <span
+            key={h.key}
+            className={cn('rounded px-2 py-1.5 text-center tabular-nums', v === null ? 'text-ink-muted/50' : 'text-ink')}
+            style={v === null ? undefined : { background: `rgb(var(--color-success) / ${(0.08 + (v / 100) * 0.5).toFixed(2)})` }}
+          >
+            {v === null ? '·' : `${v}%`}
+          </span>
+        );
+      })}
+    </>
   );
 }

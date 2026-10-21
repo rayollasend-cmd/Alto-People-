@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Repeat } from 'lucide-react';
+import { Check, Download, Plus, Repeat } from 'lucide-react';
 import type { BooksBill, BooksRecurringBill, BooksRecurringFrequency } from '@alto-people/shared';
 import { fmtDate, ymdLocal } from '@/lib/format';
-import { apAging, createRecurringBill, listBills, listRecurringBills, listVendors, PAYABLES_KEY, updateRecurringBill, vendor1099, vendor1099CsvUrl, type BillsTab } from '@/lib/books/payablesApi';
+import { apAging, approveBills, createRecurringBill, listBills, listRecurringBills, listVendors, PAYABLES_KEY, updateRecurringBill, vendor1099, vendor1099CsvUrl, type BillsTab } from '@/lib/books/payablesApi';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -40,7 +40,9 @@ const TABS: Array<{ key: Tab; label: string }> = [
 export function BillsPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const tab = (TABS.find((t) => t.key === params.get('tab'))?.key ?? 'unpaid') as Tab;
+  // Older links say ?status=PENDING_APPROVAL; they mean the approval queue.
+  const asked = params.get('tab') ?? (params.get('status') === 'PENDING_APPROVAL' ? 'approve' : null);
+  const tab = (TABS.find((t) => t.key === asked)?.key ?? 'unpaid') as Tab;
   const setTab = (t: string) => setParams((p) => {
     p.set('tab', t);
     return p;
@@ -125,8 +127,26 @@ function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: Bills
     },
   ];
   const payable = (b: BooksBill) => (b.status === 'APPROVED' || b.status === 'PARTIALLY_PAID') && b.balance > 0;
+  const qc = useQueryClient();
+  const approve = useMutation({
+    mutationFn: (ids: string[]) => approveBills(ids),
+    onSuccess: (r) => {
+      const total = r.approved.reduce((s, a) => s + a.total, 0);
+      if (r.approved.length) toast.success(`${r.approved.length === 1 ? 'Approved' : `${r.approved.length} approved`} — ${money(total)} is on the books.${r.skipped.length ? ` ${r.skipped.length} not: ${r.skipped[0]!.reason}` : ''}`);
+      else toast.error(r.skipped[0]?.reason ?? 'None approved.');
+      invalidatePayables(qc);
+    },
+    onError: (err) => toast.error(errText(err, 'Could not approve them.')),
+  });
+  // Bills this person entered can't be theirs to approve — say so once instead of a dead checkbox.
+  const ownWaiting = tab === 'approve' ? (bills ?? []).filter((b) => b.approval && !b.approval.mayDecide).length : 0;
   return (
     <>
+      {write && ownWaiting > 0 && (
+        <p className="mb-3 rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-muted">
+          {ownWaiting === 1 ? 'One bill here isn’t yours to approve' : `${ownWaiting} bills here aren’t yours to approve`} — the person who entered a bill never approves it. A second person with the books does.
+        </p>
+      )}
       <DataGrid
         id={`books-bills-${tab}`}
         caption="Bills"
@@ -142,7 +162,26 @@ function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: Bills
         rowActionLabel={(b) => `Open the ${money(b.total)} bill from ${b.vendorName}`}
         empty={{ title: tab === 'approve' ? 'No bills are waiting for approval' : tab === 'due' ? 'Nothing is due this week' : tab === 'draft' ? 'No drafts' : 'No bills here', description: tab === 'approve' ? 'A bill someone enters and submits lands here for a second person.' : 'Enter a vendor’s bill to see it here.' }}
         selectable={
-          write && (tab === 'unpaid' || tab === 'due' || tab === 'all')
+          write && tab === 'approve'
+            ? {
+                disabled: (b) => !b.approval?.mayDecide,
+                selectAllLabel: 'Select every bill you can approve',
+                actions: (selected, clear) => {
+                  const chosen = (bills ?? []).filter((b) => selected.includes(b.id));
+                  return (
+                    <Button
+                      size="sm"
+                      loading={approve.isPending}
+                      disabled={chosen.length === 0}
+                      onClick={() => approve.mutate(chosen.map((b) => b.id), { onSuccess: () => clear() })}
+                    >
+                      <Check className="h-4 w-4" aria-hidden="true" />
+                      Approve {chosen.length === 1 ? 'this bill' : `${chosen.length} bills`} · {money(chosen.reduce((s, b) => s + b.total, 0))}
+                    </Button>
+                  );
+                },
+              }
+            : write && (tab === 'unpaid' || tab === 'due' || tab === 'all')
             ? {
                 disabled: (b) => !payable(b),
                 selectAllLabel: 'Select every unpaid bill',

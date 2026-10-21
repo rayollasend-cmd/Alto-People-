@@ -51,10 +51,11 @@ vi.mock('@/lib/approvalRequestsApi', async (orig) => ({
 
 import {
   approveAdminRequest,
+  bulkDecideRequests,
   listAdminRequests,
 } from '@/lib/timeOffApi';
 import { decideApprovalRequest, listApprovalRequests } from '@/lib/approvalRequestsApi';
-import { listAdminSwaps, listOpenShiftClaims } from '@/lib/schedulingApi';
+import { listAdminSwaps, listOpenShiftClaims, managerApproveSwap } from '@/lib/schedulingApi';
 import { countAdminTimeEntries } from '@/lib/timeApi';
 import { listMyProposals } from '@/lib/agentProposalsApi';
 import { ApprovalsHome } from '@/pages/approvals/ApprovalsHome';
@@ -298,5 +299,79 @@ describe('<ApprovalsHome>', () => {
     });
     // The queue refetches after a decision so the row disappears.
     expect(listAdminRequests).toHaveBeenCalledTimes(2);
+  });
+});
+
+const swapFixture = {
+  id: 'swap-1',
+  shiftId: 'shift-2',
+  requesterAssociateId: 'assoc-1',
+  requesterName: 'Ana Reyes',
+  counterpartyAssociateId: 'assoc-2',
+  counterpartyName: 'Ben Ortiz',
+  shiftPosition: 'Cashier',
+  shiftClientName: 'Coastal Resort Holdings',
+  shiftStartsAt: new Date().toISOString(),
+  status: 'PEER_ACCEPTED',
+  note: null,
+  inExchange: null,
+  wouldExceed40h: false,
+};
+
+describe('<ApprovalsHome> links, context and flow', () => {
+  it('?tab=swaps&swap=<id> opens the swaps queue on that row, and j/a approve it from the keyboard', async () => {
+    vi.mocked(listAdminRequests).mockResolvedValue({ requests: [requestFixture] });
+    vi.mocked(listAdminSwaps).mockResolvedValue({ requests: [swapFixture] } as never);
+    vi.mocked(managerApproveSwap).mockResolvedValue({} as never);
+    const user = userEvent.setup();
+    renderPage('HR_ADMINISTRATOR', '/approvals?tab=swaps&swap=swap-1');
+    // Time off has work and comes first — the link still lands on swaps.
+    expect(await screen.findByText('Ana Reyes')).toBeInTheDocument();
+    await waitFor(() => expect(document.getElementById('swap-swap-1')?.className).toMatch(/ring-gold/));
+    expect(screen.queryByText('Maria Lopez')).not.toBeInTheDocument();
+    await user.keyboard('j');
+    await user.keyboard('a');
+    await waitFor(() => expect(managerApproveSwap).toHaveBeenCalledWith('swap-1'));
+  });
+
+  it('time off shows the balance and the shifts approving would release', async () => {
+    vi.mocked(listAdminRequests).mockResolvedValue({
+      requests: [{ ...requestFixture, balanceMinutes: 480, assignedShiftOverlaps: 2 }],
+    });
+    renderPage('HR_ADMINISTRATOR', '/approvals?tab=timeoff');
+    expect(await screen.findByText(/16h of 8h available/)).toBeInTheDocument();
+    expect(screen.getByText(/releases 2 shifts/)).toBeInTheDocument();
+  });
+
+  it('Deny selected sends every checked request with one note', async () => {
+    const second = { ...requestFixture, id: 'e2a3a3f0-0000-4000-8000-000000000009', associateName: 'Luis Vega' };
+    vi.mocked(listAdminRequests).mockResolvedValue({ requests: [requestFixture, second] });
+    vi.mocked(bulkDecideRequests).mockResolvedValue({ decided: 2, failed: [] } as never);
+    const user = userEvent.setup();
+    renderPage('HR_ADMINISTRATOR', '/approvals?tab=timeoff');
+    await user.click(await screen.findByRole('checkbox', { name: /select all time-off requests/i }));
+    await user.click(screen.getByRole('button', { name: /deny selected \(2\)/i }));
+    await user.type(await screen.findByRole('textbox'), 'Peak week — no time off');
+    await user.click(screen.getByRole('button', { name: /^deny$/i }));
+    await waitFor(() =>
+      expect(bulkDecideRequests).toHaveBeenCalledWith({
+        ids: expect.arrayContaining([requestFixture.id, second.id]),
+        decision: 'DENY',
+        note: 'Peak week — no time off',
+      }),
+    );
+  });
+
+  it('when the open queue runs dry it moves on to the next one with work', async () => {
+    vi.mocked(listAdminRequests).mockResolvedValue({ requests: [requestFixture] });
+    vi.mocked(listAdminSwaps).mockResolvedValue({ requests: [swapFixture] } as never);
+    vi.mocked(approveAdminRequest).mockResolvedValue({ request: { ...requestFixture, status: 'APPROVED' } });
+    const user = userEvent.setup();
+    renderPage('HR_ADMINISTRATOR', '/approvals?tab=timeoff');
+    expect(await screen.findByText('Maria Lopez')).toBeInTheDocument();
+    vi.mocked(listAdminRequests).mockResolvedValue({ requests: [] });
+    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+    // Swaps opens by itself.
+    expect(await screen.findByText('Ana Reyes')).toBeInTheDocument();
   });
 });

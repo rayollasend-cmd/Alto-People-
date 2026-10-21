@@ -80,6 +80,12 @@ export const ClientPaymentInputSchema = z.object({
   /** A bank account (or Undeposited funds); default operating checking, Undeposited funds for a check. */
   depositAccountId: z.string().uuid().nullable().optional(),
   applications: z.array(z.object({ statementId: z.string().uuid(), amount: z.number().positive() })).max(200),
+  /**
+   * The bank deposit this payment is (Bank → For review → "Record as payment").
+   * The payment lands in that bank's account and the deposit is matched to its
+   * entry, so the money isn't typed twice. Same amount, money in, not yet decided.
+   */
+  bankTransactionId: z.string().uuid().optional(),
 });
 export type ClientPaymentInput = z.infer<typeof ClientPaymentInputSchema>;
 

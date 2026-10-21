@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ShieldCheck } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -21,6 +21,11 @@ const KIND_LABEL: Record<string, string> = { REGULAR: 'Regular', OFF_CYCLE: 'Off
 
 export function PayrollReviewsPage() {
   const q = useQuery({ queryKey: ['payroll', 'reviews'], queryFn: getReviewQueue });
+  // One run waiting: open it — the list would be a click with nothing to
+  // choose. ?all=1 keeps the list (and Back never bounces: it's a replace).
+  const [params] = useSearchParams();
+  const only = q.data?.waiting.length === 1 ? q.data.waiting[0] : null;
+  if (only && params.get('all') !== '1') return <Navigate to={`/payroll/runs/${only.id}/review`} replace />;
   return (
     <ListTemplate
       title="Payroll to review"

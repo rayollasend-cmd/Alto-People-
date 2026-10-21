@@ -104,7 +104,9 @@ describe('<RetentionDesk>', () => {
     expect(await screen.findByText('Paid below the local market.')).toBeInTheDocument();
     expect(screen.getAllByText('High risk').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('img', { name: /risk 55 of 100/i })).toBeInTheDocument();
-    expect(screen.getByText('75%')).toBeInTheDocument();
+    // The best play's tile, and the same rate in the stay-rate chart's table.
+    expect(screen.getAllByText('75%').length).toBeGreaterThanOrEqual(2);
+    expect(within(screen.getByRole('table', { name: 'Stayed 90 days, by play' })).getByText('75%')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Review their pay' }));
     const send = await screen.findByRole('button', { name: 'Send for approval' });
     expect(send).toBeDisabled();

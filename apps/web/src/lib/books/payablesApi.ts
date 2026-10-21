@@ -4,6 +4,7 @@ import type {
   BooksBillInput,
   BooksBillPayment,
   BooksBillPaymentInput,
+  BooksBillsApproveResult,
   BooksPayablesOptions,
   BooksRecurringBill,
   BooksRecurringBillInput,
@@ -48,6 +49,8 @@ export const getBill = (id: string) => apiFetch<{ bill: BooksBill }>(`/books/bil
 export const createBill = (body: BooksBillInput) => apiFetch<{ bill: BooksBill }>('/books/bills', { method: 'POST', body });
 export const updateBill = (id: string, body: BooksBillInput) => apiFetch<{ bill: BooksBill }>(`/books/bills/${id}`, { method: 'PATCH', body });
 export const submitBill = (id: string) => apiFetch<Pending>(`/books/bills/${id}/submit`, { method: 'POST' });
+/** Approve several — each its own decision; the requester's own come back skipped. */
+export const approveBills = (ids: string[]) => apiFetch<BooksBillsApproveResult>('/books/bills/approve', { method: 'POST', body: { ids }, timeoutMs: 120_000 });
 export const withdrawBill = (id: string) => apiFetch<{ bill: BooksBill }>(`/books/bills/${id}/withdraw`, { method: 'POST' });
 export const reopenBill = (id: string, reason: string) => apiFetch<{ bill: BooksBill }>(`/books/bills/${id}/reopen`, { method: 'POST', body: { reason } });
 export const voidBill = (id: string, reason: string) => apiFetch<{ bill: BooksBill }>(`/books/bills/${id}/void`, { method: 'POST', body: { reason } });

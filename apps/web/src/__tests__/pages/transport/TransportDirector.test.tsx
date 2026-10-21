@@ -123,7 +123,7 @@ function liveRun(over: Partial<RunMap> = {}): RunMap {
   };
 }
 
-function renderAs(role: Role) {
+function renderAs(role: Role, url = '/transport') {
   const caps = ROLE_CAPABILITIES[role];
   const auth = {
     isInitializing: false,
@@ -139,7 +139,7 @@ function renderAs(role: Role) {
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <AuthContext.Provider value={auth}>
         <ConfirmProvider>
-          <MemoryRouter>
+          <MemoryRouter initialEntries={[url]}>
             <TransportHome />
           </MemoryRouter>
         </ConfirmProvider>
@@ -361,5 +361,72 @@ describe('<TransportHome> — dispatching from the Rides tab', () => {
     expect(screen.getByRole('button', { name: /Dispatch 4/ })).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(screen.queryByRole('button', { name: /Dispatch/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('<TransportHome> — the day in the link, and fees waived together', () => {
+  const noShow = (id: string, name: string, over: Partial<Ride> = {}) =>
+    ride({ id, status: 'NO_SHOW', owedCents: 100, rider: { associateId: `a-${id}`, name, phone: null }, ...over });
+
+  it('opens on the day the link names, and Tomorrow moves the board', async () => {
+    routes((path) => {
+      if (path.startsWith('/transport/board')) return board();
+      if (path.startsWith('/transport/live')) return { runs: [] };
+      return undefined;
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', '/transport?date=2026-11-03');
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/board?date=2026-11-03'));
+    expect(screen.getByLabelText('Day')).toHaveValue('2026-11-03');
+    await userEvent.click(screen.getByRole('button', { name: 'Tomorrow' }));
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    const tomorrow = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(`/transport/board?date=${tomorrow}`));
+    expect(screen.getByRole('button', { name: 'Tomorrow' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('waives every no-show on a run in one go — never a ride someone took', async () => {
+    const run: RideRun = {
+      ...activeRun(),
+      status: 'COMPLETED',
+      rides: [noShow('n1', 'Kim Nguyen'), noShow('n2', 'Lee Park'), ride({ id: 'b1', status: 'COMPLETED', owedCents: 500, rider: { associateId: 'a-b1', name: 'Ana Ruiz', phone: null } })],
+    };
+    routes((path, init) => {
+      if (path === '/transport/rides/waive' && init?.method === 'POST') return { waived: 2, waivedIds: ['n1', 'n2'], skipped: [] };
+      if (path.startsWith('/transport/board')) return board({ rides: [], runs: [run] });
+      if (path.startsWith('/transport/live')) return { runs: [] };
+      return undefined;
+    });
+    renderAs('TRANSPORTATION_DIRECTOR');
+    await userEvent.click(await screen.findByRole('button', { name: 'Waive all no-shows on this run' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByRole('textbox'), 'The van came to the wrong stop');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Waive 2 fees' }));
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/rides/waive', { method: 'POST', body: { rideIds: ['n1', 'n2'], reason: 'The van came to the wrong stop' } }),
+    );
+  });
+
+  it('on Rides, no-show fees can be picked and waived with one reason', async () => {
+    routes((path, init) => {
+      if (path === '/transport/rides/waive' && init?.method === 'POST') return { waived: 2, waivedIds: ['n1', 'n2'], skipped: [] };
+      if (path.startsWith('/transport/rides')) return { rides: [noShow('n1', 'Kim Nguyen'), noShow('n2', 'Lee Park'), ride({ id: 'b1', status: 'COMPLETED', owedCents: 500, rider: { associateId: 'a-b1', name: 'Ana Ruiz', phone: null } })] };
+      if (path.startsWith('/transport/board')) return board();
+      if (path.startsWith('/transport/live')) return { runs: [] };
+      return undefined;
+    });
+    renderAs('TRANSPORTATION_DIRECTOR');
+    await userEvent.click(await screen.findByRole('tab', { name: /^Rides/ }));
+    await screen.findByRole('table');
+    // A ride taken has no box to tick.
+    expect(screen.queryByRole('checkbox', { name: 'Select Ana Ruiz' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('checkbox', { name: /Select all 2 no-show fees/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Waive 2 fees' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByRole('textbox'), 'Vans were late all morning');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Waive 2 fees' }));
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/rides/waive', { method: 'POST', body: { rideIds: ['n1', 'n2'], reason: 'Vans were late all morning' } }),
+    );
   });
 });

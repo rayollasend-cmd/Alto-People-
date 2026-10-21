@@ -5,9 +5,11 @@
 // the page. Associates can also download their own paystub as a PDF —
 // the backend authorizes the item owner on GET /payroll/items/:id/paystub.pdf.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
+import { PALETTE, Sparkline } from '@/components/ui/charts';
 import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
 import {
@@ -129,6 +131,29 @@ export function AssociatePayrollView() {
       : t('pay.loadFailed')
     : null;
 
+  // The newest stub opens on its own; /payroll?item=<id> (the dashboard's
+  // pay tile, the paystub email) opens that one instead and scrolls to it.
+  const [params, setParams] = useSearchParams();
+  const itemParam = params.get('item');
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (!items || items.length === 0 || openedRef.current) return;
+    openedRef.current = true;
+    const target = (itemParam && items.find((i) => i.id === itemParam)) || newestOf(items);
+    if (!target) return;
+    setExpanded(new Set([target.id]));
+    setFocusId(target.id);
+    if (itemParam) {
+      const next = new URLSearchParams(params);
+      next.delete('item');
+      setParams(next, { replace: true });
+      requestAnimationFrame(() => document.getElementById(`paystub-${target.id}`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }));
+    }
+    // params/setParams change identity; the first loaded list drives this once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, itemParam]);
+
   const toggle = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -193,6 +218,7 @@ export function AssociatePayrollView() {
         const groups = groupByDayBy(disbursed, (i) => i.disbursedAt!);
         return (
           <div className="space-y-3">
+            <NetPayTrend items={disbursed} />
             {pending.length > 0 && (
               <PaystubGroup
                 heading={t('pay.pendingCount', { count: pending.length })}
@@ -215,7 +241,7 @@ export function AssociatePayrollView() {
                 expanded={expanded}
                 onToggle={toggle}
                 onAsk={setAskItem}
-                defaultOpen={pending.length === 0 && idx === 0}
+                defaultOpen={(pending.length === 0 && idx === 0) || (!!focusId && g.entries.some((e) => e.id === focusId))}
               />
             ))}
           </div>
@@ -225,6 +251,90 @@ export function AssociatePayrollView() {
       <AskPaycheckDialog item={askItem} onClose={() => setAskItem(null)} />
       </ListTemplate>
     </>
+  );
+}
+
+/** The newest paycheck: one still to be paid first, else the latest paid. */
+function newestOf(items: PayrollItem[]): PayrollItem | null {
+  const pending = items.filter((i) => !i.disbursedAt);
+  if (pending.length > 0) return pending[0]!;
+  return [...items].sort((a, b) => (b.disbursedAt ?? '').localeCompare(a.disbursedAt ?? ''))[0] ?? null;
+}
+
+/** Take-home pay across the last paid checks, oldest to newest. */
+function NetPayTrend({ items }: { items: PayrollItem[] }) {
+  const { t } = useI18n();
+  const recent = [...items]
+    .filter((i) => i.status !== 'VOIDED')
+    .sort((a, b) => (a.disbursedAt ?? '').localeCompare(b.disbursedAt ?? ''))
+    .slice(-12);
+  if (recent.length < 3) return null;
+  const nets = recent.map((i) => i.netPay);
+  const avg = nets.reduce((a, b) => a + b, 0) / nets.length;
+  const latest = nets[nets.length - 1]!;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-navy-secondary bg-navy/40 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-ink">{t('pay.trend.title')}</div>
+        <div className="text-xs text-silver/70">{t('pay.trend.sub', { count: recent.length })}</div>
+      </div>
+      <Sparkline series={nets} tone="neutral" width={140} height={32} label={`${t('pay.trend.sub', { count: recent.length })}: ${nets.map((n) => fmtMoney(n)).join(', ')}`} />
+      <div className="text-right text-xs tabular-nums">
+        <div className="text-gold">{t('pay.trend.latest', { amount: fmtMoney(latest) })}</div>
+        <div className="text-silver/70">{t('pay.trend.avg', { amount: fmtMoney(avg) })}</div>
+      </div>
+    </div>
+  );
+}
+
+/** One bar for one check: take-home, taxes and deductions, as shares of gross. */
+function MoneySplit({ item }: { item: PayrollItem }) {
+  const { t } = useI18n();
+  const programs = (item.stateProgramTaxes ?? []).reduce((s, p) => s + p.amount, 0);
+  const taxes = item.federalWithholding + item.fica + item.medicare + item.stateWithholding + programs;
+  const deductions = Math.max(0, item.grossPay - taxes - item.netPay);
+  const parts = [
+    { key: 'net', label: t('pay.split.takeHome'), amount: Math.max(0, item.netPay), color: PALETTE.primary },
+    { key: 'taxes', label: t('pay.split.taxes'), amount: taxes, color: PALETTE.secondary },
+    { key: 'deductions', label: t('pay.split.deductions'), amount: deductions, color: PALETTE.tertiary },
+  ].filter((p) => p.amount > 0.004);
+  const total = parts.reduce((s, p) => s + p.amount, 0);
+  if (item.grossPay <= 0 || total <= 0) return null;
+  const row = Object.fromEntries(parts.map((p) => [p.key, p.amount]));
+  return (
+    <section aria-label={t('pay.split.title')}>
+      <h4 className="mb-2 text-2xs uppercase tracking-widest text-silver/70">{t('pay.split.title')}</h4>
+      <div className="h-3 w-full" aria-hidden="true">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barCategoryGap={0}>
+            <XAxis type="number" hide domain={[0, total]} />
+            <YAxis type="category" hide />
+            {parts.map((p, i) => (
+              <Bar
+                key={p.key}
+                dataKey={p.key}
+                stackId="split"
+                fill={p.color}
+                stroke={PALETTE.surface}
+                strokeWidth={1}
+                radius={parts.length === 1 ? [6, 6, 6, 6] : i === 0 ? [6, 0, 0, 6] : i === parts.length - 1 ? [0, 6, 6, 0] : [0, 0, 0, 0]}
+                isAnimationActive={false}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {parts.map((p) => (
+          <li key={p.key} className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: p.color }} aria-hidden="true" />
+            <span className="text-silver/80">{p.label}</span>
+            <span className="tabular-nums text-ink">{fmtMoney(p.amount)}</span>
+            <span className="tabular-nums text-silver/60">{Math.round((p.amount / total) * 100)}%</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -783,7 +893,8 @@ export function PaystubCard({
 
   return (
     <li
-      className="bg-navy border border-navy-secondary rounded-lg overflow-hidden animate-enter"
+      id={`paystub-${item.id}`}
+      className="scroll-mt-24 bg-navy border border-navy-secondary rounded-lg overflow-hidden animate-enter"
       style={enterStagger(appearIndex)}
     >
       <button
@@ -855,6 +966,7 @@ export function PaystubCard({
 
       {expanded && ytd && (
         <div className="border-t border-navy-secondary p-4 space-y-5 text-xs">
+          <MoneySplit item={item} />
           <Section title={t('pay.earnings')}>
             <PaystubTable
               headers={['', t('pay.colHours'), t('pay.colRate'), t('pay.colCurrent'), t('pay.colYtd')]}

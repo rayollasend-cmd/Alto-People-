@@ -198,7 +198,7 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
     ]);
 
     const needsYou: BooksOverview['needsYou'] = [];
-    if (awaitingApproval) needsYou.push({ key: 'bills', label: `${awaitingApproval} ${awaitingApproval === 1 ? 'bill waits' : 'bills wait'} for approval`, count: awaitingApproval, to: '/books/bills?status=PENDING_APPROVAL', tone: 'warning' });
+    if (awaitingApproval) needsYou.push({ key: 'bills', label: `${awaitingApproval} ${awaitingApproval === 1 ? 'bill waits' : 'bills wait'} for approval`, count: awaitingApproval, to: '/books/bills?tab=approve', tone: 'warning' });
     if (apOverdue > 0) needsYou.push({ key: 'overdue-bills', label: `${fromCents(apOverdue).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} in bills past due`, count: bills.filter((b) => ymd(b.dueDate) < asOf).length, to: '/books/bills', tone: 'alert' });
     if (unmatched) needsYou.push({ key: 'bank', label: `${unmatched} bank ${unmatched === 1 ? 'transaction' : 'transactions'} to match or categorize`, count: unmatched, to: '/books/bank', tone: 'warning' });
     if (conflicts) needsYou.push({ key: 'conflicts', label: `${conflicts} QuickBooks ${conflicts === 1 ? 'change needs' : 'changes need'} a decision`, count: conflicts, to: '/books/quickbooks', tone: 'alert' });

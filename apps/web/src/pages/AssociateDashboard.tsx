@@ -440,7 +440,7 @@ function MyNumbers({
           }
         />
       </TileLink>
-      <TileLink to="/payroll">
+      <TileLink to={paystub ? `/payroll?item=${paystub.id}` : '/payroll'}>
         <StatTile
           className="h-full"
           label={t('tile.lastPay')}

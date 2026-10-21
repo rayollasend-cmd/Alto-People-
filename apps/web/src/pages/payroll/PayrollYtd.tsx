@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Printer } from 'lucide-react';
-import { getPayrollYtd, type PayrollYtdResponse } from '@/lib/payrollApi';
+import { getPayrollYtd, type PayrollYtdMonth, type PayrollYtdResponse } from '@/lib/payrollApi';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { StackedBarChart } from '@/components/ui/charts';
 import { ApiError } from '@/lib/api';
 import { ListTemplate } from '@/components/templates';
 import { Button } from '@/components/ui/Button';
@@ -11,7 +13,7 @@ import { Input } from '@/components/ui/Input';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { fmtMoney } from '@/lib/format';
+import { fmtMoney, fmtMoneyCompact, fmtMonthShortYear } from '@/lib/format';
 import { useTerm } from '@/lib/auth';
 import { MetricCard } from '@/components/ui/MetricCard';
 
@@ -94,6 +96,8 @@ export function PayrollYtd() {
             </CardContent>
           </Card>
 
+          {data.monthly && <MonthlyChart months={data.monthly} year={year} />}
+
           <div className="mb-3 print:hidden">
             <Input
               value={q}
@@ -151,4 +155,48 @@ export function PayrollYtd() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return <MetricCard label={label} value={value} />;
+}
+
+/** Month by month: each column is the month's gross, split into take-home, taxes and deductions. */
+function MonthlyChart({ months, year }: { months: PayrollYtdMonth[]; year: number }) {
+  const now = new Date();
+  const through = year < now.getUTCFullYear() ? 12 : year > now.getUTCFullYear() ? 0 : now.getUTCMonth() + 1;
+  const rows = months.slice(0, through).map((m) => ({
+    ...m,
+    label: fmtMonthShortYear(new Date(year, Number(m.month.slice(5, 7)) - 1, 15)),
+  }));
+  if (!rows.some((r) => r.gross > 0)) return null;
+  const peak = rows.reduce((a, b) => (b.gross > a.gross ? b : a), rows[0]!);
+  return (
+    <div className="mb-4 print:break-inside-avoid">
+      <ChartFrame
+        title="Month by month"
+        description="Gross pay by payout month, split into take-home pay, taxes withheld and other deductions."
+        summary={`${year} so far: the biggest month was ${peak.label} at ${fmtMoney(peak.gross)} gross.`}
+        columns={[
+          { key: 'label', label: 'Month' },
+          { key: 'runs', label: 'Runs', numeric: true },
+          { key: 'gross', label: 'Gross', numeric: true, format: (v) => fmtMoney(v as number) },
+          { key: 'tax', label: 'Taxes withheld', numeric: true, format: (v) => fmtMoney(v as number) },
+          { key: 'deductions', label: 'Other deductions', numeric: true, format: (v) => fmtMoney(v as number) },
+          { key: 'net', label: 'Net', numeric: true, format: (v) => fmtMoney(v as number) },
+        ]}
+        rows={rows}
+        csvName={`payroll-monthly-${year}`}
+        height={240}
+      >
+        <StackedBarChart
+          data={rows}
+          x="label"
+          series={[
+            { key: 'net', name: 'Take-home pay' },
+            { key: 'tax', name: 'Taxes withheld' },
+            { key: 'deductions', name: 'Other deductions' },
+          ]}
+          format={fmtMoneyCompact}
+          yLabel="Dollars"
+        />
+      </ChartFrame>
+    </div>
+  );
 }

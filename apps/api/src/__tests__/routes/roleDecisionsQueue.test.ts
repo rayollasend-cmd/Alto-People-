@@ -40,6 +40,7 @@ interface Item {
   label: string;
   severity: string;
   stakes: number | null;
+  linkUrl: string;
 }
 
 describe('GET /me/decisions', () => {
@@ -76,7 +77,32 @@ describe('GET /me/decisions', () => {
     expect(walkins).toBeDefined();
     expect(walkins!.severity).toBe('critical');
     expect(walkins!.label).toContain('1 walk-in');
+    // The link opens the walk-in queue itself, not the Approvals landing.
+    expect(walkins!.linkUrl).toBe('/approvals?tab=walkins');
     expect(items.some((d) => d.key.startsWith('receivable'))).toBe(false);
+  });
+
+  it('every item opens the exact queue: old punches open the timesheet queue on the weeks that fired it', async () => {
+    const site = await createClient('Front Beach 218');
+    const loc = await prisma.site.findFirstOrThrow({ where: { clientId: site.id } });
+    const a = await createAssociate({ firstName: 'Old', lastName: 'Punches' });
+    const day = 86_400_000;
+    const oldest = new Date(Date.now() - 40 * day);
+    for (let i = 0; i < 10; i++) {
+      const at = new Date(oldest.getTime() + i * day);
+      await prisma.timeEntry.create({ data: { associateId: a.id, clientId: site.id, locationId: loc.id, clockInAt: at, clockOutAt: new Date(at.getTime() + 3_600_000), status: 'COMPLETED', anomalies: [] } });
+    }
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const items = (await (await loginAs(hr.email)).get('/me/decisions')).body.decisions as Item[];
+    const time = items.find((d) => d.key === 'time:unapproved');
+    expect(time).toBeDefined();
+    const url = new URL(time!.linkUrl, 'http://x');
+    expect(url.pathname).toBe('/time-attendance');
+    expect(url.searchParams.get('tab')).toBe('queue');
+    // From the oldest punch (its local day, give or take the zone) through the day before this week.
+    const from = url.searchParams.get('from')!;
+    expect(Math.abs(new Date(`${from}T12:00:00Z`).getTime() - oldest.getTime())).toBeLessThan(1.5 * day);
+    expect(url.searchParams.get('to')! < new Date().toISOString().slice(0, 10)).toBe(true);
   });
 
   it('collaboration: same-site supervisors see claims, conflicting claims 409, escalation pings admins', async () => {

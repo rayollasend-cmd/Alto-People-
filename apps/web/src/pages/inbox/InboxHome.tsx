@@ -6,7 +6,7 @@ import { ListTemplate } from '@/components/templates';
 import { Badge, Card, EmptyState, SectionTitle, SkeletonRows, buttonVariants } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { cn } from '@/lib/cn';
-import { useInbox } from '@/lib/inboxApi';
+import { inboxLink, useInbox } from '@/lib/inboxApi';
 import { useI18n } from '@/lib/i18n';
 import { useListKeyboard } from '@/lib/shortcuts';
 
@@ -32,7 +32,7 @@ export function InboxHome() {
     };
   }, [inbox.data]);
   // j/k move over the queues, Enter opens one (lib/shortcuts).
-  const kb = useListKeyboard({ items: waiting, idOf: (s) => s.key, onOpen: (s) => navigate(s.path) });
+  const kb = useListKeyboard({ items: waiting, idOf: (s) => s.key, onOpen: (s) => navigate(inboxLink(s.path, s.key)) });
 
   return (
     <ListTemplate title={t('decisions.title')} subtitle={t('decisions.subtitle')}>
@@ -67,7 +67,7 @@ export function InboxHome() {
                 {quiet.map((s) => (
                   <li key={s.key}>
                     <Link
-                      to={s.path}
+                      to={inboxLink(s.path, s.key)}
                       className="inline-flex items-center gap-1.5 rounded-full border border-navy-secondary px-3 py-1 text-xs text-silver transition-colors hover:border-steel hover:text-ink"
                     >
                       {s.label}
@@ -102,7 +102,7 @@ function SourceRow({ source, rowProps }: { source: InboxSource; rowProps?: Retur
         <p className="mt-0.5 text-sm text-silver">{source.description}</p>
       </div>
       <Link
-        to={source.path}
+        to={inboxLink(source.path, source.key)}
         className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0')}
         aria-label={t('decisions.openX', { label: source.label })}
       >

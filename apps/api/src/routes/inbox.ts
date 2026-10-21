@@ -70,8 +70,9 @@ interface SourceDef {
   /** May this person see the queue at all? The list route's own gate. */
   visible: (user: SessionUser) => boolean;
   /** The queue's "pending" predicate, scoped as the list route scopes it.
-   *  May answer a description of its own, when the size is best told in money. */
-  count: (user: SessionUser) => Promise<number | { count: number; description: string }>;
+   *  May answer a description of its own, when the size is best told in money,
+   *  and a narrower link, when the work sits in one corner of the queue. */
+  count: (user: SessionUser) => Promise<number | { count: number; description?: string; path?: string }>;
 }
 
 /** Same clamp as kioskClientClamp in kiosk99.ts: bounded callers see
@@ -97,9 +98,18 @@ const SOURCES: SourceDef[] = [
     module: 'scheduling',
     visible: (u) => can(u, 'manage:scheduling'),
     // Agent proposals are their own source below; the badge total carries both.
+    // When the work is all in one queue, the link opens that queue.
     count: async (u) => {
       const c = await countApprovalQueues(u);
-      return c.total - c.proposals;
+      const queues: Array<[number, string]> = [
+        [c.swaps, '/approvals?tab=swaps'],
+        [c.pickups, '/approvals?tab=pickups'],
+        [c.timeOff, '/approvals?tab=timeoff'],
+        [c.clockIns, '/approvals?tab=walkins'],
+        [c.timesheets, '/time-attendance?tab=queue'],
+      ];
+      const busy = queues.filter(([n]) => n > 0);
+      return { count: c.total - c.proposals, path: busy.length === 1 ? busy[0]![1] : undefined };
     },
   },
   {
@@ -202,7 +212,7 @@ const SOURCES: SourceDef[] = [
     key: 'onboarding-review',
     label: 'Applications to review',
     description: 'New hires who submitted their paperwork and are waiting on HR.',
-    path: '/onboarding',
+    path: '/onboarding?status=SUBMITTED',
     visible: (u) => can(u, 'view:onboarding') && can(u, 'manage:onboarding'),
     count: (u) =>
       prisma.application.count({
@@ -809,7 +819,7 @@ const SOURCES: SourceDef[] = [
     key: 'books-bills',
     label: 'Bills',
     description: 'Vendor bills waiting for your approval, and approved bills due in the next week.',
-    path: '/books/bills',
+    path: '/books/bills?tab=approve',
     visible: (u) => can(u, 'manage:books'),
     count: async (u) => {
       const tenantId = tenantIdForWrite();
@@ -817,7 +827,8 @@ const SOURCES: SourceDef[] = [
         prisma.bill.count({ where: { tenantId, status: 'PENDING_APPROVAL', NOT: { createdById: u.id } } }),
         prisma.bill.count({ where: { tenantId, status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, dueDate: { lte: new Date(Date.now() + 7 * DAY_MS) } } }),
       ]);
-      return toApprove + dueSoon;
+      // Nothing to approve: the link opens the bills that are due instead.
+      return { count: toApprove + dueSoon, path: toApprove > 0 ? undefined : '/books/bills' };
     },
   },
 ];
@@ -849,16 +860,20 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
       mine.map(async (s) => {
         let count = 0;
         let description = s.description;
+        let path = s.path;
         const t0 = performance.now();
         try {
           const got = await s.count(user);
-          if (typeof got !== 'number') description = got.description;
+          if (typeof got !== 'number') {
+            description = got.description ?? description;
+            path = got.path ?? path;
+          }
           count = Math.min(CAP, Math.max(0, typeof got === 'number' ? got : got.count));
         } catch (err) {
           logger.error({ err, source: s.key, userId: user.id }, 'inbox source failed');
         }
         timings.push(`${s.key.replace(/[^a-zA-Z0-9_-]/g, '_')};dur=${(performance.now() - t0).toFixed(1)}`);
-        return { key: s.key, label: s.label, description, count, path: s.path };
+        return { key: s.key, label: s.label, description, count, path };
       }),
     );
     // Which source is slow, visible in any browser's network panel.

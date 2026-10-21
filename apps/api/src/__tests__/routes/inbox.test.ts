@@ -83,7 +83,7 @@ describe('GET /me/inbox', () => {
     const byKey = new Map(body.sources.map((s) => [s.key, s]));
     expect(byKey.get('onboarding-review')).toMatchObject({
       count: 1,
-      path: '/onboarding',
+      path: '/onboarding?status=SUBMITTED',
     });
     expect(byKey.get('kiosk-review')).toMatchObject({
       count: 1,
@@ -114,6 +114,15 @@ describe('GET /me/inbox', () => {
     const byKey = new Map((inbox.body.sources as Source[]).map((s) => [s.key, s]));
     expect(byKey.get('approvals')?.count).toBe(approvals.body.total);
     expect(byKey.get('kiosk-review')?.count).toBe(punches.body.punches.length);
+  });
+
+  it('approvals: when the work sits in one queue, the link opens that queue', async () => {
+    const client = await createClient('Walmart Destin');
+    const worker = await createAssociate({ firstName: 'Walk', lastName: 'In' });
+    await prisma.clockInRequest.create({ data: { associateId: worker.id, clientId: client.id, requestedAt: new Date() } });
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const body = await inboxFor(user.email);
+    expect(body.sources.find((s) => s.key === 'approvals')).toMatchObject({ count: 1, path: '/approvals?tab=walkins' });
   });
 
   it('a role without the capability does not get that source', async () => {

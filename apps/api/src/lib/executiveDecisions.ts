@@ -332,7 +332,7 @@ async function generateRaw(
       detail: 'Unapproved time is unbillable and delays payroll — have supervisors run timesheet approval.',
       stakes: null,
       ageDays: null,
-      linkUrl: '/time-attendance',
+      linkUrl: '/time-attendance?tab=queue',
     });
   }
   // Store-ops floor signals — keys mirrored with the role engine so a
@@ -446,7 +446,7 @@ async function generateRaw(
       detail: 'Every stalled day risks losing them to another employer — have HR clear the review queue.',
       stakes: null,
       ageDays: null,
-      linkUrl: '/onboarding',
+      linkUrl: '/onboarding?status=SUBMITTED',
     });
   }
   if (benchIdle >= 3) {

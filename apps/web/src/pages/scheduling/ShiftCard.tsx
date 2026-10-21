@@ -24,8 +24,9 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
-import { ArrowLeftRight, Check, ChevronDown, MapPin, Users, X } from 'lucide-react';
+import { fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl, ymdLocal } from '@/lib/format';
+import { Link } from 'react-router-dom';
+import { ArrowLeftRight, CalendarOff, Check, ChevronDown, MapPin, Users, X } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
 import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
@@ -601,6 +602,14 @@ function ShiftDetail({
             </Button>
           )}
           <SwapOfferForm shiftId={shift.id} onCreated={onSwapCreated} />
+          {/* Time off for exactly this shift: the form opens on its day,
+              with its hours. */}
+          <Button variant="ghost" size="sm" asChild>
+            <Link to={`/time-off?new=1&date=${ymdLocal(new Date(shift.startsAt))}&shift=${shift.id}`}>
+              <CalendarOff className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('shift.requestOff')}
+            </Link>
+          </Button>
         </div>
       )}
     </div>

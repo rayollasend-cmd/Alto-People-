@@ -76,16 +76,18 @@ describe('the Books overview', () => {
       profit: { month: totals({ income: 1200, netIncome: 900 }), yearToDate: totals({ income: 5000, netIncome: 2000, grossMarginPct: 38 }), trend: [{ key: '2026-10', label: 'Oct 2026', income: 1200, netIncome: 900 }] },
       close: { periodKey: '2026-09', status: 'OPEN', closedAt: null, tasksDone: 2, tasksTotal: 8 },
       quickbooks: { connected: false, status: null, companyName: null, lastPushAt: null, lastPullAt: null, openConflicts: 0, pending: 0, failed: 0 },
-      needsYou: [{ key: 'bills', label: '1 bill waits for approval', count: 1, to: '/books/bills?status=PENDING_APPROVAL', tone: 'warning' }],
+      needsYou: [{ key: 'bills', label: '1 bill waits for approval', count: 1, to: '/books/bills?tab=approve', tone: 'warning' }],
     };
     api.getBooksOverview.mockResolvedValue(o);
     renderAs('FINANCE_ACCOUNTANT', <BooksHome />, '/books');
     expect((await screen.findAllByText('$7,500.00')).length).toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: /1 bill waits for approval/ })).toHaveAttribute('href', '/books/bills?status=PENDING_APPROVAL');
+    expect(screen.getByRole('link', { name: /1 bill waits for approval/ })).toHaveAttribute('href', '/books/bills?tab=approve');
     expect(screen.getByText('$1,200.00 over 90 days')).toBeInTheDocument();
     expect(screen.getByText('2 of 8 close steps done')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Connect QuickBooks' })).toHaveAttribute('href', '/books/quickbooks');
     expect(screen.getByRole('link', { name: /Journal entry/ })).toBeInTheDocument();
+    // The profit chart says what it shows.
+    expect(screen.getByRole('img', { name: 'Income and net income, the last month. Best: Oct 2026, $900.00 kept.' })).toBeInTheDocument();
   });
 
   it('the executive reads but gets no posting button', async () => {
@@ -118,11 +120,13 @@ describe('the financial statements', () => {
     const user = userEvent.setup();
     renderAs('FINANCE_ACCOUNTANT', <BooksReportsPage />, '/books/reports?from=2026-01-01&to=2026-10-19');
     expect(await screen.findByText('Staffing services revenue')).toBeInTheDocument();
-    expect(screen.getByText('Net income')).toBeInTheDocument();
+    // The statement's own net income line, and the waterfall above it says where the money went.
+    expect(screen.getAllByText('Net income').length).toBeGreaterThan(1);
+    expect(screen.getByRole('img', { name: /Of \$40,000\.00 income, cost of services took \$0\.00 and operating expenses \$2,500\.00, leaving \$37,500\.00 net income \(93\.8% of income\)/ })).toBeInTheDocument();
     const rentLink = screen.getAllByRole('link').find((a) => a.getAttribute('href')?.startsWith(`/books/accounts/${RENT.id}`));
     expect(rentLink?.getAttribute('href')).toBe(`/books/accounts/${RENT.id}?from=2026-01-01&to=2026-10-19`);
     expect(api.getProfitAndLoss).toHaveBeenCalledWith(expect.objectContaining({ from: '2026-01-01', to: '2026-10-19', columns: 'none' }));
-    await user.click(screen.getByRole('button', { name: /Download/ }));
+    await user.click(screen.getByRole('button', { name: 'Download' }));
     await user.click(await screen.findByRole('menuitem', { name: 'PDF' }));
     await waitFor(() => expect(api.downloadReport).toHaveBeenCalledWith('profit-and-loss', 'pdf', expect.objectContaining({ from: '2026-01-01' })));
   });

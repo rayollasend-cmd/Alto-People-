@@ -28,6 +28,7 @@ import { cn } from '@/lib/cn';
 import { AssistantProvider } from '@/lib/assistantContext';
 import { AssistantPane } from '@/components/assistant/AssistantPane';
 import { OfflineQueueBanner } from '@/components/OfflineQueueBanner';
+import { InboxReturnBar } from '@/components/InboxReturnBar';
 import { GlobalShortcuts } from '@/lib/shortcuts';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
@@ -272,6 +273,8 @@ export function Layout() {
           <StoreScopeStrip />
           {/* Access pack: what was saved offline and waits to be sent. */}
           <OfflineQueueBanner />
+          {/* A queue opened from the Inbox: the way back, and the next queue once it's empty. */}
+          <InboxReturnBar />
           <main
             id="main-content"
             ref={mainRef}

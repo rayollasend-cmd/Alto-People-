@@ -76,6 +76,20 @@ describe('Receivables', () => {
     );
   });
 
+  it('“Full balance” fills what the client owes in one click', async () => {
+    const user = userEvent.setup();
+    renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
+    await user.click(await screen.findByRole('button', { name: /Record a payment/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Full balance · $1,500.00' }));
+    expect(within(dialog).getByLabelText('Amount received')).toHaveValue('1500.00');
+    await waitFor(() => expect(within(dialog).getByLabelText('Amount for statement 2')).toHaveValue('500.00'));
+    // Once it's the full balance, the chip has done its job.
+    expect(within(dialog).queryByRole('button', { name: /Full balance/ })).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: 'Record $1,500.00' }));
+    await waitFor(() => expect(api.recordClientPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 1500, applications: [{ statementId: S1, amount: 1000 }, { statementId: S2, amount: 500 }] })));
+  });
+
   it('posts history with a summary of what it did; read-only roles see no buttons', async () => {
     const user = userEvent.setup();
     const { unmount } = renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');

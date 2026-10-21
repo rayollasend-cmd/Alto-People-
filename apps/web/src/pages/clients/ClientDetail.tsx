@@ -35,6 +35,7 @@ import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
 import { PortalAccessSection } from './PortalAccessSection';
+import { ClientGlance, ClientPerformance, useCanSeeClientPerformance } from './ClientPerformance';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
 
@@ -63,6 +64,7 @@ export function ClientDetail() {
   const { can } = useAuth();
   const canManage = can('manage:clients');
   const confirm = useConfirm();
+  const showPerformance = useCanSeeClientPerformance();
 
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -166,11 +168,13 @@ export function ClientDetail() {
       label: 'Basics',
       content: (
         <div className="space-y-6">
+          {showPerformance && <ClientGlance clientId={client.id} onOpen={() => openTab('performance')} />}
           <BasicsEditor client={client} canManage={canManage} onSaved={(updated) => setClient(updated)} />
           <StateEditor client={client} canManage={canManage} onSaved={(updated) => setClient(updated)} />
         </div>
       ),
     },
+    ...(showPerformance ? [{ key: 'performance', label: 'Performance', content: <ClientPerformance clientId={client.id} /> }] : []),
     { key: 'locations', label: 'Locations', content: <LocationsSection clientId={client.id} /> },
     { key: 'portal', label: 'Portal access', content: <PortalAccessSection clientId={client.id} /> },
     { key: 'jobs', label: 'Jobs', content: <JobsSection clientId={client.id} /> },

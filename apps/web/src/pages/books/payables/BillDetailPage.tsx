@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock3, FileUp, Paperclip, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Clock3, FileUp, Paperclip, ShieldCheck, SkipForward } from 'lucide-react';
 import type { BooksBill, BooksBillInput } from '@alto-people/shared';
 import { decideApprovalRequest } from '@/lib/approvalRequestsApi';
 import { usePrompt } from '@/lib/confirm';
@@ -10,6 +10,7 @@ import {
   billAttachmentUrl,
   createBill,
   getBill,
+  listBills,
   listVendors,
   PAYABLES_KEY,
   reopenBill,
@@ -143,16 +144,25 @@ function NewBill() {
   const [params] = useSearchParams();
   const [form, setForm] = useState<FormState>({ vendorId: params.get('vendorId') ?? '', billNumber: '', billDate: ymdLocal(), dueDate: '', dueTouched: false, memo: '', lines: [blankLine()] });
   const [file, setFile] = useState<File | null>(null);
+  const [entered, setEntered] = useState(0);
   const save = useMutation({
-    mutationFn: async (submit: boolean) => {
+    mutationFn: async (how: 'draft' | 'submit' | 'another') => {
       const { bill } = await createBill(toInput(form));
       if (file) await uploadBillAttachment(bill.id, file);
-      if (submit) await submitBill(bill.id);
-      return { bill, submit };
+      if (how !== 'draft') await submitBill(bill.id);
+      return { bill, how };
     },
-    onSuccess: ({ bill, submit }) => {
-      toast.success(submit ? `${money(bill.total)} bill from ${bill.vendorName} sent for approval.` : 'Saved as a draft.');
+    onSuccess: ({ bill, how }) => {
+      toast.success(how !== 'draft' ? `${money(bill.total)} bill from ${bill.vendorName} sent for approval.` : 'Saved as a draft.');
       invalidatePayables(qc);
+      if (how === 'another') {
+        // The next one from the same vendor: keep the vendor and its account, clear the rest.
+        setForm((f) => ({ vendorId: f.vendorId, billNumber: '', billDate: ymdLocal(), dueDate: '', dueTouched: false, memo: '', lines: [blankLine(f.lines[0]?.accountId)] }));
+        setFile(null);
+        setEntered((n) => n + 1);
+        window.scrollTo?.({ top: 0 });
+        return;
+      }
       navigate(`/books/bills/${bill.id}`, { replace: true });
     },
     onError: (err) => toast.error(errText(err, 'Could not save the bill.')),
@@ -161,13 +171,16 @@ function NewBill() {
     <RecordTemplate
       breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Bills', to: '/books/bills' }, { label: 'New bill' }]}
       title="New bill"
-      subtitle="Enter it as the vendor sent it. It’s owed — on the books — once a second person approves it."
+      subtitle={entered > 0 ? `${entered} sent for approval this sitting. Enter it as the vendor sent it.` : 'Enter it as the vendor sent it. It’s owed — on the books — once a second person approves it.'}
       actions={
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => save.mutate(false)} loading={save.isPending && save.variables === false} disabled={!formReady(form) || save.isPending}>
+          <Button variant="secondary" onClick={() => save.mutate('draft')} loading={save.isPending && save.variables === 'draft'} disabled={!formReady(form) || save.isPending}>
             Save draft
           </Button>
-          <Button onClick={() => save.mutate(true)} loading={save.isPending && save.variables === true} disabled={!formReady(form) || save.isPending}>
+          <Button variant="secondary" onClick={() => save.mutate('another')} loading={save.isPending && save.variables === 'another'} disabled={!formReady(form) || save.isPending}>
+            Send & enter another
+          </Button>
+          <Button onClick={() => save.mutate('submit')} loading={save.isPending && save.variables === 'submit'} disabled={!formReady(form) || save.isPending}>
             Send for approval
           </Button>
         </div>
@@ -180,7 +193,7 @@ function NewBill() {
             <Card>
               <CardContent className="space-y-5 p-5">
                 <BillForm value={form} onChange={setForm} />
-                <FilePick file={file} onFile={setFile} />
+                <FilePick key={entered} file={file} onFile={setFile} />
               </CardContent>
             </Card>
           ),
@@ -210,7 +223,14 @@ function ExistingBill({ id }: { id: string }) {
   const qc = useQueryClient();
   const prompt = usePrompt();
   const write = useBooksWrite();
+  const navigate = useNavigate();
   const q = useQuery({ queryKey: [...PAYABLES_KEY, 'bill', id], queryFn: () => getBill(id) });
+  // The rest of the approval queue, for "Approve & next".
+  const deciding = q.data?.bill.status === 'PENDING_APPROVAL' && !!q.data.bill.approval?.mayDecide;
+  const queue = useQuery({ queryKey: [...PAYABLES_KEY, 'bills', 'approve'], queryFn: () => listBills({ tab: 'approve' }), enabled: deciding });
+  const mine = (queue.data?.bills ?? []).filter((b) => b.approval?.mayDecide);
+  const at = mine.findIndex((b) => b.id === id);
+  const nextBill = mine.filter((b) => b.id !== id)[at >= 0 ? Math.min(at, mine.length - 2) : 0] ?? null;
   const vendors = useQuery({ queryKey: [...PAYABLES_KEY, 'vendors', 'all'], queryFn: () => listVendors({ active: 'all' }) });
   const bill = q.data?.bill;
   const [editing, setEditing] = useState<FormState | null>(null);
@@ -230,14 +250,19 @@ function ExistingBill({ id }: { id: string }) {
   const open = bill.status === 'APPROVED' || bill.status === 'PARTIALLY_PAID';
   const livePayments = bill.payments.filter((p) => p.status !== 'VOID');
 
-  const decide = async (decision: 'APPROVE' | 'REJECT') => {
+  const decide = async (decision: 'APPROVE' | 'REJECT', thenNext = false) => {
     if (!bill.approval) return;
     let reason: string | null = null;
     if (decision === 'REJECT') {
       reason = await prompt({ title: `Reject the ${money(bill.total)} bill from ${bill.vendorName}?`, description: 'It goes back to draft with your reason, for whoever entered it.', reasonLabel: 'Why', confirmLabel: 'Reject', destructive: true });
       if (!reason) return;
     }
-    act.mutate(() => decideApprovalRequest(bill.approval!.id, { decision, ...(reason ? { reason } : {}) }).then(() => done(decision === 'APPROVE' ? `Approved — ${money(bill.total)} to ${bill.vendorName} is on the books.` : 'Rejected — it’s back to draft.')));
+    act.mutate(() =>
+      decideApprovalRequest(bill.approval!.id, { decision, ...(reason ? { reason } : {}) }).then(() => {
+        done(decision === 'APPROVE' ? `Approved — ${money(bill.total)} to ${bill.vendorName} is on the books.` : 'Rejected — it’s back to draft.');
+        if (thenNext) navigate(nextBill ? `/books/bills/${nextBill.id}` : '/books/bills?tab=approve');
+      }),
+    );
   };
   const withReason = async (title: string, description: string, confirmLabel: string, fn: (reason: string) => Promise<unknown>, okMsg: string) => {
     const reason = await prompt({ title, description, reasonLabel: 'Why', confirmLabel, destructive: true });
@@ -287,7 +312,7 @@ function ExistingBill({ id }: { id: string }) {
         subtitle={`${bill.billNumber ? `Invoice ${bill.billNumber} · ` : ''}dated ${fmtDate(bill.billDate)} · ${dueWords(bill)}${bill.recurringName ? ` · made by “${bill.recurringName}”` : ''}`}
         status={<BillStatusBadge bill={bill} />}
         actions={actions}
-        summary={<ApprovalPanel bill={bill} onDecide={decide} busy={act.isPending} />}
+        summary={<ApprovalPanel bill={bill} onDecide={decide} busy={act.isPending} next={nextBill} />}
         activeTab={tab}
         onTabChange={setTab}
         tabs={[
@@ -375,7 +400,7 @@ function ExistingBill({ id }: { id: string }) {
   );
 }
 
-function ApprovalPanel({ bill, onDecide, busy }: { bill: BooksBill; onDecide: (d: 'APPROVE' | 'REJECT') => void; busy: boolean }) {
+function ApprovalPanel({ bill, onDecide, busy, next }: { bill: BooksBill; onDecide: (d: 'APPROVE' | 'REJECT', thenNext?: boolean) => void; busy: boolean; next: BooksBill | null }) {
   const a = bill.approval;
   if (bill.status === 'PENDING_APPROVAL' && a) {
     return (
@@ -392,14 +417,20 @@ function ApprovalPanel({ bill, onDecide, busy }: { bill: BooksBill; onDecide: (d
             </div>
           </div>
           {a.mayDecide && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="secondary" onClick={() => onDecide('REJECT')} disabled={busy}>
                 Reject
               </Button>
-              <Button onClick={() => onDecide('APPROVE')} loading={busy}>
+              <Button variant={next ? 'secondary' : 'primary'} onClick={() => onDecide('APPROVE')} loading={busy}>
                 <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                 Approve {money(bill.total)}
               </Button>
+              {next && (
+                <Button onClick={() => onDecide('APPROVE', true)} disabled={busy} title={`Then open the ${money(next.total)} bill from ${next.vendorName}`}>
+                  <SkipForward className="h-4 w-4" aria-hidden="true" />
+                  Approve & next
+                </Button>
+              )}
             </div>
           )}
         </CardContent>

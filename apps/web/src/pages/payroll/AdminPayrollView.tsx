@@ -53,6 +53,7 @@ import {
   getPayrollRun,
   getPayrollUpcoming,
   getWcPremium,
+  listPayrollExceptions,
   listPayrollRuns,
   listPayrollSchedules,
   listRunAddOns,
@@ -71,6 +72,8 @@ import { Select } from '@/components/ui/Select';
 import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { RunPayrollWizard, type RunPayrollSeed } from './RunPayrollWizard';
+import { ExceptionStrip } from './PayrollExceptionStrip';
+import { PayrollCostChart } from './PayrollCostChart';
 import { listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type PayrollUpcomingWithSchedules, type UpcomingBySchedule } from '@/lib/payScheduleFlowApi';
 import { GarnishmentsView } from './GarnishmentsView';
 import { WebhookHealthTile } from './WebhookHealthTile';
@@ -454,6 +457,49 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     }
   }, [selected, runParam, setSearchParams]);
 
+  // ?next=pay (the review page's "Disburse $X →" after sign-off): once the
+  // run is open, go straight to the next step — finalize a draft, then the
+  // disburse ceremony; a finalized run opens the ceremony directly.
+  const nextParam = searchParams.get('next');
+  const payNextRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (nextParam !== 'pay' || !selected || selected.id !== runParam) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('next');
+      return next;
+    }, { replace: true });
+    if (!canProcess) return;
+    if (selected.status === 'DRAFT') {
+      payNextRef.current = selected.id;
+      setConfirmFinalize(true);
+    } else if (selected.status === 'FINALIZED') {
+      setConfirmDisburse(true);
+    }
+  }, [nextParam, selected, runParam, canProcess, setSearchParams]);
+
+  // ?new=run (⌘K "Run payroll"): open the next payday's run — resume its
+  // draft if one exists, else the wizard seeded like the hero's button.
+  const newParam = searchParams.get('new');
+  useEffect(() => {
+    if (newParam !== 'run' || !upcoming) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('new');
+      return next;
+    }, { replace: true });
+    if (!canProcess) return;
+    const nr = upcoming.nextRun;
+    if (nr?.draftRunId) {
+      void openRun(nr.draftRunId);
+      return;
+    }
+    setWizardSeed(nr ? { scheduleId: nr.scheduleId, periodStart: nr.periodStart, periodEnd: nr.periodEnd } : null);
+    setShowCreate(true);
+    // openRun is a plain function re-created each render; the param drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newParam, upcomingQuery.data, upcomingQuery.isError, canProcess, setSearchParams]);
+
   const openRun = async (id: string) => {
     try {
       const detail = await getPayrollRun(id);
@@ -472,6 +518,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       toast.success('Run finalized.');
       setConfirmFinalize(false);
       refresh();
+      // Came from "Finalize & disburse": the ceremony is next, when signed off.
+      if (payNextRef.current === updated.id) {
+        payNextRef.current = null;
+        if (!reviewBlocksPayout) setConfirmDisburse(true);
+      }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Finalize failed.');
     } finally {
@@ -809,7 +860,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             }}
             onResumeRun={(id) => openRun(id)}
             onOpenLastRun={(id) => openRun(id)}
+            onExceptionsChanged={() => void refreshUpcoming()}
           />
+
+          <PayrollCostChart onOpenRun={(id) => void openRun(id)} />
 
           {canProcess && (
             <div className="mb-4">
@@ -1685,6 +1739,7 @@ function PayrollHero({
   onStartRun,
   onResumeRun,
   onOpenLastRun,
+  onExceptionsChanged,
 }: {
   upcoming: PayrollUpcomingWithSchedules | null;
   loading: boolean;
@@ -1692,6 +1747,8 @@ function PayrollHero({
   onStartRun: (seed: RunPayrollSeed | null) => void;
   onResumeRun: (id: string) => void;
   onOpenLastRun: (id: string) => void;
+  /** Time approved from the hero — the projection is stale. */
+  onExceptionsChanged: () => void;
 }) {
   // The schedules' plain-words patterns ("Every other Friday") — the
   // upcoming summary carries only the frequency.
@@ -1765,19 +1822,11 @@ function PayrollHero({
                 />
               </div>
               {nr.totalExceptions > 0 && (
-                <div
-                  className={cn(
-                    'mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs2',
-                    nr.blockingExceptions > 0
-                      ? 'border-alert/40 bg-alert/5 text-alert'
-                      : 'border-warning/30 bg-warning/5 text-warning'
-                  )}
-                >
-                  <AlertTriangle className="h-3 w-3" />
-                  {nr.blockingExceptions > 0
-                    ? `${nr.blockingExceptions} blocking · ${nr.totalExceptions} total`
-                    : `${nr.totalExceptions} ${nr.totalExceptions === 1 ? 'issue' : 'issues'} to review`}
-                </div>
+                <HeroExceptions
+                  nextRun={nr}
+                  canProcess={canProcess}
+                  onChanged={onExceptionsChanged}
+                />
               )}
             </div>
             {canProcess && (
@@ -1834,6 +1883,81 @@ function PayrollHero({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The hero's issue pill opens the next run's pre-flight list in place —
+ * open on its own when anything blocks — with Fix links that carry the
+ * period and unapproved time approved right here. Re-checked when the
+ * window regains focus (fixes happen in other tabs).
+ */
+function HeroExceptions({
+  nextRun,
+  canProcess,
+  onChanged,
+}: {
+  nextRun: NonNullable<PayrollUpcomingWithSchedules['nextRun']>;
+  canProcess: boolean;
+  onChanged: () => void;
+}) {
+  const blocking = nextRun.blockingExceptions;
+  const [open, setOpen] = useState(blocking > 0);
+  const input = {
+    clientId: nextRun.clientId,
+    periodStart: nextRun.periodStart,
+    periodEnd: nextRun.periodEnd,
+    payrollScheduleId: nextRun.scheduleId,
+  };
+  const q = useQuery({
+    queryKey: ['payroll', 'exceptions', input],
+    queryFn: () => listPayrollExceptions(input),
+    enabled: open && canProcess,
+    refetchOnWindowFocus: true,
+    staleTime: 10_000,
+  });
+  const listId = `hero-exceptions-${nextRun.scheduleId}`;
+  return (
+    <div className="mt-3 space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={listId}
+        disabled={!canProcess}
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs2 transition-colors',
+          canProcess && 'hover:brightness-125',
+          blocking > 0 ? 'border-alert/40 bg-alert/5 text-alert' : 'border-warning/30 bg-warning/5 text-warning',
+        )}
+      >
+        <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+        {blocking > 0
+          ? `${blocking} blocking · ${nextRun.totalExceptions} total`
+          : `${nextRun.totalExceptions} ${nextRun.totalExceptions === 1 ? 'issue' : 'issues'} to review`}
+        {canProcess && (open ? <ChevronDown className="h-3 w-3" aria-hidden="true" /> : <ChevronRight className="h-3 w-3" aria-hidden="true" />)}
+      </button>
+      {open && canProcess && (
+        <div id={listId}>
+          {q.isError ? (
+            <p className="text-xs text-alert">Could not load the issues. <button type="button" className="underline" onClick={() => void q.refetch()}>Try again</button></p>
+          ) : (
+            <ExceptionStrip
+              exceptions={q.data ?? null}
+              loading={q.isPending}
+              onRecheck={() => void q.refetch()}
+              paychecks={nextRun.employeeCount}
+              period={{ start: nextRun.periodStart, end: nextRun.periodEnd }}
+              onTimeApproved={() => {
+                void q.refetch();
+                onChanged();
+              }}
+              defaultOpen
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
