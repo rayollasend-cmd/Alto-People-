@@ -266,10 +266,8 @@ export class AchRailAdapter implements DisbursementAdapter {
         await this.db.payrollItem.update({ where: { id: w.itemId }, data: { status: 'HELD', failureReason: (failed.error ?? 'bank_rejected').slice(0, 500) } });
       } else if (inHouseOwn) {
         // The file is the money and a person moves it: the paycheck waits, with its trace number, for the upload.
+        // The disburse route already logged this paycheck's PENDING attempt; the trace number is the reference until the upload settles it.
         queued += 1;
-        await this.db.payrollDisbursementAttempt.create({
-          data: { payrollItemId: w.itemId, provider: 'ACH', status: 'PENDING', externalRef: ref || null, failureReason: null, attemptedById: this.actorUserId },
-        });
         await this.db.payrollItem.update({ where: { id: w.itemId }, data: { disbursementRef: ref, failureReason: null } });
       } else {
         paid += 1;
