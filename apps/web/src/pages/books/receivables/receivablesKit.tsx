@@ -55,6 +55,7 @@ export function PaymentDialog({
   rows,
   statements,
   deposit: fromDeposit,
+  extraClient,
   onRecorded,
 }: {
   open: boolean;
@@ -63,13 +64,20 @@ export function PaymentDialog({
   rows: ReceivablesAgingRow[];
   statements: ReceivableStatement[];
   deposit?: DepositSeed;
-  onRecorded?: (r: { payment: ClientPaymentRow; bankTransaction?: BankTxnView | null }) => void;
+  /** Someone to offer even with nothing owed (a deposit's likely payer): their payment is held as credit. */
+  extraClient?: { id: string; name: string } | null;
+  onRecorded?: (r: { payment: ClientPaymentRow; bankTransaction?: BankTxnView | null; depositMatched?: boolean }) => void;
 }) {
   const who = useWho();
   const qc = useQueryClient();
   const accounts = useQuery({ queryKey: [...RECEIVABLES_KEY, 'deposit-accounts'], queryFn: listDepositAccounts, staleTime: 5 * 60_000 });
-  const [clientId, setClientId] = useState(initialClientId ?? rows[0]?.clientId ?? '');
   const seed = fromDeposit?.transaction;
+  // From a deposit nobody is assumed: the likely payer, or a choice — never just whoever owes the most.
+  const [clientId, setClientId] = useState(initialClientId ?? (fromDeposit ? '' : (rows[0]?.clientId ?? '')));
+  const choices = useMemo(
+    () => (extraClient && !rows.some((r) => r.clientId === extraClient.id) ? [...rows.map((r) => ({ id: r.clientId, name: r.clientName, open: r.open })), { id: extraClient.id, name: extraClient.name, open: 0 }] : rows.map((r) => ({ id: r.clientId, name: r.clientName, open: r.open }))),
+    [rows, extraClient],
+  );
   const [amount, setAmount] = useState(seed ? seed.amount.toFixed(2) : '');
   const [receivedOn, setReceivedOn] = useState(seed?.postedOn ?? ymdLocal());
   const [method, setMethod] = useState<ClientPaymentMethodKind>('ACH');
@@ -107,8 +115,8 @@ export function PaymentDialog({
           .map(([statementId, c]) => ({ statementId, amount: c / 100 })),
       }),
     onSuccess: (r) => {
-      const matched = r.bankTransaction?.status === 'MATCHED';
-      const tail = seed ? (matched ? ' and the deposit matched to it' : ' — the deposit was decided meanwhile; check it') : '';
+      const matched = r.depositMatched ?? r.bankTransaction?.status === 'MATCHED';
+      const tail = seed ? (matched ? ' and the deposit matched to it' : ' — the deposit wasn’t matched; check it') : '';
       toast.success(`${money(r.payment.amount)} from ${r.payment.clientName} recorded${r.payment.unapplied ? ` — ${money(r.payment.unapplied)} held as credit` : ''}${tail}.`);
       void qc.invalidateQueries({ queryKey: ['books'] });
       onRecorded?.(r);
@@ -153,10 +161,10 @@ export function PaymentDialog({
           <Field label={who.One} className="sm:col-span-2">
             {(p) => (
               <Select value={clientId} onChange={(e) => { setClientId(e.target.value); setTouched(false); }} {...p}>
-                {rows.length === 0 && <option value="">No {who.one} owes anything</option>}
-                {rows.map((r) => (
-                  <option key={r.clientId} value={r.clientId}>
-                    {r.clientName} — {money(r.open)} owed
+                {(fromDeposit || !clientId) && <option value="">{choices.length === 0 ? `No ${who.one} owes anything` : `Choose who paid…`}</option>}
+                {choices.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name} — {r.open > 0 ? `${money(r.open)} owed` : 'nothing owed (held as credit)'}
                   </option>
                 ))}
               </Select>

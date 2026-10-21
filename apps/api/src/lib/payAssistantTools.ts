@@ -74,7 +74,8 @@ export async function explainLatestPaystub(db: PrismaClient, associateId: string
   if (Number(item.reimbursementsTotal) > 0) lines.push(`Reimbursements added back (not taxed): ${money(Number(item.reimbursementsTotal))}.`);
   lines.push(`Take-home (net pay): ${money(Number(item.netPay))}.`);
   lines.push(`Year to date before this check: ${money(Number(item.ytdWages))} in wages.`);
-  return { reply: lines.join('\n'), linkUrl: '/payroll' };
+  // That paystub, opened.
+  return { reply: lines.join('\n'), linkUrl: `/payroll?item=${item.id}` };
 }
 
 export async function withholdingCheck(db: PrismaClient, associateId: string, now: Date = new Date()): Promise<{ reply: string; linkUrl: string | null }> {

@@ -411,6 +411,8 @@ export const OnboardingMonthlyPointSchema = /* @__PURE__ */ (() => z.object({
   month: z.string(),
   invited: z.number().int().nonnegative(),
   completed: z.number().int().nonnegative(),
+  /** Of the people invited this month, how many have finished (whenever they did) — a cohort rate that never passes 100%. */
+  invitedCompleted: z.number().int().nonnegative().optional(),
 }))();
 export type OnboardingMonthlyPoint = z.infer<typeof OnboardingMonthlyPointSchema>;
 
@@ -2287,6 +2289,11 @@ export const ShiftAssignInputSchema = /* @__PURE__ */ (() => z.object({
    *  shift (a "clopen"). Without it, /assign 409s with `rest_gap`.
    *  Advisory guard — the override is audit-logged, never silent. */
   overrideRestGap: z.boolean().optional(),
+  /** Assign only if the shift is still unassigned — a one-tap pick from a
+   *  list that may be a minute old (the call-outs desk). If someone else
+   *  (a lead, the bench, the agent) filled it meanwhile, /assign 409s with
+   *  `shift_taken` instead of silently replacing their pick. */
+  expectUnassigned: z.boolean().optional(),
 }))();
 export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
 
@@ -2389,6 +2396,8 @@ export const CopyWeekInputSchema = /* @__PURE__ */ (() => z.object({
   targetWeekStart: z.string().datetime(),
   /** When set, only shifts for this client are copied. */
   clientId: UuidSchema.optional(),
+  /** When set, only shifts at this location are copied. */
+  locationId: UuidSchema.optional(),
   /**
    * When true (the default), each copied shift keeps the associate it was
    * assigned to in the source week, so the whole roster lands pre-assigned
@@ -2818,6 +2827,12 @@ export const AutoScheduleWeekInputSchema = /* @__PURE__ */ (() => z.object({
   weekEnd: z.string().datetime().optional(),
   /** When set, only fills OPEN shifts for this client. */
   clientId: UuidSchema.optional(),
+  /** When set, only fills shifts at this location. */
+  locationId: UuidSchema.optional(),
+  /** Fill unpublished drafts only — published open shifts are left for a
+   *  person to decide (Build next week: nothing live changes before the
+   *  manager's Publish click). */
+  draftsOnly: z.boolean().optional(),
 }))();
 export type AutoScheduleWeekInput = z.infer<typeof AutoScheduleWeekInputSchema>;
 
@@ -2986,6 +3001,8 @@ export const PayrollItemSchema = /* @__PURE__ */ (() => z.object({
   /** State disability / paid-leave / employee UI contributions withheld (CA SDI, NJ TDI/FLI, WA PFML …):
    *  taxes with no column of their own, out of net. Absent when none. */
   stateProgramTaxes: z.array(z.object({ code: z.string(), label: z.string(), amount: z.number() })).optional(),
+  /** The kind of run that paid this check (REGULAR, OFF_CYCLE, AMENDMENT, DAILY, MANUAL) — on the associate's own list. */
+  runKind: z.enum(['REGULAR', 'OFF_CYCLE', 'AMENDMENT', 'DAILY', 'MANUAL']).optional(),
   /** Van rides taken from this check (part of postTaxDeductions) — the
    *  paystub's own "Transportation" line. Associate-facing reads only.
    *  Brief 1A-3: `deferred` is what was owed but held back by the
@@ -3263,7 +3280,9 @@ export const PayPeriodSchema = /* @__PURE__ */ (() => z.object({
   end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   /** True when today falls inside the period. */
   current: z.boolean(),
-  /** True when a payroll run exists for exactly this window. */
+  /** True when a payroll run for exactly this window is finalized or paid
+   *  (a draft run doesn't count). `current` is computed on the server's
+   *  UTC date — clients decide "today's period" from start/end locally. */
   hasRun: z.boolean(),
 }))();
 export type PayPeriod = z.infer<typeof PayPeriodSchema>;
@@ -4147,6 +4166,9 @@ export const NotificationSchema = /* @__PURE__ */ (() => z.object({
   // failure notifications point at /payroll?run={runId}.
   linkUrl: z.string().nullable(),
   createdAt: z.string().datetime(),
+  /** Admin log only: the recipient account's person (or account email) —
+   *  so the sent log names people, not user ids. */
+  recipientName: z.string().nullable().optional(),
 }))();
 export type Notification = z.infer<typeof NotificationSchema>;
 
@@ -4163,6 +4185,9 @@ export const NotificationSendInputSchema = /* @__PURE__ */ (() => z
   .object({
     channel: NotificationChannelSchema,
     recipientUserId: UuidSchema.optional(),
+    /** The person picked in the composer; the server resolves their account,
+     *  email and phone (whichever the channel needs). */
+    recipientAssociateId: UuidSchema.optional(),
     // max 40 matches the directory's stored phone length — the send
     // dialog auto-fills from the directory, and a legally-stored
     // 21+-char number ("+1 (555) 123-4567 ext 22") must not 400.
@@ -4173,15 +4198,15 @@ export const NotificationSendInputSchema = /* @__PURE__ */ (() => z
     category: z.string().min(1).max(80).optional(),
   })
   .refine(
-    (v) => v.recipientUserId || v.recipientPhone || v.recipientEmail,
-    { message: 'one of recipientUserId / recipientPhone / recipientEmail is required' }
+    (v) => v.recipientUserId || v.recipientAssociateId || v.recipientPhone || v.recipientEmail,
+    { message: 'one of recipientUserId / recipientAssociateId / recipientPhone / recipientEmail is required' }
   )
   .refine(
-    (v) => v.channel !== 'IN_APP' || !!v.recipientUserId,
+    (v) => v.channel !== 'IN_APP' || !!v.recipientUserId || !!v.recipientAssociateId,
     { message: 'IN_APP notifications require recipientUserId', path: ['channel'] }
   )
   .refine(
-    (v) => v.channel !== 'SMS' || !!v.recipientPhone || !!v.recipientUserId,
+    (v) => v.channel !== 'SMS' || !!v.recipientPhone || !!v.recipientUserId || !!v.recipientAssociateId,
     { message: 'SMS requires recipientPhone or recipientUserId', path: ['channel'] }
   ))();
 export type NotificationSendInput = z.infer<typeof NotificationSendInputSchema>;
@@ -6751,6 +6776,8 @@ export const ManualAttestationSignalSchema = /* @__PURE__ */ (() => z.object({
       actionTakenAt: z.string().datetime().nullable(),
     })
     .nullable(),
+  /** Reminders put off until this moment (ISO) for the current period; null = not snoozed. */
+  snoozedUntil: z.string().datetime().nullable().optional(),
 }))();
 export type ManualAttestationSignal = z.infer<typeof ManualAttestationSignalSchema>;
 

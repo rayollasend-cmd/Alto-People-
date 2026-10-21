@@ -136,21 +136,31 @@ export function AssociatePayrollView() {
   const [params, setParams] = useSearchParams();
   const itemParam = params.get('item');
   const [focusId, setFocusId] = useState<string | null>(null);
-  const openedRef = useRef(false);
+  // The newest stub opens once, on the first load. A link to a paystub
+  // opens it whenever it arrives — a bell tap while already on this page
+  // included.
+  const openedNewestRef = useRef(false);
   useEffect(() => {
-    if (!items || items.length === 0 || openedRef.current) return;
-    openedRef.current = true;
-    const target = (itemParam && items.find((i) => i.id === itemParam)) || newestOf(items);
-    if (!target) return;
-    setExpanded(new Set([target.id]));
-    setFocusId(target.id);
+    if (!items || items.length === 0) return;
     if (itemParam) {
+      const target = items.find((i) => i.id === itemParam) ?? (openedNewestRef.current ? null : newestOf(items));
+      openedNewestRef.current = true;
       const next = new URLSearchParams(params);
       next.delete('item');
       setParams(next, { replace: true });
+      if (!target) return;
+      setExpanded((prev) => new Set([...prev, target.id]));
+      setFocusId(target.id);
       requestAnimationFrame(() => document.getElementById(`paystub-${target.id}`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }));
+      return;
     }
-    // params/setParams change identity; the first loaded list drives this once.
+    if (openedNewestRef.current) return;
+    openedNewestRef.current = true;
+    const newest = newestOf(items);
+    if (!newest) return;
+    setExpanded(new Set([newest.id]));
+    setFocusId(newest.id);
+    // params/setParams change identity; the list and the item param drive this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, itemParam]);
 
@@ -264,8 +274,10 @@ function newestOf(items: PayrollItem[]): PayrollItem | null {
 /** Take-home pay across the last paid checks, oldest to newest. */
 function NetPayTrend({ items }: { items: PayrollItem[] }) {
   const { t } = useI18n();
+  // Regular paychecks only: an amendment, a daily settlement or a manual
+  // check (often $0 or negative) isn't "a check" in the trend.
   const recent = [...items]
-    .filter((i) => i.status !== 'VOIDED')
+    .filter((i) => i.status !== 'VOIDED' && i.netPay > 0 && (i.runKind ?? 'REGULAR') === 'REGULAR')
     .sort((a, b) => (a.disbursedAt ?? '').localeCompare(b.disbursedAt ?? ''))
     .slice(-12);
   if (recent.length < 3) return null;
@@ -290,9 +302,14 @@ function NetPayTrend({ items }: { items: PayrollItem[] }) {
 /** One bar for one check: take-home, taxes and deductions, as shares of gross. */
 function MoneySplit({ item }: { item: PayrollItem }) {
   const { t } = useI18n();
+  // Deductions are itemized on the check; taxes are the rest of what came
+  // out of gross — so a local income tax lands under taxes, not deductions.
+  // When take-home is more than gross less taxes and deductions, the check
+  // carried a reimbursement: the bar then runs past gross.
   const programs = (item.stateProgramTaxes ?? []).reduce((s, p) => s + p.amount, 0);
-  const taxes = item.federalWithholding + item.fica + item.medicare + item.stateWithholding + programs;
-  const deductions = Math.max(0, item.grossPay - taxes - item.netPay);
+  const listedTaxes = item.federalWithholding + item.fica + item.medicare + item.stateWithholding + programs;
+  const deductions = (item.preTaxDeductions ?? 0) + item.postTaxDeductions;
+  const taxes = Math.max(listedTaxes, item.grossPay - item.netPay - deductions);
   const parts = [
     { key: 'net', label: t('pay.split.takeHome'), amount: Math.max(0, item.netPay), color: PALETTE.primary },
     { key: 'taxes', label: t('pay.split.taxes'), amount: taxes, color: PALETTE.secondary },

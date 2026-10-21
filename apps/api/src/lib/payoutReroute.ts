@@ -185,7 +185,8 @@ export async function rerouteReturnedItem(
         ? `The bank returned your deposit (${reason}). We sent it again to ${to}. Check your pay account details so it does not happen next time.`
         : `The bank returned your deposit (${reason}) and we could not re-send it automatically. Payroll is on it — please check your pay account details.`,
       category: 'pay.returned',
-      linkUrl: '/payroll',
+      // The paycheck that came back.
+      linkUrl: `/payroll?item=${item.id}`,
     }).catch(() => undefined);
   }
   void notifyFinance({

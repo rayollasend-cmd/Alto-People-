@@ -441,6 +441,12 @@ export function cancelOpsShift(
   });
 }
 
+/** Oversight files a shift nobody closed (only once it's 6h past its end):
+ *  counts stamped as they stand, incomplete when required items were open. */
+export function closeOutOpsShift(shiftId: string, reason?: string): Promise<{ ok: true; id: string; closedIncomplete: boolean }> {
+  return apiFetch(`/ops/shifts/${shiftId}/close-out`, { method: 'POST', body: reason ? { reason } : {} });
+}
+
 /** Submit the SOP. Every submit hands over (a note on the shift, or
  *  `handoverNone`); required items still open need `incompleteReason`. */
 export function closeOpsShift(
@@ -531,6 +537,9 @@ export function getOpsBoard(
   /** Shifts that CLOSED today, including an overnight that opened
    *  yesterday — it used to match neither list and disappear. */
   closedToday: OpsShiftRow[];
+  /** Still ACTIVE 6h+ past their end — never submitted. Not live: an
+   *  exception to close out or void. Absent on an older API. */
+  neverClosed?: OpsShiftRow[];
 }> {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);

@@ -21,7 +21,7 @@ import { z } from 'zod';
  *   POST   /books/bank/transactions/:id/categorize       BankCategorizeInput → { transaction }
  *   POST   /books/bank/transactions/:id/match            { lineId } → { transaction }
  *   POST   /books/bank/transactions/:id/exclude          → { transaction }
- *   POST   /books/bank/transactions/:id/undo             → { transaction }
+ *   POST   /books/bank/transactions/:id/undo             BankUndoInput → BankUndoResult
  *   GET    /books/bank/rules                             → { rules: BankRuleView[] }
  *   POST   /books/bank/rules                             BankRuleInput → { rule }
  *   PATCH  /books/bank/rules/:id                         Partial<BankRuleInput> → { rule }
@@ -188,8 +188,9 @@ export interface BankTxnSuggestions {
   /** What it was categorized as the last time this payee appeared. */
   lastTime: { accountId: string; accountCode: string; accountName: string } | null;
   /**
-   * The match that's unambiguous — the only candidate, or the only one on
-   * the same day — which "Match all exact" takes without asking.
+   * The match that's unambiguous — the only candidate (or the only one on
+   * the same day), and this bank line the closest of all undecided ones that
+   * could be it — which "Match all exact" takes without asking.
    */
   exactLineId?: string | null;
   /** Money in: who it's most likely from (a rule's client, or a client named in the description) — for "Record as payment from …". */
@@ -215,6 +216,20 @@ export interface BankBulkResult {
   action: BankBulkAction;
   done: string[];
   skipped: Array<{ id: string; reason: string }>;
+}
+
+/**
+ * Undo a decision. A deposit matched to a client payment: `undoPayment`
+ * takes the payment back too ("Record as payment" undone whole); without it
+ * only the match is undone and `paymentKept` names the payment that stands.
+ */
+export const BankUndoInputSchema = /* @__PURE__ */ (() => z.object({ undoPayment: z.boolean().optional(), reason: z.string().trim().min(3).max(300).optional() }))();
+export type BankUndoInput = z.infer<typeof BankUndoInputSchema>;
+export interface BankUndoResult {
+  transaction: BankTxnView;
+  /** The client payment still recorded after only its match was undone. */
+  paymentKept: { id: string; clientName: string } | null;
+  paymentUndone: boolean;
 }
 
 export const BankCategorizeInputSchema = /* @__PURE__ */ (() =>

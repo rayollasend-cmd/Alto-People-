@@ -725,12 +725,15 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
       conds.push(Prisma.sql`s."publishedAt" IS NOT NULL`);
     }
 
-    const [grouped, [rollup]] = await Promise.all([
+    const [grouped, openUpcoming, [rollup]] = await Promise.all([
       prisma.shift.groupBy({
         by: ['status'],
         where,
         _count: { _all: true },
       }),
+      // isOpenShift (@alto-people/shared): OPEN and not over yet — the
+      // count every "open shifts" label reads, here and on the homes.
+      prisma.shift.count({ where: { ...where, status: 'OPEN', endsAt: { gt: now } } }),
       // Labor cost resolves each shift's rate as: explicit payRate, else
       // the (client, position) ShiftRateDefault, else the org-wide
       // standard ($15/hr associate, $18/hr lead by position flag).
@@ -810,6 +813,10 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
       draftShifts,
       completedShifts,
       totalShifts: openShifts + assignedShifts + draftShifts + completedShifts,
+      // OPEN shifts still ahead, and those that ended unfilled (openShifts
+      // keeps both, for the fill rate's base).
+      openUpcoming,
+      wentUnfilled: Math.max(0, openShifts - openUpcoming),
       fillRatePercent,
       totalScheduledMinutes,
       projectedLaborCost: showCost ? projectedLaborCost : null,
@@ -1530,8 +1537,13 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
  */
 /**
  * Store benchmarks — per-store weekly margin/hr for the last 4 complete
- * org weeks, at standard rates with OT allocated within each associate-
- * week proportionally to where the hours were worked. Powers the labor
+ * org weeks. Each hour is priced the way a statement prices it: the pay
+ * rate on the punch (or its shift), else the client's rate card for the
+ * shift's role, else the org standard — and billed at the card's bill
+ * rate, else the standard. OT is allocated within each associate-week
+ * proportionally to where the hours were worked, at that hour's rates.
+ * `standardShare` says how much of a store's time had no card or pay
+ * rate behind it, so a screen can say "partly at standard rates". Powers the labor
  * page's sparklines and the "speed of light" benchmark (each store vs
  * the best any store ran). Client-bounded callers see their store(s).
  */
@@ -1562,6 +1574,8 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
         locationId: true,
         clockInAt: true,
         clockOutAt: true,
+        payRate: true,
+        shift: { select: { position: true, payRate: true } },
         breaks: { select: { startedAt: true, endedAt: true } },
       },
       take: TREND_CAP + 1,
@@ -1577,10 +1591,20 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
       }
       return Math.max(0, Math.round(ms / 60_000));
     };
-    // associate-week → total minutes + per (store, weekIdx) minutes.
+    // Price each entry: its own pay rate, else its shift's, else the card for the shift's role.
+    const cards = await loadRateCards(prisma, [...new Set(entries.map((e) => e.clientId).filter((c): c is string => !!c))]);
+    const priceOf = (e: (typeof entries)[number]): { pay: number; bill: number; standard: boolean } => {
+      const card = e.shift && e.clientId ? cardOn(cards, e.clientId, e.shift.position, e.clockInAt) : null;
+      const explicitPay = e.payRate != null ? Number(e.payRate) : e.shift?.payRate != null ? Number(e.shift.payRate) : null;
+      const pay = explicitPay ?? card?.payRate ?? env.DEFAULT_ASSOCIATE_PAY_RATE;
+      const bill = card?.billRate ?? env.DEFAULT_ASSOCIATE_BILL_RATE;
+      return { pay, bill, standard: card?.billRate == null || (explicitPay == null && !card) };
+    };
+    // associate-week → total minutes + per (store, weekIdx) minutes, pay- and bill-weighted.
+    type LocAgg = { mins: number; payMin: number; billMin: number; standardMin: number };
     const byAssocWeek = new Map<
       string,
-      { total: number; perLoc: Map<string, number> }
+      { total: number; perLoc: Map<string, LocAgg> }
     >();
     for (const e of entries) {
       if (!e.locationId || !e.clientId) continue;
@@ -1590,25 +1614,36 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
       );
       if (wkIdx < 1) continue;
       const key = `${e.associateId}|${wkStart}`;
-      const rec = byAssocWeek.get(key) ?? { total: 0, perLoc: new Map<string, number>() };
+      const rec = byAssocWeek.get(key) ?? { total: 0, perLoc: new Map<string, LocAgg>() };
       const mins = netMin(e);
+      const price = priceOf(e);
       rec.total += mins;
       const locKey = `${e.clientId}|${e.locationId}|${wkIdx}`;
-      rec.perLoc.set(locKey, (rec.perLoc.get(locKey) ?? 0) + mins);
+      const loc = rec.perLoc.get(locKey) ?? { mins: 0, payMin: 0, billMin: 0, standardMin: 0 };
+      loc.mins += mins;
+      loc.payMin += mins * price.pay;
+      loc.billMin += mins * price.bill;
+      if (price.standard) loc.standardMin += mins;
+      rec.perLoc.set(locKey, loc);
       byAssocWeek.set(key, rec);
     }
-    const perStoreWeek = new Map<string, { minutes: number; otMinutes: number }>();
+    // Per store-week: minutes, OT minutes, and dollars (rate × minutes) straight and OT-premium.
+    const perStoreWeek = new Map<string, { minutes: number; otMinutes: number; payMin: number; billMin: number; otPayMin: number; otBillMin: number; standardMin: number }>();
     for (const rec of byAssocWeek.values()) {
       const ot = Math.max(0, rec.total - 2_400);
-      for (const [locKey, mins] of rec.perLoc) {
-        const agg = perStoreWeek.get(locKey) ?? { minutes: 0, otMinutes: 0 };
-        agg.minutes += mins;
-        agg.otMinutes += rec.total > 0 ? (ot * mins) / rec.total : 0;
+      const otShare = rec.total > 0 ? ot / rec.total : 0;
+      for (const [locKey, loc] of rec.perLoc) {
+        const agg = perStoreWeek.get(locKey) ?? { minutes: 0, otMinutes: 0, payMin: 0, billMin: 0, otPayMin: 0, otBillMin: 0, standardMin: 0 };
+        agg.minutes += loc.mins;
+        agg.otMinutes += otShare * loc.mins;
+        agg.payMin += loc.payMin;
+        agg.billMin += loc.billMin;
+        agg.otPayMin += otShare * loc.payMin;
+        agg.otBillMin += otShare * loc.billMin;
+        agg.standardMin += loc.standardMin;
         perStoreWeek.set(locKey, agg);
       }
     }
-    const bill = env.DEFAULT_ASSOCIATE_BILL_RATE;
-    const pay = env.DEFAULT_ASSOCIATE_PAY_RATE;
     const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
     const stores = new Map<
       string,
@@ -1616,6 +1651,8 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
         clientId: string;
         locationId: string;
         weeks: Array<{ start: string; hours: number; marginPerHour: number | null }>;
+        minutes: number;
+        standardMinutes: number;
       }
     >();
     for (const [locKey, agg] of perStoreWeek) {
@@ -1633,15 +1670,18 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
               hours: 0,
               marginPerHour: null as number | null,
             })),
+            minutes: 0,
+            standardMinutes: 0,
           };
           stores.set(storeKey, s);
           return s;
         })();
       const hours = agg.minutes / 60;
-      const otHours = agg.otMinutes / 60;
-      const billed = hours * bill + otHours * bill * 0.5;
-      const cost =
-        (hours * pay + otHours * pay * 0.5) * burden + hours * env.LABOR_OVERHEAD_PER_HOUR;
+      // Rate × minutes → dollars; OT adds half again at that hour's own rates.
+      const billed = (agg.billMin + agg.otBillMin * 0.5) / 60;
+      const cost = ((agg.payMin + agg.otPayMin * 0.5) / 60) * burden + hours * env.LABOR_OVERHEAD_PER_HOUR;
+      store.minutes += agg.minutes;
+      store.standardMinutes += agg.standardMin;
       // weeks array is oldest-first: index 4-wkIdx.
       const slot = store.weeks[4 - wkIdx];
       slot.hours = Math.round(hours * 10) / 10;
@@ -1672,6 +1712,8 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
         weeks: s.weeks,
         avgMarginPerHour: avg,
         hours4w: Math.round(s.weeks.reduce((n, w) => n + w.hours, 0) * 10) / 10,
+        /** Share of the time priced at org standard rates (no card bill rate or pay rate behind it). */
+        standardShare: s.minutes > 0 ? Math.round((s.standardMinutes / s.minutes) * 100) / 100 : 0,
       };
     });
     const best = Math.max(0, ...out.map((s) => s.avgMarginPerHour ?? 0));
@@ -3383,6 +3425,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       via: 'assign',
       overrideUnavailability: parsed.data.overrideUnavailability,
       overrideRestGap: parsed.data.overrideRestGap,
+      expectUnassigned: parsed.data.expectUnassigned,
     });
 
     // Fieldglass handoff for first-time workers (deduped inside).
@@ -4595,110 +4638,141 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
       include: { locationRel: { select: { timezone: true } } },
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');
-    // Availability is wall-clock at the STORE, so convert the shift's UTC
-    // instant to the location's local day-of-week + minutes before matching.
-    const targetTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-
-    // Day-bound the target in the store's zone so the ranking's PTO flag
-    // agrees with the /assign hard block (same fix as /conflicts).
-    const targetDayStart = new Date(
-      `${dayKeyInZone(target.startsAt, targetTz)}T00:00:00Z`,
-    );
-    const targetDayEnd = new Date(
-      `${dayKeyInZone(target.endsAt, targetTz)}T00:00:00Z`,
-    );
-
-    const [associates, ptoRows, exceptionRows] = await Promise.all([
-      prisma.associate.findMany({
-        where: ACTIVE_ASSOCIATE_FILTER,
-        include: {
-          assignedShifts: {
-            where: {
-              status: { notIn: ['CANCELLED', 'COMPLETED'] },
-              startsAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
-            },
-          },
-          timeEntries: {
-            where: {
-              clockInAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
-            },
-            include: { breaks: true },
-          },
-          availability: true,
-        },
-        take: 500,
-      }),
-      // Phase 52 — APPROVED PTO covering the shift's day window. One query
-      // for the whole pool; we bucket by associateId in memory.
-      prisma.timeOffRequest.findMany({
-        take: 100,
-        where: {
-          status: 'APPROVED',
-          startDate: { lte: targetDayEnd },
-          endDate: { gte: targetDayStart },
-        },
-        select: { associateId: true },
-      }),
-      // One-off days off — same treatment as PTO in the ranking.
-      prisma.availabilityException.findMany({
-        take: 200,
-        where: { date: { gte: targetDayStart, lte: targetDayEnd } },
-        select: { associateId: true },
-      }),
-    ]);
-
-    const ptoAssociateIds = new Set([
-      ...ptoRows.map((r) => r.associateId),
-      ...exceptionRows.map((r) => r.associateId),
-    ]);
-
-    const targetDOW = zonedDayOfWeek(target.startsAt, targetTz);
-    const startMin = zonedMinutes(target.startsAt, targetTz);
-    const endMin = zonedMinutes(target.endsAt, targetTz);
-
-    const candidates: AutoFillCandidate[] = associates.map((a) => {
-      const matchesAvailability = a.availability.some(
-        (w) =>
-          w.dayOfWeek === targetDOW &&
-          w.startMinute <= startMin &&
-          w.endMinute >= endMin
-      );
-      const noConflict = !a.assignedShifts.some(
-        (s) => s.startsAt < target.endsAt && s.endsAt > target.startsAt
-      );
-      const onApprovedTimeOff = ptoAssociateIds.has(a.id);
-      const weeklyMinutesScheduled = a.assignedShifts.reduce(
-        (sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt),
-        0
-      );
-      const weeklyMinutesActual = a.timeEntries.reduce(
-        (sum, e) => sum + netWorkedMinutes(e, e.breaks),
-        0
-      );
-      const targetMinutes = paidMinutesForRange(target.startsAt, target.endsAt);
-      const wouldExceed40 = weeklyMinutesActual + targetMinutes > 40 * 60;
-
-      // The ranking is shared with the Workforce agent (lib/shiftAssign autoFillScore).
-      const score = autoFillScore({ matchesAvailability, noConflict, wouldExceed40, onApprovedTimeOff });
-
-      return {
-        associateId: a.id,
-        associateName: `${a.firstName} ${a.lastName}`,
-        weeklyMinutesScheduled,
-        weeklyMinutesActual,
-        matchesAvailability,
-        noConflict,
-        onApprovedTimeOff,
-        score,
-      };
-    });
-
-    candidates.sort((x, y) => y.score - x.score);
-    res.json(AutoFillResponseSchema.parse({ candidates: candidates.slice(0, 25) }));
+    const candidates = await rankAutoFillCandidates(req.user!, target);
+    res.json(AutoFillResponseSchema.parse({ candidates }));
   } catch (err) {
     next(err);
   }
 });
+
+/**
+ * POST /scheduling/auto-fill/batch  { shiftIds: uuid[] (≤ 25) }
+ * The same ranking for several shifts in one request — the call-outs desk
+ * shows a top pick on every row that still needs cover. Shifts outside the
+ * caller's reach are simply absent from the answer.
+ */
+schedulingRouter.post('/auto-fill/batch', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = z.object({ shiftIds: z.array(z.string().uuid()).max(25) }).safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const targets = await prisma.shift.findMany({
+      where: { id: { in: parsed.data.shiftIds }, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
+      include: { locationRel: { select: { timezone: true } } },
+    });
+    const byShift: Record<string, AutoFillCandidate[]> = {};
+    // Sequential: each ranking is a handful of client-scoped queries, and
+    // a desk with 25 open call-outs shouldn't fan out 75 at once.
+    for (const t of targets) byShift[t.id] = (await rankAutoFillCandidates(req.user!, t)).slice(0, 5);
+    res.json({ byShift });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Rank the people who could take `target`: its own client's roster (or the
+ * company's, for a client-less shift), inside the caller's reach — never
+ * another client's workers. Room before 40 hours counts the larger of what
+ * they're scheduled for and what they've worked this week (scheduled hours
+ * are the ones that will be paid), not counting this shift itself.
+ */
+async function rankAutoFillCandidates(
+  user: SessionUser,
+  target: { id: string; clientId: string | null; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null },
+): Promise<AutoFillCandidate[]> {
+  // Availability is wall-clock at the STORE, so convert the shift's UTC
+  // instant to the location's local day-of-week + minutes before matching.
+  const targetTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+
+  // Day-bound the target in the store's zone so the ranking's PTO flag
+  // agrees with the /assign hard block (same fix as /conflicts).
+  const targetDayStart = new Date(`${dayKeyInZone(target.startsAt, targetTz)}T00:00:00Z`);
+  const targetDayEnd = new Date(`${dayKeyInZone(target.endsAt, targetTz)}T00:00:00Z`);
+
+  const pool: Prisma.AssociateWhereInput = target.clientId
+    ? { ...EMPLOYED, AND: [SCHEDULABLE_USER_FILTER, atClient(target.clientId, { approvedOnly: true })] }
+    : ACTIVE_ASSOCIATE_FILTER;
+
+  const [associates, ptoRows, exceptionRows] = await Promise.all([
+    prisma.associate.findMany({
+      where: { AND: [pool, { tenantId: tenantIdForWrite() }, scopeAssociates(user)] },
+      include: {
+        assignedShifts: {
+          where: {
+            id: { not: target.id },
+            status: { notIn: ['CANCELLED', 'COMPLETED'] },
+            startsAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
+          },
+        },
+        timeEntries: {
+          where: {
+            clockInAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
+          },
+          include: { breaks: true },
+        },
+        availability: true,
+      },
+      take: 500,
+    }),
+    // Phase 52 — APPROVED PTO covering the shift's day window. One query
+    // for the whole pool; we bucket by associateId in memory.
+    prisma.timeOffRequest.findMany({
+      take: 2000,
+      where: {
+        status: 'APPROVED',
+        startDate: { lte: targetDayEnd },
+        endDate: { gte: targetDayStart },
+      },
+      select: { associateId: true },
+    }),
+    // One-off days off — same treatment as PTO in the ranking.
+    prisma.availabilityException.findMany({
+      take: 2000,
+      where: { date: { gte: targetDayStart, lte: targetDayEnd } },
+      select: { associateId: true },
+    }),
+  ]);
+
+  const ptoAssociateIds = new Set([
+    ...ptoRows.map((r) => r.associateId),
+    ...exceptionRows.map((r) => r.associateId),
+  ]);
+
+  const targetDOW = zonedDayOfWeek(target.startsAt, targetTz);
+  const startMin = zonedMinutes(target.startsAt, targetTz);
+  const endMin = zonedMinutes(target.endsAt, targetTz);
+  const targetMinutes = paidMinutesForRange(target.startsAt, target.endsAt);
+
+  const candidates: AutoFillCandidate[] = associates.map((a) => {
+    const matchesAvailability = a.availability.some(
+      (w) => w.dayOfWeek === targetDOW && w.startMinute <= startMin && w.endMinute >= endMin,
+    );
+    const noConflict = !a.assignedShifts.some((s) => s.startsAt < target.endsAt && s.endsAt > target.startsAt);
+    const onApprovedTimeOff = ptoAssociateIds.has(a.id);
+    const weeklyMinutesScheduled = a.assignedShifts.reduce((sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt), 0);
+    const weeklyMinutesActual = a.timeEntries.reduce((sum, e) => sum + netWorkedMinutes(e, e.breaks), 0);
+    const wouldExceed40 = Math.max(weeklyMinutesScheduled, weeklyMinutesActual) + targetMinutes > 40 * 60;
+
+    // The ranking is shared with the Workforce agent (lib/shiftAssign autoFillScore).
+    const score = autoFillScore({ matchesAvailability, noConflict, wouldExceed40, onApprovedTimeOff });
+
+    return {
+      associateId: a.id,
+      associateName: `${a.firstName} ${a.lastName}`,
+      weeklyMinutesScheduled,
+      weeklyMinutesActual,
+      matchesAvailability,
+      noConflict,
+      onApprovedTimeOff,
+      score,
+    };
+  });
+
+  candidates.sort((x, y) => y.score - x.score);
+  return candidates.slice(0, 25);
+}
 
 /* ===== Associate availability ========================================== */
 
@@ -4949,7 +5023,10 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       body: mgrSwapTpl.text,
       html: mgrSwapTpl.html,
       category: 'scheduling',
-      linkUrl: `/approvals?tab=swaps&swap=${created.id}`,
+      // Still waiting on the coworker — the approvals queue only lists
+      // accepted swaps, so this opens the shift; the queue link follows
+      // when the coworker accepts.
+      linkUrl: `/scheduling?shift=${created.shift.id}`,
       at: { locationId: created.shift.locationId, startsAt: created.shift.startsAt },
     });
 
@@ -5092,6 +5169,20 @@ schedulingRouter.post('/swap-requests/:id/peer-accept', async (req, res, next) =
       )}`,
       category: 'swap_peer_accepted',
       senderUserId: req.user!.id,
+    });
+    // Now it's the supervisors' to decide — straight to the queue row.
+    void notifyClientSupervisors(updated.shift.clientId, {
+      subject: `Swap ready to approve: ${updated.requester.firstName} ${updated.requester.lastName} ↔ ${updated.counterparty.firstName} ${updated.counterparty.lastName}`,
+      body: `${updated.counterparty.firstName} ${updated.counterparty.lastName} accepted the swap. It needs your approval: ${formatShiftLine({
+        position: updated.shift.position,
+        clientName: updated.shift.client?.name ?? null,
+        startsAt: updated.shift.startsAt,
+        endsAt: updated.shift.endsAt,
+        timezone: updated.shift.locationRel?.timezone ?? null,
+      })}`,
+      category: 'scheduling',
+      linkUrl: `/approvals?tab=swaps&swap=${updated.id}`,
+      at: { locationId: updated.shift.locationId, startsAt: updated.shift.startsAt },
     });
 
     res.json(toSwap(updated));
@@ -6347,6 +6438,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       startsAt: { gte: source, lt: sourceEnd },
       status: { not: 'CANCELLED' },
       ...(copyClientId ? { clientId: copyClientId } : {}),
+      ...(parsed.data.locationId ? { locationId: parsed.data.locationId } : {}),
     };
     // Cap the batch but SAY so — the old take:100 silently dropped the rest
     // of a big week while reporting skipped: 0.
@@ -6389,6 +6481,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       where: {
         ...scopeShifts(req.user!),
         ...(copyClientId ? { clientId: copyClientId } : {}),
+        ...(parsed.data.locationId ? { locationId: parsed.data.locationId } : {}),
         status: { not: 'CANCELLED' },
         // Padded ±1 day: wall-clock-preserving copies across a DST change
         // can land ±1h outside the plain-offset window. Keys are exact,
@@ -6407,13 +6500,16 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
         assignedAssociateId: true,
       },
     });
+    // The SLOT is the twin, whoever is in it: once a copied open shift is
+    // filled (auto-fill, a manager), or a carried assignment is swapped
+    // for someone else, a second copy must still see that slot as taken —
+    // keying on the assignee doubled every such shift on a re-run.
     const twinKey = (s: {
       clientId: string | null;
       locationId: string | null;
       position: string;
       startsAt: Date;
       endsAt: Date;
-      assignedAssociateId: string | null;
     }) =>
       [
         s.clientId,
@@ -6421,7 +6517,6 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
         s.position,
         s.startsAt.toISOString(),
         s.endsAt.toISOString(),
-        s.assignedAssociateId ?? 'open',
       ].join('|');
     const twinBudget = new Map<string, number>();
     for (const s of existingTarget) {
@@ -6453,7 +6548,6 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
         position: s.position,
         startsAt,
         endsAt,
-        assignedAssociateId: carry ? s.assignedAssociateId : null,
       });
       const budget = twinBudget.get(k) ?? 0;
       if (budget > 0) {
@@ -7045,10 +7139,11 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       // auto-schedule must see them or the build→auto-fill→publish flow
       // never has an auto-fill step. Assigned drafts stay private until
       // publish-week, which remains the double-booking gate.
-      status: { in: ['OPEN', 'DRAFT'] },
+      status: parsed.data.draftsOnly ? 'DRAFT' : { in: ['OPEN', 'DRAFT'] },
       assignedAssociateId: null,
       startsAt: { gte: start, lt: end },
       ...(autoClientId ? { clientId: autoClientId } : {}),
+      ...(parsed.data.locationId ? { locationId: parsed.data.locationId } : {}),
     };
 
     // Earlier shifts go first so they get first pick of candidates.
@@ -7056,7 +7151,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       where,
       orderBy: { startsAt: 'asc' },
       take: 2000,
-      include: { locationRel: { select: { timezone: true } } },
+      include: { locationRel: { select: { timezone: true, name: true } }, client: { select: { name: true } } },
     });
 
     if (openShifts.length === 0) {
@@ -7286,6 +7381,31 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         },
         req,
       });
+      // A shift that was already live (published, open) is now someone's:
+      // tell them, exactly as a hand assignment would. Drafts stay quiet
+      // until publish-week, which sends the week's notices.
+      if (shift.status !== 'DRAFT' && shift.publishedAt) {
+        void notifyShift(prisma, {
+          associateId: winner.id,
+          subject: 'New shift assigned',
+          body: `You've been assigned: ${formatShiftLine({
+            position: shift.position,
+            clientName: shift.client?.name ?? null,
+            startsAt: shift.startsAt,
+            endsAt: shift.endsAt,
+            timezone: shift.locationRel?.timezone ?? null,
+          })}`,
+          category: 'shift_assigned',
+          senderUserId: req.user!.id,
+          wa: shiftWa('alto_shift_assigned', { position: shift.position, clientName: shift.client?.name ?? null, locationName: shift.locationRel?.name ?? null, startsAt: shift.startsAt, endsAt: shift.endsAt, timezone: shift.locationRel?.timezone ?? null }),
+        });
+        void noteScheduleChange(prisma, {
+          tenantId: tenantIdForWrite(),
+          before: { id: shift.id, assignedAssociateId: null, locationId: shift.locationId, startsAt: shift.startsAt, endsAt: shift.endsAt, status: shift.status },
+          after: { id: shift.id, assignedAssociateId: winner.id, locationId: shift.locationId, startsAt: shift.startsAt, endsAt: shift.endsAt, status: 'ASSIGNED' },
+          actorUserId: req.user!.id,
+        });
+      }
 
       // Mutate in-memory state so the next iteration sees this assignment.
       winner.busy.push({ startsAt: shift.startsAt, endsAt: shift.endsAt });

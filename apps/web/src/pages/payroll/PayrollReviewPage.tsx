@@ -52,7 +52,12 @@ const RUN_STATUS_LABEL: Record<PayrollReviewReport['run']['status'], string> = {
 export function PayrollReviewPage() {
   const { id = '' } = useParams<{ id: string }>();
   const q = useQuery({ queryKey: ['payroll', 'review', id], queryFn: () => getPayrollReview(id), enabled: !!id });
-  const crumbs = [{ label: 'Payroll', to: `/payroll?run=${id}` }, { label: 'Guided close', to: `/payroll/runs/${id}/close` }, { label: 'Review' }];
+  // "Payroll to review" (?all=1 keeps the list even when this is the only run waiting).
+  const crumbs = [
+    { label: 'Payroll', to: `/payroll?run=${id}` },
+    { label: 'All reviews', to: '/payroll/review?all=1' },
+    { label: 'Review' },
+  ];
 
   if (q.isError) {
     return (

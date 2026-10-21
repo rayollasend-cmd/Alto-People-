@@ -19,7 +19,7 @@ vi.mock('@/lib/teamApi', () => ({
 // are stubs so the page's order and words are what is under test.
 vi.mock('@/components/RoleDecisionQueue', () => ({
   RoleDecisionQueue: ({ hideWhenEmpty }: { hideWhenEmpty?: boolean }) =>
-    hideWhenEmpty ? null : <div>All systems nominal — nothing needs your decision.</div>,
+    hideWhenEmpty ? null : <div>Nothing needs you.</div>,
 }));
 vi.mock('@/components/MyPlanCard', () => ({ MyPlanCard: () => <div>my plan</div> }));
 vi.mock('@/components/home/HugoSeat', () => ({ HugoSeat: () => null }));
@@ -136,7 +136,7 @@ describe('<ManagerDashboard>', () => {
     const section = heading.closest('section')!;
     expect(within(section).getByText('Time-off request waiting')).toBeInTheDocument();
     expect(within(section).getByRole('button', { name: 'Approve all 2' })).toBeInTheDocument();
-    expect(screen.queryByText(/All systems nominal/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing needs you/)).not.toBeInTheDocument();
     expect(screen.queryByText('Manager view')).not.toBeInTheDocument();
     expect(screen.queryByText(/Needs your approval/)).not.toBeInTheDocument();
   });
@@ -185,8 +185,8 @@ describe('<ManagerDashboard>', () => {
     vi.mocked(listTeamTimesheets).mockResolvedValue({ entries: [] });
     vi.mocked(listTeamTimeOff).mockResolvedValue({ requests: [] });
     renderPage();
-    expect(await screen.findByText(/All systems nominal/)).toBeInTheDocument();
-    expect(screen.getByText(/Inbox zero/)).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing needs you/)).toBeInTheDocument();
+    expect(screen.getByText(/Your team is clear/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Needs you/ })).not.toHaveTextContent(/\d/);
   });
 

@@ -63,7 +63,7 @@ export function BudgetCharts({ report: r }: { report: BudgetVsActual }) {
         columns={cols('Month', 'month')}
         rows={months}
         csvName="budget-vs-actual-net-income"
-        height={Math.max(180, sections.length * 46 + 40)}
+        height={240}
       >
         <StackedBarChart
           data={months}

@@ -217,7 +217,8 @@ floorRouter.post('/floor/flags', requireCapability('report:incident'), async (re
         subject,
         body: `${i.note}\n\nRaised from the floor by ${user.email}. Acknowledge it on My floor.`,
         category: 'floor',
-        linkUrl: '/',
+        // My floor (their home), at the flags card.
+        linkUrl: '/#floor-flags',
         excludeUserId: user.id,
         at: shift ? { locationId: shift.locationId, startsAt: shift.startsAt } : null,
         aboutAssociateId: associate?.id ?? null,

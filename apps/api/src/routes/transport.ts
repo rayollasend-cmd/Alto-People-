@@ -1052,7 +1052,8 @@ async function tellRidersTheyreDroppedOff(runId: string, now: Date) {
           subject: `${run.van.name} arrived at ${store.name}`,
           body: `${riders.map((r) => `${r.associate.firstName} ${r.associate.lastName}`).join(', ')} dropped off at ${fmtTime(now, store.timezone)}.`,
           category: 'transport',
-          linkUrl: '/',
+          // My floor's "who isn't in yet" — the riders just dropped off.
+          linkUrl: '/#not-in-yet',
           at: { locationId: store.id, startsAt: now },
         }),
       );
@@ -2295,11 +2296,14 @@ transportRouter.post('/rides/:id/cancel', MANAGE, async (req, res) => {
 transportRouter.post('/rides/:id/waive', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const { reason } = ReasonInput.parse(req.body);
-  const ride = await prisma.ride.findUnique({ where: { id }, select: rideSelect });
+  const ride = await prisma.ride.findFirst({ where: { id, tenantId: tenantIdForWrite() }, select: rideSelect });
   if (!ride) throw new HttpError(404, 'not_found', 'Ride not found.');
   const refused = whyNotWaivable(ride);
   if (refused) throw new HttpError(409, refused.code, refused.message);
-  await waiveOne(ride, reason, req.user!.id);
+  if (!(await waiveOne(ride, reason, req.user!.id))) {
+    // It changed under us (boarded, undone, charged by payroll, or waived by someone else).
+    throw new HttpError(409, 'changed', 'This ride changed a moment ago — refresh and look again. A ride someone took is never waived.');
+  }
   res.json({ ok: true });
 });
 
@@ -2314,7 +2318,7 @@ const BulkWaiveInput = z.object({ rideIds: z.array(z.string().uuid()).min(1).max
 transportRouter.post('/rides/waive', MANAGE, async (req, res) => {
   const { rideIds, reason } = BulkWaiveInput.parse(req.body);
   const ids = [...new Set(rideIds)];
-  const rides = await prisma.ride.findMany({ where: { id: { in: ids } }, select: rideSelect });
+  const rides = await prisma.ride.findMany({ where: { id: { in: ids }, tenantId: tenantIdForWrite() }, select: rideSelect });
   const found = new Map(rides.map((r) => [r.id, r]));
   const waived: string[] = [];
   const skipped: Array<{ id: string; code: string; message: string }> = [];
@@ -2329,8 +2333,8 @@ transportRouter.post('/rides/waive', MANAGE, async (req, res) => {
       skipped.push({ id, ...refused });
       continue;
     }
-    await waiveOne(ride, reason, req.user!.id);
-    waived.push(id);
+    if (await waiveOne(ride, reason, req.user!.id)) waived.push(id);
+    else skipped.push({ id, code: 'changed', message: 'This ride changed a moment ago (boarded, undone, or charged) — it wasn’t waived.' });
   }
   res.json({ waived: waived.length, waivedIds: waived, skipped });
 });
@@ -2347,8 +2351,20 @@ function whyNotWaivable(ride: WaivableRide): { code: string; message: string } |
   return null;
 }
 
-async function waiveOne(ride: WaivableRide, reason: string, actorUserId: string): Promise<void> {
-  await prisma.ride.update({ where: { id: ride.id }, data: { waivedAt: new Date(), waivedById: actorUserId, waiveReason: reason, waiveKind: 'MANAGER' } });
+/**
+ * Waive one no-show fee — written only if the ride is still exactly what was
+ * checked: a no-show, a fee owed, not waived, not taken by payroll. The read
+ * that `whyNotWaivable` judged can be seconds old (a driver may undo the
+ * no-show and board the rider meanwhile), so the write re-checks it in the
+ * same statement: a ride someone took is never waived. False when it changed;
+ * then nothing is audited and nobody is told.
+ */
+async function waiveOne(ride: WaivableRide, reason: string, actorUserId: string): Promise<boolean> {
+  const { count } = await prisma.ride.updateMany({
+    where: { id: ride.id, tenantId: tenantIdForWrite(), status: 'NO_SHOW', chargeCents: { gt: 0 }, waivedAt: null, chargedRunId: null },
+    data: { waivedAt: new Date(), waivedById: actorUserId, waiveReason: reason, waiveKind: 'MANAGER' },
+  });
+  if (count !== 1) return false;
   enqueueAudit(
     { actorUserId, action: 'transport.charge_waived', entityType: 'Ride', entityId: ride.id, metadata: { reason, cents: ride.chargeCents } },
     'transport',
@@ -2361,6 +2377,7 @@ async function waiveOne(ride: WaivableRide, reason: string, actorUserId: string)
       linkUrl: '/rides',
     }),
   );
+  return true;
 }
 
 /**

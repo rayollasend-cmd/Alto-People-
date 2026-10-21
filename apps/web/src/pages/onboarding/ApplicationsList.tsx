@@ -103,12 +103,15 @@ function whereLine(a: { clientName: string | null; position: string | null }): s
 // still accepted via URL for power-user / bookmark access.
 type StatusFilter =
   | 'ACTIVE'
+  | 'TO_REVIEW'
   | 'ARCHIVED'
   | 'ALL'
   | ApplicationStatus;
 
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'ACTIVE', label: 'Active' },
+  // Submitted + in review: everything waiting on HR (the Inbox's count).
+  { value: 'TO_REVIEW', label: 'To review' },
   { value: 'DRAFT', label: 'Draft' },
   { value: 'SUBMITTED', label: 'Submitted' },
   { value: 'IN_REVIEW', label: 'In review' },
@@ -177,6 +180,7 @@ function invitedLabel(iso: string, now: number): string {
 // and bookmarks). Guards both the persisted value and URL junk.
 const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
   'ACTIVE',
+  'TO_REVIEW',
   'ARCHIVED',
   'ALL',
   'DRAFT',
@@ -473,14 +477,16 @@ export function ApplicationsList() {
   const approvableSelected = (items ?? []).filter(
     (a) => selected.has(a.id) && a.percentComplete === 100 && !isTerminal(a),
   );
-  // Submitted and every task done: the ones HR can approve now. One click
-  // selects them all, and the bulk bar's Approve takes it from there.
+  // Waiting on HR (submitted or in review) with every task done: the ones HR
+  // can approve now. One click adds this page's to the selection, and the
+  // bulk bar's Approve takes it from there.
   const readyRows = (items ?? []).filter(
     (a) => (a.status === 'SUBMITTED' || a.status === 'IN_REVIEW') && a.percentComplete === 100,
   );
 
   // Saved views: the filters on screen as a named set (components/SavedViewsMenu).
-  const [savedViewId, setSavedViewId] = useState<string | null>(null);
+  // The view applied rides in the URL (?sv=), so a reload keeps its name.
+  const savedViewId = searchParams.get('sv');
   const viewQuery = useMemo(() => {
     const q: Record<string, string> = {};
     if (status !== 'ACTIVE') q.status = status;
@@ -490,7 +496,6 @@ export function ApplicationsList() {
     return q;
   }, [status, clientId, urlQ, invitedWindow]);
   const applySavedView = (id: string | null, query: Record<string, string>) => {
-    setSavedViewId(id);
     const nextStatus: StatusFilter = isStatusFilter(query.status) ? query.status : 'ACTIVE';
     setStoredStatus(nextStatus);
     setInvitedWindow(isInvitedWindow(query.invited) ? query.invited : 'ALL');
@@ -500,6 +505,8 @@ export function ApplicationsList() {
     if (nextStatus !== 'ACTIVE') next.set('status', nextStatus);
     if (query.clientId) next.set('clientId', query.clientId);
     if (query.q) next.set('q', query.q);
+    if (id) next.set('sv', id);
+    else next.delete('sv');
     setSearchParams(next, { replace: true });
   };
 
@@ -967,6 +974,8 @@ export function ApplicationsList() {
               const count =
                 f.value === 'ALL'
                   ? stats.total
+                  : f.value === 'TO_REVIEW'
+                    ? (stats.byStatus.SUBMITTED ?? 0) + (stats.byStatus.IN_REVIEW ?? 0)
                   : f.value === 'ACTIVE'
                     ? (stats.byStatus.DRAFT ?? 0) +
                       (stats.byStatus.SUBMITTED ?? 0) +
@@ -1022,11 +1031,11 @@ export function ApplicationsList() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => setSelected(new Set(readyRows.map((a) => a.id)))}
-              title="Select every submitted application whose tasks are all done — then approve them together"
+              onClick={() => setSelected((prev) => new Set([...prev, ...readyRows.map((a) => a.id)]))}
+              title="Add every application on this page that's waiting on review with all its tasks done — then approve them together"
             >
               <UserCheck className="h-4 w-4" />
-              Select ready ({readyRows.length})
+              Select ready on this page ({readyRows.length})
             </Button>
           )}
           {stats.stale > 0 && (

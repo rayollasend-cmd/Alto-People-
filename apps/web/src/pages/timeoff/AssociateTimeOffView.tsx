@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarOff, Plus, Wallet } from 'lucide-react';
@@ -19,7 +19,7 @@ import { listHolidays } from '@/lib/holiday117Api';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtHours, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtHours, fmtShiftRangeTz, parseYmd, ymdLocal } from '@/lib/format';
 import { enterStagger } from '@/lib/motion';
 import { performWithUndo } from '@/lib/undoToast';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -134,11 +134,12 @@ export function AssociateTimeOffView() {
   // day in. Consumed once with a replace so Back/refresh don't re-open it.
   const [searchParams, setSearchParams] = useSearchParams();
   const wantsNew = searchParams.get('new') === '1';
-  const [prefill, setPrefill] = useState<{ startDate: string; endDate: string } | null>(null);
+  const [prefill, setPrefill] = useState<Prefill | null>(null);
   useEffect(() => {
     if (!wantsNew) return;
     const date = searchParams.get('date');
-    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date) && parseYmd(date)) setPrefill({ startDate: date, endDate: date });
+    const shiftId = searchParams.get('shift');
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date) && parseYmd(date)) setPrefill({ startDate: date, endDate: date, shiftId: shiftId || null });
     setOpenCreate(true);
     setSearchParams(
       (prev) => {
@@ -482,9 +483,12 @@ interface CreateProps {
    *  from the balance-impact preview so it reflects reality. */
   requests: TimeOffRequest[] | null;
   /** The day(s) a shift card asked for ("Request this shift off"). */
-  prefill?: { startDate: string; endDate: string } | null;
+  prefill?: Prefill | null;
   onCreated: () => void;
 }
+
+/** What a shift card's "Request this shift off" opens the form on. */
+type Prefill = { startDate: string; endDate: string; shiftId?: string | null };
 
 /** Tomorrow, local — time off is almost always asked for ahead. */
 function tomorrowYmd(): string {
@@ -493,11 +497,69 @@ function tomorrowYmd(): string {
   return ymdLocal(d);
 }
 
-/** The category to start on: the one with the most time in it, so the
- *  balance line is useful from the first glance; vacation when none has any. */
-export function defaultCategory(balances: readonly TimeOffBalance[] | null): Category {
-  const best = (balances ?? []).filter((b) => b.balanceMinutes > 0).sort((a, b) => b.balanceMinutes - a.balanceMinutes)[0];
-  return best?.category ?? 'VACATION';
+/** The category to start on. The one they used last (if it still has
+ *  time in it); otherwise planned time off — vacation or PTO, whichever has
+ *  the most — because a day off filed as sick counts as an absence. Sick is
+ *  the pick only when it's the one category with time in it; vacation when
+ *  none has any. */
+export function defaultCategory(
+  balances: readonly TimeOffBalance[] | null,
+  requests: readonly Pick<TimeOffRequest, 'category' | 'status' | 'createdAt'>[] | null = null,
+): Category {
+  const withTime = (balances ?? []).filter((b) => b.balanceMinutes > 0);
+  const last = [...(requests ?? [])]
+    .filter((r) => r.status !== 'CANCELLED')
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+  if (last && withTime.some((b) => b.category === last.category)) return last.category;
+  const byMost = [...withTime].sort((a, b) => b.balanceMinutes - a.balanceMinutes);
+  const planned = byMost.find((b) => b.category !== 'SICK');
+  return planned?.category ?? byMost[0]?.category ?? 'VACATION';
+}
+
+/** "YYYY-MM-DD" of an instant at the store (a shift's own day). */
+function ymdAt(iso: string, timeZone: string | null | undefined): string {
+  if (!timeZone) return ymdLocal(new Date(iso));
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  } catch {
+    return ymdLocal(new Date(iso));
+  }
+}
+
+/**
+ * The hours a full-day request covers, day by day: a day with their shifts
+ * is those shifts' paid hours; a weekday past the last day their schedule
+ * is out for is 8 (not known yet); a day inside the published schedule
+ * with no shift is a day off — 0. Holidays count 0. Exported for tests.
+ */
+export function requestMinutesFor(
+  startDate: string,
+  endDate: string,
+  shifts: ReadonlyArray<{ startsAt: string; timezone?: string | null; minutes: number }>,
+  holidays: ReadonlySet<string> | null,
+): { minutes: number; fromSchedule: boolean } {
+  const byDay = new Map<string, number>();
+  let lastScheduled = '';
+  for (const s of shifts) {
+    const d = ymdAt(s.startsAt, s.timezone);
+    if (d > lastScheduled) lastScheduled = d;
+    if (d >= startDate && d <= endDate) byDay.set(d, (byDay.get(d) ?? 0) + s.minutes);
+  }
+  if (byDay.size === 0) {
+    const days = weekdayYmds(startDate, endDate).filter((d) => !holidays?.has(d));
+    return { minutes: days.length * 8 * 60, fromSchedule: false };
+  }
+  let minutes = 0;
+  const cur = parseYmd(startDate);
+  const end = parseYmd(endDate);
+  for (let i = 0; cur && end && cur <= end && i < 366; i++) {
+    const d = ymdLocal(cur);
+    const dow = cur.getDay();
+    if (byDay.has(d)) minutes += byDay.get(d)!;
+    else if (d > lastScheduled && dow !== 0 && dow !== 6 && !holidays?.has(d)) minutes += 8 * 60;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return { minutes, fromSchedule: true };
 }
 
 // "Single day" / "Date range" aren't in the typed i18n catalog (MessageKey
@@ -603,8 +665,8 @@ function CreateRequestDialog({
   // time in it); a shift card's day lands in the dates when it opens.
   useEffect(() => {
     if (!open || categoryTouched) return;
-    setCategory(defaultCategory(balances));
-  }, [open, categoryTouched, balances]);
+    setCategory(defaultCategory(balances, requests));
+  }, [open, categoryTouched, balances, requests]);
   useEffect(() => {
     if (!open || !prefill) return;
     setStartDate(prefill.startDate);
@@ -612,6 +674,28 @@ function CreateRequestDialog({
     setSingleDay(prefill.startDate === prefill.endDate);
     setHoursTouched(false);
     setPreset('FULL');
+  }, [open, prefill]);
+  // What the form opened on — "unsaved changes" means a change from this,
+  // not from tomorrow. A plain open after a shift card's open starts fresh.
+  const openedWith = useRef<{ start: string; end: string }>({ start: tomorrowYmd(), end: tomorrowYmd() });
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      if (prefill) openedWith.current = { start: prefill.startDate, end: prefill.endDate };
+      else {
+        const pristine = !hoursTouched && !categoryTouched && reason === '';
+        if (pristine) {
+          setStartDate(tomorrowYmd());
+          setEndDate(tomorrowYmd());
+          openedWith.current = { start: tomorrowYmd(), end: tomorrowYmd() };
+        } else {
+          openedWith.current = { start: startDate, end: endDate };
+        }
+      }
+    }
+    wasOpen.current = open;
+    // Runs on the open transition only; the rest is read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, prefill]);
 
   // Their scheduled shifts on the chosen days: a full-day request is the
@@ -622,28 +706,34 @@ function CreateRequestDialog({
     enabled: open,
     staleTime: 60_000,
   });
-  const scheduledMinutes = useMemo(() => {
-    if (!startDate || !endDate) return 0;
-    return (shiftsQuery.data?.shifts ?? [])
+  // The shift a card's "Request this shift off" was about — its hours alone
+  // when the form is still on its day.
+  const linkedShift = useMemo(
+    () => (prefill?.shiftId ? (shiftsQuery.data?.shifts ?? []).find((s) => s.id === prefill.shiftId) ?? null : null),
+    [prefill, shiftsQuery.data],
+  );
+  const onLinkedDay = !!linkedShift && !!prefill && startDate === prefill.startDate && endDate === prefill.endDate;
+  const plan = useMemo(() => {
+    if (!startDate || !endDate) return { minutes: 0, fromSchedule: false };
+    if (onLinkedDay && linkedShift) return { minutes: paidShiftMinutes(linkedShift), fromSchedule: true };
+    const mine = (shiftsQuery.data?.shifts ?? [])
       .filter((s) => s.status === 'ASSIGNED')
-      .filter((s) => {
-        const day = ymdLocal(new Date(s.startsAt));
-        return day >= startDate && day <= endDate;
-      })
-      .reduce((sum, s) => sum + paidShiftMinutes(s), 0);
-  }, [shiftsQuery.data, startDate, endDate]);
-  const fromSchedule = scheduledMinutes > 0 && !hoursTouched && preset === 'FULL';
+      .map((s) => ({ startsAt: s.startsAt, timezone: s.timezone, minutes: paidShiftMinutes(s) }));
+    return requestMinutesFor(startDate, endDate, mine, holidayDates);
+  }, [shiftsQuery.data, startDate, endDate, holidayDates, onLinkedDay, linkedShift]);
+  const scheduledMinutes = plan.fromSchedule ? plan.minutes : 0;
+  const fromSchedule = plan.fromSchedule && !hoursTouched && preset === 'FULL';
 
   // Auto-compute hours from their schedule (or the effective day count) and
   // the chosen full-day/half-day preset until they type their own number.
   useEffect(() => {
     if (!open || hoursTouched) return;
-    if (preset === 'FULL' && scheduledMinutes > 0) {
-      setHours(String(Math.round((scheduledMinutes / 60) * 100) / 100));
+    if (preset === 'FULL' && plan.fromSchedule && plan.minutes > 0) {
+      setHours(String(Math.round((plan.minutes / 60) * 100) / 100));
     } else if (dayInfo.effective > 0) {
       setHours(String(dayInfo.effective * (preset === 'FULL' ? 8 : 4)));
     }
-  }, [open, hoursTouched, dayInfo.effective, preset, scheduledMinutes]);
+  }, [open, hoursTouched, dayInfo.effective, preset, plan]);
 
   const balance = balances?.find((b) => b.category === category) ?? null;
   const pendingMinutes = useMemo(
@@ -695,8 +785,8 @@ function CreateRequestDialog({
   const pickPreset = (p: 'FULL' | 'HALF') => {
     setPreset(p);
     setHoursTouched(false);
-    if (p === 'FULL' && scheduledMinutes > 0) {
-      setHours(String(Math.round((scheduledMinutes / 60) * 100) / 100));
+    if (p === 'FULL' && plan.fromSchedule && plan.minutes > 0) {
+      setHours(String(Math.round((plan.minutes / 60) * 100) / 100));
     } else if (dayInfo.effective > 0) {
       setHours(String(dayInfo.effective * (p === 'FULL' ? 8 : 4)));
     }
@@ -710,8 +800,8 @@ function CreateRequestDialog({
   // across opens until a successful submit resets it).
   const isDirty = () =>
     categoryTouched ||
-    startDate !== (prefill?.startDate ?? tomorrowYmd()) ||
-    endDate !== (prefill?.endDate ?? tomorrowYmd()) ||
+    startDate !== openedWith.current.start ||
+    endDate !== openedWith.current.end ||
     hoursTouched ||
     reason !== '';
 
@@ -751,6 +841,31 @@ function CreateRequestDialog({
               </Select>
             )}
           </Field>
+
+          {onLinkedDay && linkedShift ? (
+            <p className="rounded-md border border-line bg-surface-raised px-3 py-2 text-sm text-ink">
+              {t('timeoff.forShift', { position: linkedShift.position, time: fmtShiftRangeTz(linkedShift.startsAt, linkedShift.endsAt, linkedShift.timezone) })}
+            </p>
+          ) : (
+            // Same-day sick calls and tomorrow's day off, one tap each.
+            <div className="flex flex-wrap gap-2">
+              {([['today', ymdLocal(new Date())], ['tomorrow', tomorrowYmd()]] as const).map(([k, d]) => (
+                <Button
+                  key={k}
+                  type="button"
+                  size="xs"
+                  variant={startDate === d && endDate === d ? 'secondary' : 'ghost'}
+                  aria-pressed={startDate === d && endDate === d}
+                  onClick={() => {
+                    setSingleDay(true);
+                    setDates(d, d);
+                  }}
+                >
+                  {t(k === 'today' ? 'timeoff.today' : 'timeoff.tomorrow')}
+                </Button>
+              ))}
+            </div>
+          )}
 
           <SegmentedControl<'single' | 'range'>
             options={[

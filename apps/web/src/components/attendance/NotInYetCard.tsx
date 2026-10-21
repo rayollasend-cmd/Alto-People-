@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, CheckCircle2, MessageSquareText, Phone, UserX } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { ArrowRight, CheckCircle2, Flag, MessageSquareText, Phone, UserX } from 'lucide-react';
+import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { getLateNow, type LateNowPerson } from '@/lib/attendanceInsightsApi';
+import { raiseFloorFlag, textCrew } from '@/lib/floorApi';
 import { fmtTimeTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { toast } from '@/components/ui/Toaster';
 import { CrewTextDialog } from '@/components/floor/CrewTextDialog';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -17,17 +21,31 @@ import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
  * Not in yet: everyone whose shift has started with no punch, most late
- * first — a call or a text one tap away, one text to all of them, and for
- * the ones past the no-show line (or who called out) the way to cover the
- * shift. Refreshes every minute.
+ * first — a call or a text one tap away, one text to everyone who is late,
+ * and for the ones past the no-show line, who called out, or who are on
+ * approved time off, the way to cover the shift. A watch-only lead can flag
+ * a no-show to the supervisor. Refreshes every minute.
  */
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
 export const lateNowKey = (siteId?: string) => ['attendance', 'late-now', siteId ?? 'all'] as const;
 
+/** tel:/sms: with digits (and a leading +) only — "(305) 555-0101 ext 2" dials wrong otherwise. */
+export const dialable = (phone: string) => phone.replace(/(?!^\+)[^\d]/g, '');
+
+const CALLED_OUT: Record<NonNullable<LateNowPerson['calledOutHow']>, string> = {
+  confirmed: 'Called out',
+  unconfirmed: 'Said they can’t make it · not confirmed',
+  'reminder-no': 'Said no to the reminder',
+};
+
+/** Shifts someone has to cover — nobody is coming. */
+const needsCover = (p: LateNowPerson) => p.status === 'no-show-risk' || p.status === 'called-out' || p.status === 'on-leave';
+
 function lateness(p: LateNowPerson): string {
-  if (p.status === 'called-out') return 'Called out';
+  if (p.status === 'called-out') return CALLED_OUT[p.calledOutHow ?? 'confirmed'];
+  if (p.status === 'on-leave') return 'On approved time off';
   if (p.minutesLate < 1) return 'Starting now';
   const h = Math.floor(p.minutesLate / 60);
   const m = p.minutesLate % 60;
@@ -40,6 +58,7 @@ const STATUS_BADGE: Record<LateNowPerson['status'], 'outline' | 'pending' | 'des
   late: 'pending',
   'no-show-risk': 'destructive',
   'called-out': 'info',
+  'on-leave': 'info',
 };
 
 export function NotInYetCard({
@@ -55,6 +74,15 @@ export function NotInYetCard({
   canCover?: boolean;
   className?: string;
 }) {
+  const { can } = useAuth();
+  // A watch-only lead can't cover — they raise the flag to whoever can.
+  const canFlag = !canCover && can('report:incident');
+  const flag = useMutation({
+    mutationFn: (p: LateNowPerson) =>
+      raiseFloorFlag({ kind: 'NO_SHOW', associateId: p.associateId, shiftId: p.shiftId, clientId: p.clientId, note: `${p.name} isn’t in — ${lateness(p).toLowerCase()} for the ${fmtTimeTz(p.startsAt, p.timezone)} shift.` }),
+    onSuccess: (_r, p) => toast.success(`Flagged to the shift supervisor: ${p.name}.`),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not raise the flag.'),
+  });
   const q = useQuery({
     queryKey: lateNowKey(siteId),
     queryFn: () => getLateNow({ siteId }),
@@ -67,9 +95,25 @@ export function NotInYetCard({
   if (q.isError) return <QueryError what="who isn’t in yet" query={q} />;
 
   const people = filter ? q.data.people.filter(filter) : q.data.people;
-  const missing = people.filter((p) => p.status !== 'called-out');
-  const textable = missing.filter((p) => p.hasPhone);
-  const needCover = people.filter((p) => p.status === 'no-show-risk' || p.status === 'called-out');
+  // "Missing" is who we're still waiting on — not the ones who said they
+  // aren't coming, and not someone on approved time off.
+  const missing = people.filter((p) => p.status === 'due' || p.status === 'late' || p.status === 'no-show-risk');
+  // A text goes to the ones actually late — not someone a minute past start.
+  const textable = missing.filter((p) => p.textable && (p.status === 'late' || p.status === 'no-show-risk'));
+  const needCover = people.filter(needsCover);
+  // /floor/crew-text texts one client at a time.
+  const sendToLate = async (body: string) => {
+    const byClient = new Map<string, string[]>();
+    for (const p of textable) byClient.set(p.clientId!, [...(byClient.get(p.clientId!) ?? []), p.shiftId]);
+    let sent = 0;
+    const noPhone: string[] = [];
+    for (const [clientId, shiftIds] of byClient) {
+      const r = await textCrew({ clientId, shiftIds, body });
+      sent += r.sent;
+      noPhone.push(...r.noPhone);
+    }
+    return { sent, noPhone };
+  };
 
   return (
     <Card className={className}>
@@ -92,7 +136,7 @@ export function NotInYetCard({
             q.data.canText && textable.length > 0 ? (
               <Button size="sm" variant="secondary" onClick={() => setTextOpen(true)}>
                 <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Text the {textable.length} not in
+                Text the {textable.length} late
               </Button>
             ) : undefined
           }
@@ -120,25 +164,33 @@ export function NotInYetCard({
                   {p.phone && (
                     <>
                       <Button size="xs" variant="outline" asChild>
-                        <a href={`tel:${p.phone}`} aria-label={`Call ${p.name}`}>
+                        <a href={`tel:${dialable(p.phone)}`} aria-label={`Call ${p.name}`}>
                           <Phone className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
                           Call
                         </a>
                       </Button>
                       <Button size="xs" variant="outline" asChild>
-                        <a href={`sms:${p.phone}`} aria-label={`Text ${p.name}`}>
+                        <a href={`sms:${dialable(p.phone)}`} aria-label={`Text ${p.name}`}>
                           <MessageSquareText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
                           Text
                         </a>
                       </Button>
                     </>
                   )}
-                  {canCover && (p.status === 'no-show-risk' || p.status === 'called-out') && (
+                  {canCover && needsCover(p) && (
+                    // The shift itself: it's still assigned to them, so the
+                    // call-outs desk (confirmed, released shifts) wouldn't list it.
                     <Button size="xs" asChild>
-                      <Link to={p.status === 'called-out' ? '/call-outs' : `/scheduling?shift=${p.shiftId}`}>
-                        {p.status === 'called-out' ? 'Find cover' : 'No-show → find cover'}
+                      <Link to={`/scheduling?shift=${p.shiftId}`}>
+                        {p.status === 'no-show-risk' ? 'No-show → find cover' : 'Find cover'}
                         <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
                       </Link>
+                    </Button>
+                  )}
+                  {canFlag && (p.status === 'no-show-risk' || p.status === 'late') && (
+                    <Button size="xs" variant="outline" loading={flag.isPending && flag.variables?.shiftId === p.shiftId} onClick={() => flag.mutate(p)}>
+                      <Flag className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                      Flag to supervisor
                     </Button>
                   )}
                 </div>
@@ -146,19 +198,16 @@ export function NotInYetCard({
             ))}
           </ul>
         )}
-        {canCover && needCover.length > 1 && (
-          <p className="text-xs text-ink-muted">
-            {needCover.length} shifts need cover — <Link to="/call-outs" className="text-accent hover:underline">open the call-outs desk</Link>.
-          </p>
-        )}
+        {canCover && needCover.length > 1 && <p className="text-xs text-ink-muted">{needCover.length} shifts need cover — each opens from its row.</p>}
       </CardContent>
       {q.data.canText && textable.length > 0 && (
         <CrewTextDialog
           open={textOpen}
           onOpenChange={setTextOpen}
           shiftIds={textable.map((p) => p.shiftId)}
-          label="Not in yet"
+          label="Late, not in yet"
           count={textable.length}
+          send={sendToLate}
         />
       )}
     </Card>

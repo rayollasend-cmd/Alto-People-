@@ -1,41 +1,41 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
   Check,
   Copy,
+  CopyPlus,
   Download,
   ListPlus,
   Mail,
   Pencil,
   Plus,
+  Trash2,
   Users,
 } from 'lucide-react';
+import { BroadcastDrawer, channelPhrase, useSendBroadcast } from './BroadcastDrawer';
 import { ApiError } from '@/lib/api';
 import {
   addSurveyQuestion,
   closeSurvey,
-  createBroadcast,
   createSurvey,
   getSurveyAggregate,
+  deleteBroadcast,
+  duplicateBroadcast,
   listBroadcasts,
+  listBroadcastTemplates,
   listSurveyQuestions,
   listSurveys,
   openSurvey,
   searchDirectory,
-  sendBroadcast,
-  updateBroadcast,
   type Broadcast,
-  type BroadcastChannel,
   type Person,
   type Survey,
   type SurveyAggregate,
   type SurveyQuestion,
   type SurveyQuestionKind,
 } from '@/lib/dirCommsApi';
-import { useClients } from '@/lib/useClients';
-import { listCostCenters, listDepartments } from '@/lib/orgApi';
-import type { CostCenter, Department } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -43,7 +43,6 @@ import { StatusBadge } from '@/lib/status';
 import { downloadCsv } from '@/lib/csv';
 import {
   fmtDateTime,
-  utcToZonedDatetimeInput,
   ymdLocal,
 } from '@/lib/format';
 import {
@@ -74,13 +73,6 @@ import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'directory' | 'broadcasts' | 'surveys';
-
-const CHANNEL_LABELS: Record<BroadcastChannel, string> = {
-  IN_APP: 'In-app',
-  EMAIL: 'Email',
-  SMS: 'SMS',
-  PUSH: 'Push',
-};
 
 const QUESTION_KIND_LABELS: Record<SurveyQuestionKind, string> = {
   SHORT_TEXT: 'Short text',
@@ -143,7 +135,15 @@ function RetryBanner({
 export function DirCommsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:communications') : false;
-  const [tab, setTab] = useState<Tab>('directory');
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('tab');
+  const tab: Tab = canManage && (requested === 'broadcasts' || requested === 'surveys') ? requested : 'directory';
+  const setTab = (t: Tab) => {
+    const next = new URLSearchParams(params);
+    if (t === 'directory') next.delete('tab');
+    else next.set('tab', t);
+    setParams(next, { replace: true });
+  };
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -311,28 +311,55 @@ function DirectoryTab() {
 
 function BroadcastsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
+  const send = useSendBroadcast();
+  const [params, setParams] = useSearchParams();
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Broadcast | null>(null);
 
   const broadcastsQuery = useQuery({ queryKey: ['dirComms', 'broadcasts'], queryFn: () => listBroadcasts() });
+  const templatesQuery = useQuery({ queryKey: ['dirComms', 'broadcast-templates'], queryFn: () => listBroadcastTemplates() });
   const rows: Broadcast[] | null = broadcastsQuery.data?.broadcasts ?? null;
   const error = broadcastsQuery.error
     ? broadcastsQuery.error instanceof ApiError
       ? broadcastsQuery.error.message
       : 'Could not load broadcasts.'
     : null;
-  const refresh = () => void broadcastsQuery.refetch();
+  const refresh = () => {
+    void broadcastsQuery.refetch();
+    void templatesQuery.refetch();
+  };
 
-  const onSend = async (id: string) => {
-    if (!(await confirm({ title: 'Send this broadcast now?' }))) return;
+  // ?broadcast=<id> (the "announcement to review" notification) opens that draft.
+  const linked = params.get('broadcast');
+  useEffect(() => {
+    if (!linked || !rows) return;
+    const b = rows.find((x) => x.id === linked);
+    if (b && b.status !== 'SENT') setEditing(b);
+    const next = new URLSearchParams(params);
+    next.delete('broadcast');
+    setParams(next, { replace: true });
+  }, [linked, rows, params, setParams]);
+
+  const onDuplicate = async (b: Broadcast) => {
     try {
-      const r = await sendBroadcast(id);
-      toast.success(`Sent to ${r.recipientCount} associates.`);
+      await duplicateBroadcast(b.id);
+      toast.success(`“${b.title}” copied to a new draft.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not send the broadcast.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not duplicate it.');
     }
   };
+  const onDelete = async (b: Broadcast, what: 'draft' | 'template') => {
+    if (!(await confirm({ title: `Delete the ${what} “${b.templateName ?? b.title}”?`, destructive: true, confirmLabel: 'Delete' }))) return;
+    try {
+      await deleteBroadcast(b.id);
+      toast.success(what === 'template' ? 'Template deleted.' : 'Draft deleted.');
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not delete it.');
+    }
+  };
+  const templates = templatesQuery.data?.broadcasts ?? [];
 
   return (
     <div className="space-y-4">
@@ -364,7 +391,21 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
               urlState={false}
               exportCsv={{ filename: 'broadcasts' }}
               columns={[
-                { key: 'title', header: 'Title', accessor: (b) => b.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                {
+                  key: 'title',
+                  header: 'Title',
+                  accessor: (b) => b.title,
+                  sortable: true,
+                  primary: true,
+                  cell: (b) => (
+                    <span className="min-w-0">
+                      <span className="font-medium text-ink">{b.title}</span>
+                      {b.status !== 'SENT' && b.createdByRole === 'MARKETING_MANAGER' && (
+                        <span className="block text-2xs text-ink-muted">Drafted by Marketing — review and send</span>
+                      )}
+                    </span>
+                  ),
+                },
                 {
                   key: 'status',
                   header: 'Status',
@@ -374,11 +415,11 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                   cell: (b) => (
                     <>
                       <StatusBadge status={b.status} />
-                      {b.status === 'SCHEDULED' && b.scheduledFor && <div className="text-2xs text-silver/70 mt-0.5">{fmtDateTime(b.scheduledFor)}</div>}
+                      {b.status === 'SCHEDULED' && b.scheduledFor && <div className="text-2xs text-ink-muted mt-0.5">{fmtDateTime(b.scheduledFor)}</div>}
                     </>
                   ),
                 },
-                { key: 'channels', header: 'Channels', accessor: (b) => b.channels.map((c) => CHANNEL_LABELS[c]).join(', '), sortable: true },
+                { key: 'channels', header: 'Channels', accessor: (b) => channelPhrase(b.channels), sortable: true },
                 { key: 'recipients', header: 'Recipients', accessor: (b) => b.receiptCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
                 { key: 'sent', header: 'Sent', accessor: (b) => b.sentAt, sortable: true, searchable: false, cardMeta: true, cell: (b) => (b.sentAt ? fmtDateTime(b.sentAt) : '—') },
                 {
@@ -389,7 +430,7 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                   csv: () => '',
                   align: 'right',
                   stopRowClick: true,
-                  className: 'space-x-2',
+                  className: 'space-x-1 whitespace-nowrap',
                   cell: (b) => (
                     <>
                       {canManage && b.status === 'DRAFT' && (
@@ -397,9 +438,19 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                           <Pencil className="mr-1 h-3 w-3" /> Edit
                         </Button>
                       )}
+                      {canManage && (
+                        <Button size="sm" variant="ghost" onClick={() => void onDuplicate(b)} aria-label={`Duplicate ${b.title}`}>
+                          <CopyPlus className="mr-1 h-3 w-3" /> Duplicate
+                        </Button>
+                      )}
+                      {canManage && b.status === 'DRAFT' && (
+                        <Button size="sm" variant="ghost" onClick={() => void onDelete(b, 'draft')} aria-label={`Delete ${b.title}`}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      )}
                       {canManage && b.status !== 'SENT' && b.status !== 'CANCELLED' && (
-                        <Button size="sm" onClick={() => onSend(b.id)}>
-                          Send
+                        <Button size="sm" onClick={() => void send(b).then((ok) => ok && refresh())}>
+                          Send…
                         </Button>
                       )}
                     </>
@@ -410,6 +461,29 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
           )}
         </CardContent>
       </Card>
+      {canManage && templates.length > 0 && (
+        <Card>
+          <CardContent className="space-y-2">
+            <h3 className="text-sm font-medium text-ink">Templates</h3>
+            <ul className="divide-y divide-line">
+              {templates.map((t) => (
+                <li key={t.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+                  <span className="min-w-0 flex-1">
+                    <span className="text-ink">{t.templateName}</span>
+                    <span className="block truncate text-xs text-ink-muted">{t.title}</span>
+                  </span>
+                  <Button size="sm" variant="outline" onClick={() => void onDuplicate(t)}>
+                    Use
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => void onDelete(t, 'template')} aria-label={`Delete template ${t.templateName}`}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
       {(showNew || editing) && (
         <BroadcastDrawer
           broadcast={editing}
@@ -425,220 +499,6 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
         />
       )}
     </div>
-  );
-}
-
-function BroadcastDrawer({
-  broadcast,
-  onClose,
-  onSaved,
-}: {
-  /** Null = create; a DRAFT broadcast = edit in place. */
-  broadcast: Broadcast | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const isEdit = broadcast !== null;
-  const [title, setTitle] = useState(broadcast?.title ?? '');
-  const [body, setBody] = useState(broadcast?.body ?? '');
-  const [clientId, setClientId] = useState(broadcast?.clientId ?? '');
-  const [departmentId, setDepartmentId] = useState(broadcast?.departmentId ?? '');
-  const [costCenterId, setCostCenterId] = useState(broadcast?.costCenterId ?? '');
-  const [scheduledFor, setScheduledFor] = useState(
-    broadcast?.scheduledFor
-      ? utcToZonedDatetimeInput(broadcast.scheduledFor)
-      : '',
-  );
-  const [saving, setSaving] = useState(false);
-
-  // Client targeting options come from the app-wide react-query cache
-  // (5-minute staleTime) instead of refetching per drawer open.
-  const {
-    clients,
-    isLoading: clientsLoading,
-    isError: clientsError,
-    refetch: refetchClients,
-  } = useClients();
-  const targetsQuery = useQuery({
-    queryKey: ['dirComms', 'broadcast-targets'],
-    queryFn: async () => {
-      const [d, cc] = await Promise.all([listDepartments(), listCostCenters()]);
-      return { departments: d.departments, costCenters: cc.costCenters };
-    },
-  });
-  const departments: Department[] | null = targetsQuery.data?.departments ?? null;
-  const costCenters: CostCenter[] | null = targetsQuery.data?.costCenters ?? null;
-  const targetsError = targetsQuery.error
-    ? targetsQuery.error instanceof ApiError
-      ? targetsQuery.error.message
-      : 'Could not load targeting options.'
-    : null;
-  const loadTargets = () => void targetsQuery.refetch();
-
-  // Departments / cost centers belong to a client — narrow the pickers when
-  // a client is chosen so cross-client combos can't be assembled.
-  const visibleDepartments = useMemo(
-    () =>
-      (departments ?? []).filter((d) => !clientId || d.clientId === clientId),
-    [departments, clientId],
-  );
-  const visibleCostCenters = useMemo(
-    () =>
-      (costCenters ?? []).filter((c) => !clientId || c.clientId === clientId),
-    [costCenters, clientId],
-  );
-
-  const onSubmit = async () => {
-    if (!title.trim() || !body.trim()) {
-      toast.error('Title and body required.');
-      return;
-    }
-    const payload = {
-      title: title.trim(),
-      body: body.trim(),
-      clientId: clientId || null,
-      departmentId: departmentId || null,
-      costCenterId: costCenterId || null,
-      scheduledFor: scheduledFor
-        ? new Date(scheduledFor).toISOString()
-        : null,
-    };
-    setSaving(true);
-    try {
-      if (isEdit && broadcast) {
-        await updateBroadcast(broadcast.id, payload);
-        toast.success('Broadcast updated.');
-      } else {
-        await createBroadcast(payload);
-        toast.success(
-          scheduledFor
-            ? `Broadcast scheduled for ${fmtDateTime(payload.scheduledFor)}.`
-            : 'Broadcast draft created.',
-        );
-      }
-      onSaved();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not save the broadcast.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
-      <DrawerHeader>
-        <DrawerTitle>{isEdit ? 'Edit broadcast' : 'New broadcast'}</DrawerTitle>
-      </DrawerHeader>
-      <DrawerBody className="space-y-4">
-        <div>
-          <Label>Title</Label>
-          <Input className="mt-1" value={title} onChange={(e) => setTitle(e.target.value)} />
-        </div>
-        <div>
-          <Label>Body</Label>
-          <Textarea
-            className="mt-1 min-h-32"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-          />
-        </div>
-        {targetsError || clientsError ? (
-          <RetryBanner
-            message={targetsError ?? 'Could not load targeting options.'}
-            onRetry={() => {
-              loadTargets();
-              if (clientsError) void refetchClients();
-            }}
-          />
-        ) : (
-          <>
-            <div>
-              <Label>Client</Label>
-              <Select
-                className="mt-1"
-                value={clientId}
-                disabled={clientsLoading}
-                onChange={(e) => {
-                  setClientId(e.target.value);
-                  // Narrowing the client invalidates any cross-client picks.
-                  setDepartmentId('');
-                  setCostCenterId('');
-                }}
-              >
-                <option value="">
-                  {clientsLoading ? 'Loading clients…' : 'All clients'}
-                </option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Department</Label>
-                <Select
-                  className="mt-1"
-                  value={departmentId}
-                  disabled={departments === null}
-                  onChange={(e) => setDepartmentId(e.target.value)}
-                >
-                  <option value="">
-                    {departments === null ? 'Loading departments…' : 'All departments'}
-                  </option>
-                  {visibleDepartments.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <Label>Cost center</Label>
-                <Select
-                  className="mt-1"
-                  value={costCenterId}
-                  disabled={costCenters === null}
-                  onChange={(e) => setCostCenterId(e.target.value)}
-                >
-                  <option value="">
-                    {costCenters === null ? 'Loading cost centers…' : 'All cost centers'}
-                  </option>
-                  {visibleCostCenters.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.code} — {c.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </div>
-          </>
-        )}
-        <div>
-          <Label>Schedule (optional)</Label>
-          <Input
-            type="datetime-local"
-            className="mt-1"
-            value={scheduledFor}
-            onChange={(e) => setScheduledFor(e.target.value)}
-          />
-          <div className="text-xs text-silver mt-1">
-            {scheduledFor
-              ? `Will be scheduled for ${fmtDateTime(new Date(scheduledFor))}.`
-              : 'Leave empty to save as a draft you send manually.'}
-          </div>
-        </div>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Save'}
-        </Button>
-      </DrawerFooter>
-    </Drawer>
   );
 }
 

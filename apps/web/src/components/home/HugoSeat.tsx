@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { useAssistant } from '@/lib/assistantContext';
+import { useAuth } from '@/lib/auth';
 
 /**
  * Hugo's seat on a home (design system §4.1): the same place on every
@@ -16,7 +17,33 @@ import { useAssistant } from '@/lib/assistantContext';
  * and answers in place. Switched off, or nothing to offer: renders
  * nothing, so the home never shows an empty assistant.
  */
-export function HugoSeat({ className }: { className?: string }) {
+/**
+ * Starters for a staff role, offered only when a model answers (it knows
+ * the page and has the records as tools). The rules-only registry can't
+ * answer these, so without a model the seat offers the registry's own.
+ */
+const ROLE_PROMPTS: Partial<Record<string, string[]>> = {
+  MARKETING_MANAGER: ['Which source brought the most hires this quarter?', 'Where does the careers funnel lose people?'],
+  FINANCE_ACCOUNTANT: ['What is blocking the next payroll?', 'Which clients are late paying?'],
+  INTERNAL_RECRUITER: ['Which postings have no applicants this week?', 'Who is waiting on an interview?'],
+  WORKFORCE_MANAGER: ['Where are we short this week?', 'Who called out today?'],
+  TRANSPORTATION_DIRECTOR: ['Which riders haven’t signed their fare authorization?', 'Which vans are due for service?'],
+  HR_ADMINISTRATOR: ['What compliance deadlines are coming up?', 'Who is stuck in onboarding?'],
+  OPERATIONS_MANAGER: ['Which stores are short today?', 'What is waiting on me?'],
+  MANAGER: ['Who on my team is heading into overtime?', 'What is waiting on me?'],
+};
+
+/** The role, or null where no session is around (a home rendered alone in a test). */
+function useRoleIfSignedIn(): string | null {
+  try {
+    return useAuth().user?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function HugoSeat({ className, prompts }: { className?: string; /** Page-specific starters, used when a model answers. */ prompts?: string[] }) {
+  const role = useRoleIfSignedIn();
   // Inside the app the seat is a way into the one pane; the question is
   // asked there, where the thread lives. Outside the provider (a test
   // rendering a home alone) it answers in place, as it first did.
@@ -33,6 +60,15 @@ export function HugoSeat({ className }: { className?: string }) {
   });
   // A thin answer (an older API, a generic test mock) is "nothing to offer".
   if (me.isLoading || me.error || !me.data?.can?.length) return null;
+  // What the chips offer: this page's (or this role's) questions when a model
+  // can answer them; otherwise the registry's. A desk is never offered the
+  // associate's "how many sick days" — policy questions still work typed.
+  const roleStarters = (prompts?.length ? prompts : role ? ROLE_PROMPTS[role] : undefined) ?? [];
+  const registry = me.data.audience === 'associate' || me.data.can.length <= 1 ? me.data.can : me.data.can.filter((c) => c.key !== 'HELP_CENTER');
+  const chips: Array<{ key: string; example: string }> =
+    me.data.model && roleStarters.length
+      ? [...roleStarters.map((q, i) => ({ key: `page-${i}`, example: q })), ...registry.filter((c) => c.key === 'DESK')].slice(0, 3)
+      : (registry.length ? registry : me.data.can).slice(0, 3);
   const send = (q: string) => {
     const t = q.trim();
     if (!t || ask.isPending) return;
@@ -56,7 +92,7 @@ export function HugoSeat({ className }: { className?: string }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {me.data.can.slice(0, 3).map((c) => (
+          {chips.map((c) => (
             <Button key={c.key} size="sm" variant="secondary" onClick={() => send(c.example)} disabled={ask.isPending}>
               {c.example}
             </Button>

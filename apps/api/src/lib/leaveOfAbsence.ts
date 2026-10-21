@@ -3,6 +3,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { renderFormPdf, fmtDay } from './claimsPdf.js';
 import { tenantIdForWrite } from './tenant.js';
+import { companyWorkweek } from './timeAnomalies.js';
+import { localDateKey } from './timezone.js';
 
 /**
  * Leave of absence — the rules behind the desk.
@@ -265,7 +267,8 @@ export async function releaseShiftsForLeave(
   const end = c.endDate ? new Date(c.endDate.getTime() + DAY_MS) : new Date(c.startDate.getTime() + 84 * DAY_MS);
   const shifts = await db.shift.findMany({
     where: { tenantId, assignedAssociateId: c.associateId, status: 'ASSIGNED', startsAt: { gte: c.startDate, lt: end } },
-    select: { id: true, clientId: true, notes: true },
+    select: { id: true, clientId: true, notes: true, startsAt: true },
+    orderBy: { startsAt: 'asc' },
     take: 500,
   });
   if (c.schedule === 'CONTINUOUS' && shifts.length > 0) {
@@ -292,6 +295,9 @@ export async function releaseShiftsForLeave(
     take: 50,
   });
   const range = `${fmtDay(c.startDate)}${c.endDate ? ` – ${fmtDay(c.endDate)}` : ' onward'}`;
+  const nowMs = Date.now();
+  const firstShift = shifts.find((s) => s.startsAt.getTime() >= nowMs) ?? shifts[0];
+  const firstToCover = firstShift ? localDateKey(firstShift.startsAt, companyWorkweek().timezone) : '';
   for (const u of leads) {
     void notifyUser(u.id, {
       subject: c.schedule === 'CONTINUOUS' && shifts.length ? `${shifts.length} shift${shifts.length === 1 ? '' : 's'} to cover — approved leave` : `Approved leave on your team — ${personName}`,
@@ -300,8 +306,9 @@ export async function releaseShiftsForLeave(
           ? `${personName} is on approved leave ${range}. ${shifts.length ? `${shifts.length} of their shifts are open again and need cover.` : 'They had no assigned shifts in that window.'}`
           : `${personName} has approved ${c.schedule === 'INTERMITTENT' ? 'intermittent' : 'reduced-schedule'} leave ${range}. They may miss some shifts at short notice; those absences are protected.`,
       category: 'scheduling',
-      // Released shifts: the open ones, from the first day of the leave.
-      linkUrl: c.schedule === 'CONTINUOUS' && shifts.length ? `/scheduling?open=1&view=day&date=${fmtDay(c.startDate)}` : '/scheduling',
+      // Released shifts: the open ones, on the week of the next one still to
+      // come (a leave approved after it began has past days with nothing to do).
+      linkUrl: c.schedule === 'CONTINUOUS' && shifts.length ? `/scheduling?open=1&view=week&date=${firstToCover}` : '/scheduling',
     });
   }
   return c.schedule === 'CONTINUOUS' ? shifts.length : 0;

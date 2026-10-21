@@ -18,7 +18,8 @@ import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from './tenant.js';
-import { scopeAssociatesIncludingFormer, scopeShifts, scopeTimeEntries, scopeWhere } from './scope.js';
+import { effectiveClientIdFilter, scopeAssociatesIncludingFormer, scopeShifts, scopeTimeEntries, scopeWhere } from './scope.js';
+import { getLaborPolicy } from './stateLaborPolicy.js';
 import { teamScope } from './delegations.js';
 import { EMPLOYED_WHERE } from './activeDefinition.js';
 import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
@@ -44,6 +45,8 @@ const DAY_MS = 86_400_000;
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MAX_HEATMAP_DAYS = 184;
 const MAX_SITE_ROWS = 20;
+/** Rows per page when walking a table in full — nothing is silently capped. */
+const PAGE = 10_000;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 type ShiftWhere = Prisma.ShiftWhereInput;
@@ -129,30 +132,50 @@ interface ScopedEvent {
  */
 async function scopedEvents(user: SessionUser, kinds: EventKind[], fromKey: string, toKeyExclusive: string, siteId?: string): Promise<ScopedEvent[]> {
   const tenantId = tenantIdForWrite();
-  const rows = await prisma.attendanceEvent.findMany({
-    where: { tenantId, kind: { in: kinds }, occurredOn: { gte: new Date(`${fromKey}T00:00:00Z`), lt: new Date(`${toKeyExclusive}T00:00:00Z`) } },
-    select: { kind: true, occurredOn: true, excusedAt: true, shiftId: true, associateId: true },
-    take: 20_000,
-  });
+  // A client-bound caller's events are narrowed in SQL (an event with no
+  // client is still checked below through its shift or person). A bounded
+  // role with no client (a site-bound lead) is left to the checks below.
+  const bound = effectiveClientIdFilter(user, undefined);
+  const where: Prisma.AttendanceEventWhereInput = {
+    tenantId,
+    kind: { in: kinds },
+    occurredOn: { gte: new Date(`${fromKey}T00:00:00Z`), lt: new Date(`${toKeyExclusive}T00:00:00Z`) },
+    ...(typeof bound === 'string' ? { OR: [{ clientId: bound }, { clientId: null }] } : {}),
+  };
+  // Every event in range, page by page — no cap that drops some at random.
+  const rows: Array<{ id: string; kind: string; occurredOn: Date; excusedAt: Date | null; shiftId: string | null; associateId: string }> = [];
+  for (let cursor: string | undefined; ; ) {
+    const page = await prisma.attendanceEvent.findMany({
+      where,
+      select: { id: true, kind: true, occurredOn: true, excusedAt: true, shiftId: true, associateId: true },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    rows.push(...page);
+    if (page.length < PAGE) break;
+    cursor = page[page.length - 1]!.id;
+  }
   const shiftIds = [...new Set(rows.map((r) => r.shiftId).filter((x): x is string => !!x))];
-  const shifts = shiftIds.length
-    ? await prisma.shift.findMany({
-        where: scopeWhere<ShiftWhere>(shiftScope(user, siteId), { id: { in: shiftIds } }),
+  const shifts: Array<{ id: string; startsAt: Date; locationId: string | null; locationRel: { timezone: string } | null }> = [];
+  for (let i = 0; i < shiftIds.length; i += PAGE) {
+    shifts.push(
+      ...(await prisma.shift.findMany({
+        where: scopeWhere<ShiftWhere>(shiftScope(user, siteId), { id: { in: shiftIds.slice(i, i + PAGE) } }),
         select: { id: true, startsAt: true, locationId: true, locationRel: { select: { timezone: true } } },
-      })
-    : [];
+      })),
+    );
+  }
   const byId = new Map<string, ShiftRef>(shifts.map((s) => [s.id, { id: s.id, startsAt: s.startsAt, locationId: s.locationId, timezone: s.locationRel?.timezone ?? companyWorkweek().timezone }]));
   const loose = siteId ? [] : [...new Set(rows.filter((r) => !r.shiftId).map((r) => r.associateId))];
-  const people = loose.length
-    ? new Set(
-        (
-          await prisma.associate.findMany({
-            where: scopeWhere<Prisma.AssociateWhereInput>({ tenantId }, scopeAssociatesIncludingFormer(user), { id: { in: loose } }),
-            select: { id: true },
-          })
-        ).map((a) => a.id),
-      )
-    : new Set<string>();
+  const people = new Set<string>();
+  for (let i = 0; i < loose.length; i += PAGE) {
+    for (const a of await prisma.associate.findMany({
+      where: scopeWhere<Prisma.AssociateWhereInput>({ tenantId }, scopeAssociatesIncludingFormer(user), { id: { in: loose.slice(i, i + PAGE) } }),
+      select: { id: true },
+    }))
+      people.add(a.id);
+  }
   const out: ScopedEvent[] = [];
   for (const r of rows) {
     const shift = r.shiftId ? byId.get(r.shiftId) : undefined;
@@ -162,12 +185,16 @@ async function scopedEvents(user: SessionUser, kinds: EventKind[], fromKey: stri
   return out;
 }
 
-/** Logged call-outs on shifts starting in [from, to), inside the caller's reach. */
+/**
+ * Confirmed call-outs on shifts starting in [from, to), inside the caller's
+ * reach — the same rows the call-outs desk counts. A PENDING one (a text read
+ * as "can't make it", never confirmed) isn't a call-out yet.
+ */
 async function scopedCallOuts(user: SessionUser, from: Date, to: Date, siteId?: string): Promise<ShiftRef[]> {
   const rows = await prisma.callOut.findMany({
     where: {
       tenantId: tenantIdForWrite(),
-      status: { not: 'CANCELLED' },
+      status: 'CONFIRMED',
       shift: scopeWhere<ShiftWhere>(shiftScope(user, siteId), { startsAt: { gte: from, lt: to } }),
     },
     select: { shift: { select: { id: true, startsAt: true, locationId: true, locationRel: { select: { timezone: true } } } } },
@@ -213,29 +240,70 @@ interface OvertimeSlice {
  * workweek, net of unpaid meal breaks. The hours past the line are placed
  * on the punches that crossed it, so they can be shown by day and store.
  * An open punch counts to now.
+ *
+ * Two passes, so a large company's weeks are counted in full: first every
+ * punch in range, page by page, as bare times — gross hours per person and
+ * week; then, for only the person-weeks whose gross passes 40 (net can't
+ * pass it if gross doesn't), the punches with their breaks and stores.
+ *
+ * Weeks are the company's workweek (payroll's overtime lookback uses the
+ * site's zone — the two can differ by an evening at a week's edge), and a
+ * client-bound caller sees the hours at their client only.
  */
 async function overtimeSlices(user: SessionUser, weeks: Week[], now: Date): Promise<Array<OvertimeSlice & { week: number }>> {
   const from = weeks[0]!.start;
   const to = weeks[weeks.length - 1]!.end;
-  const entries = await prisma.timeEntry.findMany({
-    where: scopeWhere<Prisma.TimeEntryWhereInput>({ tenantId: tenantIdForWrite(), status: { not: 'REJECTED' }, clockInAt: { gte: from, lt: to } }, scopeTimeEntries(user)),
-    select: {
-      associateId: true,
-      clockInAt: true,
-      clockOutAt: true,
-      locationId: true,
-      location: { select: { timezone: true } },
-      shift: { select: { locationId: true, locationRel: { select: { timezone: true } } } },
-      breaks: { select: { type: true, startedAt: true, endedAt: true } },
-    },
-    orderBy: { clockInAt: 'asc' },
-    take: 50_000,
-  });
+  const where = scopeWhere<Prisma.TimeEntryWhereInput>({ tenantId: tenantIdForWrite(), status: { not: 'REJECTED' }, clockInAt: { gte: from, lt: to } }, scopeTimeEntries(user));
+
+  // Pass 1: gross hours per person-week.
+  const gross = new Map<string, number>();
+  for (let cursor: string | undefined; ; ) {
+    const page = await prisma.timeEntry.findMany({
+      where,
+      select: { id: true, associateId: true, clockInAt: true, clockOutAt: true },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    for (const e of page) {
+      const week = weekIndexOf(weeks, e.clockInAt);
+      if (week < 0) continue;
+      const key = `${e.associateId}|${week}`;
+      gross.set(key, (gross.get(key) ?? 0) + Math.max(0, (e.clockOutAt ?? now).getTime() - e.clockInAt.getTime()) / HOUR_MS);
+    }
+    if (page.length < PAGE) break;
+    cursor = page[page.length - 1]!.id;
+  }
+  const over = new Set([...gross].filter(([, h]) => h > ATTENDANCE_OVERTIME_THRESHOLD_HOURS).map(([k]) => k));
+  if (over.size === 0) return [];
+  const people = [...new Set([...over].map((k) => k.split('|')[0]!))];
+
+  // Pass 2: those people's punches, in order, with breaks and stores.
+  const entries = [];
+  for (let i = 0; i < people.length; i += 1_000) {
+    entries.push(
+      ...(await prisma.timeEntry.findMany({
+        where: scopeWhere<Prisma.TimeEntryWhereInput>(where, { associateId: { in: people.slice(i, i + 1_000) } }),
+        select: {
+          associateId: true,
+          clockInAt: true,
+          clockOutAt: true,
+          locationId: true,
+          location: { select: { timezone: true } },
+          shift: { select: { locationId: true, locationRel: { select: { timezone: true } } } },
+          breaks: { select: { type: true, startedAt: true, endedAt: true } },
+        },
+      })),
+    );
+  }
+  entries.sort((a, b) => a.clockInAt.getTime() - b.clockInAt.getTime());
+
   const totals = new Map<string, number>();
   const out: Array<OvertimeSlice & { week: number }> = [];
   for (const e of entries) {
     const week = weekIndexOf(weeks, e.clockInAt);
-    if (week < 0) continue;
+    const key = `${e.associateId}|${week}`;
+    if (week < 0 || !over.has(key)) continue;
     const end = (e.clockOutAt ?? now).getTime();
     let ms = Math.max(0, end - e.clockInAt.getTime());
     for (const b of e.breaks) {
@@ -243,16 +311,15 @@ async function overtimeSlices(user: SessionUser, weeks: Week[], now: Date): Prom
       ms -= Math.max(0, (b.endedAt ?? new Date(end)).getTime() - b.startedAt.getTime());
     }
     const hours = Math.max(0, ms / HOUR_MS);
-    const key = `${e.associateId}|${week}`;
     const before = totals.get(key) ?? 0;
     const after = before + hours;
     totals.set(key, after);
-    const over = after - Math.max(before, ATTENDANCE_OVERTIME_THRESHOLD_HOURS);
-    if (over <= 0) continue;
+    const past = after - Math.max(before, ATTENDANCE_OVERTIME_THRESHOLD_HOURS);
+    if (past <= 0) continue;
     out.push({
       week,
       at: e.clockInAt,
-      hours: over,
+      hours: past,
       locationId: e.locationId ?? e.shift?.locationId ?? null,
       timezone: e.location?.timezone ?? e.shift?.locationRel?.timezone ?? companyWorkweek().timezone,
     });
@@ -273,7 +340,9 @@ export async function attendanceTrends(user: SessionUser, q: { weeks: number; si
       weeks.map((w) =>
         prisma.shift.groupBy({
           by: ['status'],
-          where: scopeWhere<ShiftWhere>(scope, PUBLISHED_LIVE, { startsAt: { gte: w.start, lt: w.end } }),
+          // The week in progress counts the shifts that have started: a
+          // future open shift isn't a miss yet.
+          where: scopeWhere<ShiftWhere>(scope, PUBLISHED_LIVE, { startsAt: { gte: w.start, lt: w.end < now ? w.end : now } }),
           _count: true,
         }),
       ),
@@ -302,7 +371,9 @@ export async function attendanceTrends(user: SessionUser, q: { weeks: number; si
   });
   for (const e of events) {
     if (e.excused || e.kind === 'CALL_OUT') continue;
-    const i = weekIndexOfKey(weeks, e.occurredOn);
+    // By the shift's real start (occurredOn is the UTC date — a Friday
+    // evening shift's would land on Saturday, in the next workweek).
+    const i = e.shift ? weekIndexOf(weeks, e.shift.startsAt) : weekIndexOfKey(weeks, e.occurredOn);
     if (i < 0) continue;
     if (e.kind === 'LATE') out[i]!.lates += 1;
     else out[i]!.noCallNoShows += 1;
@@ -427,6 +498,18 @@ function mayReachCrew(user: SessionUser): boolean {
   return can(user, 'manage:time') || can(user, 'message:crew');
 }
 
+/**
+ * Whether /floor/crew-text can reach this shift for the caller: it texts one
+ * client's shifts at a time, clamped to a client-bound caller's own — so a
+ * shift with no client, or a bounded caller with none, can't be texted here.
+ */
+function textableFor(user: SessionUser, shiftClientId: string | null): boolean {
+  if (!shiftClientId) return false;
+  const bound = effectiveClientIdFilter(user, undefined);
+  if (bound === undefined) return true;
+  return bound === shiftClientId;
+}
+
 export async function lateNow(user: SessionUser, q: { siteId?: string }, now = new Date()): Promise<LateNowResponse> {
   const shifts = await prisma.shift.findMany({
     where: scopeWhere<ShiftWhere>(shiftScope(user, q.siteId), {
@@ -448,25 +531,48 @@ export async function lateNow(user: SessionUser, q: { siteId?: string }, now = n
       assignedAssociate: { select: { firstName: true, lastName: true, phone: true } },
     },
     orderBy: { startsAt: 'asc' },
-    take: 500,
+    take: 1_000,
   });
   const reach = mayReachCrew(user);
-  const base: LateNowResponse = { generatedAt: now.toISOString(), graceMinutes: LATE_GRACE_MINUTES, noShowRiskMinutes: NO_SHOW_RISK_MINUTES, canText: reach && can(user, 'message:crew'), people: [] };
+  // A client-bound role with no client has nothing crew-text can reach.
+  const mayText = reach && can(user, 'message:crew') && effectiveClientIdFilter(user, undefined) !== null;
+  const base: LateNowResponse = { generatedAt: now.toISOString(), graceMinutes: LATE_GRACE_MINUTES, noShowRiskMinutes: NO_SHOW_RISK_MINUTES, canText: mayText, people: [] };
   if (shifts.length === 0) return base;
 
+  const tz = (s: (typeof shifts)[number]) => s.locationRel?.timezone ?? companyWorkweek().timezone;
+  const dayOf = (s: (typeof shifts)[number]) => dateKeyInZone(s.startsAt, tz(s));
   const associateIds = [...new Set(shifts.map((s) => s.assignedAssociateId!))];
   const shiftIds = shifts.map((s) => s.id);
+  const days = shifts.map(dayOf).sort();
   const earliest = shifts.reduce((m, s) => (s.startsAt < m ? s.startsAt : m), shifts[0]!.startsAt);
-  const [entries, callOuts, declined] = await Promise.all([
+  const [entries, callOuts, declined, leave] = await Promise.all([
     prisma.timeEntry.findMany({
       where: { tenantId: tenantIdForWrite(), associateId: { in: associateIds }, clockInAt: { gte: new Date(earliest.getTime() - 3 * HOUR_MS) } },
       select: { associateId: true, shiftId: true, clockInAt: true, clockOutAt: true },
       take: 5_000,
     }),
-    prisma.callOut.findMany({ where: { tenantId: tenantIdForWrite(), shiftId: { in: shiftIds }, status: { not: 'CANCELLED' } }, select: { shiftId: true } }),
+    prisma.callOut.findMany({ where: { tenantId: tenantIdForWrite(), shiftId: { in: shiftIds }, status: { not: 'CANCELLED' } }, select: { shiftId: true, status: true } }),
     prisma.attendanceConfirmation.findMany({ where: { shiftId: { in: shiftIds }, answer: 'NO' }, select: { shiftId: true } }),
+    // Approved time off doesn't release a shift on its own (the agent only
+    // proposes cover) — such a shift is still "theirs" yet nobody's coming.
+    prisma.timeOffRequest.findMany({
+      where: {
+        tenantId: tenantIdForWrite(),
+        associateId: { in: associateIds },
+        status: 'APPROVED',
+        startDate: { lte: new Date(`${days[days.length - 1]}T00:00:00Z`) },
+        endDate: { gte: new Date(`${days[0]}T00:00:00Z`) },
+      },
+      select: { associateId: true, startDate: true, endDate: true },
+    }),
   ]);
-  const calledOut = new Set([...callOuts.map((c) => c.shiftId), ...declined.map((d) => d.shiftId)]);
+  const howCalledOut = new Map<string, NonNullable<LateNowPerson['calledOutHow']>>();
+  for (const d of declined) howCalledOut.set(d.shiftId, 'reminder-no');
+  for (const c of callOuts) howCalledOut.set(c.shiftId, c.status === 'CONFIRMED' ? 'confirmed' : 'unconfirmed');
+  const onLeave = (s: (typeof shifts)[number]) => {
+    const day = dayOf(s);
+    return leave.some((l) => l.associateId === s.assignedAssociateId && dateOnlyKey(l.startDate) <= day && dateOnlyKey(l.endDate) >= day);
+  };
   const punched = (s: (typeof shifts)[number]) =>
     entries.some(
       (e) =>
@@ -482,13 +588,16 @@ export async function lateNow(user: SessionUser, q: { siteId?: string }, now = n
     if (punched(s)) continue;
     const a = s.assignedAssociate!;
     const minutesLate = Math.max(0, Math.floor((now.getTime() - s.startsAt.getTime()) / 60_000));
-    const status: LateNowPerson['status'] = calledOut.has(s.id)
+    const how = howCalledOut.get(s.id) ?? null;
+    const status: LateNowPerson['status'] = how
       ? 'called-out'
-      : minutesLate >= NO_SHOW_RISK_MINUTES
-        ? 'no-show-risk'
-        : minutesLate > LATE_GRACE_MINUTES
-          ? 'late'
-          : 'due';
+      : onLeave(s)
+        ? 'on-leave'
+        : minutesLate >= NO_SHOW_RISK_MINUTES
+          ? 'no-show-risk'
+          : minutesLate > LATE_GRACE_MINUTES
+            ? 'late'
+            : 'due';
     people.push({
       shiftId: s.id,
       associateId: s.assignedAssociateId!,
@@ -499,15 +608,17 @@ export async function lateNow(user: SessionUser, q: { siteId?: string }, now = n
       siteName: s.locationRel?.name ?? null,
       startsAt: s.startsAt.toISOString(),
       endsAt: s.endsAt.toISOString(),
-      timezone: s.locationRel?.timezone ?? companyWorkweek().timezone,
+      timezone: tz(s),
       minutesLate,
       status,
+      calledOutHow: how,
       hasPhone: !!a.phone,
+      textable: mayText && !!a.phone && textableFor(user, s.clientId),
       phone: reach ? (a.phone ?? null) : null,
     });
   }
   people.sort((x, y) => y.minutesLate - x.minutesLate || x.name.localeCompare(y.name));
-  return { ...base, people };
+  return { ...base, canText: mayText && people.some((p) => p.textable), people };
 }
 
 /* ---- Team hours ---------------------------------------------------------- */
@@ -530,25 +641,41 @@ export async function teamHours(user: SessionUser, now = new Date()): Promise<Te
       select: { associateId: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
       take: 10_000,
     }),
+    // Shifts still ahead — and the one under way, whose rest still counts.
     prisma.shift.findMany({
-      where: { tenantId: tenantIdForWrite(), assignedAssociateId: { in: ids }, status: 'ASSIGNED', publishedAt: { not: null }, startsAt: { gte: now, lt: end } },
-      select: { assignedAssociateId: true, startsAt: true, endsAt: true },
+      where: { tenantId: tenantIdForWrite(), assignedAssociateId: { in: ids }, status: 'ASSIGNED', publishedAt: { not: null }, endsAt: { gt: now }, startsAt: { lt: end } },
+      select: { assignedAssociateId: true, startsAt: true, endsAt: true, locationRel: { select: { state: true } } },
       take: 10_000,
     }),
   ]);
   const worked = new Map<string, number>();
   const onClock = new Set<string>();
+  /** People on the clock now who have already taken a meal on this punch. */
+  const atePunch = new Set<string>();
   for (const e of entries) {
     const stop = (e.clockOutAt ?? now).getTime();
     let ms = Math.max(0, stop - e.clockInAt.getTime());
     for (const b of e.breaks) if (b.type === 'MEAL') ms -= Math.max(0, (b.endedAt ?? new Date(stop)).getTime() - b.startedAt.getTime());
     worked.set(e.associateId, (worked.get(e.associateId) ?? 0) + Math.max(0, ms / HOUR_MS));
-    if (!e.clockOutAt) onClock.add(e.associateId);
+    if (!e.clockOutAt) {
+      onClock.add(e.associateId);
+      if (e.breaks.some((b) => b.type === 'MEAL')) atePunch.add(e.associateId);
+    }
   }
   const ahead = new Map<string, number>();
   for (const s of shifts) {
     const id = s.assignedAssociateId!;
-    ahead.set(id, (ahead.get(id) ?? 0) + Math.max(0, (Math.min(s.endsAt.getTime(), end.getTime()) - s.startsAt.getTime()) / HOUR_MS));
+    const spanH = (s.endsAt.getTime() - s.startsAt.getTime()) / HOUR_MS;
+    const from = Math.max(s.startsAt.getTime(), now.getTime());
+    let hours = Math.max(0, (Math.min(s.endsAt.getTime(), end.getTime()) - from) / HOUR_MS);
+    // Worked hours are net of the unpaid meal; so is this. The state's rule
+    // where it has one, else the usual half hour on a shift of six or more.
+    const policy = getLaborPolicy(s.locationRel?.state);
+    const mealAfter = policy.mealBreakRequiredAfterHours ?? 6;
+    const mealH = (policy.mealBreakRequiredAfterHours !== null ? policy.mealBreakMinMinutes : 30) / 60;
+    const underWay = s.startsAt <= now;
+    if (spanH >= mealAfter && !(underWay && atePunch.has(id))) hours = Math.max(0, hours - mealH);
+    ahead.set(id, (ahead.get(id) ?? 0) + hours);
   }
   const people = reports.map((r) => {
     const w = round1(worked.get(r.id) ?? 0);

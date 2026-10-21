@@ -9,17 +9,18 @@
 import type { PrismaClient } from '@prisma/client';
 import { type Capability, type Role, can as userCan } from '@alto-people/shared';
 import { computeNoShowRisk } from './noShowRisk.js';
-import { startOfWeekUTC } from './timeAnomalies.js';
+import { companyWorkweek, startOfWeekUTC } from './timeAnomalies.js';
 import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from './agentCapabilities.js';
 import { I9_SECTION2, blockerWords, pendingSection2, section2Link } from './complianceAgent.js';
 import { INCIDENT_LOOP, closable, incidentWhere, openDays, openIncidents, severityWords } from './incidentLoop.js';
 import { COVERAGE_CREDENTIALS, latestCoverage } from './credentialCoverage.js';
 import { tenantIdForWrite } from './tenant.js';
-import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import { addDaysInZone, localDateKey } from './timezone.js';
 
 const DAY_MS = 24 * 3600_000;
-/** Store-local "YYYY-MM-DD" — the date a deep link opens the schedule or a queue on. */
-const ymd = (d: Date) => localDateKey(d, DEFAULT_TIMEZONE);
+/** Company-local "YYYY-MM-DD" (the company's own zone, the same one its
+ *  workweek starts in) — the date a deep link opens the schedule or a queue on. */
+const ymd = (d: Date) => localDateKey(d, companyWorkweek().timezone);
 
 export type DecisionDomain =
   | 'site-ops'
@@ -99,17 +100,20 @@ export async function computeRoleDecisions(
 
   /* ----- Site operations (supervisors + anyone managing time) ----------- */
   if (can('manage:time')) {
+    const queueFloor = new Date(now.getTime() - 90 * DAY_MS);
     const [walkIns, unapproved, oldestUnapproved] = await Promise.all([
       prisma.clockInRequest.findMany({
         where: { status: 'PENDING', ...clientClamp },
         select: { requestedAt: true },
         take: 100,
       }),
+      // The same 90-day window the Inbox counts — older COMPLETED rows are
+      // history, not a queue (countApprovalQueues).
       prisma.timeEntry.count({
-        where: { status: 'COMPLETED', clockInAt: { lt: thisWeekStart }, ...clientClamp },
+        where: { status: 'COMPLETED', clockInAt: { gte: queueFloor, lt: thisWeekStart }, ...clientClamp },
       }),
       prisma.timeEntry.findFirst({
-        where: { status: 'COMPLETED', clockInAt: { lt: thisWeekStart }, ...clientClamp },
+        where: { status: 'COMPLETED', clockInAt: { gte: queueFloor, lt: thisWeekStart }, ...clientClamp },
         orderBy: { clockInAt: 'asc' },
         select: { clockInAt: true },
       }),
@@ -141,7 +145,8 @@ export async function computeRoleDecisions(
         ageDays: null,
         // The queue, opened on exactly the weeks that fired this: the oldest
         // unapproved punch through the day before this week.
-        linkUrl: `/time-attendance?tab=queue&from=${ymd(oldestUnapproved?.clockInAt ?? thisWeekStart)}&to=${ymd(new Date(thisWeekStart.getTime() - DAY_MS))}`,
+        // `to` is the last instant before this week, read as a local day.
+        linkUrl: `/time-attendance?tab=queue&from=${ymd(oldestUnapproved?.clockInAt ?? queueFloor)}&to=${ymd(new Date(thisWeekStart.getTime() - 1))}`,
       });
     }
   }
@@ -209,16 +214,16 @@ export async function computeRoleDecisions(
     }
   }
   if (can('manage:scheduling')) {
-    const [openToday, claims] = await Promise.all([
-      prisma.shift.count({
-        where: {
-          publishedAt: { not: null },
-          status: 'OPEN',
-          assignedAssociateId: null,
-          startsAt: { gte: now, lt: new Date(now.getTime() + DAY_MS) },
-          ...clientClamp,
-        },
-      }),
+    const openWhere = {
+      publishedAt: { not: null },
+      status: 'OPEN' as const,
+      assignedAssociateId: null,
+      startsAt: { gte: now, lt: new Date(now.getTime() + DAY_MS) },
+      ...clientClamp,
+    };
+    const [openToday, openSpan, claims] = await Promise.all([
+      prisma.shift.count({ where: openWhere }),
+      prisma.shift.aggregate({ where: openWhere, _min: { startsAt: true }, _max: { startsAt: true } }),
       prisma.openShiftClaim.count({
         where: { status: 'PENDING', ...(user.clientId ? { shift: { clientId: user.clientId } } : {}) },
       }),
@@ -233,7 +238,13 @@ export async function computeRoleDecisions(
           'The auto-fill engine already invited the eligible bench — these still need a hand.',
         stakes: null,
         ageDays: null,
-        linkUrl: `/scheduling?open=1&view=day&date=${ymd(now)}`,
+        // The next 24h can straddle midnight: one day's view when they all
+        // fall on one day, else the week, opened on the first of them.
+        linkUrl: (() => {
+          const first = openSpan._min.startsAt ?? now;
+          const last = openSpan._max.startsAt ?? first;
+          return `/scheduling?open=1&view=${ymd(first) === ymd(last) ? 'day' : 'week'}&date=${ymd(first)}`;
+        })(),
       });
     }
     // Prediction, not reaction: tomorrow's shifts held by high-risk
@@ -253,7 +264,7 @@ export async function computeRoleDecisions(
             .join(', ')}) — worth a confirmation text tonight or a pre-arranged backup.`,
           stakes: null,
           ageDays: null,
-          linkUrl: `/scheduling?view=day&date=${ymd(new Date(now.getTime() + DAY_MS))}`,
+          linkUrl: `/scheduling?view=day&date=${ymd(addDaysInZone(now, 1, companyWorkweek().timezone))}`,
         });
       }
     }
@@ -343,7 +354,7 @@ export async function computeRoleDecisions(
         ageDays: null,
         // Carry the filter that made this fire — the URL param beats the
         // list's persisted status chip.
-        linkUrl: '/onboarding?status=SUBMITTED',
+        linkUrl: '/onboarding?status=TO_REVIEW',
       });
     }
     // Agent families step 4: with the Compliance agent's i9.section2 running, the desk

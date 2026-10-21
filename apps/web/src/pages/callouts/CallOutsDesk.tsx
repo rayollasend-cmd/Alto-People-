@@ -7,7 +7,8 @@ import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtRelativeDayTz, fmtShiftRangeTz } from '@/lib/format';
 import { CALL_OUT_REASONS, listCallOuts, recordCallOutFor, type CallOutItem, type CallOutReason } from '@/lib/callOutsApi';
-import { assignShift, getAutoFillCandidates, listShifts } from '@/lib/schedulingApi';
+import { assignShift, getAutoFillBatch, listShifts } from '@/lib/schedulingApi';
+import type { AutoFillResponse } from '@alto-people/shared';
 import { ListTemplate } from '@/components/templates';
 import { Avatar } from '@/components/ui/Avatar';
 import { QueryError } from '@/components/ui/QueryError';
@@ -73,39 +74,51 @@ function CoverBadge({ item }: { item: CallOutItem }) {
 
 /**
  * The one-click fill on a shift still looking for cover: the best-ranked
- * person who's free (the same ranking the bench asks), assigned in place —
- * and the shift itself, one click away, for anything the pick can't settle.
+ * person from the shift's own store who is free all of it — posted
+ * availability covers it, no clash, no time off, and it doesn't take them
+ * past 40 scheduled hours — assigned in place. Anyone less certain is the
+ * shift's own page, one click away. The assign only lands if the shift is
+ * still unassigned: a lead (or the bench) who filled it a moment ago wins.
  */
-function CoverActions({ item, canManage }: { item: CallOutItem; canManage: boolean }) {
+type Candidates = AutoFillResponse['candidates'];
+
+function CoverActions({ item, canManage, candidates, picksLoaded }: { item: CallOutItem; canManage: boolean; candidates: Candidates | undefined; picksLoaded: boolean }) {
   const qc = useQueryClient();
   const looking = item.cover.state !== 'covered';
-  const picks = useQuery({
-    queryKey: ['scheduling', 'auto-fill', item.shift.id],
-    queryFn: () => getAutoFillCandidates(item.shift.id),
-    enabled: canManage && looking,
-    staleTime: 60_000,
-    retry: false,
-  });
-  const top = (picks.data?.candidates ?? []).find((c) => c.associateId !== item.associateId && c.noConflict && !c.onApprovedTimeOff && c.score > 0) ?? null;
+  const top =
+    (candidates ?? []).find(
+      (c) => c.associateId !== item.associateId && c.noConflict && !c.onApprovedTimeOff && c.matchesAvailability && c.score >= 0.99,
+    ) ?? null;
   const assign = useMutation({
-    mutationFn: (pick: { associateId: string; associateName: string }) => assignShift(item.shift.id, { associateId: pick.associateId }),
+    mutationFn: (pick: { associateId: string; associateName: string }) => assignShift(item.shift.id, { associateId: pick.associateId, expectUnassigned: true }),
     onSuccess: (_shift, pick) => {
       toast.success(`${pick.associateName} has the ${item.shift.position} shift. They were told.`);
       void qc.invalidateQueries({ queryKey: ['callouts'] });
       void qc.invalidateQueries({ queryKey: ['scheduling'] });
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not assign — open the shift to pick someone.'),
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.message : 'Could not assign — open the shift to pick someone.');
+      if (e instanceof ApiError && e.status === 409) {
+        void qc.invalidateQueries({ queryKey: ['callouts'] });
+        void qc.invalidateQueries({ queryKey: ['scheduling', 'auto-fill-batch'] });
+      }
+    },
   });
   if (!canManage) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
       {looking && top && (
-        <Button size="sm" onClick={() => assign.mutate(top)} loading={assign.isPending} title={`Best fit: ${Math.round(top.score * 100)}% — free, no conflict, ${Math.round(top.weeklyMinutesScheduled / 60)} h already this week`}>
+        <Button
+          size="sm"
+          onClick={() => assign.mutate(top)}
+          loading={assign.isPending}
+          title={`Free for all of it, no clash, ${Math.round(Math.max(top.weeklyMinutesScheduled, top.weeklyMinutesActual) / 60)} h already this week`}
+        >
           <UserCheck className="h-4 w-4" aria-hidden="true" />
           Assign {top.associateName}
         </Button>
       )}
-      {looking && picks.isSuccess && !top && <span className="text-xs text-ink-muted">Nobody free ranks for it yet.</span>}
+      {looking && picksLoaded && !top && <span className="text-xs text-ink-muted">Nobody at this store is free for all of it — open the shift to choose.</span>}
       <Button size="sm" variant="ghost" asChild>
         <Link to={`/scheduling?shift=${item.shift.id}`}>
           <CalendarSearch className="h-4 w-4" aria-hidden="true" />
@@ -116,7 +129,7 @@ function CoverActions({ item, canManage }: { item: CallOutItem; canManage: boole
   );
 }
 
-function CallOutRow({ item, canManage, highlight }: { item: CallOutItem; canManage: boolean; highlight: boolean }) {
+function CallOutRow({ item, canManage, highlight, candidates, picksLoaded }: { item: CallOutItem; canManage: boolean; highlight: boolean; candidates?: Candidates; picksLoaded?: boolean }) {
   const [open, setOpen] = useState(false);
   const when = `${fmtRelativeDayTz(item.shift.startsAt, item.shift.timezone, Date.now())} · ${fmtShiftRangeTz(item.shift.startsAt, item.shift.endsAt, item.shift.timezone)}`;
   return (
@@ -142,7 +155,7 @@ function CallOutRow({ item, canManage, highlight }: { item: CallOutItem; canMana
             {item.hasRecording && <span className="text-xs text-ink-muted">Left a voice message</span>}
           </div>
           {item.note && <p className="mt-1.5 text-sm text-ink">“{item.note}”</p>}
-          <CoverActions item={item} canManage={canManage} />
+          <CoverActions item={item} canManage={canManage} candidates={candidates} picksLoaded={!!picksLoaded} />
         </div>
         {item.cover.steps.length > 0 && (
           <Button size="sm" variant="ghost" className="ml-11 sm:ml-0" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={`${open ? 'Hide' : 'Show'} how cover is going for ${item.name}`}>
@@ -284,6 +297,15 @@ export function CallOutsDesk() {
   }, [highlight]);
   const looking = (d?.items ?? []).filter((i) => i.cover.state !== 'covered');
   const covered = (d?.items ?? []).filter((i) => i.cover.state === 'covered');
+  // One request ranks every shift still looking for cover (not one per row).
+  const lookingShiftIds = useMemo(() => [...new Set(looking.map((i) => i.shift.id))].slice(0, 25).sort(), [looking]);
+  const picks = useQuery({
+    queryKey: ['scheduling', 'auto-fill-batch', lookingShiftIds],
+    queryFn: () => getAutoFillBatch(lookingShiftIds),
+    enabled: canManage && lookingShiftIds.length > 0,
+    staleTime: 60_000,
+    retry: false,
+  });
 
   return (
     <ListTemplate
@@ -346,7 +368,7 @@ export function CallOutsDesk() {
                   </h2>
                   <Card>
                     <CardContent className="p-4">
-                      <ul className="divide-y divide-line">{looking.map((i) => <CallOutRow key={i.id} item={i} canManage={canManage} highlight={highlight === i.id} />)}</ul>
+                      <ul className="divide-y divide-line">{looking.map((i) => <CallOutRow key={i.id} item={i} canManage={canManage} highlight={highlight === i.id} candidates={picks.data?.byShift[i.shift.id]} picksLoaded={picks.isSuccess} />)}</ul>
                     </CardContent>
                   </Card>
                 </section>

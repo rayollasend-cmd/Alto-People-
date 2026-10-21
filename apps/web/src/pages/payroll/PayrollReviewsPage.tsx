@@ -24,8 +24,12 @@ export function PayrollReviewsPage() {
   // One run waiting: open it — the list would be a click with nothing to
   // choose. ?all=1 keeps the list (and Back never bounces: it's a replace).
   const [params] = useSearchParams();
-  const only = q.data?.waiting.length === 1 ? q.data.waiting[0] : null;
+  // Only on data fetched for this visit: a cached list from before a
+  // sign-off would send the person to a run that no longer waits on them.
+  const fresh = q.isFetchedAfterMount && !q.isFetching;
+  const only = fresh && q.data?.waiting.length === 1 ? q.data.waiting[0] : null;
   if (only && params.get('all') !== '1') return <Navigate to={`/payroll/runs/${only.id}/review`} replace />;
+  if (!fresh && params.get('all') !== '1' && q.data?.waiting.length === 1) return <Skeleton className="h-64" />;
   return (
     <ListTemplate
       title="Payroll to review"

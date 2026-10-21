@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, onTestFinished } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -120,6 +120,10 @@ beforeEach(() => {
 
 describe('<AdminTimeView> pay-period picker', () => {
   it('lists the server periods with current/paid markers', async () => {
+    // "Current" is the reader's own date, not the server's flag.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-01T12:00:00'));
+    onTestFinished(() => vi.useRealTimers());
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
@@ -903,6 +907,13 @@ describe('<AdminTimeView> queue opens on the pay period', () => {
     // Already run: nothing left to approve there.
     expect(defaultQueuePeriod([periods[0]!, { ...periods[1]!, hasRun: true }], '2026-10-20')).toMatchObject({ which: 'CURRENT', period: { start: '2026-10-17' } });
     expect(defaultQueuePeriod([], '2026-10-20')).toBeNull();
+  });
+
+  it('decides "current" on the reader\'s date, not the server\'s UTC flag', () => {
+    // Friday Oct 30, 6 PM Pacific: the server (UTC) already calls the next
+    // period current. The reader is still on the last day of theirs.
+    const periods = [P('2026-10-31', '2026-11-13', true, false), P('2026-10-17', '2026-10-30', false, false), P('2026-10-03', '2026-10-16', false, true)];
+    expect(defaultQueuePeriod(periods, '2026-10-30')).toMatchObject({ which: 'CURRENT', period: { start: '2026-10-17' } });
   });
 
   it('opens on the current period instead of the last 14 days', async () => {

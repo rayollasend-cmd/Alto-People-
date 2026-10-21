@@ -40,7 +40,7 @@ import { renderPayrollReviewPdf } from '../lib/payrollReviewPdf.js';
 import { renderPayrollReviewXlsx } from '../lib/payrollReviewXlsx.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
+import { scopePayrollRuns, scopePayrollSchedules, scopeTimeEntries, scopeWhere } from '../lib/scope.js';
 import { membershipWindows, nextPaydayOn, periodAfter, scheduleFilterFor, tenantUsesScheduleRules } from '../lib/payScheduleMembership.js';
 import { assignPeople } from './paySchedules.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
@@ -590,6 +590,116 @@ payrollRouter.post('/runs/exceptions', PROCESS, async (req, res, next) => {
       counts: result.counts,
     });
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Approve the clean time behind a run's "unapproved time" warning, from
+ * the payroll screen. The cut is the exception scan's own: the run's
+ * client, the period (UTC days, as the run pays them), and — for a run on
+ * one pay schedule — each person's days on that schedule. Only the people
+ * named, and only entries a person need not read first: no anomaly flags,
+ * no kiosk punch waiting for a supervisor (no photo, face mismatch…), no
+ * correction the worker submitted. Each is written only while still
+ * COMPLETED. Needs both payroll and time approval rights.
+ */
+const ApproveCleanTimeSchema = z.object({
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  clientId: z.string().uuid().nullish(),
+  payrollScheduleId: z.string().uuid().nullish(),
+  associateIds: z.array(z.string().uuid()).min(1).max(500),
+});
+
+payrollRouter.post('/runs/approve-clean-time', PROCESS, requireCapability('manage:time'), async (req, res, next) => {
+  try {
+    const parsed = ApproveCleanTimeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+    const periodStart = new Date(`${input.periodStart}T00:00:00.000Z`);
+    const periodEndExclusive = new Date(`${input.periodEnd}T00:00:00.000Z`);
+    periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+    if (!(periodEndExclusive > periodStart)) throw new HttpError(400, 'invalid_period', 'The period ends before it starts');
+    const scheduleId = input.payrollScheduleId ? (await assertScheduleInReach(req.user!, input.payrollScheduleId)).id : null;
+
+    let entries = await prisma.timeEntry.findMany({
+      where: scopeWhere<Prisma.TimeEntryWhereInput>(
+        {
+          tenantId: tenantIdForWrite(),
+          status: 'COMPLETED',
+          clockInAt: { gte: periodStart, lt: periodEndExclusive },
+          associateId: { in: input.associateIds },
+        },
+        input.clientId ? { clientId: input.clientId } : null,
+        scopeTimeEntries(req.user!),
+      ),
+      select: {
+        id: true,
+        associateId: true,
+        clockInAt: true,
+        anomalies: true,
+        location: { select: { timezone: true } },
+        kioskPunches: { where: { reviewStatus: 'PENDING' }, select: { id: true } },
+      },
+      take: 5000,
+    });
+    if (scheduleId) {
+      const { inWindows, workDayOf, ymd } = await import('../lib/payScheduleMembership.js');
+      const windows = await membershipWindows(prisma, scheduleId, ymd(periodStart), ymd(new Date(periodEndExclusive.getTime() - 86_400_000)));
+      entries = entries.filter((e) => inWindows(windows, e.associateId, workDayOf(e.clockInAt, e.location?.timezone)));
+    }
+
+    // A correction the worker submitted (or the kiosk prompted) holds the
+    // entry it names — and, for a missed punch, that person's day.
+    const corrections = entries.length
+      ? await prisma.timeCorrectionRequest.findMany({
+          where: { tenantId: tenantIdForWrite(), status: { in: ['SUBMITTED', 'PROMPTED'] }, associateId: { in: [...new Set(entries.map((e) => e.associateId))] } },
+          select: { associateId: true, timeEntryId: true, workDate: true },
+        })
+      : [];
+    const heldEntry = new Set(corrections.map((c) => c.timeEntryId).filter((x): x is string => !!x));
+    const heldDay = new Set(corrections.filter((c) => c.workDate).map((c) => `${c.associateId}|${c.workDate!.toISOString().slice(0, 10)}`));
+
+    const clean: string[] = [];
+    let flagged = 0;
+    let awaitingReview = 0;
+    let awaitingCorrection = 0;
+    for (const e of entries) {
+      const anomalies = Array.isArray(e.anomalies) ? e.anomalies : [];
+      if (anomalies.length > 0) flagged++;
+      else if (e.kioskPunches.length > 0) awaitingReview++;
+      else if (heldEntry.has(e.id) || heldDay.has(`${e.associateId}|${e.clockInAt.toISOString().slice(0, 10)}`)) awaitingCorrection++;
+      else clean.push(e.id);
+    }
+
+    const { approveCompletedEntries } = await import('./time.js');
+    const done = clean.length ? await approveCompletedEntries(req.user!, clean, req) : { approved: [], failed: [] };
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'payroll.approve_clean_time',
+        entityType: 'PayrollPeriod',
+        entityId: `${input.periodStart}..${input.periodEnd}`,
+        metadata: {
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          clientId: input.clientId ?? null,
+          payrollScheduleId: scheduleId,
+          people: input.associateIds.length,
+          approved: done.approved.length,
+          failed: done.failed.length,
+          flagged,
+          awaitingReview,
+          awaitingCorrection,
+        },
+      },
+      'payroll.approve_clean_time',
+    );
+    res.json({ approved: done.approved.length, failed: done.failed.length, flagged, awaitingReview, awaitingCorrection });
   } catch (err) {
     next(err);
   }
@@ -1570,6 +1680,50 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, idempotent, async (req, res, n
           .join(', ')}${unsupported.length > 3 ? ` and ${unsupported.length - 3} more` : ''}. Set a configured state rate or correct their work state, then re-run.`,
         { count: unsupported.length },
       );
+    }
+    // The app asks for a re-scan of a regular run as it is finalized: a
+    // blocker that appeared after the wizard's preview (a W-4 removed, a
+    // local tax not yet reviewed, pay under the prevailing wage) stops it
+    // here unless the person finalizing says, on the record, to go ahead.
+    // (API callers that don't ask keep the finalize they had.)
+    const finalizeBody = (req.body ?? {}) as { recheckExceptions?: unknown; acknowledgeBlocking?: unknown };
+    if (run.kind === 'REGULAR' && finalizeBody.recheckExceptions === true) {
+      const periodEndExclusive = new Date(run.periodEnd);
+      periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+      const inRun = new Set(
+        (await prisma.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { associateId: true } })).map((i) => i.associateId),
+      );
+      const scan = await computePayrollExceptions(prisma, {
+        periodStart: run.periodStart,
+        periodEndExclusive,
+        clientId: run.clientId,
+        payrollScheduleId: run.payrollScheduleId,
+      });
+      const blockers = scan.exceptions.filter((e) => e.severity === 'BLOCKING' && e.kind !== 'UNSUPPORTED_STATE' && inRun.has(e.associateId));
+      const acknowledged = finalizeBody.acknowledgeBlocking === true;
+      if (blockers.length > 0 && !acknowledged) {
+        throw new HttpError(
+          409,
+          'blocking_exceptions',
+          `${blockers.length} blocking ${blockers.length === 1 ? 'issue' : 'issues'} in this run: ${blockers
+            .slice(0, 3)
+            .map((b) => `${b.associateName} — ${b.message}`)
+            .join('; ')}${blockers.length > 3 ? ` and ${blockers.length - 3} more` : ''}. Fix them, or finalize anyway with the acknowledgement.`,
+          { count: blockers.length, kinds: [...new Set(blockers.map((b) => b.kind))] },
+        );
+      }
+      if (blockers.length > 0) {
+        enqueueAudit(
+          {
+            actorUserId: req.user!.id,
+            action: 'payroll.finalized_over_blocking',
+            entityType: 'PayrollRun',
+            entityId: run.id,
+            metadata: { blockers: blockers.map((b) => ({ associateId: b.associateId, kind: b.kind })) },
+          },
+          'payroll.finalized_over_blocking',
+        );
+      }
     }
     const updated = await prisma.payrollRun.update({
       where: { id: run.id },
@@ -3872,6 +4026,7 @@ payrollRouter.get('/me/items', async (req, res, next) => {
         earnings: true,
         deductions: { select: { code: true, category: true, label: true, sourceId: true, employeeAmount: true, employerAmount: true } },
         taxLines: { where: { kind: 'STATE_PROGRAM', employer: false }, select: { code: true, label: true, amount: true } },
+        payrollRun: { select: { kind: true } },
       },
     });
     // Van rides taken from each check — their own paystub line.
@@ -3895,7 +4050,7 @@ payrollRouter.get('/me/items', async (req, res, next) => {
       };
     };
     const payload: PayrollItemListResponse = PayrollItemListResponseSchema.parse({
-      items: rows.map((r) => ({ ...toItem(r), transport: transportFor(r) })),
+      items: rows.map((r) => ({ ...toItem(r), runKind: r.payrollRun.kind, transport: transportFor(r) })),
     });
     res.json(payload);
   } catch (err) {

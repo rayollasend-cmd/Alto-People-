@@ -245,7 +245,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
           )}
           {doors.length > 0 && <div className="mt-2" />}
           {doors.map((door) => {
-            const single = door.children.length === 1 && door.target.key === door.children[0]!.key;
+            const single = door.flat || (door.children.length === 1 && door.target.key === door.children[0]!.key);
             if (single) {
               if (!notInTabBar(door.target)) return null;
               return <MobileLink key={door.key} to={door.target.path} active={activePath === door.target.path} label={door.label} icon={DOOR_ICONS[door.key]} badge={badgeFor(door.target)} />;

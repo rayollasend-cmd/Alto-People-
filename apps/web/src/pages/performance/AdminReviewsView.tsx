@@ -49,6 +49,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { useTerm } from '@/lib/auth';
+import { ReviewRecordPanel } from './ReviewRecordPanel';
 import { pickOne } from '@/lib/validationCopy';
 
 /** Start/end of the most recently COMPLETED calendar quarter, as local
@@ -577,85 +578,73 @@ function CreateReviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-5xl">
         <DialogHeader>
           <DialogTitle>New performance review</DialogTitle>
           <DialogDescription>
-            The review starts as a draft — you can revise before submitting.
+            Their record for the period sits beside the form — write from it, then rate. It starts as a draft.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="grid gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Associate" required>
-              <AssociatePicker value={associate} onChange={setAssociate} />
+        <form onSubmit={handleSubmit} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+          <div className="grid content-start gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <Field label={term('worker')} required>
+                <AssociatePicker value={associate} onChange={setAssociate} />
+              </Field>
+              <Field label="Period start" required>
+                <Input type="date" required value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+              </Field>
+              <Field label="Period end" required>
+                <Input type="date" required value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+              </Field>
+            </div>
+            <Field label="Summary" required>
+              <Textarea required rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} />
             </Field>
-            <Field label="Overall rating (1–5)" required>
-              <Input
-                type="number"
-                min={1}
-                max={5}
-                step={1}
-                required
-                value={overallRating}
-                onChange={(e) => setOverallRating(Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Period start" required>
-              <Input
-                type="date"
-                required
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-              />
-            </Field>
-            <Field label="Period end" required>
-              <Input
-                type="date"
-                required
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-              />
-            </Field>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <Field label="Strengths">
+                <Textarea rows={3} value={strengths} onChange={(e) => setStrengths(e.target.value)} />
+              </Field>
+              <Field label="Areas for improvement">
+                <Textarea rows={3} value={improvements} onChange={(e) => setImprovements(e.target.value)} />
+              </Field>
+              <Field label="Goals">
+                <Textarea rows={3} value={goals} onChange={(e) => setGoals(e.target.value)} />
+              </Field>
+            </div>
+            {/* The rating comes last: after the record and the words. */}
+            <fieldset>
+              <legend className="mb-1.5 text-sm font-medium text-ink">Overall rating</legend>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Overall rating">
+                {RATINGS.map((r) => (
+                  <button
+                    key={r.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={overallRating === r.value}
+                    onClick={() => setOverallRating(r.value)}
+                    className={
+                      overallRating === r.value
+                        ? 'rounded-md border border-gold bg-gold/15 px-3 py-1.5 text-sm text-ink'
+                        : 'rounded-md border border-line px-3 py-1.5 text-sm text-ink-muted hover:text-ink'
+                    }
+                  >
+                    <span className="font-semibold tabular-nums">{r.value}</span> · {r.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            {error && <ErrorBanner>{error}</ErrorBanner>}
           </div>
-          <Field label="Summary" required>
-            <Textarea
-              required
-              rows={3}
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-            />
-          </Field>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Strengths">
-              <Textarea
-                rows={3}
-                value={strengths}
-                onChange={(e) => setStrengths(e.target.value)}
-              />
-            </Field>
-            <Field label="Areas for improvement">
-              <Textarea
-                rows={3}
-                value={improvements}
-                onChange={(e) => setImprovements(e.target.value)}
-              />
-            </Field>
-            <Field label="Goals">
-              <Textarea
-                rows={3}
-                value={goals}
-                onChange={(e) => setGoals(e.target.value)}
-              />
-            </Field>
+          <div className="lg:border-l lg:border-line lg:pl-5">
+            {associate ? (
+              <ReviewRecordPanel associateId={associate.id} from={periodStart} to={periodEnd} />
+            ) : (
+              <p className="text-sm text-ink-muted">Pick who you’re reviewing to see their goals, attendance, 1:1s, kudos and last review for the period.</p>
+            )}
           </div>
-          {error && <ErrorBanner>{error}</ErrorBanner>}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => onOpenChange(false)}
-              disabled={submitting}
-            >
+          <DialogFooter className="lg:col-span-2">
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
               Cancel
             </Button>
             <Button type="submit" loading={submitting} disabled={submitting}>
@@ -667,3 +656,11 @@ function CreateReviewDialog({
     </Dialog>
   );
 }
+
+const RATINGS = [
+  { value: 1, label: 'Below expectations' },
+  { value: 2, label: 'Partly meets' },
+  { value: 3, label: 'Meets' },
+  { value: 4, label: 'Exceeds' },
+  { value: 5, label: 'Outstanding' },
+] as const;

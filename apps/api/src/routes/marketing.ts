@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { can } from '@alto-people/shared';
+import { can, rolesWithCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
@@ -307,6 +307,55 @@ marketingRouter.post('/marketing/campaigns/:id/status', requireAuth, MANAGE, asy
   const row = await prisma.referralCampaign.update({ where: { id: existing.id }, data: { status }, include: CAMPAIGN_INCLUDE });
   audit(req, status === 'ACTIVE' ? 'campaign_activated' : 'campaign_closed', 'ReferralCampaign', row.id);
   res.json(campaignOut(row));
+});
+
+/**
+ * "Announce it": write the campaign up as a broadcast DRAFT for HR to send.
+ * Marketing holds no send permission and gains none here — the draft lands
+ * in HR's Broadcasts list, and everyone who can send broadcasts is told one
+ * is waiting. HR edits, targets and sends it (or doesn't).
+ */
+marketingRouter.post('/marketing/campaigns/:id/announce', requireAuth, MANAGE, async (req, res) => {
+  const input = z
+    .object({ title: z.string().trim().min(1).max(250).optional(), body: z.string().trim().min(1).max(4000).optional() })
+    .parse(req.body ?? {});
+  const c = await prisma.referralCampaign.findFirst({ where: { id: req.params.id, ...T() } });
+  if (!c) throw new HttpError(404, 'not_found', 'Campaign not found.');
+  if (c.status === 'CLOSED') throw new HttpError(409, 'closed', 'A closed campaign can’t be announced.');
+  const out = campaignOut(c);
+  const money = `$${out.bonusAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const until = out.endsOn ? new Date(`${out.endsOn}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' }) : null;
+  const roles = out.positions.length ? out.positions.join(', ') : 'any open role';
+  const title = input.title ?? `Refer a friend — ${money} bonus`;
+  const body =
+    input.body ??
+    [
+      `Know someone who'd be great for ${roles}? Refer them${until ? ` by ${until}` : ''} and earn ${money} once they've worked ${out.payAfterDays} days.`,
+      c.description ?? '',
+      'Send their name and phone number to HR or your supervisor and say who referred them.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  const draft = await prisma.broadcast.create({
+    data: { title, body, channels: ['IN_APP'], status: 'DRAFT', createdById: req.user!.id },
+  });
+  audit(req, 'campaign_announce_drafted', 'ReferralCampaign', c.id, { broadcastId: draft.id });
+
+  // Tell the people who can send it. Fire-and-forget: the draft exists either way.
+  const senders = await prisma.user.findMany({
+    where: { ...T(), deletedAt: null, status: 'ACTIVE', role: { in: rolesWithCapability('manage:communications') }, id: { not: req.user!.id } },
+    select: { id: true },
+    take: 50,
+  });
+  for (const u of senders) {
+    void notifyUser(u.id, {
+      subject: `Announcement to review: ${c.name}`,
+      body: `Marketing drafted an announcement for the ${c.name} referral campaign. Review the wording and the audience, then send it.`,
+      category: 'broadcast.review',
+      linkUrl: `/directory?tab=broadcasts&broadcast=${draft.id}`,
+    }).catch(() => undefined);
+  }
+  res.status(201).json({ broadcastId: draft.id, notified: senders.length });
 });
 
 /** The referrals made, with where each referred person got to and the bonus's state. */

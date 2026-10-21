@@ -45,6 +45,21 @@ export interface OneOnOne {
   managerNotes: string | null;
   associateNotes: string | null;
   status: OneOnOneStatus;
+  /** Set on a repeating 1:1 (absent on an older API). */
+  cadence?: OneOnOneCadence | null;
+  seriesId?: string | null;
+  actionItems?: OneOnOneActionItem[];
+}
+
+export type OneOnOneCadence = 'WEEKLY' | 'BIWEEKLY';
+export interface OneOnOneActionItem {
+  id: string;
+  text: string;
+  ownerIsManager: boolean;
+  doneAt: string | null;
+  /** Carried over, still open, from the meeting before. */
+  carried: boolean;
+  createdAt: string;
 }
 
 export interface Kudo {
@@ -177,6 +192,7 @@ export const createOneOnOne = (input: {
   managerUserId: string;
   scheduledFor: string;
   agenda?: string | null;
+  cadence?: OneOnOneCadence | null;
 }) => apiFetch<{ id: string }>('/performance/one-on-ones', { method: 'POST', body: input });
 export const updateOneOnOne = (
   id: string,
@@ -185,12 +201,34 @@ export const updateOneOnOne = (
     managerNotes?: string | null;
     associateNotes?: string | null;
     status?: OneOnOneStatus;
+    cadence?: OneOnOneCadence | null;
   },
 ) =>
-  apiFetch<{ ok: true }>(`/performance/one-on-ones/${id}`, {
+  apiFetch<{ ok: true; nextId?: string | null }>(`/performance/one-on-ones/${id}`, {
     method: 'PUT',
     body: input,
   });
+export const addOneOnOneActionItem = (meetingId: string, input: { text: string; ownerIsManager?: boolean }) =>
+  apiFetch<{ item: OneOnOneActionItem }>(`/performance/one-on-ones/${meetingId}/action-items`, { method: 'POST', body: input });
+export const updateOneOnOneActionItem = (id: string, input: { text?: string; done?: boolean }) =>
+  apiFetch<{ item: OneOnOneActionItem }>(`/performance/one-on-one-action-items/${id}`, { method: 'PATCH', body: input });
+export const deleteOneOnOneActionItem = (id: string) =>
+  apiFetch<void>(`/performance/one-on-one-action-items/${id}`, { method: 'DELETE' });
+/** The caller's own 1:1s, as the person met with — the shared agenda. */
+export interface MyOneOnOne {
+  id: string;
+  scheduledFor: string;
+  completedAt: string | null;
+  status: OneOnOneStatus;
+  cadence: OneOnOneCadence | null;
+  managerEmail: string | null;
+  agenda: string | null;
+  associateNotes: string | null;
+  actionItems: OneOnOneActionItem[];
+}
+export const listMyOneOnOnes = () => apiFetch<{ meetings: MyOneOnOne[] }>('/performance/one-on-ones/mine');
+export const setOneOnOneAgenda = (id: string, agenda: string | null) =>
+  apiFetch<{ ok: true }>(`/performance/one-on-ones/${id}/agenda`, { method: 'PUT', body: { agenda } });
 
 // Kudos
 export const listKudos = (params?: { toAssociateId?: string; onlyPublic?: boolean }) => {

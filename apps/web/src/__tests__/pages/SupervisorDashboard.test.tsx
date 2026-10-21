@@ -507,7 +507,9 @@ const late = (id: string, name: string, minutesLate: number, status: string, pho
   timezone: tz,
   minutesLate,
   status,
+  calledOutHow: null,
   hasPhone: phone !== null,
+  textable: phone !== null,
   phone,
 });
 
@@ -520,7 +522,7 @@ describe('<SupervisorDashboard> — who isn\u2019t in, and the fill line', () =>
     expect(within(list).getByRole('link', { name: 'Call Gus Hale' })).toHaveAttribute('href', 'tel:+15555550111');
     expect(within(list).getByRole('link', { name: 'Text Ivy Moss' })).toHaveAttribute('href', 'sms:+15555550112');
     expect(within(list).getByRole('link', { name: /No-show → find cover/ })).toHaveAttribute('href', '/scheduling?shift=n1');
-    expect(screen.getByRole('button', { name: 'Text the 2 not in' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Text the 2 late' })).toBeInTheDocument();
     // Eight weeks of fill against the 95% line — and never a labor budget.
     expect(await screen.findByRole('heading', { name: 'Fill rate · 8 weeks' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /met the 95% target in 2 of 3 weeks/ })).toBeInTheDocument();
@@ -602,7 +604,8 @@ describe('<SupervisorDashboard> — the floor from a phone', () => {
   it('files an incident from the home, and never shows money', async () => {
     renderPage();
     await screen.findByText('Front Beach 218');
-    await userEvent.setup().click(screen.getByRole('button', { name: /report an incident/i }));
+    // One tap from anywhere: the sticky floor-actions row.
+    await userEvent.setup().click(screen.getByRole('button', { name: /report incident/i }));
     expect(await screen.findByRole('dialog', { name: /report an incident/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add a photo/i })).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\$/);
@@ -618,7 +621,7 @@ describe('<SupervisorDashboard> — the floor from a phone', () => {
     });
     expect(await screen.findByTestId('floor-week')).toHaveTextContent('This week at the store');
     expect(screen.queryByTestId('floor-flags')).not.toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: /flag a no-show or hazard/i }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /raise a flag/i }));
     expect(await screen.findByRole('dialog', { name: /flag it/i })).toBeInTheDocument();
     expect(apiFetch).not.toHaveBeenCalledWith('/floor/flags');
   });

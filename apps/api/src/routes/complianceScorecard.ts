@@ -1250,6 +1250,50 @@ complianceScorecardRouter.get('/attestations', VIEW, async (_req, res, next) => 
   }
 });
 
+/**
+ * Snooze one attestation's reminders until a date (the daily digest leaves
+ * it out until then), or wake it again. Keyed on the current period — a new
+ * period starts with reminders on.
+ */
+complianceScorecardRouter.post('/attestations/:key/snooze', MANAGE_COMPLIANCE, async (req, res, next) => {
+  try {
+    const config = getAttestationConfig(String(req.params.key));
+    if (!config) throw new HttpError(404, 'unknown_attestation_key', 'No such attestation.');
+    const { until } = z.object({ until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(req.body ?? {});
+    const untilAt = new Date(`${until}T23:59:59Z`);
+    const now = new Date();
+    if (untilAt <= now) throw new HttpError(400, 'past_date', 'Pick a date after today.');
+    if (untilAt.getTime() - now.getTime() > 92 * 86_400_000) throw new HttpError(400, 'too_far', 'Snooze for at most three months.');
+    const { periodStart } = periodForNow(config.cadence, now);
+    const tenantId = tenantIdForWrite();
+    const existing = await prisma.attestationSnooze.findFirst({ where: { tenantId, key: config.key, periodStart } });
+    if (existing) {
+      await prisma.attestationSnooze.update({ where: { id: existing.id }, data: { snoozedUntil: untilAt, createdById: req.user!.id } });
+    } else {
+      await prisma.attestationSnooze.create({ data: { tenantId, key: config.key, periodStart, snoozedUntil: untilAt, createdById: req.user!.id } });
+    }
+    enqueueAudit(
+      { actorUserId: req.user!.id, clientId: null, tenantId, action: 'compliance.attestation.snoozed', entityType: 'ManualComplianceAttestation', entityId: config.key, metadata: { until, periodStart: toDateKey(periodStart) } },
+      'compliance',
+    );
+    res.json({ key: config.key, snoozedUntil: untilAt.toISOString() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+complianceScorecardRouter.delete('/attestations/:key/snooze', MANAGE_COMPLIANCE, async (req, res, next) => {
+  try {
+    const config = getAttestationConfig(String(req.params.key));
+    if (!config) throw new HttpError(404, 'unknown_attestation_key', 'No such attestation.');
+    const { periodStart } = periodForNow(config.cadence, new Date());
+    await prisma.attestationSnooze.deleteMany({ where: { tenantId: tenantIdForWrite(), key: config.key, periodStart } });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 complianceScorecardRouter.post(
   '/attestations',
   MANAGE_COMPLIANCE,
@@ -1360,6 +1404,10 @@ async function loadAttestationSignals(
     const current = rows.find(
       (r) => toDateKey(r.periodStart) === toDateKey(periodStart),
     );
+    const snooze = await prisma.attestationSnooze.findFirst({
+      where: { tenantId: tenantIdForWrite(), key: config.key, periodStart, snoozedUntil: { gt: now } },
+      select: { snoozedUntil: true },
+    });
     const previous = rows.find(
       (r) => toDateKey(r.periodStart) === toDateKey(previousPeriod.periodStart),
     );
@@ -1397,6 +1445,7 @@ async function loadAttestationSignals(
               : null,
           }
         : null,
+      snoozedUntil: snooze?.snoozedUntil.toISOString() ?? null,
     });
   }
 

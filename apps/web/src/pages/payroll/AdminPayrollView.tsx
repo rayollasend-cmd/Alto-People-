@@ -73,6 +73,7 @@ import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { RunPayrollWizard, type RunPayrollSeed } from './RunPayrollWizard';
 import { ExceptionStrip } from './PayrollExceptionStrip';
+import { fundingSentence, getRunFunding } from '@/lib/bankingApi';
 import { PayrollCostChart } from './PayrollCostChart';
 import { listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type PayrollUpcomingWithSchedules, type UpcomingBySchedule } from '@/lib/payScheduleFlowApi';
 import { GarnishmentsView } from './GarnishmentsView';
@@ -249,6 +250,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   });
   const signoff = reviewStatus.data?.signoff ?? null;
   const reviewBlocksPayout = !!signoff && signoff.required && !signoff.current;
+  // On the company's own ACH the money has to arrive before pay goes out
+  // (the server refuses otherwise) — said before the ceremony, not after.
+  const runFunding = useQuery({
+    queryKey: ['payroll-banking', 'run', selected?.id],
+    queryFn: () => getRunFunding(selected!.id),
+    enabled: !!selected && selected.status === 'FINALIZED' && canProcess,
+    retry: false,
+  });
+  const fundingNote =
+    runFunding.data?.applies && runFunding.data.funding && !['SETTLED', 'WIRE_RECEIVED'].includes(runFunding.data.funding.status)
+      ? fundingSentence(runFunding.data.funding)
+      : null;
   // Bulk actions over the runs table.
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -462,8 +475,13 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // disburse ceremony; a finalized run opens the ceremony directly.
   const nextParam = searchParams.get('next');
   const payNextRef = useRef<string | null>(null);
+  const reviewSettled = !reviewStatus.isPending;
+  const fundingSettled = selected?.status !== 'FINALIZED' || !runFunding.isPending;
   useEffect(() => {
     if (nextParam !== 'pay' || !selected || selected.id !== runParam) return;
+    // Wait for the sign-off (and, for a finalized run, the funding) to load:
+    // the ceremony opens only when the server would let it through.
+    if (!reviewSettled || !fundingSettled) return;
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.delete('next');
@@ -474,9 +492,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       payNextRef.current = selected.id;
       setConfirmFinalize(true);
     } else if (selected.status === 'FINALIZED') {
-      setConfirmDisburse(true);
+      if (reviewBlocksPayout) toast.error('The sign-off no longer matches this run — the numbers changed. Sign the review again before paying.');
+      else if (fundingNote) toast.error(fundingNote);
+      else setConfirmDisburse(true);
     }
-  }, [nextParam, selected, runParam, canProcess, setSearchParams]);
+  }, [nextParam, selected, runParam, canProcess, setSearchParams, reviewSettled, fundingSettled, reviewBlocksPayout, fundingNote]);
+
+  // Closing the finalize dialog without finalizing drops "pay next" — a
+  // later ordinary Finalize never opens the ceremony by surprise.
+  const closeFinalize = () => {
+    payNextRef.current = null;
+    setConfirmFinalize(false);
+  };
 
   // ?new=run (⌘K "Run payroll"): open the next payday's run — resume its
   // draft if one exists, else the wizard seeded like the hero's button.
@@ -509,11 +536,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     }
   };
 
-  const onFinalize = async () => {
+  const onFinalize = async (acknowledgeBlocking = false) => {
     if (!selected || busy) return;
     setBusy(true);
     try {
-      const updated = await finalizePayrollRun(selected.id);
+      const updated = await finalizePayrollRun(selected.id, { acknowledgeBlocking });
       setSelected(updated);
       toast.success('Run finalized.');
       setConfirmFinalize(false);
@@ -524,6 +551,19 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         if (!reviewBlocksPayout) setConfirmDisburse(true);
       }
     } catch (err) {
+      // A blocker that appeared since the run was built: say what it is and
+      // let the person go ahead on the record (the server audits it).
+      if (err instanceof ApiError && err.code === 'blocking_exceptions' && !acknowledgeBlocking) {
+        setBusy(false);
+        const goAhead = await confirm({
+          title: 'Blocking issues in this run',
+          description: `${err.message}`,
+          confirmLabel: 'Finalize anyway',
+          destructive: true,
+        });
+        if (goAhead) await onFinalize(true);
+        return;
+      }
       toast.error(err instanceof ApiError ? err.message : 'Finalize failed.');
     } finally {
       setBusy(false);
@@ -1200,10 +1240,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         <Button
                           variant="primary"
                           onClick={() => setConfirmDisburse(true)}
-                          disabled={busy}
+                          disabled={busy || !!fundingNote}
+                          title={fundingNote ?? undefined}
                         >
                           <Send className="h-4 w-4" />
-                          Disburse
+                          {fundingNote ? 'Waiting on funding' : 'Disburse'}
                         </Button>
                       ))}
                     {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
@@ -1569,7 +1610,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       {/* Finalize confirmation — advancing a run to FINALIZED locks the
           projection and is the gate before money moves, so it earns a
           confirm step (Disburse already has its ceremony). */}
-      <Dialog open={confirmFinalize} onOpenChange={(v) => !busy && setConfirmFinalize(v)}>
+      <Dialog open={confirmFinalize} onOpenChange={(v) => !busy && (v ? setConfirmFinalize(true) : closeFinalize())}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t('payrollHome.finalizeRun')}</DialogTitle>
@@ -1586,10 +1627,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 void afterward, but you can no longer add earning lines.
               </p>
               <div className="flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setConfirmFinalize(false)} disabled={busy}>
+                <Button variant="ghost" onClick={closeFinalize} disabled={busy}>
                   Cancel
                 </Button>
-                <Button onClick={onFinalize} loading={busy} disabled={busy}>
+                <Button onClick={() => void onFinalize()} loading={busy} disabled={busy}>
                   Finalize
                 </Button>
               </div>
@@ -1948,7 +1989,7 @@ function HeroExceptions({
               loading={q.isPending}
               onRecheck={() => void q.refetch()}
               paychecks={nextRun.employeeCount}
-              period={{ start: nextRun.periodStart, end: nextRun.periodEnd }}
+              period={{ start: nextRun.periodStart, end: nextRun.periodEnd, clientId: nextRun.clientId, payrollScheduleId: nextRun.scheduleId }}
               onTimeApproved={() => {
                 void q.refetch();
                 onChanged();

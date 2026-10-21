@@ -10,6 +10,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { scopeAssociatesIncludingFormer, scopeWhere } from '../lib/scope.js';
 import { enqueueAudit, recordComplianceEvent } from '../lib/audit.js';
 import { notifyAssociate, notifyUser } from '../lib/notify.js';
 
@@ -220,6 +221,85 @@ const CalibrationQuery = z.object({
 
 /** A reviewer whose average sits this far from everyone's is called out. */
 const LEAN_THRESHOLD = 0.75;
+
+/**
+ * GET /performance/review-context?associateId&from&to — what a reviewer
+ * writes from, in one read: the person's goals and their progress, kudos in
+ * the period, the 1:1 notes, attendance (late, no-shows, call-outs, early
+ * outs — excused ones left out) and their last review. The composer shows it
+ * beside the form so a rating rests on the record, not on memory.
+ */
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+performanceRouter.get('/review-context', MANAGE, async (req, res, next) => {
+  try {
+    const associateId = z.string().uuid().parse(req.query.associateId);
+    const fromQ = req.query.from?.toString();
+    const toQ = req.query.to?.toString();
+    if ((fromQ && !DAY_RE.test(fromQ)) || (toQ && !DAY_RE.test(toQ))) {
+      throw new HttpError(400, 'invalid_period', '`from`/`to` must be YYYY-MM-DD');
+    }
+    const to = toQ ? new Date(`${toQ}T23:59:59.999Z`) : new Date();
+    const from = fromQ ? new Date(`${fromQ}T00:00:00Z`) : new Date(to.getTime() - 90 * 86_400_000);
+    // Only someone in the reviewer's reach: everything below hangs off this read.
+    const person = await prisma.associate.findFirst({
+      where: scopeWhere<Prisma.AssociateWhereInput>({ id: associateId, deletedAt: null }, scopeAssociatesIncludingFormer(req.user!)),
+      select: { id: true, firstName: true, lastName: true },
+    });
+    if (!person) throw new HttpError(404, 'not_found', 'Associate not found');
+    const [goals, kudos, meetings, events, lastReview] = await Promise.all([
+      prisma.goal.findMany({
+        where: { associateId, deletedAt: null, status: { not: 'CANCELLED' } },
+        orderBy: { periodEnd: 'desc' },
+        take: 20,
+        select: { id: true, title: true, status: true, progressPct: true, periodStart: true, periodEnd: true },
+      }),
+      prisma.kudo.findMany({
+        where: { toAssociateId: associateId, createdAt: { gte: from, lte: to } },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, message: true, createdAt: true, fromUser: { select: { email: true } } },
+      }),
+      prisma.oneOnOne.findMany({
+        where: { associateId, status: 'COMPLETED', scheduledFor: { gte: from, lte: to } },
+        orderBy: { scheduledFor: 'desc' },
+        take: 12,
+        select: { id: true, scheduledFor: true, managerNotes: true, agenda: true, actionItems: { select: { text: true, doneAt: true } } },
+      }),
+      prisma.attendanceEvent.findMany({
+        where: { associateId, excusedAt: null, occurredOn: { gte: from, lte: to } },
+        select: { kind: true },
+      }),
+      prisma.performanceReview.findFirst({
+        where: { associateId, status: { not: 'DRAFT' } },
+        orderBy: { periodEnd: 'desc' },
+        select: { id: true, periodStart: true, periodEnd: true, overallRating: true, summary: true },
+      }),
+    ]);
+    const count = (k: string) => events.filter((e) => e.kind === k).length;
+    const ymd = (d: Date) => d.toISOString().slice(0, 10);
+    res.json({
+      associate: { id: person.id, name: `${person.firstName} ${person.lastName}` },
+      from: ymd(from),
+      to: ymd(to),
+      goals: goals.map((g) => ({ id: g.id, title: g.title, status: g.status, progressPct: g.progressPct, periodEnd: ymd(g.periodEnd) })),
+      kudos: kudos.map((k) => ({ id: k.id, message: k.message, from: k.fromUser.email, at: k.createdAt.toISOString() })),
+      oneOnOnes: meetings.map((m) => ({
+        id: m.id,
+        at: m.scheduledFor.toISOString(),
+        notes: m.managerNotes,
+        agenda: m.agenda,
+        itemsDone: m.actionItems.filter((i) => i.doneAt).length,
+        itemsOpen: m.actionItems.filter((i) => !i.doneAt).length,
+      })),
+      attendance: { late: count('LATE'), noCallNoShow: count('NO_CALL_NO_SHOW'), callOut: count('CALL_OUT'), earlyOut: count('EARLY_OUT') },
+      lastReview: lastReview
+        ? { id: lastReview.id, periodStart: ymd(lastReview.periodStart), periodEnd: ymd(lastReview.periodEnd), overallRating: lastReview.overallRating, summary: lastReview.summary }
+        : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 performanceRouter.get('/calibration', MANAGE, async (req, res, next) => {
   try {

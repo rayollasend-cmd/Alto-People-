@@ -403,11 +403,14 @@ timeOffRouter.post('/me/requests/:id/cancel', async (req, res, next) => {
     if (row.status !== 'PENDING') {
       throw new HttpError(409, 'illegal_state', `Cannot cancel a ${row.status} request`);
     }
-    const updated = await prisma.timeOffRequest.update({
-      where: { id },
+    const cancelled = await prisma.timeOffRequest.updateMany({
+      where: { id, status: 'PENDING' },
       data: { status: 'CANCELLED', cancelledAt: new Date() },
-      include: REQUEST_INCLUDE,
     });
+    if (cancelled.count === 0) {
+      throw new HttpError(409, 'illegal_state', 'This request was decided a moment ago — refresh to see the outcome.');
+    }
+    const updated = await prisma.timeOffRequest.findUniqueOrThrow({ where: { id }, include: REQUEST_INCLUDE });
     res.json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(updated) })
     );
@@ -569,8 +572,10 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
           if (row.status !== 'PENDING') {
             throw new IllegalStateError(`Cannot deny a ${row.status} request`);
           }
-          await prisma.timeOffRequest.update({
-            where: { id },
+          // Conditional: a concurrent approval (which already took the
+          // balance) must not be overwritten to DENIED.
+          const denied = await prisma.timeOffRequest.updateMany({
+            where: { id, status: 'PENDING' },
             data: {
               status: 'DENIED',
               reviewerUserId: user.id,
@@ -578,6 +583,7 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
               decidedAt: new Date(),
             },
           });
+          if (denied.count === 0) throw new IllegalStateError('Someone decided this request a moment ago');
           void emitWebhookEvent('time_off.denied', {
             requestId: id,
             associateId: row.associateId,
@@ -717,16 +723,21 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
     if (row.status !== 'PENDING') {
       throw new HttpError(409, 'illegal_state', `Cannot deny a ${row.status} request`);
     }
-    const updated = await prisma.timeOffRequest.update({
-      where: { id },
+    // Conditional: a concurrent approval (which already took the balance)
+    // must not be overwritten to DENIED.
+    const denied = await prisma.timeOffRequest.updateMany({
+      where: { id, status: 'PENDING' },
       data: {
         status: 'DENIED',
         reviewerUserId: user.id,
         reviewerNote: input.note,
         decidedAt: new Date(),
       },
-      include: REQUEST_INCLUDE,
     });
+    if (denied.count === 0) {
+      throw new HttpError(409, 'illegal_state', 'Someone decided this request a moment ago — refresh to see the outcome.');
+    }
+    const updated = await prisma.timeOffRequest.findUniqueOrThrow({ where: { id }, include: REQUEST_INCLUDE });
     void emitWebhookEvent('time_off.denied', {
       requestId: updated.id,
       associateId: updated.associateId,

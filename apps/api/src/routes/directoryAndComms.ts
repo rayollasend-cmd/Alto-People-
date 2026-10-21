@@ -8,6 +8,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyUser } from '../lib/notify.js';
 import { assertInTenant } from '../lib/sameTenant.js';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * Phase 87 — Directory + broadcast + surveys.
@@ -105,12 +106,15 @@ const BroadcastInputSchema = z.object({
 directoryAndCommsRouter.get(
   '/broadcasts',
   MANAGE_COMMS,
-  async (_req, res) => {
+  async (req, res) => {
+    // Saved templates are listed apart (?templates=1); the default list is
+    // the drafts and sends themselves.
+    const templates = req.query.templates === '1';
     const rows = await prisma.broadcast.findMany({
-      where: { tenantId: tenantIdForWrite() },
-      orderBy: { createdAt: 'desc' },
+      where: { tenantId: tenantIdForWrite(), templateName: templates ? { not: null } : null },
+      orderBy: templates ? { templateName: 'asc' } : { createdAt: 'desc' },
       take: 100,
-      include: { _count: { select: { receipts: true } } },
+      include: { _count: { select: { receipts: true } }, createdBy: { select: { email: true, role: true } } },
     });
     res.json({
       broadcasts: rows.map((b) => ({
@@ -119,6 +123,9 @@ directoryAndCommsRouter.get(
         body: b.body,
         channels: b.channels,
         status: b.status,
+        templateName: b.templateName,
+        createdByEmail: b.createdBy?.email ?? null,
+        createdByRole: b.createdBy?.role ?? null,
         clientId: b.clientId,
         departmentId: b.departmentId,
         costCenterId: b.costCenterId,
@@ -185,6 +192,104 @@ directoryAndCommsRouter.put(
   },
 );
 
+const AudienceSchema = z.object({
+  clientId: z.string().uuid().nullable().optional(),
+  departmentId: z.string().uuid().nullable().optional(),
+  costCenterId: z.string().uuid().nullable().optional(),
+});
+
+/**
+ * Who a broadcast reaches: active people in this tenant, within the
+ * sender's reach, narrowed by the targeting. Send and the pre-send count
+ * use the same where, so the confirm's number is the number that goes out.
+ */
+function audienceWhere(
+  user: SessionUser,
+  t: { clientId?: string | null; departmentId?: string | null; costCenterId?: string | null },
+): Prisma.AssociateWhereInput {
+  return scopeWhere<Prisma.AssociateWhereInput>(
+    { tenantId: tenantIdForWrite(), deletedAt: null, deactivatedAt: null },
+    scopeAssociates(user),
+    // The client's people now — a transfer moves them (lib/scope.atClient).
+    !!t.clientId && atClient(t.clientId),
+    !!t.departmentId && { departmentId: t.departmentId },
+    !!t.costCenterId && { costCenterId: t.costCenterId },
+  );
+}
+
+async function audienceCount(user: SessionUser, t: z.infer<typeof AudienceSchema>) {
+  const where = audienceWhere(user, t);
+  // Every associate has an email; an account is what in-app and push need,
+  // a phone what SMS needs.
+  const [people, withAccount, withPhone] = await Promise.all([
+    prisma.associate.count({ where }),
+    prisma.associate.count({ where: { AND: [where, { user: { isNot: null } }] } }),
+    prisma.associate.count({ where: { AND: [where, { phone: { not: null } }] } }),
+  ]);
+  return { people, withAccount, withPhone, withEmail: people };
+}
+
+/** The pre-send count for a targeting (the drawer shows it as you pick). */
+directoryAndCommsRouter.post('/broadcasts/audience-count', MANAGE_COMMS, async (req, res) => {
+  res.json(await audienceCount(req.user!, AudienceSchema.parse(req.body ?? {})));
+});
+
+/** The same count for a saved draft — what the send confirm names. */
+directoryAndCommsRouter.get('/broadcasts/:id/audience-count', MANAGE_COMMS, async (req, res) => {
+  const b = await prisma.broadcast.findFirst({ where: { id: String(req.params.id), tenantId: tenantIdForWrite() } });
+  if (!b) throw new HttpError(404, 'not_found', 'Broadcast not found.');
+  res.json(await audienceCount(req.user!, b));
+});
+
+/** Duplicate: a new draft with the same words, channels and targeting. */
+directoryAndCommsRouter.post('/broadcasts/:id/duplicate', MANAGE_COMMS, async (req, res) => {
+  const b = await prisma.broadcast.findFirst({ where: { id: String(req.params.id), tenantId: tenantIdForWrite() } });
+  if (!b) throw new HttpError(404, 'not_found', 'Broadcast not found.');
+  const created = await prisma.broadcast.create({
+    data: {
+      title: b.title,
+      body: b.body,
+      channels: b.channels,
+      clientId: b.clientId,
+      departmentId: b.departmentId,
+      costCenterId: b.costCenterId,
+      status: 'DRAFT',
+      createdById: req.user!.id,
+    },
+  });
+  res.status(201).json({ id: created.id });
+});
+
+/** Save as template: a named copy that is never sent, for the next time. */
+directoryAndCommsRouter.post('/broadcasts/:id/template', MANAGE_COMMS, async (req, res) => {
+  const { name } = z.object({ name: z.string().trim().min(1).max(120) }).parse(req.body);
+  const b = await prisma.broadcast.findFirst({ where: { id: String(req.params.id), tenantId: tenantIdForWrite() } });
+  if (!b) throw new HttpError(404, 'not_found', 'Broadcast not found.');
+  const created = await prisma.broadcast.create({
+    data: {
+      title: b.title,
+      body: b.body,
+      channels: b.channels,
+      clientId: b.clientId,
+      departmentId: b.departmentId,
+      costCenterId: b.costCenterId,
+      status: 'DRAFT',
+      templateName: name,
+      createdById: req.user!.id,
+    },
+  });
+  res.status(201).json({ id: created.id });
+});
+
+/** Remove a draft or a template. A sent broadcast stays on the record. */
+directoryAndCommsRouter.delete('/broadcasts/:id', MANAGE_COMMS, async (req, res) => {
+  const b = await prisma.broadcast.findFirst({ where: { id: String(req.params.id), tenantId: tenantIdForWrite() } });
+  if (!b) throw new HttpError(404, 'not_found', 'Broadcast not found.');
+  if (b.status === 'SENT') throw new HttpError(400, 'already_sent', 'A sent broadcast stays on the record.');
+  await prisma.broadcast.delete({ where: { id: b.id } });
+  res.status(204).end();
+});
+
 /**
  * Send-now: stamp sentAt, materialize a BroadcastReceipt for every
  * targeted user, and stub channels other than IN_APP. SMS/EMAIL/PUSH
@@ -200,17 +305,13 @@ directoryAndCommsRouter.post(
     if (b.status === 'SENT') {
       throw new HttpError(400, 'already_sent', 'Already sent.');
     }
+    if (b.templateName) {
+      throw new HttpError(400, 'is_template', 'That is a saved template — use it to start a new broadcast.');
+    }
 
     // Resolve recipients via Associate ↔ User join, applying targeting:
     // active people, this tenant, the sender's reach, then the audience.
-    const associateWhere = scopeWhere<Prisma.AssociateWhereInput>(
-      { tenantId: tenantIdForWrite(), deletedAt: null, deactivatedAt: null },
-      scopeAssociates(req.user!),
-      // The client's people now — a transfer moves them (lib/scope.atClient).
-      !!b.clientId && atClient(b.clientId),
-      !!b.departmentId && { departmentId: b.departmentId },
-      !!b.costCenterId && { costCenterId: b.costCenterId },
-    );
+    const associateWhere = audienceWhere(req.user!, b);
     // Every recipient, in pages, in a stable order — a silent cap used to skip everyone past 1,000.
     const userIds: string[] = [];
     for (let cursor: string | undefined; ; ) {

@@ -82,3 +82,22 @@ export function getCalibration(range: { from?: string; to?: string } = {}): Prom
 export function calibrateReview(id: string, body: { rating: number; note: string }): Promise<PerformanceReview> {
   return apiFetch<PerformanceReview>(`/performance/reviews/${id}/calibrate`, { method: 'POST', body });
 }
+
+/** What a reviewer writes from — GET /performance/review-context. */
+export interface ReviewContext {
+  associate: { id: string; name: string };
+  from: string;
+  to: string;
+  goals: Array<{ id: string; title: string; status: string; progressPct: number; periodEnd: string }>;
+  kudos: Array<{ id: string; message: string; from: string; at: string }>;
+  oneOnOnes: Array<{ id: string; at: string; notes: string | null; agenda: string | null; itemsDone: number; itemsOpen: number }>;
+  attendance: { late: number; noCallNoShow: number; callOut: number; earlyOut: number };
+  lastReview: { id: string; periodStart: string; periodEnd: string; overallRating: number; summary: string } | null;
+}
+
+export function getReviewContext(associateId: string, from?: string, to?: string): Promise<ReviewContext> {
+  const q = new URLSearchParams({ associateId });
+  if (from) q.set('from', from);
+  if (to) q.set('to', to);
+  return apiFetch<ReviewContext>(`/performance/review-context?${q.toString()}`);
+}

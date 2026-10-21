@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import {
   EmailSuppressionListResponseSchema,
@@ -18,7 +19,7 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
-import { EmailSuppressedError, sendStubbed } from '../lib/notifications.js';
+import { EmailSuppressedError, send } from '../lib/notifications.js';
 import { pushConfigured } from '../lib/webPush.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
@@ -42,7 +43,7 @@ type RawNotif = Prisma.NotificationGetPayload<{
   include: { senderUser: { select: { email: true } } };
 }>;
 
-function toNotif(row: RawNotif): Notification {
+function toNotif(row: RawNotif, recipientName?: string | null): Notification {
   return {
     id: row.id,
     channel: row.channel,
@@ -63,7 +64,19 @@ function toNotif(row: RawNotif): Notification {
     senderEmail: row.senderUser?.email ?? null,
     linkUrl: row.linkUrl ?? null,
     createdAt: row.createdAt.toISOString(),
+    ...(recipientName !== undefined ? { recipientName } : {}),
   };
+}
+
+/** Names for the admin log: the account's person, else the account's email. */
+async function recipientNames(userIds: Array<string | null>): Promise<Map<string, string>> {
+  const ids = [...new Set(userIds.filter((x): x is string => !!x))];
+  if (ids.length === 0) return new Map();
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } },
+  });
+  return new Map(users.map((u) => [u.id, u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : u.email]));
 }
 
 const NOTIF_INCLUDE = {
@@ -154,7 +167,7 @@ communicationsMeRouter.get('/inbox', async (req, res, next) => {
       }),
     ]);
     const payload: NotificationListResponse = NotificationListResponseSchema.parse({
-      notifications: rows.map(toNotif),
+      notifications: rows.map((r) => toNotif(r)),
       total,
     });
     res.json(payload);
@@ -181,11 +194,36 @@ communicationsMeRouter.post('/inbox/seen', async (req, res, next) => {
 // One request instead of the bell's old Promise.allSettled storm of up to
 // 100 individual /read calls. Also stamps seenAt — a row can't be read
 // but unseen.
+// With `ids`, only those (the bell's "mark these N read" on a group) —
+// still only the caller's own rows.
 communicationsMeRouter.post('/inbox/read-all', async (req, res, next) => {
   try {
+    const { ids } = z.object({ ids: z.array(z.string().uuid()).min(1).max(200).optional() }).parse(req.body ?? {});
     const now = new Date();
     const r = await prisma.notification.updateMany({
-      where: { recipientUserId: req.user!.id, channel: 'IN_APP', readAt: null },
+      where: { recipientUserId: req.user!.id, channel: 'IN_APP', readAt: null, ...(ids ? { id: { in: ids } } : {}) },
+      data: { status: 'READ', readAt: now, seenAt: now },
+    });
+    res.json({ updated: r.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// "Clear all of this kind": every unread row of one category (and its
+// sub-categories — compliance.attestation clears every signal's reminder),
+// not just the ones loaded in the bell. Still only the caller's own rows.
+communicationsMeRouter.post('/inbox/read-kind', async (req, res, next) => {
+  try {
+    const { category } = z.object({ category: z.string().trim().min(1).max(120) }).parse(req.body ?? {});
+    const now = new Date();
+    const r = await prisma.notification.updateMany({
+      where: {
+        recipientUserId: req.user!.id,
+        channel: 'IN_APP',
+        readAt: null,
+        OR: [{ category }, { category: { startsWith: `${category}.` } }],
+      },
       data: { status: 'READ', readAt: now, seenAt: now },
     });
     res.json({ updated: r.count });
@@ -245,8 +283,11 @@ communicationsRouter.get('/admin', MANAGE, async (req, res, next) => {
       take: 200,
       include: NOTIF_INCLUDE,
     });
+    const names = await recipientNames(rows.map((r) => r.recipientUserId));
     res.json(
-      NotificationListResponseSchema.parse({ notifications: rows.map(toNotif) })
+      NotificationListResponseSchema.parse({
+        notifications: rows.map((r) => toNotif(r, r.recipientUserId ? names.get(r.recipientUserId) ?? null : null)),
+      })
     );
   } catch (err) {
     next(err);
@@ -261,13 +302,35 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
     }
     const i = parsed.data;
 
+    // A person picked in the composer: the server finds their account,
+    // email and phone — within this tenant and the sender's reach.
+    let target = { userId: i.recipientUserId ?? null, email: i.recipientEmail ?? null, phone: i.recipientPhone ?? null };
+    if (i.recipientAssociateId) {
+      const a = await prisma.associate.findFirst({
+        where: { AND: [{ id: i.recipientAssociateId, tenantId: tenantIdForWrite(), deletedAt: null }, scopeAssociates(req.user!)] },
+        select: { email: true, phone: true, firstName: true, user: { select: { id: true } } },
+      });
+      if (!a) throw new HttpError(404, 'not_found', 'That person is not in your reach.');
+      target = {
+        userId: target.userId ?? a.user?.id ?? null,
+        email: target.email ?? (i.channel === 'EMAIL' ? a.email : null),
+        phone: target.phone ?? (i.channel === 'SMS' ? a.phone : null),
+      };
+      if ((i.channel === 'IN_APP' || i.channel === 'PUSH') && !target.userId) {
+        throw new HttpError(400, 'no_account', `${a.firstName} hasn’t set up an account yet — send by email instead.`);
+      }
+      if (i.channel === 'SMS' && !target.phone) {
+        throw new HttpError(400, 'no_phone', `${a.firstName} has no phone number on file.`);
+      }
+    }
+
     const created = await prisma.notification.create({
       data: {
         channel: i.channel,
         status: 'QUEUED',
-        recipientUserId: i.recipientUserId ?? null,
-        recipientPhone: i.recipientPhone ?? null,
-        recipientEmail: i.recipientEmail ?? null,
+        recipientUserId: target.userId,
+        recipientPhone: target.phone,
+        recipientEmail: target.email,
         subject: i.subject ?? null,
         body: i.body,
         category: i.category ?? null,
@@ -276,12 +339,15 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
       include: NOTIF_INCLUDE,
     });
 
-    // Stub the provider call.
+    // The provider call, with the words — an email went out with an empty
+    // body when this went through the subject-less stub sender.
     try {
-      const { externalRef } = await sendStubbed(created.channel, {
-        userId: created.recipientUserId,
-        phone: created.recipientPhone,
-        email: created.recipientEmail,
+      const { externalRef } = await send({
+        channel: created.channel,
+        recipient: { userId: created.recipientUserId, phone: created.recipientPhone, email: created.recipientEmail },
+        subject: created.subject,
+        body: created.body,
+        audit: false,
       });
       const sent = await prisma.notification.update({
         where: { id: created.id },
@@ -311,6 +377,35 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
   } catch (err) {
     next(err);
   }
+});
+
+/* ===== Which channels can actually deliver ============================== */
+
+/**
+ * GET /communications/admin/channels — what the composer may offer. A
+ * channel with no provider behind it is shown disabled WITH the reason,
+ * instead of a "(stub)" option that silently goes nowhere.
+ */
+communicationsRouter.get('/admin/channels', MANAGE, (_req, res) => {
+  const emailReady = Boolean(env.RESEND_API_KEY && env.RESEND_FROM);
+  res.json({
+    channels: [
+      { channel: 'IN_APP', available: true, reason: null },
+      {
+        channel: 'EMAIL',
+        available: emailReady,
+        reason: emailReady ? null : 'No email provider connected — set one up in Settings › Communications.',
+      },
+      { channel: 'SMS', available: false, reason: 'One-off texts aren’t connected yet — crew texts go out from the floor tools.' },
+      {
+        channel: 'PUSH',
+        available: false,
+        reason: pushConfigured()
+          ? 'Push goes out with every in-app message to people who turned it on — choose In-app.'
+          : 'Push isn’t set up for this organization.',
+      },
+    ],
+  });
 });
 
 /* ===== Email suppression list (do-not-email) =========================== */

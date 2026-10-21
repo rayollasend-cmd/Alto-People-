@@ -1,15 +1,18 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   ASSISTANT_PLATFORM_NAME,
   BUSINESS_MODELS,
   BUSINESS_MODEL_LABEL,
+  ROLE_LABELS,
+  ROLE_MODULE,
   TENANT_MODULES,
   TENANT_MODULE_LABEL,
   TERM_KEYS,
   type BusinessModel,
+  type Role,
   type TenantModule,
   type TenantModules,
   type TermKey,
@@ -28,6 +31,20 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { MODULES, MODULE_GATE } from '@/lib/modules';
+import { cn } from '@/lib/cn';
+
+/** The menu pages and the roles each module brings — what a switch adds or takes away. */
+const MODULE_REACH: Record<TenantModule, { pages: string[]; roles: string[] }> = Object.fromEntries(
+  TENANT_MODULES.map((m) => [
+    m,
+    {
+      pages: MODULES.filter((x) => MODULE_GATE[x.key] === m).map((x) => x.label),
+      roles: (Object.entries(ROLE_MODULE) as Array<[Role, string]>).filter(([, g]) => g === m).map(([r]) => ROLE_LABELS[r]),
+    },
+  ]),
+) as Record<TenantModule, { pages: string[]; roles: string[] }>;
 
 /**
  * Brief 2-1b — the Organization profile: what kind of organization this
@@ -118,6 +135,15 @@ export function TenantProfileHome() {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ['tenant', 'profile'], queryFn: getTenantProfile });
+  // Two halves, one Save: the model and its modules, then the words.
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'terms' ? 'terms' : 'modules';
+  const setTab = (t: string) => {
+    const next = new URLSearchParams(params);
+    if (t === 'terms') next.set('tab', 'terms');
+    else next.delete('tab');
+    setParams(next, { replace: true });
+  };
 
   // Draft edits sit beside the loaded profile; Save sends only what changed.
   const [modelDraft, setModelDraft] = useState<BusinessModel | null>(null);
@@ -136,6 +162,13 @@ export function TenantProfileHome() {
     }
     return out;
   }, [profile, termDraft]);
+
+  // What the pending switches do to the menu, said before Save.
+  const moduleChanges = profile
+    ? (Object.entries(moduleDraft) as Array<[TenantModule, boolean]>).filter(([k, v]) => profile.modules[k] !== v)
+    : [];
+  const pagesLeaving = moduleChanges.filter(([, on]) => !on).flatMap(([k]) => MODULE_REACH[k].pages);
+  const pagesArriving = moduleChanges.filter(([, on]) => on).flatMap(([k]) => MODULE_REACH[k].pages);
 
   const dirty = modelDraft !== null || Object.keys(moduleDraft).length > 0 || Object.keys(termDraft).length > 0;
 
@@ -181,9 +214,9 @@ export function TenantProfileHome() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Organization profile"
+        title="Organization"
         subtitle={`What kind of organization this is, which modules it runs, and what it calls things. The words here reach the navigation, the roles and ${assistantName}.`}
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile' }]}
+        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization' }]}
       />
 
       {can('view:org') ? (
@@ -205,6 +238,12 @@ export function TenantProfileHome() {
 
       {profile && modules && terms ? (
         <>
+          <Tabs value={tab} onValueChange={setTab}>
+            <TabsList>
+              <TabsTrigger value="modules">Model &amp; modules</TabsTrigger>
+              <TabsTrigger value="terms">Terminology</TabsTrigger>
+            </TabsList>
+            <TabsContent value="modules" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Business model</CardTitle>
@@ -234,27 +273,53 @@ export function TenantProfileHome() {
               <CardTitle>Modules</CardTitle>
             </CardHeader>
             <CardContent>
-              <ul className="divide-y divide-navy-secondary" data-testid="module-switches">
-                {TENANT_MODULES.map((key) => (
-                  <li key={key} className="flex items-start gap-3 py-3">
-                    <input
-                      id={`module-${key}`}
-                      type="checkbox"
-                      className="mt-1 h-5 w-5 shrink-0 accent-gold"
-                      checked={modules[key]}
-                      disabled={!canManage || save.isPending}
-                      onChange={(e) => setModuleDraft((d) => ({ ...d, [key]: e.target.checked }))}
-                    />
-                    <label htmlFor={`module-${key}`} className="min-w-0 flex-1 cursor-pointer">
-                      <span className="block text-sm font-medium text-white">{TENANT_MODULE_LABEL[key]}</span>
-                      <span className="block text-xs text-silver">{MODULE_NOTE[key]}</span>
-                    </label>
-                  </li>
-                ))}
+              <p className="mb-3 text-sm text-silver">Off, a module leaves the menu and its pages answer not found. Nothing is deleted — switch it back on and everything is where it was.</p>
+              <ul className="grid gap-3 md:grid-cols-2" data-testid="module-switches">
+                {TENANT_MODULES.map((key) => {
+                  const reach = MODULE_REACH[key];
+                  const changed = profile.modules[key] !== modules[key];
+                  return (
+                    <li key={key} className={cn('rounded-lg border p-3', modules[key] ? 'border-accent/40 bg-accent-fill/5' : 'border-line', changed && 'ring-1 ring-warning/50')}>
+                      <div className="flex items-start gap-3">
+                        <input
+                          id={`module-${key}`}
+                          type="checkbox"
+                          className="mt-1 h-5 w-5 shrink-0 accent-gold"
+                          checked={modules[key]}
+                          disabled={!canManage || save.isPending}
+                          onChange={(e) => setModuleDraft((d) => ({ ...d, [key]: e.target.checked }))}
+                        />
+                        <label htmlFor={`module-${key}`} className="min-w-0 flex-1 cursor-pointer">
+                          <span className="flex items-center gap-2 text-sm font-medium text-ink">
+                            {TENANT_MODULE_LABEL[key]}
+                            <span className={cn('text-2xs font-normal', modules[key] ? 'text-success' : 'text-silver/70')}>{modules[key] ? 'On' : 'Off'}</span>
+                            {changed && <span className="text-2xs font-normal text-warning">unsaved</span>}
+                          </span>
+                          <span className="block text-xs text-silver">{MODULE_NOTE[key]}</span>
+                          {(reach.pages.length > 0 || reach.roles.length > 0) && (
+                            <span className="mt-1.5 block text-2xs text-silver/80">
+                              {reach.pages.length > 0 && <>Menu: {reach.pages.slice(0, 6).join(', ')}{reach.pages.length > 6 ? ` and ${reach.pages.length - 6} more` : ''}.</>}
+                              {reach.roles.length > 0 && <> Roles: {reach.roles.join(', ')}.</>}
+                            </span>
+                          )}
+                        </label>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
+              {(pagesLeaving.length > 0 || pagesArriving.length > 0) && (
+                <div className="mt-4 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-ink" role="status">
+                  <span className="font-medium">When you save:</span>{' '}
+                  {pagesArriving.length > 0 && <>{pagesArriving.length} page{pagesArriving.length === 1 ? '' : 's'} join the menu ({pagesArriving.slice(0, 5).join(', ')}{pagesArriving.length > 5 ? '…' : ''}). </>}
+                  {pagesLeaving.length > 0 && <>{pagesLeaving.length} page{pagesLeaving.length === 1 ? '' : 's'} leave it ({pagesLeaving.slice(0, 5).join(', ')}{pagesLeaving.length > 5 ? '…' : ''}) for everyone.</>}
+                </div>
+              )}
             </CardContent>
           </Card>
 
+            </TabsContent>
+            <TabsContent value="terms">
           <Card>
             <CardHeader>
               <CardTitle>Terminology</CardTitle>
@@ -310,6 +375,9 @@ export function TenantProfileHome() {
               ))}
             </CardContent>
           </Card>
+
+            </TabsContent>
+          </Tabs>
 
           {canManage ? (
             <div className="sticky bottom-0 flex items-center justify-between gap-3 rounded-lg border border-navy-secondary bg-navy/95 p-3 backdrop-blur">

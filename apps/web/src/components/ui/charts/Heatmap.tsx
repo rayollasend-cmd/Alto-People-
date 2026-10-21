@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import { cn } from '@/lib/cn';
 import { toneColor, type Tone } from './palette';
 
@@ -10,7 +10,17 @@ import { toneColor, type Tone } from './palette';
  * figure out under the grid (hover never fires on a phone).
  *
  * Empty (null) cells stay blank — "no data" is not "zero".
+ *
+ * Keyboard: the grid is one tab stop (roving tabindex); the arrow keys,
+ * Home and End move between cells, Enter or Space reads one out. When
+ * figures print in the cells the ramp stops at 50%, so the text — always
+ * the body text color — keeps ≥ 4.5:1 on every cell in both themes
+ * (white on a strong warning cell fell to 2.2:1).
  */
+
+const RAMP_LOW = 0.12;
+/** Top of the shade ramp: deep when the cells are bare, capped under text. */
+const rampTop = (withText: boolean) => (withText ? 0.5 : 0.92);
 
 export interface HeatmapAxisItem {
   key: string;
@@ -64,13 +74,38 @@ export function Heatmap({
   const color = toneColor(tone);
   const top = max ?? Math.max(0, ...values.flat().filter((v): v is number => typeof v === 'number'));
   const [picked, setPicked] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<[number, number]>([0, 0]);
+  const gridRef = useRef<HTMLTableElement>(null);
+  const top01 = rampTop(showValues);
+  const shade = (intensity: number) => RAMP_LOW + intensity * (top01 - RAMP_LOW);
+  const focusCell = (r: number, c: number) => {
+    const rr = Math.max(0, Math.min(rows.length - 1, r));
+    const cc = Math.max(0, Math.min(columns.length - 1, c));
+    setCursor([rr, cc]);
+    gridRef.current?.querySelector<HTMLButtonElement>(`[data-cell="${rr}-${cc}"]`)?.focus();
+  };
+  const onKey = (e: KeyboardEvent<HTMLTableElement>) => {
+    const [r, c] = cursor;
+    const moves: Record<string, [number, number]> = {
+      ArrowRight: [r, c + 1],
+      ArrowLeft: [r, c - 1],
+      ArrowDown: [r + 1, c],
+      ArrowUp: [r - 1, c],
+      Home: [r, 0],
+      End: [r, columns.length - 1],
+    };
+    const to = moves[e.key];
+    if (!to) return;
+    e.preventDefault();
+    focusCell(to[0], to[1]);
+  };
   const label = (r: HeatmapAxisItem, c: HeatmapAxisItem, v: number | null) =>
     cellLabel ? cellLabel(r, c, v) : `${r.label}, ${c.label}: ${v === null ? 'no data' : format(v)}`;
 
   return (
     <div className={className}>
       <div className="overflow-x-auto">
-        <table className="w-full border-separate" style={{ borderSpacing: 2 }}>
+        <table ref={gridRef} className="w-full border-separate" style={{ borderSpacing: 2 }} onKeyDown={onKey}>
           <caption className="sr-only">{caption}</caption>
           <thead>
             <tr>
@@ -96,9 +131,9 @@ export function Heatmap({
                   const strong = intensity > 0.6;
                   const body = (
                     <>
-                      {v !== null && v !== 0 && <span aria-hidden="true" className="absolute inset-0 rounded-sm" style={{ background: color, opacity: 0.12 + intensity * 0.8 }} />}
+                      {v !== null && v !== 0 && <span aria-hidden="true" className="absolute inset-0 rounded-sm" style={{ background: color, opacity: shade(intensity) }} />}
                       {showValues && v !== null && (
-                        <span aria-hidden="true" className={cn('relative text-2xs tabular-nums', strong ? 'font-medium text-on-solid' : 'text-ink')}>
+                        <span aria-hidden="true" className={cn('relative text-2xs tabular-nums text-ink', strong && 'font-medium')}>
                           {format(v)}
                         </span>
                       )}
@@ -112,6 +147,9 @@ export function Heatmap({
                     <td key={c.key} className="p-0" title={text}>
                       <button
                         type="button"
+                        data-cell={`${ri}-${ci}`}
+                        tabIndex={cursor[0] === ri && cursor[1] === ci ? 0 : -1}
+                        onFocus={() => setCursor([ri, ci])}
                         aria-label={text}
                         className={cn(cellClass, 'focus:outline-none focus-visible:ring-1 focus-visible:ring-gold', onCellClick && 'cursor-pointer hover:ring-1 hover:ring-gold/60')}
                         onClick={() => {
@@ -136,7 +174,7 @@ export function Heatmap({
         <div className="flex items-center gap-1.5 text-2xs text-ink-muted">
           {legend.low}
           <span className="flex gap-px" aria-hidden="true">
-            {[0.12, 0.3, 0.5, 0.72, 0.92].map((o) => (
+            {[0, 0.25, 0.5, 0.75, 1].map((i) => shade(i)).map((o) => (
               <span key={o} className="h-2.5 w-3 rounded-sm" style={{ background: color, opacity: o }} />
             ))}
           </span>

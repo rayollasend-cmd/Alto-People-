@@ -156,6 +156,7 @@ import { regionRouter, regionsAdminRouter } from './routes/region.js';
 import { kiosk99Router } from './routes/kiosk99.js';
 import { punchPhotosRouter } from './routes/punchPhotos.js';
 import { attendanceInsightsRouter } from './routes/attendanceInsights.js';
+import { opsActivityRouter } from './routes/opsActivity.js';
 import { celebrationsRouter } from './routes/celebrations107.js';
 import { assetsRouter } from './routes/assets108.js';
 import { pulseSurveysRouter } from './routes/pulseSurveys109.js';
@@ -526,6 +527,8 @@ export function createApp() {
   app.use('/time', requireCapability('view:time'), timeRouter);
   // Attendance trends, heatmap, not-in-yet and team hours (each route gates itself).
   app.use('/attendance', attendanceInsightsRouter);
+  // The floor's record for the admin home: call-outs, publishes, swaps, incidents.
+  app.use('/ops-activity', opsActivityRouter);
   // Policies before the catch-all: /time-off/policies/* is its own router.
   app.use('/time-off/policies', requireCapability('view:time'), timeOffPoliciesRouter);
   app.use('/time-off', requireCapability('view:time'), timeOffRouter);

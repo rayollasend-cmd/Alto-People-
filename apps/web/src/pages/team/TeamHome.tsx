@@ -43,6 +43,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { OneOnOneCell } from '@/components/team/OneOnOneCell';
 import { toast } from 'sonner';
 import { removeFromLists, useOptimisticMutation } from '@/lib/optimistic';
 import { ListTemplate } from '@/components/templates';
@@ -464,6 +465,16 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
             { key: 'email', header: 'Email', accessor: (r) => r.email, sortable: true, cardMeta: true, className: 'text-silver' },
             { key: 'title', header: 'Title', accessor: (r) => r.jobTitle, sortable: true, className: 'text-silver', cell: (r) => r.jobTitle ?? '—' },
             { key: 'department', header: 'Department', accessor: (r) => r.departmentName, sortable: true, cardMeta: true, className: 'text-silver', cell: (r) => r.departmentName ?? '—' },
+            {
+              key: 'oneOnOne',
+              header: '1:1',
+              // Sort by how long since the last one — the longest gap first.
+              accessor: (r) => (r.lastOneOnOneAt ? Date.parse(r.lastOneOnOneAt) : 0),
+              sortable: true,
+              searchable: false,
+              cardMeta: true,
+              cell: (r) => <OneOnOneCell report={r} />,
+            },
           ]}
         />
       )}

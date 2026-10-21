@@ -369,6 +369,21 @@ async function liveCounts(shiftId: string) {
   return { sopTotal, sopDone, taskTotal, taskDone };
 }
 
+/**
+ * A shift still ACTIVE this long after it should have ended was never
+ * closed: the supervisor walked out without submitting. It leaves the live
+ * board (and its totals — 33-day-old "live" shifts were adding their
+ * headcount to "on the floor now") and shows as an exception to close out
+ * or void. The SOP expiry sweep (lib/storeShiftSop) closes the rest later.
+ */
+export const NEVER_CLOSED_AFTER_MS = 6 * 3_600_000;
+/** A shift opened by hand has no window end; it's taken to end this long after it opened. */
+const OPEN_SPAN_MS = 12 * 3_600_000;
+export function neverClosed(s: { dueAt: Date | null; openedAt: Date }, now: Date = new Date()): boolean {
+  const end = s.dueAt ?? new Date(s.openedAt.getTime() + OPEN_SPAN_MS);
+  return now.getTime() >= end.getTime() + NEVER_CLOSED_AFTER_MS;
+}
+
 /* ===== SOP library ======================================================= */
 
 opsRouter.get('/library', LIB_READ, async (_req, res, next) => {
@@ -1971,6 +1986,63 @@ opsRouter.post('/shifts/:id/cancel', LIB, async (req, res, next) => {
   }
 });
 
+/**
+ * POST /ops/shifts/:id/close-out — oversight's way to file a shift nobody
+ * closed: stamps the counts as they stand, marks it incomplete when
+ * required items were open, and keeps the reason. Only a shift that's
+ * past its end (see neverClosed) — a running shift is its supervisor's.
+ */
+opsRouter.post('/shifts/:id/close-out', LIB, async (req, res, next) => {
+  try {
+    const shift = await loadShiftScoped(req, req.params.id);
+    const parsed = z.object({ reason: z.string().trim().max(500).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    if (shift.status !== 'ACTIVE') throw new HttpError(409, 'shift_closed', 'This shift is already closed.');
+    const now = new Date();
+    if (!neverClosed(shift, now)) {
+      throw new HttpError(409, 'still_running', 'This shift is still running — its supervisor submits it.');
+    }
+    const [counts, requiredOpen] = await Promise.all([
+      liveCounts(shift.id),
+      prisma.opsTask.count({ where: { opsShiftId: shift.id, required: true, status: { not: 'DONE' } } }),
+    ]);
+    const why = parsed.data.reason?.trim();
+    const reason = `Never closed — closed out from the board${why ? `: ${why}` : '.'}`.slice(0, 1000);
+    // Conditional: two people closing out the same shift file it once.
+    const closed = await prisma.opsShift.updateMany({
+      where: { id: shift.id, status: 'ACTIVE' },
+      data: {
+        status: 'CLOSED',
+        closedById: req.user!.id,
+        closedAt: now,
+        closingSummary: reason,
+        incompleteReason: requiredOpen > 0 ? reason : null,
+        closedIncomplete: requiredOpen > 0,
+        handoverNone: true,
+        sopTotal: counts.sopTotal,
+        sopDone: counts.sopDone,
+        taskTotal: counts.taskTotal,
+        taskDone: counts.taskDone,
+      },
+    });
+    if (closed.count === 0) throw new HttpError(409, 'shift_closed', 'This shift is already closed.');
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: shift.clientId,
+        action: 'ops.shift_closed_out',
+        entityType: 'OpsShift',
+        entityId: shift.id,
+        metadata: { reason: why ?? null, sop: `${counts.sopDone}/${counts.sopTotal}`, requiredOpen, openedById: shift.openedById },
+      },
+      'ops.shifts',
+    );
+    res.json({ ok: true, id: shift.id, closedIncomplete: requiredOpen > 0 });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ===== Close ============================================================= */
 
 opsRouter.post('/shifts/:id/close', RUN_OR_ASSIST, async (req, res, next) => {
@@ -2214,8 +2286,10 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
         },
       }),
     ]);
+    const live = active.filter((s) => !neverClosed(s, now));
+    const stale = active.filter((s) => neverClosed(s, now));
     const activeWithCounts = await Promise.all(
-      active.map(async (s) => ({
+      live.map(async (s) => ({
         ...shiftHeader(s),
         ...(await liveCounts(s.id)),
         clientName: s.client.name,
@@ -2227,6 +2301,16 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
       dateKey: todayKey,
       generatedAt: new Date().toISOString(),
       active: activeWithCounts,
+      // Past their end by 6h+ and never submitted: not live, an exception.
+      neverClosed: await Promise.all(
+        stale.map(async (s) => ({
+          ...shiftHeader(s),
+          ...(await liveCounts(s.id)),
+          clientName: s.client.name,
+          openedByEmail: s.openedBy.email,
+          coveringForName: s.coveringFor ? personName(s.coveringFor) : null,
+        })),
+      ),
       closedToday: closedToday.map((s) => ({
         ...shiftHeader(s),
         clientName: s.client.name,

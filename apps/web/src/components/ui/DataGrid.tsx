@@ -444,11 +444,14 @@ function GridCore<T>({
     else setOwnSelected(resolved);
   };
   const selectableRows = selectable ? sorted.filter((r) => !selectable.disabled?.(r)) : [];
+  // The shift-click anchor. Select-all, clear and a re-sort start it over.
+  const lastPicked = React.useRef<string | null>(null);
   const allSelected = selectableRows.length > 0 && selectableRows.every((r) => selected.has(rowKey(r)));
   // Union and difference, never replace: a controlled selection may span
   // several grids (renew across every expiry bucket), and this grid's
   // header box must only ever add or remove ITS rows from that choice.
-  const toggleAll = () =>
+  const toggleAll = () => {
+    lastPicked.current = null;
     setSelected((prev) => {
       const next = new Set(prev);
       const mine = selectableRows.map(rowKey);
@@ -456,6 +459,7 @@ function GridCore<T>({
       else for (const k of mine) next.add(k);
       return next;
     });
+  };
   const toggleOne = (key: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -465,12 +469,12 @@ function GridCore<T>({
     });
   // Shift-click a second box: every selectable row between the two takes
   // the state the clicked one is moving to — the way a mail client works.
-  const lastPicked = React.useRef<string | null>(null);
+  // "Between" is as drawn: group order, and never a row in a folded group.
   const pick = (key: string, shift: boolean) => {
     const anchor = lastPicked.current;
     lastPicked.current = key;
     if (!shift || !anchor || anchor === key) return toggleOne(key);
-    const order = selectableRows.map(rowKey);
+    const order = navRows.filter((r) => !selectable?.disabled?.(r.row)).map((r) => r.key);
     const a = order.indexOf(anchor);
     const b = order.indexOf(key);
     if (a === -1 || b === -1) return toggleOne(key);
@@ -485,7 +489,13 @@ function GridCore<T>({
     });
   };
   const shiftOf = (e: React.SyntheticEvent) => (e.nativeEvent as MouseEvent).shiftKey === true;
-  const clearSelection = () => setSelected(new Set());
+  const clearSelection = () => {
+    lastPicked.current = null;
+    setSelected(new Set());
+  };
+  React.useEffect(() => {
+    lastPicked.current = null;
+  }, [sortState.key, sortState.direction]);
   // A row that left the list (filtered away, deleted) leaves the selection.
   // Only for a selection this grid owns: a controlled one may span other
   // grids whose rows this one cannot see.
@@ -674,18 +684,25 @@ function GridCore<T>({
       e.stopPropagation();
       const r = navRows[Math.max(0, Math.min(navRows.length - 1, i))]!;
       setCursor(r.key);
-      const land = () => {
+      // A windowed row may need a frame or two to be drawn after the jump
+      // (End on a long list); until it is, focus stays in the box.
+      const land = (tries = 0) => {
         const el = rowEl(box, r.key);
-        if (rowsOpen) el?.focus({ preventScroll: false });
+        if (!el && virtualize && tries < 3) {
+          requestAnimationFrame(() => land(tries + 1));
+          return;
+        }
+        if (rowsOpen) (el ?? box).focus({ preventScroll: false });
         else el?.scrollIntoView?.({ block: 'nearest' });
       };
       if (virtualize) {
         virtualizer.scrollToIndex(r.index, { align: 'auto' });
-        requestAnimationFrame(land);
+        requestAnimationFrame(() => land());
       } else land();
     };
     const current = cursorAt >= 0 ? navRows[cursorAt]! : null;
-    switch (e.key) {
+    // Shift (x for a range) and Caps Lock arrive upper-case.
+    switch (e.key.length === 1 ? e.key.toLowerCase() : e.key) {
       case 'j':
       case 'ArrowDown':
         return go(cursorAt + 1);
@@ -985,6 +1002,15 @@ function GridCore<T>({
           {/* The table. Scrolls inside its own box only when virtualized —
               and then the box is the ONLY scrollport, so the sticky header
               stays put instead of scrolling away with the rows. */}
+          {/* A table worked from its box (rows that don't open) has no
+              focused row to announce — say where the cursor is. */}
+          {!showCards && boxFocusable && (
+            <span className="sr-only" role="status" aria-live="polite">
+              {cursorAt >= 0 && primary
+                ? t('grid.cursorAt', { n: cursorAt + 1, total: navRows.length, label: String(primary.accessor(navRows[cursorAt]!.row) ?? '') })
+                : ''}
+            </span>
+          )}
           {!showCards && (
             <div
               ref={scrollRef}

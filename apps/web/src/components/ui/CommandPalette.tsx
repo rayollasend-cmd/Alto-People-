@@ -22,6 +22,7 @@ import {
   UserPlus,
   type LucideIcon,
 } from 'lucide-react';
+import { personRecordTabs } from '@/lib/personTabs';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DASHBOARD_NAV, visibleModules, applyTerms, roleNavLabels } from '@/lib/modules';
@@ -157,15 +158,21 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const navigate = useNavigate();
   const { signOut, can, user } = useAuth();
-  // Where a person result goes next, by what this login may open there.
-  const personActions = (id: string): Array<{ key: string; label: string; to: string; icon: LucideIcon }> => [
-    ...(can('manage:time') ? [{ key: 'time', label: 'Timesheet', to: `/people/${id}?tab=time`, icon: Clock }] : []),
-    ...(can('manage:scheduling') || can('view:scheduling') ? [{ key: 'schedule', label: 'Schedule', to: `/scheduling?view=week&associate=${id}`, icon: CalendarDays }] : []),
-    ...(can('view:comp') ? [{ key: 'pay', label: 'Change pay', to: `/people/${id}?tab=pay`, icon: Banknote }] : []),
-    { key: 'documents', label: 'Documents', to: `/people/${id}?tab=documents`, icon: FileText },
-  ];
   const assistant = useAssistant();
   const tenant = useTenant();
+  // Where a person result goes next: the record's own tab rule (personRecordTabs),
+  // so every shortcut lands on a tab this login can open.
+  const personActions = (id: string): Array<{ key: string; label: string; to: string; icon: LucideIcon }> => {
+    const tabs = personRecordTabs(can, tenant.moduleOn);
+    return [
+      ...(tabs.includes('time') ? [{ key: 'time', label: 'Timesheet', to: `/people/${id}?tab=time`, icon: Clock }] : []),
+      ...((can('manage:scheduling') || can('view:scheduling')) && tenant.moduleOn('scheduling')
+        ? [{ key: 'schedule', label: 'Schedule', to: `/scheduling?view=week&associate=${id}`, icon: CalendarDays }]
+        : []),
+      ...(tabs.includes('pay') ? [{ key: 'pay', label: can('manage:comp') ? 'Change pay' : 'Pay', to: `/people/${id}?tab=pay`, icon: Banknote }] : []),
+      { key: 'documents', label: 'Documents', to: `/people/${id}?tab=documents`, icon: FileText },
+    ];
+  };
   const term = useTerm();
   const [search, setSearch] = useState('');
 

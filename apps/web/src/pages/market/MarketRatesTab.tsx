@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { STOCK_LEGEND } from '@/components/ui/charts';
 import { Gauge, MapPinned } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -283,8 +284,8 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
                 <CartesianGrid stroke={CHART.grid} vertical={false} />
                 <XAxis dataKey="occupation" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} interval={0} tickFormatter={(v: string) => (v.length > 18 ? `${v.split(/,| and /)[0]!.slice(0, 18)}…` : v)} />
                 <YAxis tickFormatter={(v: number) => `${Math.round(v * 100)}%`} domain={[0, 1]} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
-                <Tooltip formatter={(v) => pct(v as number)} contentStyle={CHART.tooltip} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Tooltip formatter={(v) => pct(v as number)} contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
+                <Legend {...STOCK_LEGEND} />
                 <Bar dataKey="below" name={BAND_LABEL.below} fill={CHART.warn} radius={[3, 3, 0, 0]} maxBarSize={56} />
                 <Bar dataKey="at" name={BAND_LABEL.at} fill={CHART.series[0]} radius={[3, 3, 0, 0]} maxBarSize={56} />
                 <Bar dataKey="above" name={BAND_LABEL.above} fill={CHART.good} radius={[3, 3, 0, 0]} maxBarSize={56} />

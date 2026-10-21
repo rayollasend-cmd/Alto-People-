@@ -75,7 +75,7 @@ describe('runScheduleDigestSweep', () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0].recipientUserId).toBe(admin.id);
-    expect(rows[0].linkUrl).toMatch(/^\/scheduling\?view=day\&date=\d{4}-\d{2}-\d{2}$/);
+    expect(rows[0].linkUrl).toMatch(/^\/scheduling\?view=day&date=\d{4}-\d{2}-\d{2}$/);
     expect(rows[0].subject).toContain('2 shifts');
     expect(rows[0].subject).toContain('1 filled');
     expect(rows[0].subject).toContain('1 open');

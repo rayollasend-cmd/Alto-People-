@@ -1988,6 +1988,8 @@ async function approveOneEntry(
   user: TimeUser,
   entryId: string,
   req: import('express').Request,
+  /** Approve only a finished entry that is still unreviewed — a rejection or edit that raced in wins. */
+  opts: { onlyIfCompleted?: boolean } = {},
 ): Promise<{ associateId: string; minutes: number } | null> {
   const existing = await prisma.timeEntry.findFirst({
     where: { id: entryId, ...scopeTimeEntries(user) },
@@ -2001,17 +2003,24 @@ async function approveOneEntry(
   if (existing.status === 'APPROVED') {
     return null; // idempotent — no state change, no notification
   }
+  if (opts.onlyIfCompleted && existing.status !== 'COMPLETED') {
+    throw new HttpError(409, 'not_completed', 'This entry is no longer waiting for approval');
+  }
 
-  const updated = await prisma.timeEntry.update({
-    where: { id: existing.id },
-    data: {
-      status: 'APPROVED',
-      approvedById: user.id,
-      approvedAt: new Date(),
-      rejectionReason: null,
-    },
-    include: ENTRY_INCLUDE,
-  });
+  const data = {
+    status: 'APPROVED' as const,
+    approvedById: user.id,
+    approvedAt: new Date(),
+    rejectionReason: null,
+  };
+  let updated;
+  if (opts.onlyIfCompleted) {
+    const { count } = await prisma.timeEntry.updateMany({ where: { id: existing.id, status: 'COMPLETED' }, data });
+    if (count === 0) throw new HttpError(409, 'not_completed', 'This entry changed while it was being approved');
+    updated = await prisma.timeEntry.findUniqueOrThrow({ where: { id: existing.id }, include: ENTRY_INCLUDE });
+  } else {
+    updated = await prisma.timeEntry.update({ where: { id: existing.id }, data, include: ENTRY_INCLUDE });
+  }
 
   const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
     void accruePolicyLeaveForEntry(prisma, updated.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
@@ -2092,6 +2101,45 @@ async function rejectOneEntry(
   });
 
   return { associateId: updated.associateId };
+}
+
+/**
+ * Approve a set of entries the caller has already judged clean (payroll's
+ * "approve clean time" — routes/payroll.ts). Each entry must still be
+ * COMPLETED when it is written; one summary notice per person, as the
+ * bulk approve sends.
+ */
+export async function approveCompletedEntries(
+  user: TimeUser,
+  entryIds: string[],
+  req: import('express').Request,
+): Promise<{ approved: string[]; failed: Array<{ entryId: string; code: string; message: string }> }> {
+  const approved: string[] = [];
+  const failed: Array<{ entryId: string; code: string; message: string }> = [];
+  const byAssociate = new Map<string, { count: number; minutes: number }>();
+  await runWithConcurrency(entryIds, 6, async (entryId) => {
+    try {
+      const done = await approveOneEntry(user, entryId, req, { onlyIfCompleted: true });
+      if (!done) return;
+      emitTimeEntryApproved(entryId);
+      approved.push(entryId);
+      const agg = byAssociate.get(done.associateId) ?? { count: 0, minutes: 0 };
+      agg.count += 1;
+      agg.minutes += done.minutes;
+      byAssociate.set(done.associateId, agg);
+    } catch (err) {
+      failed.push({ entryId, code: err instanceof HttpError ? err.code : 'approve_failed', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  for (const [associateId, agg] of byAssociate) {
+    void notifyAssociate(associateId, {
+      subject: 'Hours approved',
+      body: `${agg.count} time ${agg.count === 1 ? 'entry' : 'entries'} approved — ${(agg.minutes / 60).toFixed(1)}h total.`,
+      category: 'time_entry',
+      linkUrl: '/time-attendance',
+    });
+  }
+  return { approved, failed };
 }
 
 timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {

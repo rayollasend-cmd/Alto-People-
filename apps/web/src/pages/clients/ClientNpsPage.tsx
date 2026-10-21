@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowDownRight, ArrowUpRight, MessageSquareQuote, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { getNpsResults, remindNpsWave, sendNpsWave, type NpsResults } from '@/lib/npsApi';
@@ -26,8 +27,9 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * manage:clients sends the wave or a reminder from here.
  */
 
-const LINE = 'rgb(var(--color-chart-1))';
-const MUTED = 'rgb(var(--color-silver))';
+const LINE = PALETTE.primary;
+/** Axis ticks: the kit's muted text token. */
+const MUTED = TICK.fill;
 
 function tone(nps: number | null): string {
   if (nps === null) return 'text-ink-muted';
@@ -150,10 +152,10 @@ export function ClientNpsPage() {
                   <div className="mt-2 h-40">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-                        <CartesianGrid stroke="rgb(var(--color-silver) / 0.12)" vertical={false} />
+                        <CartesianGrid stroke={PALETTE.grid} vertical={false} />
                         <XAxis dataKey="quarter" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
                         <YAxis domain={[-100, 100]} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
-                        <Tooltip contentStyle={{ background: 'rgb(var(--color-surface-raised))', border: '1px solid rgb(var(--color-line))', borderRadius: 8, fontSize: 12 }} />
+                        <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
                         <Area type="monotone" dataKey="nps" name="NPS" stroke={LINE} strokeWidth={2} fill={LINE} fillOpacity={0.15} />
                       </AreaChart>
                     </ResponsiveContainer>

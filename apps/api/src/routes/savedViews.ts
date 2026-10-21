@@ -116,6 +116,9 @@ savedViewsRouter.patch('/:id', async (req, res, next) => {
     const input = SavedViewUpdateSchema.parse(req.body);
     const me = req.user!.id;
     const row = await ownView(req.params.id, me);
+    // Changing a view (sharing it with the team, above all) is for someone
+    // who can still see that list.
+    assertScope(req.user!, row.scope as SavedViewScope);
     const updated = await prisma.savedView.update({
       where: { id: row.id },
       data: {
@@ -134,6 +137,7 @@ savedViewsRouter.patch('/:id', async (req, res, next) => {
 savedViewsRouter.delete('/:id', async (req, res, next) => {
   try {
     const row = await ownView(req.params.id, req.user!.id);
+    assertScope(req.user!, row.scope as SavedViewScope);
     await prisma.savedView.delete({ where: { id: row.id } });
     res.status(204).end();
   } catch (err) {

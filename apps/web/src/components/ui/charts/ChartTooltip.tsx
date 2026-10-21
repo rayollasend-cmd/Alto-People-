@@ -74,6 +74,19 @@ export function LegendKey({ items }: { items: Array<{ name: string; color: strin
   );
 }
 
+/**
+ * Props for a stock recharts <Legend> where a figure still uses one: the
+ * key reads in the muted text token (recharts colors legend text in the
+ * series color, which fails contrast for gold and the neutrals), square
+ * swatches, the kit's size. Prefer LegendKey under the chart for new work.
+ */
+export const STOCK_LEGEND = {
+  wrapperStyle: { fontSize: 12 },
+  iconType: 'square' as const,
+  iconSize: 10,
+  formatter: (value: unknown) => <span style={{ color: 'rgb(var(--color-silver))' }}>{String(value)}</span>,
+};
+
 /** The portal's original name for the tooltip readout. */
 export const PortalTooltip = ChartTooltipContent;
 

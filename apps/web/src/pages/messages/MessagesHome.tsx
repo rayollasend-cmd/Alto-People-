@@ -215,7 +215,7 @@ export function MessagesHome() {
                     <li key={r.messageId}>
                       <Link to={`/messages/${r.conversationId}`} className="block px-3 py-2.5 hover:bg-navy-secondary/30">
                         <div className="flex items-baseline justify-between gap-2">
-                          <span className="truncate text-sm font-medium text-white">{r.conversationTitle}</span>
+                          <span className="truncate text-sm font-medium text-ink">{r.conversationTitle}</span>
                           <span className="shrink-0 text-2xs tabular-nums text-silver/50">{fmtDate(r.createdAt)}</span>
                         </div>
                         <p className="mt-0.5 line-clamp-2 text-xs text-silver/70">
@@ -263,7 +263,7 @@ export function MessagesHome() {
                       <ConversationAvatar c={c} meId={user.id} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline justify-between gap-2">
-                          <span className={cn('truncate text-sm', c.unread > 0 ? 'font-semibold text-white' : 'font-medium text-white/90')}>
+                          <span className={cn('truncate text-sm', c.unread > 0 ? 'font-semibold text-ink' : 'font-medium text-ink/90')}>
                             {c.title}
                           </span>
                           {c.lastMessageAt && (
@@ -416,7 +416,7 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-white">{data?.title ?? '…'}</div>
+          <div className="truncate text-sm font-medium text-ink">{data?.title ?? '…'}</div>
           {data && (
             <div className="truncate text-2xs text-silver/60">
               {data.kind === 'STORE_CHANNEL'
@@ -554,7 +554,7 @@ function Bubble({ m, showSender, senderPhoto }: { m: MessageRow; showSender: boo
       <div
         className={cn(
           'max-w-[85%] rounded-2xl px-3 py-2 text-sm md:max-w-[70%]',
-          m.mine ? 'rounded-br-sm bg-gold/20 text-white' : 'rounded-bl-sm bg-navy-secondary/70 text-white',
+          m.mine ? 'rounded-br-sm bg-gold/20 text-ink' : 'rounded-bl-sm bg-navy-secondary/70 text-ink',
         )}
       >
         {showSender && !m.mine && m.senderName && (
@@ -654,7 +654,7 @@ function ComposeDialog({
                   key={p.id}
                   type="button"
                   onClick={() => setPicked((s) => s.filter((x) => x.id !== p.id))}
-                  className="flex items-center gap-1.5 rounded-full bg-gold/15 py-0.5 pl-1 pr-2 text-xs text-white"
+                  className="flex items-center gap-1.5 rounded-full bg-gold/15 py-0.5 pl-1 pr-2 text-xs text-ink"
                   aria-label={t('msg.remove', { name: p.name })}
                 >
                   <Avatar src={photoUrl(p)} name={p.name} email="" size="xs" />
@@ -668,7 +668,15 @@ function ComposeDialog({
           )}
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('msg.findPerson')} autoFocus={typeof window === 'undefined' || !window.matchMedia?.('(pointer: coarse)').matches} />
           <ul className="max-h-56 divide-y divide-navy-secondary/60 overflow-y-auto rounded-md border border-navy-secondary">
-            {candidates.length === 0 ? (
+            {directory.isError ? (
+              // A failed lookup isn't "nobody matches" — say so, with a retry.
+              <li role="alert" className="flex items-center justify-between gap-3 p-3 text-xs text-alert">
+                <span>{t('msg.directoryFailed')}</span>
+                <Button size="xs" variant="secondary" onClick={() => void directory.refetch()} loading={directory.isFetching}>
+                  {t('common.retry')}
+                </Button>
+              </li>
+            ) : candidates.length === 0 ? (
               <li className="p-3 text-xs text-silver/60">{directory.isLoading ? '…' : t('msg.noPeople')}</li>
             ) : (
               candidates.slice(0, 40).map((p) => (
@@ -680,7 +688,7 @@ function ComposeDialog({
                   >
                     <Avatar src={photoUrl(p)} name={p.name} email="" size="sm" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-white">{p.name}</span>
+                      <span className="block truncate text-sm text-ink">{p.name}</span>
                       <span className="block truncate text-2xs text-silver/60">
                         {p.roleLabel}
                         {p.clientName ? ` · ${p.clientName}` : ''}

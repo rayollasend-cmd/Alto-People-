@@ -619,18 +619,307 @@ export async function openSopOnClockIn(
   return { shiftId: shift.id, resumed: false };
 }
 
+/** An SOP still open this long after its shift ended is closed by the
+ *  expiry sweep as "Expired — not submitted": nobody is waiting on a
+ *  handover from a shift that ended yesterday, and it must never hold a
+ *  later clock-out hostage. */
+export const SOP_EXPIRY_MS = 12 * 60 * MIN_MS;
+/** An SOP opened by hand has no window end; it counts as ended this long
+ *  after it opened. */
+const MANUAL_SOP_SPAN_MS = 12 * 60 * MIN_MS;
+
+/** When this SOP's shift ended (or, opened by hand, is taken to have). */
+function sopShiftEnd(s: { dueAt: Date | null; openedAt: Date }): Date {
+  return s.dueAt ?? new Date(s.openedAt.getTime() + MANUAL_SOP_SPAN_MS);
+}
+
+/** Whether an open SOP is past the point the sweep expires it. */
+export function sopExpired(s: { dueAt: Date | null; openedAt: Date }, now: Date = new Date()): boolean {
+  return now.getTime() >= sopShiftEnd(s).getTime() + SOP_EXPIRY_MS;
+}
+
+export interface BlockingSop {
+  id: string;
+  windowLabel: string | null;
+  position: string;
+  /** For the kiosk's "submit it incomplete" screen. */
+  dateKey: string;
+  dueAt: Date | null;
+}
+
 /** The SOP a supervisor must submit before they may clock out, if any —
- *  for a floor supervisor, only one they're running (covering). */
+ *  for a floor supervisor, only one they're running (covering).
+ *
+ *  Only THIS shift's SOP holds the clock: one whose window ends after the
+ *  clock-in being closed began (or that this clock-in opened). An earlier
+ *  shift's SOP left open — the supervisor forgot it last week — never
+ *  traps today's clock-out; the escalation and the expiry sweep chase it.
+ *  With no open clock-in (a role switch, a sign-out), any SOP not yet
+ *  expired still counts, as before. */
 export async function sopBlockingClockOut(
   db: Db,
   user: { id: string; role: string },
-): Promise<{ id: string; windowLabel: string | null; position: string } | null> {
+  now: Date = new Date(),
+): Promise<BlockingSop | null> {
   if (!SOP_ROLES.has(user.role)) return null;
-  return db.opsShift.findFirst({
+  const open = await db.opsShift.findMany({
     where: { openedById: user.id, status: 'ACTIVE' },
-    select: { id: true, windowLabel: true, position: true },
+    select: { id: true, windowLabel: true, position: true, dateKey: true, dueAt: true, openedAt: true, timeEntryId: true },
     orderBy: { openedAt: 'desc' },
+    take: 20,
   });
+  const live = open.filter((s) => !sopExpired(s, now));
+  if (live.length === 0) return null;
+  const me = await db.user.findUnique({ where: { id: user.id }, select: { associateId: true } });
+  const entry = me?.associateId
+    ? await db.timeEntry.findFirst({
+        where: { associateId: me.associateId, status: 'ACTIVE' },
+        orderBy: { clockInAt: 'desc' },
+        select: { id: true, clockInAt: true },
+      })
+    : null;
+  const mine = entry
+    ? live.filter(
+        (s) =>
+          s.timeEntryId === entry.id ||
+          (s.dueAt
+            ? s.dueAt.getTime() > entry.clockInAt.getTime()
+            : s.openedAt.getTime() >= entry.clockInAt.getTime() - EARLY_MIN * MIN_MS),
+      )
+    : live;
+  const s = mine[0];
+  return s ? { id: s.id, windowLabel: s.windowLabel, position: s.position, dateKey: s.dateKey, dueAt: s.dueAt } : null;
+}
+
+async function sopCounts(db: Db, shiftId: string) {
+  const rows = await db.opsTask.groupBy({
+    by: ['source', 'status'],
+    where: { opsShiftId: shiftId },
+    _count: { _all: true },
+  });
+  let sopTotal = 0;
+  let sopDone = 0;
+  let taskTotal = 0;
+  let taskDone = 0;
+  for (const r of rows) {
+    const n = r._count._all;
+    taskTotal += n;
+    if (r.status === 'DONE') taskDone += n;
+    if (r.source === 'SOP') {
+      sopTotal += n;
+      if (r.status === 'DONE') sopDone += n;
+    }
+  }
+  return { sopTotal, sopDone, taskTotal, taskDone };
+}
+
+/** What the kiosk shows on its "your SOP is still open" screen. */
+export async function sopBlockSummary(db: Db, sop: BlockingSop) {
+  const [requiredOpen, counts] = await Promise.all([
+    db.opsTask.count({ where: { opsShiftId: sop.id, required: true, status: { not: 'DONE' } } }),
+    sopCounts(db, sop.id),
+  ]);
+  return {
+    sopId: sop.id,
+    label: sop.windowLabel ? `${sop.windowLabel} SOP` : `SOP for ${sop.position}`,
+    windowLabel: sop.windowLabel,
+    dateKey: sop.dateKey,
+    requiredOpen,
+    sopDone: counts.sopDone,
+    sopTotal: counts.sopTotal,
+  };
+}
+
+/**
+ * The kiosk's way out of the clock-out gate: submit the SOP as it stands,
+ * with a written reason (and, optionally, a note for the next shift). The
+ * same record the app's "submit incomplete" writes — counts stamped, the
+ * reason kept, leadership told — so a supervisor at the tablet with no
+ * phone is never trapped on the clock. Unread handover notes from the
+ * previous shift don't block here (they do in the app): this is the exit.
+ */
+export async function submitSopAtKiosk(
+  db: Db,
+  input: { sopId: string; userId: string; reason: string; handoverNote?: string | null; at?: Date },
+): Promise<{ closedIncomplete: boolean }> {
+  const at = input.at ?? new Date();
+  const shift = await db.opsShift.findFirst({
+    where: { id: input.sopId, openedById: input.userId, status: 'ACTIVE' },
+    select: {
+      id: true,
+      clientId: true,
+      locationId: true,
+      windowLabel: true,
+      position: true,
+      department: true,
+      dateKey: true,
+      coveringForId: true,
+      location: { select: { name: true } },
+    },
+  });
+  if (!shift) return { closedIncomplete: false };
+  const note = input.handoverNote?.trim() ?? '';
+  if (note) {
+    await db.opsHandoverItem.create({ data: { fromShiftId: shift.id, kind: 'NOTE', body: note.slice(0, 1000), priority: 'MEDIUM' } });
+  }
+  const [counts, requiredOpen, handoverCount] = await Promise.all([
+    sopCounts(db, shift.id),
+    db.opsTask.count({ where: { opsShiftId: shift.id, required: true, status: { not: 'DONE' } } }),
+    db.opsHandoverItem.count({ where: { fromShiftId: shift.id } }),
+  ]);
+  const closedIncomplete = requiredOpen > 0;
+  const reason = input.reason.trim();
+  // Conditional close: a second tablet (or the app) submitting at the same
+  // moment leaves one record, not two.
+  const closed = await db.opsShift.updateMany({
+    where: { id: shift.id, status: 'ACTIVE' },
+    data: {
+      status: 'CLOSED',
+      closedById: input.userId,
+      closedAt: at,
+      closingSummary: closedIncomplete ? `Submitted incomplete at the kiosk. ${reason}`.slice(0, 2000) : 'Submitted at the kiosk.',
+      incompleteReason: closedIncomplete ? reason.slice(0, 1000) : null,
+      handoverNone: handoverCount === 0,
+      sopTotal: counts.sopTotal,
+      sopDone: counts.sopDone,
+      taskTotal: counts.taskTotal,
+      taskDone: counts.taskDone,
+      closedIncomplete,
+    },
+  });
+  if (closed.count === 0) return { closedIncomplete: false };
+  enqueueAudit(
+    {
+      actorUserId: input.userId,
+      clientId: shift.clientId,
+      action: 'ops.shift_closed',
+      entityType: 'OpsShift',
+      entityId: shift.id,
+      metadata: {
+        via: 'kiosk',
+        department: shift.department,
+        sop: `${counts.sopDone}/${counts.sopTotal}`,
+        tasks: `${counts.taskDone}/${counts.taskTotal}`,
+        closedIncomplete,
+      },
+    },
+    'ops.shifts',
+  );
+  const label = shift.windowLabel ? `${shift.windowLabel} SOP` : `SOP for ${shift.position}`;
+  if (closedIncomplete) {
+    void notifyAllAdmins({
+      subject: `Ops shift closed incomplete — ${shift.position}`,
+      body:
+        `${label} (${shift.dateKey}${shift.location?.name ? ` · ${shift.location.name}` : ''}) was submitted at the kiosk ` +
+        `with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}. ` +
+        `Reason: ${reason}`,
+      category: 'ops.incomplete_close',
+      linkUrl: `/ops?tab=board&record=${shift.id}`,
+    });
+  }
+  if (shift.coveringForId && shift.coveringForId !== input.userId) {
+    void notifyUser(shift.coveringForId, {
+      subject: `Your ${label} was submitted at the kiosk`,
+      body:
+        `${shift.dateKey}: ${counts.sopDone} of ${counts.sopTotal} done` +
+        (closedIncomplete ? `, submitted incomplete — ${reason}` : '') +
+        `. ${handoverCount === 0 ? 'Nothing handed over.' : `${handoverCount} note${handoverCount === 1 ? '' : 's'} handed over.`}`,
+      category: 'ops.sop',
+      linkUrl: `/ops?tab=shift&record=${shift.id}`,
+    });
+  }
+  return { closedIncomplete };
+}
+
+/**
+ * SOPs still open long after their shift ended (end + 12h) close as
+ * "Expired — not submitted": counts stamped as they stood, marked
+ * incomplete with that reason, the supervisor told, and the store's
+ * leadership (their lead, the Workforce desk) flagged — the record shows
+ * the SOP was never submitted, and a stale SOP no longer reads as "live"
+ * on the ops board or holds anyone's clock.
+ */
+export async function runSopExpirySweep(
+  db: PrismaClient = defaultPrisma,
+  now: Date = new Date(),
+): Promise<{ expired: number }> {
+  const open = await db.opsShift.findMany({
+    where: {
+      status: 'ACTIVE',
+      OR: [
+        { dueAt: { lte: new Date(now.getTime() - SOP_EXPIRY_MS) } },
+        { dueAt: null, openedAt: { lte: new Date(now.getTime() - SOP_EXPIRY_MS - MANUAL_SOP_SPAN_MS) } },
+      ],
+    },
+    select: {
+      id: true,
+      clientId: true,
+      windowLabel: true,
+      position: true,
+      department: true,
+      dateKey: true,
+      openedById: true,
+      coveringForId: true,
+      location: { select: { name: true } },
+      openedBy: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+    },
+    take: 500,
+  });
+  let expired = 0;
+  for (const s of open) {
+    try {
+      const counts = await sopCounts(db, s.id);
+      const closed = await db.opsShift.updateMany({
+        where: { id: s.id, status: 'ACTIVE' },
+        data: {
+          status: 'CLOSED',
+          closedAt: now,
+          closedById: null,
+          closedIncomplete: true,
+          incompleteReason: 'Expired — not submitted. Closed automatically 12 hours after the shift ended.',
+          handoverNone: true,
+          sopTotal: counts.sopTotal,
+          sopDone: counts.sopDone,
+          taskTotal: counts.taskTotal,
+          taskDone: counts.taskDone,
+        },
+      });
+      if (closed.count === 0) continue;
+      expired += 1;
+      enqueueAudit(
+        {
+          actorUserId: null,
+          clientId: s.clientId,
+          action: 'ops.shift_expired',
+          entityType: 'OpsShift',
+          entityId: s.id,
+          metadata: { department: s.department, sop: `${counts.sopDone}/${counts.sopTotal}`, dateKey: s.dateKey },
+        },
+        'ops.shifts',
+      );
+      const label = s.windowLabel ? `${s.windowLabel} SOP` : `SOP for ${s.position}`;
+      const where = `${s.location?.name ?? 'the store'} · ${s.dateKey}`;
+      const who = s.openedBy.associate ? `${s.openedBy.associate.firstName} ${s.openedBy.associate.lastName}` : s.openedBy.email;
+      const link = `/ops?tab=board&record=${s.id}`;
+      void notifyUser(s.openedById, {
+        subject: `Your ${label} expired without being submitted`,
+        body: `${where}: it was still open 12 hours after the shift ended, so it closed as "Expired — not submitted" (${counts.sopDone} of ${counts.sopTotal} done). It no longer holds your clock.`,
+        category: 'ops.sop',
+        linkUrl: link,
+      });
+      const flag = {
+        subject: `SOP expired, never submitted — ${where}`,
+        body: `${who}'s ${label} was never submitted (${counts.sopDone} of ${counts.sopTotal} done) and closed automatically 12 hours after the shift ended. No handover reached the next shift.`,
+        category: 'ops.sop_expired',
+        linkUrl: link,
+      };
+      if (s.coveringForId) void notifyUser(s.coveringForId, flag);
+      void notifyWorkforce(flag);
+    } catch (err) {
+      console.warn('[ops] SOP expiry sweep:', s.id, err instanceof Error ? err.message : err);
+    }
+  }
+  return { expired };
 }
 
 /**
@@ -852,7 +1141,11 @@ export function startOpsSopCron(): void {
   const run = () => {
     // Covers first: an SOP that moves to a floor supervisor this tick is
     // reminded and escalated like any other from the next one.
-    void tenantJob('storeShiftSop', () => runSopCoverSweep().then(() => runOpsSopSweep()))()
+    void tenantJob('storeShiftSop', () =>
+      runSopCoverSweep()
+        .then(() => runOpsSopSweep())
+        .then(() => runSopExpirySweep()),
+    )()
       .catch((err) => {
         console.error('[alto-people/api] store-shift SOP sweep failed:', err);
       });

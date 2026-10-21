@@ -93,7 +93,8 @@ describe('Expirations', () => {
     expect(await screen.findByText(/1 at Back Bay/)).toBeInTheDocument();
     // The chart frame: Table switches the picture for its numbers.
     await userEvent.click(screen.getByRole('button', { name: 'Table' }));
-    expect(screen.getByRole('button', { name: 'Chart' })).toHaveAttribute('aria-pressed', 'true');
+    // The button now names the view it switches back to.
+    expect(screen.getByRole('button', { name: 'Chart' })).toBeInTheDocument();
   });
 
   it('the full list is still one click away', async () => {

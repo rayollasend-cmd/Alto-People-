@@ -21,8 +21,10 @@ export const PALETTE = {
   primary: token('chart-1'),
   secondary: token('chart-2'),
   tertiary: token('chart-3'),
-  /** The fold-in color for "Other" and for a comparison/background series. */
-  other: token('silver', 0.45),
+  /** The fold-in color for "Other" and for a comparison/background series —
+   *  a solid token per theme, ≥ 3:1 on its surface (a translucent silver
+   *  fell to 2.3:1 on white). */
+  other: token('chart-other'),
   good: token('success'),
   warn: token('warning'),
   bad: token('alert'),
@@ -44,10 +46,22 @@ export function seriesColor(i: number): string {
 }
 
 /**
- * For older figures with more than five fixed categories (a status donut):
- * the five hues, then neutrals — never generated hues.
+ * For older figures indexed past the fifth category: the five hues, then
+ * "Other" — never a sixth hue, and never a repeat of one of the five (the
+ * steel blue in slot 6 was slot 2's twin in light mode). Fold the sixth
+ * category and beyond into one "Other" (see `foldToOther`).
  */
-export const EXTENDED_SERIES = [...PALETTE.series, PALETTE.info, PALETTE.other, PALETTE.axis] as const;
+export const EXTENDED_SERIES = [...PALETTE.series, PALETTE.other, PALETTE.other, PALETTE.other] as const;
+
+/**
+ * Keeps the first `keep` items and sums the rest into one "Other" row, so a
+ * categorical chart never runs out of distinct hues.
+ */
+export function foldToOther<T extends { name: string; value: number }>(items: T[], keep = 5, otherName = 'Other'): Array<T | { name: string; value: number; color: string }> {
+  if (items.length <= keep + 1) return items;
+  const rest = items.slice(keep).reduce((s, d) => s + d.value, 0);
+  return [...items.slice(0, keep), { name: otherName, value: rest, color: PALETTE.other }];
+}
 
 /** Axis tick text: the muted text token, never a series color. */
 export const TICK = { fill: token('silver', 0.75), fontSize: 11 } as const;
@@ -63,6 +77,10 @@ export const TOOLTIP_STYLE = {
 } as const;
 
 export const TOOLTIP_LABEL_STYLE = { color: token('silver'), marginBottom: 2 } as const;
+
+/** recharts `itemStyle`: the stock tooltip colors each row in its series
+ *  color (gold text at 3.2:1 on white) — rows read in the text color. */
+export const TOOLTIP_ITEM_STYLE = { color: token('fg'), padding: '1px 0' } as const;
 
 export type Tone = 'primary' | 'good' | 'warn' | 'bad' | 'neutral';
 

@@ -18,6 +18,7 @@ export function CrewTextDialog({
   shiftIds,
   label,
   count,
+  send: sendOverride,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,6 +26,8 @@ export function CrewTextDialog({
   /** "Morning · 6:00 AM – 2:00 PM" */
   label: string;
   count: number;
+  /** Send it some other way (e.g. one text per client); defaults to one /floor/crew-text call. */
+  send?: (body: string) => Promise<{ sent: number; noPhone: string[] }>;
 }) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,7 +35,7 @@ export function CrewTextDialog({
     if (!body.trim()) return;
     setBusy(true);
     try {
-      const r = await textCrew({ shiftIds, body: body.trim() });
+      const r = sendOverride ? await sendOverride(body.trim()) : await textCrew({ shiftIds, body: body.trim() });
       toast.success(r.noPhone.length ? `Sent to ${r.sent}. No phone on file: ${r.noPhone.join(', ')}.` : `Sent to ${r.sent}.`);
       setBody('');
       onOpenChange(false);

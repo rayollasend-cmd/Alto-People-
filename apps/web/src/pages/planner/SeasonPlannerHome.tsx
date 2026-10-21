@@ -47,7 +47,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
-import { DetailsTable, PALETTE, PortalTooltip, TICK } from '@/components/ui/charts';
+import { DetailsTable, LegendKey, PALETTE, PortalTooltip, TICK } from '@/components/ui/charts';
 import { SERIES } from '@/pages/portal/portalCharts';
 import { TaskDemandEditor, linesOf, mixLine, spreadLines } from './TaskDemandEditor';
 import { fmtMoney } from '@/lib/format';
@@ -450,10 +450,10 @@ function PlanView({ id }: { id: string }) {
               ) : (
                 <>
                   <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={weekly}>
+                    <BarChart accessibilityLayer={false} data={weekly}>
                       <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                      <XAxis dataKey="label" tick={TICK} />
-                      <YAxis allowDecimals={false} tick={TICK} />
+                      <XAxis dataKey="label" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} />
+                      <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
                       <Tooltip content={<PortalTooltip series={{ associatesNeeded: { name: 'Associates', color: SERIES.primary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: PALETTE.cursor }} />
                       <Bar dataKey="associatesNeeded" name="Associates" fill={SERIES.primary} radius={[4, 4, 0, 0]} />
                     </BarChart>
@@ -890,15 +890,19 @@ function CompareView({ a, b }: { a: string; b: string }) {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={series}>
+                <BarChart accessibilityLayer={false} data={series}>
                   <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                  <XAxis dataKey="label" tick={TICK} />
-                  <YAxis allowDecimals={false} tick={TICK} />
+                  <XAxis dataKey="label" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} />
+                  <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
                   <Tooltip content={<PortalTooltip series={{ a: { name: q.data.a.name, color: SERIES.primary }, b: { name: q.data.b.name, color: SERIES.secondary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: PALETTE.cursor }} />
                   <Bar dataKey="a" name={q.data.a.name} fill={SERIES.primary} radius={[4, 4, 0, 0]} />
                   <Bar dataKey="b" name={q.data.b.name} fill={SERIES.secondary} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+              {/* Two scenarios, two colors — the key says which is which. */}
+              <div className="mt-2">
+                <LegendKey items={[{ name: q.data.a.name, color: SERIES.primary }, { name: q.data.b.name, color: SERIES.secondary }]} />
+              </div>
               <DetailsTable label="Details" columns={['Week of', q.data.a.name, q.data.b.name, 'Difference']} rows={series.map((s) => [s.label, s.a, s.b, s.b - s.a])} />
             </CardContent>
           </Card>

@@ -87,6 +87,10 @@ export const listCampaigns = () => apiFetch<{ campaigns: ReferralCampaign[] }>('
 export const createCampaign = (input: CampaignInput) => apiFetch<ReferralCampaign>('/marketing/campaigns', { method: 'POST', body: input });
 export const updateCampaign = (id: string, input: Partial<CampaignInput>) =>
   apiFetch<ReferralCampaign>(`/marketing/campaigns/${id}`, { method: 'PATCH', body: input });
+/** Write the campaign up as a broadcast draft for HR to review and send. */
+export const announceCampaign = (id: string) =>
+  apiFetch<{ broadcastId: string; notified: number }>(`/marketing/campaigns/${id}/announce`, { method: 'POST', body: {} });
+
 export const setCampaignStatus = (id: string, status: 'ACTIVE' | 'CLOSED') =>
   apiFetch<ReferralCampaign>(`/marketing/campaigns/${id}/status`, { method: 'POST', body: { status } });
 

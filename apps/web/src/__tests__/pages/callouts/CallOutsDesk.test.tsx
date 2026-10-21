@@ -19,13 +19,13 @@ vi.mock('@/lib/callOutsApi', async (orig) => ({
 }));
 vi.mock('@/lib/schedulingApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/schedulingApi')>()),
-  getAutoFillCandidates: vi.fn(),
+  getAutoFillBatch: vi.fn(),
   assignShift: vi.fn(),
   listShifts: vi.fn(async () => ({ shifts: [], truncated: false })),
 }));
 
 import { listCallOuts, type CallOutItem } from '@/lib/callOutsApi';
-import { assignShift, getAutoFillCandidates } from '@/lib/schedulingApi';
+import { assignShift, getAutoFillBatch } from '@/lib/schedulingApi';
 import { CallOutsDesk } from '@/pages/callouts/CallOutsDesk';
 
 const SHIFT = '11111111-1111-4111-8111-111111111111';
@@ -68,13 +68,17 @@ function renderDesk(path = '/call-outs') {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(getAutoFillCandidates).mockResolvedValue({
-    candidates: [
-      // The person who called out never comes back as the cover.
-      { associateId: 'a-out', associateName: 'Ana Reyes', weeklyMinutesScheduled: 0, weeklyMinutesActual: 0, matchesAvailability: true, noConflict: true, onApprovedTimeOff: false, score: 1 },
-      { associateId: 'a-busy', associateName: 'Omar Busy', weeklyMinutesScheduled: 600, weeklyMinutesActual: 0, matchesAvailability: true, noConflict: false, onApprovedTimeOff: false, score: 0.9 },
-      { associateId: 'a-free', associateName: 'Tess Free', weeklyMinutesScheduled: 1200, weeklyMinutesActual: 0, matchesAvailability: true, noConflict: true, onApprovedTimeOff: false, score: 0.8 },
-    ],
+  vi.mocked(getAutoFillBatch).mockResolvedValue({
+    byShift: {
+      [SHIFT]: [
+        // The person who called out never comes back as the cover.
+        { associateId: 'a-out', associateName: 'Ana Reyes', weeklyMinutesScheduled: 0, weeklyMinutesActual: 0, matchesAvailability: true, noConflict: true, onApprovedTimeOff: false, score: 1 },
+        { associateId: 'a-busy', associateName: 'Omar Busy', weeklyMinutesScheduled: 600, weeklyMinutesActual: 0, matchesAvailability: true, noConflict: false, onApprovedTimeOff: false, score: 0.8 },
+        // Free and no clash, but would cross 40 hours — not a one-tap pick.
+        { associateId: 'a-tired', associateName: 'Ola Overtime', weeklyMinutesScheduled: 2280, weeklyMinutesActual: 0, matchesAvailability: true, noConflict: true, onApprovedTimeOff: false, score: 0.8 },
+        { associateId: 'a-free', associateName: 'Tess Free', weeklyMinutesScheduled: 1200, weeklyMinutesActual: 0, matchesAvailability: true, noConflict: true, onApprovedTimeOff: false, score: 1 },
+      ],
+    },
   });
 });
 
@@ -85,8 +89,23 @@ describe('<CallOutsDesk>', () => {
     const user = renderDesk();
     const assign = await screen.findByRole('button', { name: /assign tess free/i });
     expect(screen.getByRole('link', { name: /open shift/i })).toHaveAttribute('href', `/scheduling?shift=${SHIFT}`);
+    // One request ranks every row.
+    expect(getAutoFillBatch).toHaveBeenCalledTimes(1);
     await user.click(assign);
-    await waitFor(() => expect(assignShift).toHaveBeenCalledWith(SHIFT, { associateId: 'a-free' }));
+    // Only if it's still unassigned — a lead who filled it meanwhile wins.
+    await waitFor(() => expect(assignShift).toHaveBeenCalledWith(SHIFT, { associateId: 'a-free', expectUnassigned: true }));
+  });
+
+  it('offers no one-tap pick when nobody at the store is free for all of it', async () => {
+    vi.mocked(listCallOuts).mockResolvedValue(list([item()]));
+    vi.mocked(getAutoFillBatch).mockResolvedValue({
+      byShift: {
+        [SHIFT]: [{ associateId: 'a-maybe', associateName: 'May Be', weeklyMinutesScheduled: 0, weeklyMinutesActual: 0, matchesAvailability: false, noConflict: true, onApprovedTimeOff: false, score: 0.5 }],
+      },
+    });
+    renderDesk();
+    expect(await screen.findByText(/nobody at this store is free for all of it/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^assign /i })).not.toBeInTheDocument();
   });
 
   it('a covered call-out offers no assign, only the shift', async () => {
@@ -94,7 +113,7 @@ describe('<CallOutsDesk>', () => {
     renderDesk();
     expect(await screen.findByRole('link', { name: /open shift/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^assign /i })).not.toBeInTheDocument();
-    expect(getAutoFillCandidates).not.toHaveBeenCalled();
+    expect(getAutoFillBatch).not.toHaveBeenCalled();
   });
 
   it('?callout=<id> rings that call-out, widening to the week when it is later', async () => {

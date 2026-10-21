@@ -963,9 +963,12 @@ transportOpsRouter.patch('/vans/:id/record', MANAGE, async (req, res) => {
   enqueueAudit({ actorUserId: req.user!.id, action: 'transport.van_record_changed', entityType: 'Van', entityId: id, metadata: input }, 'transportOps');
   if (input.outOfService !== undefined && !!input.outOfService !== !!before.outOfServiceAt && van.outOfServiceAt) {
     // Runs planned on a parked van need another van: the desk is told.
-    const planned = await prisma.rideRun.count({ where: { vanId: id, status: 'PLANNED', departAt: { gte: new Date() } } });
+    const plannedRuns = await prisma.rideRun.findMany({ where: { vanId: id, status: 'PLANNED', departAt: { gte: new Date() } }, orderBy: { departAt: 'asc' }, select: { serviceDate: true } });
+    const planned = plannedRuns.length;
     if (planned > 0) {
-      void trackNotificationWork(notifyDesk({ subject: `${before.name} is out of service — ${planned} planned run${planned === 1 ? '' : 's'} need another van`, body: input.outOfService?.reason ?? '', linkUrl: '/transport' }));
+      // Straight to the board on the first day that needs another van.
+      const linkUrl = `/transport?date=${plannedRuns[0]!.serviceDate}`;
+      void trackNotificationWork(notifyDesk({ subject: `${before.name} is out of service — ${planned} planned run${planned === 1 ? '' : 's'} need another van`, body: input.outOfService?.reason ?? '', linkUrl }));
     }
   }
   res.json({ record: vanRecordView(van) });
@@ -1353,15 +1356,15 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
   const to = addDaysYmd(thisWeek, 6);
   const [rides, runs, service] = await Promise.all([
     prisma.ride.findMany({
-      where: { serviceDate: { gte: from, lte: to }, status: { in: ['BOARDED', 'COMPLETED', 'NO_SHOW'] } },
-      select: { serviceDate: true, status: true, chargeCents: true, waivedAt: true, pickupAt: true, vanArrivedAt: true, boardedAt: true },
+      where: { tenantId: tenantIdForWrite(), serviceDate: { gte: from, lte: to }, status: { in: ['BOARDED', 'COMPLETED', 'NO_SHOW'] } },
+      select: { serviceDate: true, status: true, chargeCents: true, waivedAt: true, pickupAt: true, vanArrivedAt: true, boardedAt: true, run: { select: { status: true } } },
     }),
     prisma.rideRun.findMany({
-      where: { serviceDate: { gte: from, lte: to }, status: 'COMPLETED' },
+      where: { tenantId: tenantIdForWrite(), serviceDate: { gte: from, lte: to }, status: 'COMPLETED' },
       select: { serviceDate: true, driverUserId: true, startedAt: true, endedAt: true },
     }),
     prisma.vanServiceEntry.findMany({
-      where: { occurredAt: { gte: toDate(from)!, lt: toDate(addDaysYmd(to, 1))! } },
+      where: { tenantId: tenantIdForWrite(), occurredAt: { gte: toDate(from)!, lt: toDate(addDaysYmd(to, 1))! } },
       select: { occurredAt: true, costCents: true },
     }),
   ]);
@@ -1382,7 +1385,9 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
     if (!b) continue;
     if (r.status === 'NO_SHOW') b.noShows += 1;
     else b.riders += 1;
-    if (!r.waivedAt) b.revenueCents += r.chargeCents;
+    // Earned on the same terms as /costs: rides finished (or no-shows) on runs that ended — so
+    // a run still out, or one a driver never closed, doesn't count fares against zero cost.
+    if (!r.waivedAt && r.run?.status === 'COMPLETED' && (r.status === 'COMPLETED' || r.status === 'NO_SHOW')) b.revenueCents += r.chargeCents;
     const reached = r.vanArrivedAt ?? r.boardedAt;
     if (r.status !== 'NO_SHOW' && r.pickupAt && reached) {
       b.timed += 1;
@@ -1413,6 +1418,6 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
         costCents: b.costCents,
       };
     }),
-    note: 'On time: the van arrived (or the rider boarded) within 5 minutes of the planned pickup. Revenue is fares and no-show fees charged, less waivers. Cost is run hours at each driver’s rate plus fuel and upkeep from the service log.',
+    note: 'On time: the van arrived (or the rider boarded) within 5 minutes of the planned pickup. Revenue is fares and no-show fees charged on runs that ended, less waivers — the same terms as Costs. Cost is run hours at each driver’s rate plus fuel and upkeep from the service log.',
   });
 });

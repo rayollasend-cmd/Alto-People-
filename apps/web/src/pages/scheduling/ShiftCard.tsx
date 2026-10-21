@@ -67,6 +67,16 @@ export function shiftMinutes(s: Shift): number {
   return ms > 0 ? Math.round(ms / 60000) : 0;
 }
 
+/** The shift's own calendar day, at the store — not the phone's. */
+function shiftDayYmd(iso: string, timeZone: string | null | undefined): string {
+  if (!timeZone) return ymdLocal(new Date(iso));
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  } catch {
+    return ymdLocal(new Date(iso));
+  }
+}
+
 /** PAID minutes (shared unpaid-break rule) — hour TOTALS use this. */
 export function paidShiftMinutes(s: Shift): number {
   return paidMinutesForRange(s.startsAt, s.endsAt);
@@ -605,7 +615,7 @@ function ShiftDetail({
           {/* Time off for exactly this shift: the form opens on its day,
               with its hours. */}
           <Button variant="ghost" size="sm" asChild>
-            <Link to={`/time-off?new=1&date=${ymdLocal(new Date(shift.startsAt))}&shift=${shift.id}`}>
+            <Link to={`/time-off?new=1&date=${shiftDayYmd(shift.startsAt, shift.timezone)}&shift=${shift.id}`}>
               <CalendarOff className="h-3.5 w-3.5" aria-hidden="true" />
               {t('shift.requestOff')}
             </Link>

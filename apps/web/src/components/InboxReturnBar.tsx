@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, CheckCircle2, X } from 'lucide-react';
 import { INBOX_QUERY_KEY, getInbox, inboxLink } from '@/lib/inboxApi';
@@ -47,14 +47,20 @@ const onBase = (pathname: string, base: string) => pathname === base || pathname
 export function InboxReturnBar() {
   const { t } = useI18n();
   const location = useLocation();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [trip, setTrip] = useState<Trip | null>(() => readTrip());
+  // The navigation whose from=inbox already started a trip — a dismissed
+  // trip must not restart from the same URL's params.
+  const startedFor = useRef<string | null>(null);
 
   // A link from the Inbox starts (or replaces) the trip; leaving its page ends it.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const queue = params.get('inbox');
     if (params.get('from') === 'inbox' && queue) {
+      if (startedFor.current === location.key) return;
+      startedFor.current = location.key;
       if (trip?.queue === queue && trip.base === location.pathname) return;
       const next = { queue, base: location.pathname };
       writeTrip(next);
@@ -65,12 +71,12 @@ export function InboxReturnBar() {
       writeTrip(null);
       setTrip(null);
     }
-  }, [location.pathname, location.search, trip]);
+  }, [location.key, location.pathname, location.search, trip]);
 
   const active = trip !== null && onBase(location.pathname, trip.base);
-  // Fresher than the Inbox's own minute while a queue is being worked, so
-  // "done" shows soon after the last item; any successful change refetches too.
-  const inbox = useQuery({ queryKey: INBOX_QUERY_KEY, queryFn: getInbox, enabled: active, refetchInterval: active ? 15_000 : false, staleTime: 5_000 });
+  // Fresher than the Inbox's own minute while a queue is being worked; any
+  // successful change on the page refetches it right away too.
+  const inbox = useQuery({ queryKey: INBOX_QUERY_KEY, queryFn: getInbox, enabled: active, refetchInterval: active ? 30_000 : false, staleTime: 5_000 });
   useEffect(() => {
     if (!active) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -98,14 +104,24 @@ export function InboxReturnBar() {
     writeTrip(null);
     setTrip(null);
   };
+  // Dismissing also drops the trip's params, so a reload doesn't bring it back.
+  const dismiss = () => {
+    end();
+    const params = new URLSearchParams(location.search);
+    if (!params.has('from') && !params.has('inbox')) return;
+    params.delete('from');
+    params.delete('inbox');
+    const qs = params.toString();
+    navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '', hash: location.hash }, { replace: true, state: location.state });
+  };
 
   return (
-    <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-navy-secondary bg-navy-secondary/30 px-4 py-1.5 text-sm text-ink">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-navy-secondary bg-navy-secondary/30 px-4 py-1.5 text-sm text-ink">
       <Link to="/inbox" onClick={end} className="inline-flex items-center gap-1 text-silver hover:text-ink">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         {t('decisions.backToInbox')}
       </Link>
-      <span className="min-w-0 flex-1 truncate">
+      <span role="status" aria-live="polite" className="min-w-0 flex-1 truncate">
         {done ? (
           <span className="inline-flex items-center gap-1.5">
             <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
@@ -121,7 +137,7 @@ export function InboxReturnBar() {
           <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Link>
       )}
-      <button type="button" onClick={end} className="rounded p-0.5 text-silver hover:text-ink" aria-label={t('decisions.hideReturn')}>
+      <button type="button" onClick={dismiss} className="rounded p-0.5 text-silver hover:text-ink" aria-label={t('decisions.hideReturn')}>
         <X className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </div>

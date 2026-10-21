@@ -39,7 +39,8 @@ import { EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { notifyClockOutEarnings } from '../lib/associateEarnings.js';
 import { supervisorRecipients } from '../lib/shiftWindows.js';
-import { openSopOnClockIn, sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
+import { openSopOnClockIn, sopBlockSummary, sopBlockingClockOut, sopOpenMessage, submitSopAtKiosk } from '../lib/storeShiftSop.js';
+import { kioskPunchSummary } from '../lib/kioskPunchSummary.js';
 import { recordAttendanceForEntry } from '../lib/attendance.js';
 import { env } from '../config/env.js';
 import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
@@ -2236,6 +2237,8 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
           deletedAt: true,
           separatedAt: true,
           deactivatedAt: true,
+          // The tablet switches to their language for this punch.
+          user: { select: { language: true } },
         },
       },
     },
@@ -2355,7 +2358,9 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     const sup = await supervisorLoginFor(prisma, pinRow.associateId);
     const openSop = sup ? await sopBlockingClockOut(prisma, sup) : null;
     if (openSop) {
-      throw new HttpError(409, 'sop_open', sopOpenMessage(openSop));
+      // The details drive the kiosk's own screen: what's open, and the
+      // way out — submit it incomplete with a reason, right here.
+      throw new HttpError(409, 'sop_open', sopOpenMessage(openSop), await sopBlockSummary(prisma, openSop));
     }
   }
 
@@ -2389,6 +2394,11 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   res.json({
     ok: true,
     associateFirstName: pinRow.associate.firstName,
+    // "Maria L." on the confirm screen — enough to catch a mistyped number
+    // that landed on a coworker's, without spelling out a full name.
+    associateLastInitial: pinRow.associate.lastName ? pinRow.associate.lastName.charAt(0).toUpperCase() : null,
+    // Their saved language (en/es/tr); the tablet uses it for this punch.
+    language: pinRow.associate.user?.language ?? null,
     predictedAction,
     // A photo must be taken at this punch: no "continue without", consent or not.
     photoRequired: photoPolicy.required,
@@ -2402,6 +2412,72 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     // Asked before a clock-out where the state requires breaks (null otherwise).
     breakQuestions,
   });
+});
+
+/**
+ * The way out of the clock-out SOP gate, at the tablet: a supervisor whose
+ * shift SOP is still open submits it as it stands — with a written reason
+ * (and, if they like, a note for the next shift) — then clocks out. Same
+ * record the app's "submit incomplete" writes (lib/storeShiftSop
+ * submitSopAtKiosk); leadership is told when required items were left.
+ * Authenticated the way a punch is: the device token plus their number or
+ * badge. Only THIS shift's SOP is submitted — the one holding the clock.
+ */
+const KioskSopSubmitSchema = z.object({
+  deviceToken: z.string().min(10),
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  badgeToken: z.string().min(10).max(400).optional().nullable(),
+  /** Required when required items are still open (submitting incomplete). */
+  reason: z.string().trim().max(1000).optional().nullable(),
+  handoverNote: z.string().trim().max(1000).optional().nullable(),
+});
+
+kiosk99Router.post('/kiosk/sop/submit', async (req, res) => {
+  const input = KioskSopSubmitSchema.parse(req.body);
+  const device: DeviceLookupRow | null = await findDeviceByPlaintextToken(input.deviceToken);
+  if (!device) throw new HttpError(401, 'invalid_device', 'Device not registered.');
+  if (device.tokenExpiresAt && device.tokenExpiresAt.getTime() < Date.now()) {
+    throw new HttpError(401, 'device_token_expired', "This kiosk's device token expired. Re-pair from the admin page.");
+  }
+  enforcePunchRateLimit(device.id, 'preflight');
+  enforcePinBackoff(device.id);
+  const credential = credentialLookup(input);
+  const pinRow = acceptCredential(
+    credential,
+    await prisma.kioskPin.findUnique({
+      where: credential.where,
+      select: { id: true, clientId: true, associateId: true, badgeVersion: true },
+    }),
+  );
+  if (!pinRow || pinRow.clientId !== device.clientId) {
+    recordPinFailure(device.id);
+    throw new HttpError(401, credential.kind === 'badge' ? 'invalid_badge' : 'invalid_pin', NOT_RECOGNIZED[credential.kind]);
+  }
+  clearPinFailures(device.id);
+  const sup = await supervisorLoginFor(prisma, pinRow.associateId);
+  const open = sup ? await sopBlockingClockOut(prisma, sup) : null;
+  if (!sup || !open) {
+    // Nothing holding the clock (submitted in the app a moment ago): fine.
+    res.json({ ok: true, submitted: false, closedIncomplete: false });
+    return;
+  }
+  const summary = await sopBlockSummary(prisma, open);
+  const reason = input.reason?.trim() ?? '';
+  if (summary.requiredOpen > 0 && reason.length < 5) {
+    throw new HttpError(
+      400,
+      'reason_required',
+      `${summary.requiredOpen} required item${summary.requiredOpen === 1 ? ' is' : 's are'} still open — say why before submitting it incomplete.`,
+    );
+  }
+  const r = await submitSopAtKiosk(prisma, {
+    sopId: open.id,
+    userId: sup.id,
+    reason: reason || 'Finished — submitted at the kiosk.',
+    handoverNote: input.handoverNote ?? null,
+  });
+  await prisma.kioskDevice.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } });
+  res.json({ ok: true, submitted: true, closedIncomplete: r.closedIncomplete });
 });
 
 // One-time biometric consent, recorded from the kiosk after a valid
@@ -2539,6 +2615,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
         action: true,
         rejectReason: true,
         createdAt: true,
+        clientPunchedAt: true,
         timeEntry: { select: { id: true, updatedAt: true } },
         associate: { select: { firstName: true, lastName: true } },
       },
@@ -2566,7 +2643,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
         associateName: prior.associate
           ? `${prior.associate.firstName} ${prior.associate.lastName}`
           : 'unknown',
-        at: (prior.timeEntry?.updatedAt ?? prior.createdAt).toISOString(),
+        at: (prior.clientPunchedAt ?? prior.createdAt).toISOString(),
         punchId: prior.id,
       });
       return;
@@ -3053,7 +3130,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
           const sup = await supervisorLoginFor(tx, pinRow.associateId);
           const openSop = sup ? await sopBlockingClockOut(tx, sup) : null;
           if (openSop) {
-            throw new HttpError(409, 'sop_open', sopOpenMessage(openSop));
+            throw new HttpError(409, 'sop_open', sopOpenMessage(openSop), await sopBlockSummary(tx, openSop));
           }
         }
         timeEntry = await tx.timeEntry.update({
@@ -3208,7 +3285,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
-    return { timeEntry, action, punchId: punch.id };
+    return { timeEntry, action, punchId: punch.id, at };
   }, {
     // The punch txn is ~8 queries behind an advisory lock. On Railway
     // (co-located with Neon) it's tens of ms, but from a far region —
@@ -3253,11 +3330,30 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
     }
   }
 
+  // What the result screen says back: the shift, on time or late, when the
+  // meal break is due, hours this week. Best-effort — never fails the punch.
+  const site = device.locationId
+    ? await prisma.site.findFirst({ where: { id: device.locationId }, select: { timezone: true, state: true } }).catch(() => null)
+    : null;
+  const summary = await kioskPunchSummary(prisma, {
+    associateId: pinRow.associateId,
+    timeEntryId: result.timeEntry.id,
+    action: result.action,
+    at: result.at,
+    site,
+  }).catch((err: unknown) => {
+    console.warn('[kiosk] punch summary failed:', err instanceof Error ? err.message : err);
+    return null;
+  });
+
   res.json({
     action: result.action,
     associateName: `${pinRow.associate.firstName} ${pinRow.associate.lastName}`,
-    at: result.timeEntry.updatedAt.toISOString(),
+    // The punch instant. The entry's updatedAt was wrong for break punches,
+    // which don't write the entry — the screen showed the clock-in time.
+    at: result.at.toISOString(),
     punchId: result.punchId,
+    summary,
   });
 };
 
@@ -3306,6 +3402,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res, next) => {
         action: true,
         rejectReason: true,
         createdAt: true,
+        clientPunchedAt: true,
         timeEntry: { select: { updatedAt: true } },
         associate: { select: { firstName: true, lastName: true } },
       },
@@ -3331,7 +3428,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res, next) => {
       associateName: prior.associate
         ? `${prior.associate.firstName} ${prior.associate.lastName}`
         : 'unknown',
-      at: (prior.timeEntry?.updatedAt ?? prior.createdAt).toISOString(),
+      at: (prior.clientPunchedAt ?? prior.createdAt).toISOString(),
       punchId: prior.id,
     });
   }

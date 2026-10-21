@@ -32,6 +32,8 @@ export interface StoreTrend {
   weeks: Array<{ start: string; hours: number; marginPerHour: number | null }>;
   avgMarginPerHour: number | null;
   hours4w: number;
+  /** Share of the time priced at org standard rates — no rate card (or pay rate) behind it. */
+  standardShare?: number;
 }
 
 const weekLabel = (ymd: string) => {
@@ -39,6 +41,20 @@ const weekLabel = (ymd: string) => {
   return `${m}/${d}`;
 };
 const perHour = (v: number | null) => (v === null ? '—' : `${v < 0 ? '−' : ''}${fmtMoney(Math.abs(v))}/h`);
+
+/** Hours-weighted share of a client's time priced at standard rates. */
+export function standardShareOf(stores: StoreTrend[]): number {
+  const hours = stores.reduce((s, x) => s + x.hours4w, 0);
+  if (hours <= 0) return 0;
+  return stores.reduce((s, x) => s + (x.standardShare ?? 0) * x.hours4w, 0) / hours;
+}
+
+/** How the margin was priced, in a few words — honest when the rate cards don't cover it. */
+export function marginBasis(share: number): string {
+  if (share >= 0.5) return 'At standard rates — add rate cards for this client’s roles to see its real margin';
+  if (share > 0.05) return `Bill less pay, per hour · ${Math.round(share * 100)}% at standard rates`;
+  return 'Bill less pay, per hour worked, from the rate cards';
+}
 
 /** Week-by-week totals across a set of locations: hours summed, margin per hour weighted by hours. */
 export function rollUpWeeks(stores: StoreTrend[]): Array<{ start: string; hours: number; marginPerHour: number | null }> {
@@ -69,6 +85,8 @@ function useClientNumbers(clientId: string) {
   const statements = useQuery({ queryKey: ['clients', clientId, 'statements'], queryFn: () => listClientStatements(clientId), enabled: canBill, retry: false });
   const stores = labor.data?.stores ?? [];
   const weeks = rollUpWeeks(stores);
+  const truncated = labor.data?.truncated ?? false;
+  const standardShare = standardShareOf(stores);
   const npsPoints = nps.data?.clientTrends?.find((c) => c.clientId === clientId)?.points ?? [];
   const billed = (statements.data?.statements ?? [])
     .filter((s) => s.snapshot?.totals)
@@ -82,7 +100,7 @@ function useClientNumbers(clientId: string) {
       hours: s.snapshot.totals.hours,
       state: s.status === 'DRAFT' ? ('Draft' as const) : s.paidAt ? ('Paid' as const) : ('Outstanding' as const),
     }));
-  return { canLabor, canNps, canBill, labor, nps, statements, stores, weeks, npsPoints, billed };
+  return { canLabor, canNps, canBill, labor, nps, statements, stores, weeks, npsPoints, billed, truncated, standardShare };
 }
 
 /* ----- The strip at the top of the record -------------------------------- */
@@ -119,7 +137,7 @@ export function ClientGlance({ clientId, onOpen }: { clientId: string; onOpen: (
       <GlanceTile key="hours" label="Hours last week" value={lastWeek ? lastWeek.hours.toLocaleString('en-US') : '—'} hint={hoursDelta === null ? undefined : `${hoursDelta >= 0 ? '+' : '−'}${Math.abs(Math.round(hoursDelta)).toLocaleString('en-US')} vs the week before`} onOpen={onOpen}>
         <Sparkline series={n.weeks.map((w) => w.hours)} tone="primary" />
       </GlanceTile>,
-      <GlanceTile key="margin" label="Margin per hour" value={perHour(lastWeek?.marginPerHour ?? null)} hint="Bill less pay, per hour worked" onOpen={onOpen}>
+      <GlanceTile key="margin" label={n.standardShare >= 0.5 ? 'Margin per hour · standard rates' : 'Margin per hour'} value={perHour(lastWeek?.marginPerHour ?? null)} hint={marginBasis(n.standardShare)} onOpen={onOpen}>
         <Sparkline series={n.weeks.map((w) => w.marginPerHour)} tone={(lastWeek?.marginPerHour ?? 0) < 0 ? 'bad' : 'good'} />
       </GlanceTile>,
     );
@@ -159,7 +177,7 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
   const n = useClientNumbers(clientId);
   const storeWord = term('label.store').toLowerCase();
   const weekRows = useMemo(() => n.weeks.map((w) => ({ week: weekLabel(w.start), hours: w.hours, margin: w.marginPerHour })), [n.weeks]);
-  const loading = (n.canLabor && n.labor.isPending) || (n.canBill && n.statements.isPending);
+  const loading = (n.canLabor && n.labor.isPending) || (n.canBill && n.statements.isPending) || (n.canNps && n.nps.isPending);
   if (loading) return <Skeleton className="h-72" />;
   const nothing = n.weeks.length === 0 && !n.npsPoints.some((p) => p.nps !== null) && n.billed.length === 0;
   if (nothing) {
@@ -172,7 +190,7 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
       {n.weeks.length > 0 && (
         <ChartFrame
           title="Hours and margin, week by week"
-          description={`The last ${n.weeks.length} full weeks across every ${storeWord}. Margin is bill less pay, per hour worked.`}
+          description={`The last ${n.weeks.length} full weeks across every ${storeWord}. ${marginBasis(n.standardShare)}.${n.truncated ? ' Too many punches to count them all — the oldest week may read low.' : ''}`}
           summary={`${Math.round(totalHours).toLocaleString('en-US')} hours over ${n.weeks.length} weeks; the last week ran ${perHour(n.weeks[n.weeks.length - 1]!.marginPerHour)}.`}
           csvName="client-hours-margin"
           columns={[

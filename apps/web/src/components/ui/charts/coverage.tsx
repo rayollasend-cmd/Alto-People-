@@ -79,7 +79,7 @@ export function CoverageCurve({
     <div>
       <div className="h-40 w-full sm:h-48">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={points} margin={{ top: 12, right: 12, bottom: 0, left: -18 }}>
+          <ComposedChart accessibilityLayer={false} data={points} margin={{ top: 12, right: 12, bottom: 0, left: -18 }}>
             <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
             <XAxis
               dataKey="label"
@@ -206,7 +206,7 @@ export function WeekFillChart({
     <div>
       <div className="h-40 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={days} margin={{ top: 8, right: 4, bottom: 0, left: -18 }} barCategoryGap="30%">
+          <BarChart accessibilityLayer={false} data={days} margin={{ top: 8, right: 4, bottom: 0, left: -18 }} barCategoryGap="30%">
             <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
             <XAxis
               dataKey="day"
@@ -271,7 +271,7 @@ export function ReliabilityChart({
   return (
     <div className="h-36 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 12, right: 4, bottom: 0, left: -18 }} barCategoryGap="35%">
+        <BarChart accessibilityLayer={false} data={data} margin={{ top: 12, right: 4, bottom: 0, left: -18 }} barCategoryGap="35%">
           <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
           <XAxis dataKey="label" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} />
           <YAxis
@@ -499,7 +499,7 @@ export function HoursChart({
     <div>
       <div className="h-40 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={days} margin={{ top: 8, right: 4, bottom: 0, left: -18 }} barCategoryGap="25%" barGap={2}>
+          <BarChart accessibilityLayer={false} data={days} margin={{ top: 8, right: 4, bottom: 0, left: -18 }} barCategoryGap="25%" barGap={2}>
             <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
             <XAxis dataKey="day" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} />
             <YAxis tick={TICK} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => `${v}h`} />
@@ -545,7 +545,7 @@ export function StoreBarChart({
   return (
     <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 4 }} barCategoryGap="30%">
+        <BarChart accessibilityLayer={false} data={data} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 4 }} barCategoryGap="30%">
           <CartesianGrid stroke={GRID} strokeWidth={1} horizontal={false} />
           <XAxis
             type="number"

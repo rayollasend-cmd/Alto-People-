@@ -486,7 +486,7 @@ function HeadcountTrend() {
   return (
     <ChartFrame
       title="Headcount, month by month"
-      description="Everyone employed at each month’s end, with that month’s hires above the line and separations below. It needs no recent work, so it can run above the active count."
+      description="Everyone employed at each month’s end, with that month’s hires above the line and separations below. Counted from hire and separation dates — an invite who never started isn’t in it — so it can sit a little above the active count, which needs recent work."
       summary={`Employed went from ${first.headcount} to ${last.headcount} over ${q.data.headcount.length} months: ${hires} hired, ${left} left.`}
       csvName="headcount-by-month"
       columns={[

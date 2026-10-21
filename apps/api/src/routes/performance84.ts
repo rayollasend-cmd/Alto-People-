@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Phase 84 — Performance: Goals/OKRs, 1:1s, Kudos, PIPs, 360 reviews.
@@ -230,6 +231,8 @@ const OneOnOneCreateSchema = z.object({
   managerUserId: z.string().uuid(),
   scheduledFor: z.string().datetime(),
   agenda: z.string().max(4000).optional().nullable(),
+  /** A repeating 1:1: completing one schedules the next. */
+  cadence: z.enum(['WEEKLY', 'BIWEEKLY']).optional().nullable(),
 });
 
 const OneOnOneUpdateSchema = z.object({
@@ -237,6 +240,19 @@ const OneOnOneUpdateSchema = z.object({
   managerNotes: z.string().max(4000).nullable().optional(),
   associateNotes: z.string().max(4000).nullable().optional(),
   status: z.enum(['SCHEDULED', 'COMPLETED', 'CANCELLED']).optional(),
+  /** null stops the series repeating after this one. */
+  cadence: z.enum(['WEEKLY', 'BIWEEKLY']).nullable().optional(),
+});
+
+const CADENCE_DAYS = { WEEKLY: 7, BIWEEKLY: 14 } as const;
+
+const actionItemView = (a: { id: string; text: string; ownerIsManager: boolean; doneAt: Date | null; carriedFromId: string | null; createdAt: Date }) => ({
+  id: a.id,
+  text: a.text,
+  ownerIsManager: a.ownerIsManager,
+  doneAt: a.doneAt?.toISOString() ?? null,
+  carried: a.carriedFromId !== null,
+  createdAt: a.createdAt.toISOString(),
 });
 
 performance84Router.get('/one-on-ones', VIEW, async (req, res) => {
@@ -246,12 +262,16 @@ performance84Router.get('/one-on-ones', VIEW, async (req, res) => {
     include: {
       associate: { select: { firstName: true, lastName: true } },
       manager: { select: { email: true } },
+      actionItems: { orderBy: { createdAt: 'asc' } },
     },
     orderBy: { scheduledFor: 'desc' },
     take: 100,
   });
   res.json({
     meetings: rows.map((m) => ({
+      cadence: (m.cadence as 'WEEKLY' | 'BIWEEKLY' | null) ?? null,
+      seriesId: m.seriesId,
+      actionItems: m.actionItems.map(actionItemView),
       id: m.id,
       associateId: m.associateId,
       associateName: m.associate
@@ -271,12 +291,17 @@ performance84Router.get('/one-on-ones', VIEW, async (req, res) => {
 
 performance84Router.post('/one-on-ones', VIEW, async (req, res) => {
   const input = OneOnOneCreateSchema.parse(req.body);
+  const id = randomUUID();
   const created = await prisma.oneOnOne.create({
     data: {
+      id,
       associateId: input.associateId,
       managerUserId: input.managerUserId,
       scheduledFor: new Date(input.scheduledFor),
       agenda: input.agenda ?? null,
+      // A series is named for its first meeting.
+      cadence: input.cadence ?? null,
+      seriesId: input.cadence ? id : null,
     },
   });
   res.status(201).json({ id: created.id });
@@ -285,7 +310,10 @@ performance84Router.post('/one-on-ones', VIEW, async (req, res) => {
 performance84Router.put('/one-on-ones/:id', VIEW, async (req, res) => {
   const id = req.params.id;
   const input = OneOnOneUpdateSchema.parse(req.body);
-  const completed = input.status === 'COMPLETED';
+  const before = await prisma.oneOnOne.findUnique({ where: { id }, include: { actionItems: true } });
+  if (!before) throw new HttpError(404, 'not_found', '1:1 not found');
+  const completed = input.status === 'COMPLETED' && before.status !== 'COMPLETED';
+  const cadence = input.cadence === undefined ? (before.cadence as 'WEEKLY' | 'BIWEEKLY' | null) : input.cadence;
   await prisma.oneOnOne.update({
     where: { id },
     data: {
@@ -294,9 +322,142 @@ performance84Router.put('/one-on-ones/:id', VIEW, async (req, res) => {
       associateNotes: input.associateNotes === undefined ? undefined : input.associateNotes,
       status: input.status ?? undefined,
       completedAt: completed ? new Date() : undefined,
+      cadence: input.cadence === undefined ? undefined : input.cadence,
+      seriesId: input.cadence ? (before.seriesId ?? before.id) : undefined,
     },
   });
+  // Completing a repeating 1:1 books the next one, same time of day, and
+  // carries every open action item onto it — unless the next is already
+  // on the calendar (completed twice, or booked by hand).
+  let nextId: string | null = null;
+  if (completed && cadence) {
+    const seriesId = before.seriesId ?? before.id;
+    const existing = await prisma.oneOnOne.findFirst({
+      where: { seriesId, status: 'SCHEDULED', scheduledFor: { gt: before.scheduledFor }, id: { not: id } },
+      select: { id: true },
+    });
+    if (existing) {
+      nextId = existing.id;
+    } else {
+      const step = CADENCE_DAYS[cadence] * 86_400_000;
+      // Never book into the past: a 1:1 completed late lands one step after now.
+      let when = before.scheduledFor.getTime() + step;
+      while (when < Date.now()) when += step;
+      const next = await prisma.oneOnOne.create({
+        data: {
+          associateId: before.associateId,
+          managerUserId: before.managerUserId,
+          scheduledFor: new Date(when),
+          cadence,
+          seriesId,
+          tenantId: before.tenantId,
+        },
+      });
+      nextId = next.id;
+      const open = before.actionItems.filter((a) => a.doneAt === null);
+      if (open.length > 0) {
+        await prisma.oneOnOneActionItem.createMany({
+          data: open.map((a) => ({
+            oneOnOneId: next.id,
+            text: a.text,
+            ownerIsManager: a.ownerIsManager,
+            carriedFromId: a.id,
+            createdById: a.createdById,
+            tenantId: a.tenantId,
+          })),
+        });
+      }
+    }
+  }
+  res.json({ ok: true, nextId });
+});
+
+// ----- The shared agenda: the associate's side ------------------------------
+
+/**
+ * GET /performance/one-on-ones/mine — the caller's own 1:1s (as the person
+ * met with): what's next, what was agreed, the agenda both sides add to.
+ * Manager notes stay the manager's.
+ */
+performance84Router.get('/one-on-ones/mine', async (req, res) => {
+  const associateId = req.user!.associateId;
+  if (!associateId) {
+    res.json({ meetings: [] });
+    return;
+  }
+  const rows = await prisma.oneOnOne.findMany({
+    where: { associateId, status: { not: 'CANCELLED' } },
+    include: { manager: { select: { email: true } }, actionItems: { orderBy: { createdAt: 'asc' } } },
+    orderBy: { scheduledFor: 'desc' },
+    take: 12,
+  });
+  res.json({
+    meetings: rows.map((m) => ({
+      id: m.id,
+      scheduledFor: m.scheduledFor.toISOString(),
+      completedAt: m.completedAt?.toISOString() ?? null,
+      status: m.status,
+      cadence: m.cadence,
+      managerEmail: m.manager?.email ?? null,
+      agenda: m.agenda,
+      associateNotes: m.associateNotes,
+      actionItems: m.actionItems.map(actionItemView),
+    })),
+  });
+});
+
+/** PUT /performance/one-on-ones/:id/agenda — either side of the 1:1 edits the shared agenda. */
+performance84Router.put('/one-on-ones/:id/agenda', async (req, res) => {
+  const input = z.object({ agenda: z.string().max(4000).nullable() }).parse(req.body ?? {});
+  const m = await prisma.oneOnOne.findUnique({ where: { id: req.params.id }, select: { id: true, associateId: true, managerUserId: true, status: true } });
+  const me = req.user!;
+  const party = m && (m.managerUserId === me.id || (me.associateId !== null && me.associateId !== undefined && m.associateId === me.associateId));
+  if (!m || !party) throw new HttpError(404, 'not_found', '1:1 not found');
+  if (m.status !== 'SCHEDULED') throw new HttpError(409, 'not_scheduled', 'The agenda closes once the 1:1 is held.');
+  await prisma.oneOnOne.update({ where: { id: m.id }, data: { agenda: input.agenda } });
   res.json({ ok: true });
+});
+
+// ----- 1:1 action items ----------------------------------------------------
+
+const ActionItemCreateSchema = z.object({
+  text: z.string().trim().min(1).max(500),
+  ownerIsManager: z.boolean().optional(),
+});
+const ActionItemUpdateSchema = z.object({
+  text: z.string().trim().min(1).max(500).optional(),
+  done: z.boolean().optional(),
+});
+
+performance84Router.post('/one-on-ones/:id/action-items', VIEW, async (req, res) => {
+  const input = ActionItemCreateSchema.parse(req.body);
+  const meeting = await prisma.oneOnOne.findUnique({ where: { id: req.params.id }, select: { id: true, tenantId: true } });
+  if (!meeting) throw new HttpError(404, 'not_found', '1:1 not found');
+  const item = await prisma.oneOnOneActionItem.create({
+    data: { oneOnOneId: meeting.id, text: input.text, ownerIsManager: input.ownerIsManager ?? true, createdById: req.user!.id, tenantId: meeting.tenantId },
+  });
+  res.status(201).json({ item: actionItemView(item) });
+});
+
+performance84Router.patch('/one-on-one-action-items/:id', VIEW, async (req, res) => {
+  const input = ActionItemUpdateSchema.parse(req.body);
+  const found = await prisma.oneOnOneActionItem.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (!found) throw new HttpError(404, 'not_found', 'Action item not found');
+  const item = await prisma.oneOnOneActionItem.update({
+    where: { id: found.id },
+    data: {
+      text: input.text ?? undefined,
+      doneAt: input.done === undefined ? undefined : input.done ? new Date() : null,
+    },
+  });
+  res.json({ item: actionItemView(item) });
+});
+
+performance84Router.delete('/one-on-one-action-items/:id', VIEW, async (req, res) => {
+  const found = await prisma.oneOnOneActionItem.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (!found) throw new HttpError(404, 'not_found', 'Action item not found');
+  await prisma.oneOnOneActionItem.delete({ where: { id: found.id } });
+  res.status(204).end();
 });
 
 // ----- Kudos --------------------------------------------------------------

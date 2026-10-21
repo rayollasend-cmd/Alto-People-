@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Gift, Megaphone, Palette, Users } from 'lucide-react';
+import { Gift, Link2, Megaphone, Palette, Users } from 'lucide-react';
 import { useGreeting, greetingName } from '@/lib/greeting';
 import { useAuth } from '@/lib/auth';
 import { getMarketingOverview } from '@/lib/marketingApi';
@@ -17,7 +17,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { CampaignsPanel } from './CampaignsPanel';
 import { EmployerBrandEditor } from './EmployerBrandEditor';
-import { FunnelHero, PostingsPanel, SourceOfHireGrid, WeeklyChart } from './FunnelPanels';
+import { ConversionChart, FunnelHero, PostingsPanel, SourceOfHireGrid, StageFunnel } from './FunnelPanels';
+import { PostingsBoardsPanel } from './PostingsBoardsPanel';
 
 /**
  * Marketing's home and hub, one page: the careers funnel as the hero
@@ -26,7 +27,7 @@ import { FunnelHero, PostingsPanel, SourceOfHireGrid, WeeklyChart } from './Funn
  * lands here; anyone with view:marketing opens it at /marketing.
  */
 
-type Tab = 'funnel' | 'sources' | 'brand' | 'campaigns';
+type Tab = 'funnel' | 'postings' | 'sources' | 'brand' | 'campaigns';
 type Preset = '30d' | '90d' | '12m';
 const PRESETS: Array<{ value: Preset; label: string }> = [
   { value: '30d', label: '30 days' },
@@ -44,7 +45,7 @@ export function MarketingHome() {
   const { user, can } = useAuth();
   const greet = useGreeting();
   const [params, setParams] = useSearchParams();
-  const tab = (['funnel', 'sources', 'brand', 'campaigns'].includes(params.get('tab') ?? '') ? params.get('tab') : 'funnel') as Tab;
+  const tab = (['funnel', 'postings', 'sources', 'brand', 'campaigns'].includes(params.get('tab') ?? '') ? params.get('tab') : 'funnel') as Tab;
   const preset = ((['30d', '90d', '12m'] as Preset[]).includes(params.get('range') as Preset) ? params.get('range') : '90d') as Preset;
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -109,7 +110,11 @@ export function MarketingHome() {
                   )}
                   {o.bySource.length === 0 && (
                     <p className="text-ink-muted">
-                      No applicants in the range. Add <code className="text-ink">?source=indeed</code> (or the board&rsquo;s name) to every careers link you place, and the funnel fills in by source.
+                      No applicants in the range. Give every place you post its own link and the funnel fills in by source.{' '}
+                      <button type="button" className="text-accent hover:underline" onClick={() => setParam('tab', 'postings')}>
+                        Build a tracked link
+                      </button>
+                      .
                     </p>
                   )}
                   {o.campaigns.active === 0 && canEdit && (
@@ -138,6 +143,10 @@ export function MarketingHome() {
               The careers site
             </Link>
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setParam('tab', 'postings')}>
+            <Link2 className="h-4 w-4" aria-hidden="true" />
+            Postings &amp; boards
+          </Button>
           <Button asChild variant="outline" size="sm">
             <Link to="/recruiting">
               <Users className="h-4 w-4" aria-hidden="true" />
@@ -153,6 +162,7 @@ export function MarketingHome() {
       <Tabs value={tab} onValueChange={(v) => setParam('tab', v)}>
         <TabsList>
           <TabsTrigger value="funnel">Funnel</TabsTrigger>
+          <TabsTrigger value="postings">Postings &amp; boards</TabsTrigger>
           <TabsTrigger value="sources">Source of hire</TabsTrigger>
           <TabsTrigger value="brand">
             <Palette className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -165,8 +175,11 @@ export function MarketingHome() {
         </TabsList>
         <TabsContent value="funnel">
           {o ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <WeeklyChart o={o} />
+            <div className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <StageFunnel o={o} />
+                <ConversionChart o={o} />
+              </div>
               <PostingsPanel o={o} />
             </div>
           ) : q.isError ? (
@@ -174,6 +187,9 @@ export function MarketingHome() {
           ) : (
             <Skeleton className="h-64" />
           )}
+        </TabsContent>
+        <TabsContent value="postings">
+          <PostingsBoardsPanel o={o} />
         </TabsContent>
         <TabsContent value="sources">
           <SourceOfHireGrid o={o} loading={q.isPending} />

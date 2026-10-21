@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth, useTenant } from '@/lib/auth';
+import { visibleModules } from '@/lib/modules';
 import { useNavigate } from 'react-router-dom';
 import { openKeyboardShortcuts } from '@/components/KeyboardShortcutsDialog';
 
@@ -19,7 +21,9 @@ import { openKeyboardShortcuts } from '@/components/KeyboardShortcutsDialog';
  *   scroll-into-view), so a page adds keyboard support in three lines.
  */
 
-export const GO_TO: ReadonlyArray<{ key: string; path: string; label: string }> = [
+export type GoTo = { key: string; path: string; label: string };
+
+export const GO_TO: ReadonlyArray<GoTo> = [
   { key: 'h', path: '/', label: 'Home' },
   { key: 'i', path: '/inbox', label: 'Inbox' },
   { key: 's', path: '/scheduling', label: 'Schedule' },
@@ -31,6 +35,25 @@ export const GO_TO: ReadonlyArray<{ key: string; path: string; label: string }> 
   { key: 'o', path: '/onboarding', label: 'Onboarding' },
   { key: ',', path: '/settings', label: 'Settings' },
 ];
+
+/**
+ * The go-to chords this person can use: a chord whose page isn't on their
+ * nav (no capability, or the module is off for the company) is left out of
+ * the listener and the shortcut list alike. Home and Settings are everyone's.
+ */
+export function useGoToTargets(): ReadonlyArray<GoTo> {
+  const { user, can } = useAuth();
+  const tenant = useTenant();
+  return useMemo(() => {
+    const paths = new Set(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }).map((m) => m.path));
+    // Finance reaches the time queue as "Timesheets".
+    if (paths.has('/timesheets')) paths.add('/time-attendance');
+    return GO_TO.filter((g) => {
+      const base = g.path.split('?')[0] ?? g.path;
+      return base === '/' || base === '/settings' || paths.has(base);
+    });
+  }, [user?.role, user?.regionId, can, tenant.modules, tenant.id]);
+}
 
 const CHORD_MS = 1500;
 
@@ -49,9 +72,9 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  * when a chord completes, 'leader' when it is waiting for the second key,
  * or null. Exported for tests.
  */
-export function resolveChord(prev: string | null, key: string, now: number, prevAt: number): { path: string | null; leader: boolean } {
+export function resolveChord(prev: string | null, key: string, now: number, prevAt: number, targets: ReadonlyArray<GoTo> = GO_TO): { path: string | null; leader: boolean } {
   if (prev === 'g' && now - prevAt <= CHORD_MS) {
-    const hit = GO_TO.find((g) => g.key === key.toLowerCase());
+    const hit = targets.find((g) => g.key === key.toLowerCase());
     return { path: hit?.path ?? null, leader: false };
   }
   return { path: null, leader: key === 'g' };
@@ -59,12 +82,13 @@ export function resolveChord(prev: string | null, key: string, now: number, prev
 
 export function GlobalShortcuts() {
   const navigate = useNavigate();
+  const targets = useGoToTargets();
   const leader = useRef<{ key: string; at: number } | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
-      const r = resolveChord(leader.current?.key ?? null, e.key, Date.now(), leader.current?.at ?? 0);
+      const r = resolveChord(leader.current?.key ?? null, e.key, Date.now(), leader.current?.at ?? 0, targets);
       if (r.path) {
         e.preventDefault();
         leader.current = null;
@@ -75,7 +99,7 @@ export function GlobalShortcuts() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [navigate]);
+  }, [navigate, targets]);
   return null;
 }
 
@@ -95,12 +119,21 @@ export interface ListKeyboard {
   /** Spread on each row. */
   rowProps: (id: string) => { 'data-kb-cursor': 'true' | undefined; 'aria-selected': boolean; ref: (el: HTMLElement | null) => void };
   /** Spread on the list container. */
-  listProps: { tabIndex: 0; onFocus: () => void };
+  listProps: { tabIndex: 0; onFocus: () => void; ref: (el: HTMLElement | null) => void };
+}
+
+/** A control that owns its own Enter: buttons, links, form fields, menu items. */
+function isControlTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return !!target.closest(
+    'button, a[href], select, summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="switch"], [role="option"]',
+  );
 }
 
 export function useListKeyboard<T>({ items, idOf, onOpen, onApprove, onDecline, enabled = true }: ListKeyboardOptions<T>): ListKeyboard {
   const [cursor, setCursor] = useState<string | null>(null);
   const rows = useRef(new Map<string, HTMLElement>());
+  const listEl = useRef<HTMLElement | null>(null);
   const ids = items.map(idOf);
   const current = cursor && ids.includes(cursor) ? cursor : null;
 
@@ -117,14 +150,22 @@ export function useListKeyboard<T>({ items, idOf, onOpen, onApprove, onDecline, 
         setCursor(id);
         rows.current.get(id)?.scrollIntoView?.({ block: 'nearest' });
       };
+      // Arrows scroll the page unless the list itself has focus; Enter on a
+      // button or link is that control's, never "open the cursor row".
+      const inList = !!listEl.current && listEl.current.contains(document.activeElement);
       switch (e.key) {
         case 'j':
-        case 'ArrowDown':
           return move(at + 1);
         case 'k':
-        case 'ArrowUp':
           return move(at <= 0 ? 0 : at - 1);
+        case 'ArrowDown':
+          if (inList) move(at + 1);
+          return;
+        case 'ArrowUp':
+          if (inList) move(at <= 0 ? 0 : at - 1);
+          return;
         case 'Enter':
+          if (isControlTarget(e.target)) return;
           if (current && onOpen) {
             e.preventDefault();
             onOpen(items[at]!);
@@ -171,6 +212,10 @@ export function useListKeyboard<T>({ items, idOf, onOpen, onApprove, onDecline, 
     cursor: current,
     setCursor,
     rowProps,
-    listProps: { tabIndex: 0, onFocus: () => { if (!current && ids[0]) setCursor(ids[0]); } },
+    listProps: {
+      tabIndex: 0,
+      onFocus: () => { if (!current && ids[0]) setCursor(ids[0]); },
+      ref: (el: HTMLElement | null) => { listEl.current = el; },
+    },
   };
 }

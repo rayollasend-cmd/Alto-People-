@@ -66,6 +66,10 @@ describe('Organization profile', () => {
     expect(screen.getByDisplayValue('Workforce provider')).toBeInTheDocument();
 
     await user.click(transport);
+    // The pending switch says what it does to the menu before Save.
+    expect(screen.getByText(/When you save:/)).toBeInTheDocument();
+    // The words are on their own tab; the draft carries across tabs to one Save.
+    await user.click(screen.getByRole('tab', { name: 'Terminology' }));
     const workerEn = screen.getByLabelText('Worker (one) in English');
     await user.clear(workerEn);
     await user.type(workerEn, 'Team member');
@@ -83,6 +87,7 @@ describe('Organization profile', () => {
     renderPage({ ...DEFAULT_TENANT, assistantName: 'Coco' });
     await screen.findByRole('checkbox', { name: /^Transportation/ });
     expect(screen.getByText(/The words here reach the navigation, the roles and Coco\./)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Terminology' }));
     expect(screen.getByText(/the screens and Coco use/)).toBeInTheDocument();
     expect(screen.queryByText(/Hugo/)).toBeNull();
     cleanup();

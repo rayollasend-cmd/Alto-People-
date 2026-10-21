@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Label } from '@/components/ui/Label';
+import { Badge } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Textarea } from '@/components/ui/Input';
@@ -31,8 +32,11 @@ import { Textarea } from '@/components/ui/Input';
  *   · every other verb (assign / tag / postpone / plan / escalate /
  *     release) lives in the item's ROOM, where the context is
  * The engine, rooms, and actions are unchanged — this is the console
- * skin. Empty queue = "All systems nominal". Fails silent (supplement).
+ * skin. Empty queue = "Nothing needs you.". Fails silent (supplement).
  */
+
+/** The queue's all-clear: a status line, not an empty state. */
+const ALL_CLEAR = 'Nothing needs you.';
 
 interface RoleDecision {
   key: string;
@@ -80,7 +84,11 @@ function ageTone(ageDays: number | null): string {
 export function RoleDecisionQueue({
   title = 'Needs your decision',
   hideWhenEmpty = false,
+  scopeLabel,
 }: {
+  /** Says whose decisions these are when the page around them is narrower
+   *  (a manager's team home): "Company-wide". Shown only with rows. */
+  scopeLabel?: string;
   /** `null` when the page titles the section itself (a home's "Needs you"). */
   title?: string | null;
   /**
@@ -242,7 +250,7 @@ export function RoleDecisionQueue({
     return (
       <div className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-silver">
         <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />
-        All systems nominal — nothing needs your decision.
+        {ALL_CLEAR}
       </div>
     );
   }
@@ -263,6 +271,11 @@ export function RoleDecisionQueue({
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           {title !== null && <CardTitle className="text-base">{title}</CardTitle>}
+          {scopeLabel && rows && rows.length > 0 && (
+            <Badge variant="outline" size="sm">
+              {scopeLabel}
+            </Badge>
+          )}
           {/* The triage line — the whole queue in one sentence. */}
           {rows && rows.length > 0 && (
             <span className="ml-auto text-2xs tabular-nums text-silver">

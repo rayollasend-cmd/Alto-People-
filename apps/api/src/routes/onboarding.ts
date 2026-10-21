@@ -605,6 +605,9 @@ onboardingRouter.get('/applications', async (req, res, next) => {
     let statusWhere: Prisma.ApplicationWhereInput = {};
     if (status === 'ACTIVE') {
       statusWhere = { status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] } };
+    } else if (status === 'TO_REVIEW') {
+      // Everything waiting on HR's decision — what the Inbox counts.
+      statusWhere = { status: { in: ['SUBMITTED', 'IN_REVIEW'] } };
     } else if (status === 'ARCHIVED') {
       statusWhere = { status: { in: ['APPROVED', 'REJECTED', 'CANCELLED'] } };
     } else if (status && status !== 'ALL') {

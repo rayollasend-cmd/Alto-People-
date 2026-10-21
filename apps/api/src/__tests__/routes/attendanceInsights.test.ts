@@ -244,3 +244,109 @@ describe('GET /attendance/team-hours', () => {
     expect((await (await loginAs(agent(), hrUser.email)).get('/attendance/team-hours')).body.people).toEqual([]);
   });
 });
+
+describe('review fixes', () => {
+  it('counts overtime from net hours per person-week — gross past 40 that nets under it is no overtime', async () => {
+    const a = await store('Harbor Inn');
+    const [ana, ben, cy] = await Promise.all([
+      createAssociate({ firstName: 'Ana', lastName: 'Reyes' }),
+      createAssociate({ firstName: 'Ben', lastName: 'Cole' }),
+      createAssociate({ firstName: 'Cy', lastName: 'Park' }),
+    ]);
+    // Ana 5 × 9h = 45 → 5. Ben 5 × 8.2h = 41 gross, a 30-minute meal each day → 38.5 net → 0. Cy 39h → 0.
+    for (let d = 0; d < 5; d++) {
+      const at = lastWeekDay(d + 1, 7);
+      await prisma.timeEntry.create({ data: { associateId: ana.id, clientId: a.client.id, locationId: a.site.id, clockInAt: at, clockOutAt: new Date(at.getTime() + 9 * HOUR), status: 'APPROVED' } });
+      const b = await prisma.timeEntry.create({ data: { associateId: ben.id, clientId: a.client.id, locationId: a.site.id, clockInAt: at, clockOutAt: new Date(at.getTime() + 8.2 * HOUR), status: 'APPROVED' } });
+      await prisma.breakEntry.create({ data: { timeEntryId: b.id, type: 'MEAL', startedAt: new Date(at.getTime() + 4 * HOUR), endedAt: new Date(at.getTime() + 4.5 * HOUR) } });
+      await prisma.timeEntry.create({ data: { associateId: cy.id, clientId: a.client.id, locationId: a.site.id, clockInAt: at, clockOutAt: new Date(at.getTime() + 7.8 * HOUR), status: 'APPROVED' } });
+    }
+    const res = await (await hr()).get('/attendance/trends?weeks=4');
+    expect(res.body.weeks[2].overtimeHours).toBe(5);
+  });
+
+  it('places a late on an evening shift in the shift’s own week, and counts only confirmed call-outs', async () => {
+    const a = await store('Harbor Inn');
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Reyes' });
+    // Last week's Friday, 9 PM on the company clock — already Saturday in UTC.
+    const friday = lastWeekDay(6, 21);
+    const s = await shift(a.client.id, a.site.id, friday, 6, { associateId: ana.id });
+    await prisma.attendanceEvent.create({ data: { associateId: ana.id, shiftId: s.id, clientId: a.client.id, kind: 'LATE', points: 0.5, occurredOn: new Date(`${friday.toISOString().slice(0, 10)}T00:00:00Z`) } });
+    const s2 = await shift(a.client.id, a.site.id, lastWeekDay(2), 8, { associateId: ana.id });
+    await prisma.callOut.create({ data: { shiftId: s2.id, associateId: ana.id, clientId: a.client.id, locationId: a.site.id, channel: 'SMS', minutesBeforeStart: 60, status: 'PENDING' } });
+    const res = await (await hr()).get('/attendance/trends?weeks=4');
+    const [last, current] = [res.body.weeks[2], res.body.weeks[3]];
+    expect(last.lates).toBe(1);
+    expect(current.lates).toBe(0);
+    expect(last.callOuts).toBe(0);
+  });
+
+  it('refuses a date that isn’t on the calendar', async () => {
+    expect((await (await hr()).get('/attendance/heatmap?metric=late&from=2026-02-31&to=2026-03-10')).status).toBe(400);
+  });
+
+  it('marks someone on approved time off — not a no-show, not texted — and labels an unconfirmed call-out', async () => {
+    const a = await store('Harbor Inn');
+    const [ana, ben] = await Promise.all([createAssociate({ firstName: 'Ana', lastName: 'Reyes' }), createAssociate({ firstName: 'Ben', lastName: 'Cole' })]);
+    await prisma.associate.updateMany({ where: { id: { in: [ana.id, ben.id] } }, data: { phone: '+15555550101' } });
+    const now = Date.now();
+    const sAna = await shift(a.client.id, a.site.id, new Date(now - 45 * 60_000), 8, { associateId: ana.id });
+    const sBen = await shift(a.client.id, a.site.id, new Date(now - 45 * 60_000), 8, { associateId: ben.id });
+    const day = new Date(`${dateKeyInZone(sAna.startsAt, TZ)}T00:00:00Z`);
+    await prisma.timeOffRequest.create({ data: { associateId: ana.id, category: 'VACATION', startDate: day, endDate: day, requestedMinutes: 480, status: 'APPROVED' } });
+    await prisma.callOut.create({ data: { shiftId: sBen.id, associateId: ben.id, clientId: a.client.id, locationId: a.site.id, channel: 'SMS', minutesBeforeStart: 0, status: 'PENDING' } });
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: a.client.id });
+    const res = await (await loginAs(agent(), sup.email)).get('/attendance/late-now');
+    const byShift = Object.fromEntries(res.body.people.map((p: { shiftId: string }) => [p.shiftId, p]));
+    expect(byShift[sAna.id]).toMatchObject({ status: 'on-leave', calledOutHow: null });
+    expect(byShift[sBen.id]).toMatchObject({ status: 'called-out', calledOutHow: 'unconfirmed' });
+
+    // A shift supervisor bound to a store but to no client can't text through crew-text.
+    const { user: siteLead } = await createUser({ role: 'SHIFT_SUPERVISOR' });
+    await prisma.user.update({ where: { id: siteLead.id }, data: { scopeSiteIds: [a.site.id] } });
+    const lead = await (await loginAs(agent(), siteLead.email)).get('/attendance/late-now');
+    expect(lead.status).toBe(200);
+    expect(lead.body.canText).toBe(false);
+    expect(lead.body.people.every((p: { textable: boolean }) => !p.textable)).toBe(true);
+  });
+
+  it('a store-bound account sees its own store only — trends, heatmap and late-now', async () => {
+    const a = await store('Harbor Inn');
+    const south = await prisma.site.create({ data: { name: 'South Store', clientId: a.client.id, timezone: TZ } });
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Reyes' });
+    const north1 = await shift(a.client.id, a.site.id, lastWeekDay(1), 8, { associateId: ana.id });
+    const south1 = await shift(a.client.id, south.id, lastWeekDay(2), 8, { associateId: ana.id });
+    for (const s of [north1, south1]) await prisma.attendanceEvent.create({ data: { associateId: ana.id, shiftId: s.id, clientId: a.client.id, kind: 'LATE', points: 0.5, occurredOn: s.startsAt } });
+    await shift(a.client.id, south.id, new Date(Date.now() - 40 * 60_000), 8, { associateId: ana.id });
+
+    const { user } = await createUser({ role: 'OPERATIONS_MANAGER' });
+    await prisma.user.update({ where: { id: user.id }, data: { scopeSiteIds: [a.site.id] } });
+    const ops = await loginAs(agent(), user.email);
+    const trends = await ops.get('/attendance/trends?weeks=4');
+    expect(trends.body.weeks[2]).toMatchObject({ scheduledShifts: 1, lates: 1 });
+    const heat = await ops.get('/attendance/heatmap?metric=late');
+    expect(heat.body.rows.map((r: { label: string }) => r.label)).toEqual(['Harbor Inn']);
+    expect((await ops.get(`/attendance/trends?siteId=${south.id}`)).body.weeks[6]).toMatchObject({ scheduledShifts: 0, lates: 0 });
+    expect((await ops.get('/attendance/late-now')).body.people).toEqual([]);
+  });
+
+  it('projects the rest of a shift under way, net of the meal break', async () => {
+    const a = await store('Harbor Inn');
+    const boss = await createAssociate({ firstName: 'Mia', lastName: 'Boss' });
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Reyes' });
+    await prisma.associate.update({ where: { id: ana.id }, data: { managerId: boss.id } });
+    const now = Date.now();
+    const weekEnd = startOfWeekUTC(new Date()).getTime() + 7 * DAY;
+    // An 8-hour shift that started an hour ago, punched in; only when it ends inside this week.
+    if (now + 7 * HOUR > weekEnd - HOUR || now - HOUR < startOfWeekUTC(new Date()).getTime()) return;
+    const s = await shift(a.client.id, a.site.id, new Date(now - HOUR), 8, { associateId: ana.id });
+    await prisma.timeEntry.create({ data: { associateId: ana.id, clientId: a.client.id, locationId: a.site.id, shiftId: s.id, clockInAt: new Date(now - HOUR), status: 'ACTIVE' } });
+    const { user } = await createUser({ role: 'MANAGER', associateId: boss.id });
+    const res = await (await loginAs(agent(), user.email)).get('/attendance/team-hours');
+    const p = res.body.people[0];
+    expect(p.onClock).toBe(true);
+    expect(p.workedHours).toBeCloseTo(1, 0);
+    // Seven hours left, less the half-hour meal not yet taken.
+    expect(p.scheduledHours).toBeCloseTo(6.5, 0);
+  });
+});

@@ -49,7 +49,7 @@ export function TrendLineChart({ data, x, series, format = (v) => v.toLocaleStri
     <div className="flex w-full flex-col" style={{ height: h }}>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 12, right: 12, bottom: xLabel ? 14 : 0, left: yLabel ? 8 : 0 }}>
+          <ComposedChart accessibilityLayer={false} data={data} margin={{ top: 12, right: 12, bottom: xLabel ? 14 : 0, left: yLabel ? 8 : 0 }}>
             <CartesianGrid stroke={PALETTE.grid} vertical={false} />
             <XAxis dataKey={x} {...AXIS} minTickGap={16} label={xAxisLabel(xLabel)} />
             <YAxis tick={TICK} tickLine={false} axisLine={false} width={yLabel ? 64 : 48} tickFormatter={(v: number) => format(v)} domain={zeroBased ? [0, 'auto'] : ['auto', 'auto']} label={yAxisLabel(yLabel)} />

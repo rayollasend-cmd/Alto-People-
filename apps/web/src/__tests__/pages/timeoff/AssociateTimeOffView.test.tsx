@@ -24,7 +24,7 @@ import {
   listMyRequests,
 } from '@/lib/timeOffApi';
 import { listMyShifts } from '@/lib/schedulingApi';
-import { AssociateTimeOffView, defaultCategory } from '@/pages/timeoff/AssociateTimeOffView';
+import { AssociateTimeOffView, defaultCategory, requestMinutesFor } from '@/pages/timeoff/AssociateTimeOffView';
 
 function renderView(path = '/time-off') {
   // Fresh client per render so cached lists never leak between tests;
@@ -300,6 +300,15 @@ describe('<AssociateTimeOffView>', () => {
 describe('<AssociateTimeOffView> form defaults', () => {
   it('starts on the category with time in it, vacation when none has any', () => {
     expect(defaultCategory([{ category: 'SICK', balanceMinutes: 240 }, { category: 'VACATION', balanceMinutes: 0 }] as never)).toBe('SICK');
+    // Planned time off beats sick even when sick has more in it.
+    expect(defaultCategory([{ category: 'SICK', balanceMinutes: 2400 }, { category: 'PTO', balanceMinutes: 480 }] as never)).toBe('PTO');
+    // The one they used last, while it still has time in it.
+    expect(
+      defaultCategory(
+        [{ category: 'SICK', balanceMinutes: 2400 }, { category: 'VACATION', balanceMinutes: 480 }] as never,
+        [{ category: 'SICK', status: 'APPROVED', createdAt: '2026-10-01T00:00:00Z' }] as never,
+      ),
+    ).toBe('SICK');
     expect(defaultCategory([{ category: 'SICK', balanceMinutes: 0 }] as never)).toBe('VACATION');
     expect(defaultCategory(null)).toBe('VACATION');
   });
@@ -338,5 +347,22 @@ describe('<AssociateTimeOffView> form defaults', () => {
     await waitFor(() =>
       expect(createMyRequest).toHaveBeenCalledWith(expect.objectContaining({ startDate: '2026-11-07', endDate: '2026-11-07', hours: 5.5 })),
     );
+  });
+});
+
+describe('requestMinutesFor', () => {
+  // Mon Nov 2 – Fri Nov 13, 2026. The schedule is out through Fri Nov 6.
+  const shifts = [
+    { startsAt: '2026-11-02T13:00:00Z', timezone: 'America/New_York', minutes: 330 },
+    { startsAt: '2026-11-04T13:00:00Z', timezone: 'America/New_York', minutes: 480 },
+    { startsAt: '2026-11-06T13:00:00Z', timezone: 'America/New_York', minutes: 480 },
+  ];
+  it('counts each day: its shifts, a day off as 0, and 8h for weekdays past the published schedule', () => {
+    const r = requestMinutesFor('2026-11-02', '2026-11-13', shifts, null);
+    // 330 + 480 + 480 scheduled; Nov 3 and 5 are days off; Nov 9–13 aren't out yet: 5 × 8h.
+    expect(r).toEqual({ minutes: 330 + 480 + 480 + 5 * 480, fromSchedule: true });
+  });
+  it('falls back to 8h a weekday with no schedule at all, skipping holidays', () => {
+    expect(requestMinutesFor('2026-11-09', '2026-11-13', [], new Set(['2026-11-11']))).toEqual({ minutes: 4 * 480, fromSchedule: false });
   });
 });

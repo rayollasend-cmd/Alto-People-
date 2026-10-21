@@ -188,7 +188,7 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
             <YAxis tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v: number) => `$${Math.round(v)}`} />
             <Tooltip contentStyle={CHART.tooltip} formatter={(v) => fmtMoney(Number(v))} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="paid" name="Paid" fill={CHART.series[6]} />
+            <Bar dataKey="paid" name="Paid" fill={CHART.series[1]} />
             <Bar dataKey="billed" name="Billed" fill={CHART.good} />
             <Bar dataKey="waiting" name="Waiting" fill={CHART.warn} />
             <Bar dataKey="notBilled" name="Not billed" fill={CHART.bad} />

@@ -4,8 +4,11 @@ import { Card, CardContent } from './Card';
 import { Sparkline as KitSparkline } from './charts/Sparkline';
 
 export interface MetricTrend {
-  /** Weekly values, oldest first (last bucket = in-progress week). */
+  /** Weekly values, oldest first. */
   series: number[];
+  /** The last bucket is the week in progress: drawn hollow and dashed,
+   *  and the spoken summary ends on the last complete week. */
+  lastIsPartial?: boolean;
   /** Change of the last complete week vs the one before (absolute). */
   delta: number;
   /** Appended after the delta number, e.g. "vs last wk". */
@@ -37,6 +40,9 @@ export interface MetricCardProps {
   href?: string;
   /** Render-prop wrapper for non-anchor links (Router Link, button, etc.). */
   wrap?: (children: React.ReactElement) => React.ReactElement;
+  /** The "View details →" line on a linked tile. Off for a band of tiles
+   *  that are all links, where it repeats on every one. */
+  cta?: boolean;
   className?: string;
 }
 
@@ -167,27 +173,35 @@ export function DeltaChip({
     meaning === 'good' ? 'bg-success/10 text-success' : meaning === 'bad' ? 'bg-alert/10 text-alert' : 'bg-silver/10 text-silver';
   const arrow = flat ? '—' : delta > 0 ? '↑' : '↓';
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs2 tabular-nums">
-      <span className={cn('inline-flex items-center gap-0.5 rounded-full px-1.5 py-px font-medium', tone)}>
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1 text-xs2 tabular-nums">
+      <span className={cn('inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded-full px-1.5 py-px font-medium', tone)}>
         <span aria-hidden="true">{arrow}</span>
         <span className="sr-only">{flat ? 'unchanged' : delta > 0 ? 'up' : 'down'}</span>
         {!flat && <>{format ? format(Math.abs(delta)) : fmtDelta(delta)}</>}
       </span>
-      {deltaLabel && <span className="text-silver/70">{deltaLabel}</span>}
+      {deltaLabel && (
+        <span className="min-w-0 truncate text-silver/70" title={deltaLabel}>
+          {deltaLabel}
+        </span>
+      )}
     </span>
   );
 }
 
 /** One sentence for a screen reader: where the line started, where it is, and the change. */
 export function trendSummary(trend: MetricTrend, good: TrendGood): string {
-  const pts = trend.series.filter((v) => Number.isFinite(v));
+  const all = trend.series.filter((v) => Number.isFinite(v));
+  // A week still in progress isn't where the line "ended" — say it separately.
+  const partial = trend.lastIsPartial && all.length >= 3 ? all[all.length - 1]! : null;
+  const pts = partial === null ? all : all.slice(0, -1);
   if (pts.length < 2) return '';
   const f = (n: number) => (trend.format ? trend.format(n) : n.toLocaleString('en-US', { maximumFractionDigits: 1 }));
   const unit = trend.unit ?? 'week';
   const meaning = trendMeaning(trend.delta, good);
   const change =
     trend.delta === 0 ? 'unchanged' : `${trend.delta > 0 ? 'up' : 'down'} ${f(Math.abs(trend.delta))}${trend.deltaLabel ? ` ${trend.deltaLabel}` : ''}`;
-  return `Over the last ${pts.length} ${unit}s: from ${f(pts[0]!)} to ${f(pts[pts.length - 1]!)}, ${change}${meaning === 'flat' ? '' : meaning === 'good' ? ' (better)' : ' (worse)'}.`;
+  const soFar = partial === null ? '' : ` This ${unit} so far: ${f(partial)}.`;
+  return `Over the last ${pts.length} complete ${unit}s: from ${f(pts[0]!)} to ${f(pts[pts.length - 1]!)}, ${change}${meaning === 'flat' ? '' : meaning === 'good' ? ' (better)' : ' (worse)'}.${soFar}`;
 }
 
 /* --------------------------------------------------------- metric card */
@@ -209,6 +223,7 @@ export function MetricCard({
   trendGood,
   href,
   wrap,
+  cta = true,
   className,
 }: MetricCardProps) {
   const isInteractive = Boolean(href || wrap);
@@ -229,14 +244,14 @@ export function MetricCard({
           <CountUpValue value={value} />
         </div>
         {trend && (
-          <div className="mt-2 flex items-center gap-2 text-silver">
-            <KitSparkline series={trend.series} tone={sparkTone(trend.delta, good)} />
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-silver">
+            <KitSparkline series={trend.series} tone={sparkTone(trend.delta, good)} lastIsPartial={trend.lastIsPartial} />
             <DeltaChip delta={trend.delta} deltaLabel={trend.deltaLabel} good={good} format={trend.format} />
             <span className="sr-only">{trendSummary(trend, good)}</span>
           </div>
         )}
         {hint && <div className="text-xs text-silver mt-2">{hint}</div>}
-        {isInteractive && (
+        {isInteractive && cta && (
           <div className="text-2xs uppercase tracking-widest mt-3 text-gold/80 group-hover:text-gold-bright transition-colors inline-flex items-center gap-1">
             View details
             <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">

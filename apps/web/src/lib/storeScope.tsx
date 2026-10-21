@@ -46,6 +46,10 @@ interface StoreScopeValue {
   clients: StoreScopeClient[];
   /** False for bounded roles / signed-out — hide the switcher, pin the scope. */
   enabled: boolean;
+  /** True once the signed-in user's saved choice has been read — a page
+   *  that follows the scope treats the value it sees then as its baseline,
+   *  not as a click. */
+  ready: boolean;
 }
 
 const StoreScopeContext = createContext<StoreScopeValue>({
@@ -53,6 +57,7 @@ const StoreScopeContext = createContext<StoreScopeValue>({
   setClientId: () => {},
   clients: [],
   enabled: false,
+  ready: false,
 });
 
 const storageKey = (userId: string) => `alto:storeScope:${userId}`;
@@ -77,16 +82,19 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
   const canViewClients = can('view:clients');
 
   const [clientId, setClientIdState] = useState('');
+  const [readyFor, setReadyFor] = useState<string | null>(null);
 
   // Hydrate the persisted choice when the signed-in user changes. Bounded
   // roles are pinned to their clamp regardless of anything persisted.
   useEffect(() => {
     if (!userId) {
       setClientIdState('');
+      setReadyFor(null);
       return;
     }
     if (!enabled) {
       setClientIdState(boundedClientId);
+      setReadyFor(userId);
       return;
     }
     try {
@@ -94,6 +102,7 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
     } catch {
       setClientIdState('');
     }
+    setReadyFor(userId);
   }, [userId, enabled, boundedClientId]);
 
   // Scheduler-tier roles without view:clients (the WFM) read the
@@ -138,9 +147,10 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
     [enabled, userId],
   );
 
+  const ready = userId !== null && readyFor === userId;
   const value = useMemo(
-    () => ({ clientId, setClientId, clients, enabled }),
-    [clientId, setClientId, clients, enabled],
+    () => ({ clientId, setClientId, clients, enabled, ready }),
+    [clientId, setClientId, clients, enabled, ready],
   );
   return <StoreScopeContext.Provider value={value}>{children}</StoreScopeContext.Provider>;
 }

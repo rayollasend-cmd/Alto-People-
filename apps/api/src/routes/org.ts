@@ -783,6 +783,30 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
   res.json(body);
 });
 
+/**
+ * A job profile carries overtime exemption, the workers' comp class and the
+ * tipped occupation code. Moving someone between profiles that differ on
+ * any of those is a promotion — a second person (manage:comp) decides it —
+ * not an org edit. Nor may an edit overtake a promotion already waiting.
+ */
+async function assertProfileMoveNeedsNoApproval(fromId: string | null, toId: string | null): Promise<void> {
+  const ids = [fromId, toId].filter((x): x is string => !!x);
+  const rows = await prisma.jobProfile.findMany({ where: { id: { in: ids } }, select: { id: true, title: true, isExempt: true, wcClassCode: true, tippedOccupationCode: true } });
+  const from = rows.find((r) => r.id === fromId) ?? null;
+  const to = rows.find((r) => r.id === toId) ?? null;
+  const changes: string[] = [];
+  if ((from?.isExempt ?? false) !== (to?.isExempt ?? false)) changes.push('overtime exemption');
+  if (from?.wcClassCode && to?.wcClassCode && from.wcClassCode !== to.wcClassCode) changes.push("workers' comp class");
+  if ((from?.tippedOccupationCode ?? null) !== (to?.tippedOccupationCode ?? null)) changes.push('tipped occupation code');
+  if (changes.length > 0) {
+    throw new HttpError(
+      409,
+      'job_profile_needs_approval',
+      `${to ? `“${to.title}”` : 'Removing the job profile'} changes their ${changes.join(' and ')} — send it as a promotion for a second person to approve.`,
+    );
+  }
+}
+
 orgRouter.put(
   '/associates/:id/org',
   MANAGE,
@@ -814,6 +838,12 @@ orgRouter.put(
     }
     if (input.jobProfileId && !(await prisma.jobProfile.findFirst({ where: { id: input.jobProfileId, tenantId, deletedAt: null }, select: { id: true } }))) {
       throw new HttpError(404, 'job_profile_not_found', 'Job profile not found.');
+    }
+    if (input.jobProfileId !== undefined && input.jobProfileId !== existing.jobProfileId) {
+      if (await prisma.promotion.findFirst({ where: { associateId: id, status: 'PENDING' }, select: { id: true } })) {
+        throw new HttpError(409, 'promotion_open', 'A promotion for this person is waiting on a decision — it sets their job profile when approved.');
+      }
+      await assertProfileMoveNeedsNoApproval(existing.jobProfileId, input.jobProfileId);
     }
     if (input.managerId === id) {
       throw new HttpError(

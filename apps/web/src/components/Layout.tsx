@@ -30,6 +30,7 @@ import { AssistantPane } from '@/components/assistant/AssistantPane';
 import { OfflineQueueBanner } from '@/components/OfflineQueueBanner';
 import { InboxReturnBar } from '@/components/InboxReturnBar';
 import { GlobalShortcuts } from '@/lib/shortcuts';
+import { useHashScroll } from '@/lib/useHashScroll';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
 // in. A 40vh-centered spinner used to feel like "something is wrong" on
@@ -114,6 +115,7 @@ export function Layout() {
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsHook();
   const [helpOpen, setHelpOpen] = useState(false);
   const location = useLocation();
+  useHashScroll();
   // A soft navigation closes the books on the previous route's web vitals.
   useEffect(() => {
     noteRouteChange(location.pathname);

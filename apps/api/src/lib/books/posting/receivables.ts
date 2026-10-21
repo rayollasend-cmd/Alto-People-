@@ -161,10 +161,26 @@ export async function undoClientPayment(db: import('@prisma/client').PrismaClien
   const payment = await db.clientPayment.findFirst({ where: { id, tenantId }, include: { applications: true } });
   if (!payment) throw new HttpError(404, 'payment_not_found', 'Payment not found.');
   if (payment.voidedAt) throw new HttpError(409, 'already_undone', 'This payment was already undone.');
-  await db.$transaction(async (tx) => {
-    await tx.clientPayment.update({ where: { id }, data: { voidedAt: new Date() } });
+  // A bank deposit matched to this payment's lines goes back to review with it — otherwise the bank page would
+  // show it done while the cash it stands for is off the books. One already in a completed reconciliation stops this.
+  const lineIds = payment.journalEntryId ? (await db.journalLine.findMany({ where: { tenantId, entryId: payment.journalEntryId }, select: { id: true, clearedAt: true } })) : [];
+  const deposits = lineIds.length ? await db.bankTransaction.findMany({ where: { tenantId, status: 'MATCHED', matchedLineId: { in: lineIds.map((l) => l.id) } }, select: { id: true, matchedLineId: true } }) : [];
+  if (deposits.some((d) => lineIds.find((l) => l.id === d.matchedLineId)?.clearedAt)) {
+    throw new HttpError(409, 'reconciled', 'The deposit this payment was matched to is in a completed reconciliation. Undo that reconciliation first.');
+  }
+  const claimed = await db.$transaction(async (tx) => {
+    const undone = await tx.clientPayment.updateMany({ where: { id, voidedAt: null }, data: { voidedAt: new Date() } });
+    if (undone.count === 0) return false;
     await voidByKey(tx, paymentKey(id), input.reason);
+    if (deposits.length) {
+      await tx.bankTransaction.updateMany({
+        where: { id: { in: deposits.map((d) => d.id) }, status: 'MATCHED' },
+        data: { status: 'UNMATCHED', matchedLineId: null, journalEntryId: null, ruleId: null, decidedById: null, decidedAt: null },
+      });
+    }
+    return true;
   });
+  if (!claimed) throw new HttpError(409, 'already_undone', 'This payment was already undone.');
   // A statement this payment had finished is open again.
   const balances = await statementBalances(db, { id: { in: payment.applications.map((a) => a.statementId) } });
   for (const b of balances) {

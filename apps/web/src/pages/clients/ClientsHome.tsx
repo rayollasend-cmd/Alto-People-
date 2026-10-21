@@ -37,7 +37,7 @@ import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { NewClientDialog } from './NewClientDialog';
 import { ListTemplate } from '@/components/templates';
 import { PipelineSection } from './PipelineSection';
-import { rollUpWeeks, type StoreTrend } from './ClientPerformance';
+import { rollUpWeeks, standardShareOf, type StoreTrend } from './ClientPerformance';
 import { storeTrends } from '@/lib/schedulingApi';
 import { Sparkline } from '@/components/ui/charts/Sparkline';
 
@@ -84,8 +84,11 @@ export function ClientsHome() {
   const trendByClient = useMemo(() => {
     const byClient = new Map<string, StoreTrend[]>();
     for (const st of trendsQuery.data?.stores ?? []) byClient.set(st.clientId, [...(byClient.get(st.clientId) ?? []), st]);
-    return new Map([...byClient.entries()].map(([id, stores]) => [id, rollUpWeeks(stores)]));
+    return new Map([...byClient.entries()].map(([id, stores]) => [id, { weeks: rollUpWeeks(stores), standardShare: standardShareOf(stores) }]));
   }, [trendsQuery.data]);
+  // Capped at the server (too many punches to count): the oldest week reads
+  // low and every line would seem to climb — so no trend column at all.
+  const trendsTruncated = trendsQuery.data?.truncated ?? false;
   // Per-row busy tracking so several clients' reports can generate in
   // parallel — a single busy id serialized the whole run.
   const [reportBusyIds, setReportBusyIds] = useState<Set<string>>(new Set());
@@ -435,26 +438,28 @@ export function ClientsHome() {
                   </span>
                 ),
               },
-              ...(canTrend && trendByClient.size > 0
+              ...(canTrend && trendByClient.size > 0 && !trendsTruncated
                 ? [
                     {
                       key: 'trend',
                       header: 'Hours · 4 wks',
-                      accessor: (c: ClientListItem) => trendByClient.get(c.id)?.reduce((n, w) => n + w.hours, 0) ?? null,
+                      accessor: (c: ClientListItem) => trendByClient.get(c.id)?.weeks.reduce((n, w) => n + w.hours, 0) ?? null,
                       csv: (c: ClientListItem) => {
-                        const w = trendByClient.get(c.id);
+                        const w = trendByClient.get(c.id)?.weeks;
                         return w ? String(Math.round(w.reduce((n, x) => n + x.hours, 0))) : '';
                       },
                       sortable: true,
                       searchable: false,
                       align: 'right' as const,
                       cell: (c: ClientListItem) => {
-                        const w = trendByClient.get(c.id);
-                        if (!w || w.length === 0) return <span className="text-silver/70">—</span>;
+                        const t = trendByClient.get(c.id);
+                        const w = t?.weeks;
+                        if (!t || !w || w.length === 0) return <span className="text-silver/70">—</span>;
                         const total = Math.round(w.reduce((n, x) => n + x.hours, 0));
                         const margin = w[w.length - 1]!.marginPerHour;
+                        const basis = t.standardShare >= 0.5 ? ' (at standard rates — no rate card)' : '';
                         return (
-                          <span className="inline-flex items-center justify-end gap-2" title={margin === null ? undefined : `Last week’s margin: $${margin.toFixed(2)} an hour`}>
+                          <span className="inline-flex items-center justify-end gap-2" title={margin === null ? undefined : `Last week’s margin: $${margin.toFixed(2)} an hour${basis}`}>
                             <Sparkline series={w.map((x) => x.hours)} tone={margin !== null && margin < 0 ? 'bad' : 'primary'} width={64} height={20} />
                             <span className="tabular-nums text-silver">{total.toLocaleString('en-US')}h</span>
                           </span>

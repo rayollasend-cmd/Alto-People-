@@ -139,11 +139,17 @@ booksPayablesRouter.post('/bills/:id/submit', MANAGE, async (req, res) => {
   res.status(202).json(pendingResponse(approval));
 });
 
-/** Approve several at once — each its own decision, the second-person rule intact. */
-booksPayablesRouter.post('/bills/approve', MANAGE, async (req, res) => {
-  const { ids } = BooksBillsApproveInputSchema.parse(req.body ?? {});
+/**
+ * Approve several at once — each its own decision, the second-person rule
+ * intact. Who may decide is the approval's own rule (decideApprovalRequest),
+ * exactly as approving one from the bill: a delegate covering an approver can
+ * approve in bulk too.
+ */
+booksPayablesRouter.post('/bills/approve', async (req, res) => {
+  const { ids: asked } = BooksBillsApproveInputSchema.parse(req.body ?? {});
+  const ids = [...new Set(asked)];
   const me = viewer(req);
-  const bills = await prisma.bill.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: [...new Set(ids)] } }, include: { vendor: { select: { name: true } } } });
+  const bills = await prisma.bill.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: ids } }, include: { vendor: { select: { name: true } } } });
   const byId = new Map(bills.map((b) => [b.id, b]));
   const out: BooksBillsApproveResult = { approved: [], skipped: [] };
   for (const id of ids) {

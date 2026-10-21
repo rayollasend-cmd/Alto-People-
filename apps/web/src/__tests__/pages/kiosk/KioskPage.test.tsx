@@ -16,6 +16,7 @@ vi.mock('@/lib/kiosk99Api', () => ({
   kioskPunch: vi.fn(),
   kioskFaceConsent: vi.fn().mockResolvedValue({ ok: true, status: 'GRANTED' }),
   kioskAttachFace: vi.fn().mockResolvedValue({ ok: true }),
+  kioskSubmitSop: vi.fn(),
 }));
 
 vi.mock('@/lib/faceMatch', () => ({
@@ -40,7 +41,7 @@ vi.mock('@/lib/confirm', () => ({
 }));
 
 import { ApiError } from '@/lib/api';
-import { kioskVerifyPin, kioskPunch, kioskFaceConsent } from '@/lib/kiosk99Api';
+import { kioskVerifyPin, kioskPunch, kioskFaceConsent, kioskSubmitSop } from '@/lib/kiosk99Api';
 import { enqueuePunch } from '@/lib/kioskQueue';
 import { KioskPage } from '@/pages/kiosk/KioskPage';
 
@@ -75,7 +76,13 @@ async function typePin(user: ReturnType<typeof userEvent.setup>) {
   }
 }
 
+/** The who-is-this step: "Maria L. — Clock in?" (it also confirms itself after 3s). */
+async function confirmMe(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: /yes, that’s me/i }));
+}
+
 beforeEach(() => {
+  vi.mocked(kioskSubmitSop).mockReset();
   vi.mocked(kioskVerifyPin).mockReset();
   vi.mocked(kioskPunch).mockReset();
   vi.mocked(kioskFaceConsent).mockClear();
@@ -97,6 +104,7 @@ describe('<KioskPage> punch flow', () => {
     const user = userEvent.setup();
     renderKiosk();
     await typePin(user);
+    await confirmMe(user);
 
     expect(await screen.findByText('Clocked in')).toBeInTheDocument();
     expect(screen.getByText(/Welcome, Maria/)).toBeInTheDocument();
@@ -153,6 +161,7 @@ describe('<KioskPage> punch flow', () => {
     for (const d of ['5', '6', '7', '8']) {
       await user.click(screen.getByRole('button', { name: d }));
     }
+    await confirmMe(user);
     expect(await screen.findByText('Clocked in')).toBeInTheDocument();
     expect(kioskVerifyPin).toHaveBeenCalledTimes(2);
   });
@@ -167,6 +176,7 @@ describe('<KioskPage> punch flow', () => {
     const user = userEvent.setup();
     renderKiosk();
     await typePin(user);
+    await confirmMe(user);
 
     expect(await screen.findByText(/quick question/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /no thanks/i }));
@@ -188,6 +198,7 @@ describe('<KioskPage> punch flow', () => {
     const user = userEvent.setup();
     renderKiosk();
     await typePin(user);
+    await confirmMe(user);
 
     await user.click(
       await screen.findByRole('button', { name: /use photo verification/i }),
@@ -214,6 +225,7 @@ describe('<KioskPage> punch flow', () => {
     const user = userEvent.setup();
     renderKiosk();
     await typePin(user);
+    await confirmMe(user);
 
     // Declined face matching used to mean PIN-only; a required photo opens the camera anyway.
     // jsdom has no camera, so this lands on the camera-unavailable screen — whose only way
@@ -231,6 +243,7 @@ describe('<KioskPage> punch flow', () => {
     const user = userEvent.setup();
     renderKiosk();
     await typePin(user);
+    await confirmMe(user);
     expect(await screen.findByText('Clocked in')).toBeInTheDocument();
     expect(vi.mocked(kioskPunch).mock.calls[0]![0]).toMatchObject({ photoPolicyAware: true, photoUnavailable: false });
   });
@@ -277,6 +290,111 @@ describe('<KioskPage> punch flow', () => {
       screen.getByRole('button', { name: /continue without selfie/i }),
     );
     expect(await screen.findByText(/saved offline/i)).toBeInTheDocument();
+    expect(enqueuePunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows who the punch is for before it happens — "Not me" goes back to the keypad and punches nothing', async () => {
+    vi.mocked(kioskVerifyPin).mockResolvedValue({ ...VERIFY_OK, associateLastInitial: 'L' });
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+
+    expect(await screen.findByText('Maria L.')).toBeInTheDocument();
+    expect(screen.getByText('Clock in?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /not me/i }));
+    expect(await screen.findByText(/type your own clock-in number/i)).toBeInTheDocument();
+    expect(kioskPunch).not.toHaveBeenCalled();
+  });
+
+  it('the confirm goes through on its own after 3 seconds — the line keeps moving', async () => {
+    vi.mocked(kioskVerifyPin).mockResolvedValue(VERIFY_OK);
+    vi.mocked(kioskPunch).mockResolvedValue(PUNCH_OK);
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+    expect(await screen.findByText(/continuing in 3/i)).toBeInTheDocument();
+    expect(await screen.findByText('Clocked in', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(kioskPunch).toHaveBeenCalledTimes(1);
+  }, 10_000);
+
+  it('says back the shift, on time or late, the meal break and the hours this week', async () => {
+    vi.mocked(kioskVerifyPin).mockResolvedValue(VERIFY_OK);
+    vi.mocked(kioskPunch).mockResolvedValue({
+      ...PUNCH_OK,
+      summary: {
+        timezone: 'America/New_York',
+        shift: { startsAt: '2026-06-11T12:00:00.000Z', endsAt: '2026-06-11T20:30:00.000Z' },
+        lateMinutes: 12,
+        mealDueAt: '2026-06-11T17:00:00.000Z',
+        weekMinutes: 1110,
+      },
+    });
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+    await confirmMe(user);
+    expect(await screen.findByText('Clocked in')).toBeInTheDocument();
+    expect(screen.getByText(/Shift 8:00\sAM – 4:30\sPM/)).toBeInTheDocument();
+    expect(screen.getByText(/12 min late/)).toBeInTheDocument();
+    expect(screen.getByText(/Meal break by 1:00\sPM/)).toBeInTheDocument();
+    expect(screen.getByText('18.5 h')).toBeInTheDocument();
+  });
+
+  it('switches to the worker’s own language for their punch, and back for the next person', async () => {
+    vi.mocked(kioskVerifyPin).mockResolvedValue({ ...VERIFY_OK, language: 'es' });
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+    expect(await screen.findByText('¿Marcar entrada?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /no soy yo/i }));
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+    // The tablet's own language (English) is back at idle.
+    expect(await screen.findByRole('button', { name: /tap to clock/i })).toBeInTheDocument();
+  });
+
+  it('a held clock-out gets its own SOP screen: pick why, submit, and the clock-out carries on', async () => {
+    vi.mocked(kioskVerifyPin)
+      .mockRejectedValueOnce(
+        new ApiError(409, 'sop_open', 'Submit your Swing SOP before you clock out.', {
+          sopId: 's1',
+          label: 'Swing SOP',
+          windowLabel: 'Swing',
+          dateKey: '2026-06-11',
+          requiredOpen: 2,
+          sopDone: 5,
+          sopTotal: 7,
+        }),
+      )
+      .mockResolvedValue({ ...VERIFY_OK, predictedAction: 'CLOCK_OUT' });
+    vi.mocked(kioskSubmitSop).mockResolvedValue({ ok: true, submitted: true, closedIncomplete: true });
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+
+    expect(await screen.findByText('Your SOP is still open')).toBeInTheDocument();
+    expect(screen.getByText(/5 of 7 done/)).toBeInTheDocument();
+    const submit = screen.getByRole('button', { name: /submit and clock out/i });
+    expect(submit).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /family emergency/i }));
+    await user.click(submit);
+    expect(kioskSubmitSop).toHaveBeenCalledWith(
+      expect.objectContaining({ pin: '1234', reason: 'Family emergency — leaving early' }),
+    );
+    // The preflight runs again and the clock-out goes on: "Done for the day, Maria?"
+    expect(await screen.findByText(/done for the day/i)).toBeInTheDocument();
+    expect(kioskVerifyPin).toHaveBeenCalledTimes(2);
+  });
+
+  it('offline after a good preflight: names the person and what was saved', async () => {
+    vi.mocked(kioskVerifyPin).mockResolvedValue(VERIFY_OK);
+    vi.mocked(kioskPunch).mockRejectedValue(new Error('network down'));
+    const user = userEvent.setup();
+    renderKiosk();
+    await typePin(user);
+    await confirmMe(user);
+    expect(await screen.findByText(/Welcome, Maria/)).toBeInTheDocument();
+    expect(screen.getByText('Clocked in')).toBeInTheDocument();
+    expect(screen.getByText(/will send/)).toBeInTheDocument();
     expect(enqueuePunch).toHaveBeenCalledTimes(1);
   });
 

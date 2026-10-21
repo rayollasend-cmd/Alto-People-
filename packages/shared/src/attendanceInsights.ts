@@ -33,6 +33,12 @@ export const LATE_GRACE_MINUTES = 7;
 export const NO_SHOW_RISK_MINUTES = 30;
 
 const YmdSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** A real calendar day — 2026-13-45 and 2026-02-31 are refused, not rolled over. */
+const RealYmdSchema = YmdSchema.refine((s) => {
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d!));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m! - 1 && dt.getUTCDate() === d;
+}, 'Not a real date');
 
 /* ---- Trends ------------------------------------------------------------- */
 
@@ -47,11 +53,13 @@ export const AttendanceWeekSchema = z.object({
   weekStart: YmdSchema,
   /** True for the week still running — its figures are to date. */
   inProgress: z.boolean(),
+  /** For the week in progress, only shifts that have already started — "so far" means so far. */
   scheduledShifts: z.number().int().nonnegative(),
   filledShifts: z.number().int().nonnegative(),
   /** filled / scheduled, whole percent; null when nothing was scheduled. */
   fillRatePct: z.number().nullable(),
   noCallNoShows: z.number().int().nonnegative(),
+  /** Confirmed call-outs (the desk's count) plus missed shifts a time-off request covered. */
   callOuts: z.number().int().nonnegative(),
   lates: z.number().int().nonnegative(),
   overtimeHours: z.number().nonnegative(),
@@ -74,8 +82,8 @@ export type AttendanceHeatmapMetric = (typeof ATTENDANCE_HEATMAP_METRICS)[number
 
 export const AttendanceHeatmapQuerySchema = z.object({
   metric: z.enum(ATTENDANCE_HEATMAP_METRICS).default('late'),
-  from: YmdSchema.optional(),
-  to: YmdSchema.optional(),
+  from: RealYmdSchema.optional(),
+  to: RealYmdSchema.optional(),
   siteId: z.string().uuid().optional(),
 });
 export type AttendanceHeatmapQuery = z.infer<typeof AttendanceHeatmapQuerySchema>;
@@ -114,7 +122,7 @@ export const LateNowQuerySchema = z.object({
   siteId: z.string().uuid().optional(),
 });
 
-export const LATE_NOW_STATUSES = ['due', 'late', 'no-show-risk', 'called-out'] as const;
+export const LATE_NOW_STATUSES = ['due', 'late', 'no-show-risk', 'called-out', 'on-leave'] as const;
 export type LateNowStatus = (typeof LATE_NOW_STATUSES)[number];
 
 export const LateNowPersonSchema = z.object({
@@ -133,9 +141,18 @@ export const LateNowPersonSchema = z.object({
   /**
    * due: started, inside the grace minutes · late: past them ·
    * no-show-risk: past NO_SHOW_RISK_MINUTES with no word — find cover ·
-   * called-out: they said they can't make it — find cover.
+   * called-out: they said they can't make it — find cover ·
+   * on-leave: approved time off covers the day, yet the shift is still theirs — find cover.
    */
   status: z.enum(LATE_NOW_STATUSES),
+  /**
+   * How they said so, for a called-out row: a confirmed call-out, a call-out
+   * still waiting on their YES (read as "can't make it", not confirmed), or a
+   * NO to the attendance reminder. Null otherwise.
+   */
+  calledOutHow: z.enum(['confirmed', 'unconfirmed', 'reminder-no']).nullable(),
+  /** True when the caller can text this person from here (a phone, a client to text through, and the right). */
+  textable: z.boolean(),
   hasPhone: z.boolean(),
   /** Only for callers who may reach the crew (never a store account or a watch-only lead). */
   phone: z.string().nullable(),
@@ -146,7 +163,11 @@ export const LateNowResponseSchema = z.object({
   generatedAt: z.string(),
   graceMinutes: z.number(),
   noShowRiskMinutes: z.number(),
-  /** True when the caller can text these people through /floor/crew-text. */
+  /**
+   * True when the caller can text through /floor/crew-text at all. Each
+   * person's `textable` says whether they can be reached from here; texts go
+   * one client at a time (a shift with no client can't be texted this way).
+   */
   canText: z.boolean(),
   /** Most late first. */
   people: z.array(LateNowPersonSchema),
@@ -160,7 +181,12 @@ export const TeamHoursPersonSchema = z.object({
   name: z.string(),
   /** Net hours punched this workweek so far (an open punch counts to now). */
   workedHours: z.number().nonnegative(),
-  /** Hours on assigned shifts still ahead this workweek. */
+  /**
+   * Hours on assigned shifts still ahead this workweek — the rest of a shift
+   * under way included — net of the meal break the site's state requires
+   * (or a usual 30 minutes on a shift of six hours or more), so it adds to
+   * worked hours on the same basis.
+   */
   scheduledHours: z.number().nonnegative(),
   /** worked + scheduled — where the week is heading. */
   projectedHours: z.number().nonnegative(),

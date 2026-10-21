@@ -61,6 +61,7 @@ import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
+import { proposePromotion } from '@/lib/approvalRequestsApi';
 import { downloadCsv } from '@/lib/csv';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import {
@@ -478,7 +479,15 @@ export function PeopleDirectory() {
   );
 
   // Saved views: the filters on screen as a named set (components/SavedViewsMenu).
-  const [savedViewId, setSavedViewId] = useState<string | null>(null);
+  // The view applied rides in the URL (?sv=), so a reload keeps its name.
+  const savedViewId = searchParams.get('sv');
+  const setSavedViewId = (id: string | null) => {
+    if ((searchParams.get('sv') ?? null) === id) return;
+    const next = new URLSearchParams(searchParams);
+    if (id) next.set('sv', id);
+    else next.delete('sv');
+    setSearchParams(next, { replace: true });
+  };
   const viewQuery = useMemo(() => {
     const v: Record<string, string> = {};
     if (q) v.q = q;
@@ -2400,7 +2409,12 @@ function ManagerField({
   );
 }
 
-/** Job profile, set in place from the profiles of their workplace. */
+/**
+ * Job profile, set in place from the profiles of their workplace: pick, then
+ * Save. A move that changes overtime exemption, the comp class or the tipped
+ * code is a promotion — the API refuses it here (409) and it goes to a
+ * second person instead.
+ */
 function JobProfileField({
   associate: a,
   onSaved,
@@ -2410,36 +2424,64 @@ function JobProfileField({
 }) {
   const { can } = useAuth();
   const canEdit = can('manage:org');
+  const canPropose = can('manage:comp');
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pick, setPick] = useState<string>(a.jobProfileId ?? '');
+  const [needsApproval, setNeedsApproval] = useState<string | null>(null);
   const profiles = useQuery({
     queryKey: ['org', 'job-profiles', a.workplaceClientId ?? 'all'],
     queryFn: () => listJobProfiles(a.workplaceClientId ?? undefined),
     enabled: editing,
     staleTime: 5 * 60_000,
   });
-  async function save(next: string) {
+  // Their current profile stays an option even when it isn't their workplace's.
+  const options = useMemo(() => {
+    const list = profiles.data?.jobProfiles ?? [];
+    if (!a.jobProfileId || list.some((p) => p.id === a.jobProfileId)) return list;
+    return [{ id: a.jobProfileId, title: a.jobProfileTitle ?? 'Current profile', level: null }, ...list];
+  }, [profiles.data, a.jobProfileId, a.jobProfileTitle]);
+  const close = () => {
+    setEditing(false);
+    setNeedsApproval(null);
+    setPick(a.jobProfileId ?? '');
+  };
+  async function save() {
     if (saving) return;
-    const nextId = next || null;
+    const nextId = pick || null;
     if (nextId === (a.jobProfileId ?? null)) {
-      setEditing(false);
+      close();
       return;
     }
     setSaving(true);
     try {
       await assignOrgFields(a.id, { jobProfileId: nextId });
-      onSaved(nextId, profiles.data?.jobProfiles.find((p) => p.id === nextId)?.title ?? null);
+      onSaved(nextId, options.find((p) => p.id === nextId)?.title ?? null);
       toast.success('Job profile updated.');
-      setEditing(false);
+      close();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+      if (err instanceof ApiError && err.code === 'job_profile_needs_approval') setNeedsApproval(err.message);
+      else toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function propose() {
+    if (saving || !pick) return;
+    setSaving(true);
+    try {
+      await proposePromotion({ associateId: a.id, jobProfileId: pick, effectiveFrom: ymdLocal(), notes: 'Job profile change from their record.' });
+      toast.success('Sent for approval — the change lands when a second person approves it.');
+      close();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not send it.');
     } finally {
       setSaving(false);
     }
   }
   if (editing) {
     return (
-      <div className="flex items-start gap-3 text-sm">
+      <div className="flex flex-wrap items-start gap-3 text-sm">
         <div className="w-32 text-silver text-xs flex items-center pt-2">
           <span>Job profile</span>
         </div>
@@ -2449,9 +2491,19 @@ function JobProfileField({
           ) : profiles.isError ? (
             <span className="text-xs text-alert pt-2">Could not load the job profiles.</span>
           ) : (
-            <Select size="sm" value={a.jobProfileId ?? ''} onChange={(e) => void save(e.target.value)} disabled={saving} aria-label="Job profile" autoFocus>
+            <Select
+              size="sm"
+              value={pick}
+              onChange={(e) => {
+                setPick(e.target.value);
+                setNeedsApproval(null);
+              }}
+              disabled={saving}
+              aria-label="Job profile"
+              autoFocus
+            >
               <option value="">— No job profile —</option>
-              {profiles.data.jobProfiles.map((p) => (
+              {options.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
                   {p.level ? ` · ${p.level}` : ''}
@@ -2459,10 +2511,25 @@ function JobProfileField({
               ))}
             </Select>
           )}
-          <Button variant="ghost" size="icon-sm" onClick={() => setEditing(false)} disabled={saving} aria-label="Cancel" title="Cancel">
+          <Button size="xs" onClick={() => void save()} loading={saving && !needsApproval} disabled={saving || pick === (a.jobProfileId ?? '')}>
+            Save
+          </Button>
+          <Button variant="ghost" size="icon-sm" onClick={close} disabled={saving} aria-label="Cancel" title="Cancel">
             <X className="h-4 w-4" />
           </Button>
         </div>
+        {needsApproval && (
+          <div className="basis-full pl-32 text-xs text-ink" role="alert">
+            <p className="text-warning">{needsApproval}</p>
+            {canPropose && pick ? (
+              <Button size="xs" variant="secondary" className="mt-1.5" onClick={() => void propose()} loading={saving}>
+                Send as a promotion for approval
+              </Button>
+            ) : (
+              <p className="mt-1 text-silver">Someone who manages compensation can send it from Promotions.</p>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -2472,7 +2539,15 @@ function JobProfileField({
       value={
         <div className="flex items-center gap-2 group">
           <span className="flex-1 min-w-0">{a.jobProfileTitle ?? '—'}</span>
-          {canEdit && <EditPencil label="Edit job profile" onClick={() => setEditing(true)} />}
+          {canEdit && (
+            <EditPencil
+              label="Edit job profile"
+              onClick={() => {
+                setPick(a.jobProfileId ?? '');
+                setEditing(true);
+              }}
+            />
+          )}
         </div>
       }
     />

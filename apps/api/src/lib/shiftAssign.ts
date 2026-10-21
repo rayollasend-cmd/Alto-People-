@@ -199,7 +199,7 @@ export async function assignWithinRules(
   db: PrismaClient,
   shift: { id: string; clientId: string | null; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null },
   associate: { id: string; firstName: string; lastName: string; deactivatedAt: Date | null; separatedAt: Date | null },
-  opts: { actorUserId: string | null; via: string; overrideUnavailability?: boolean; overrideRestGap?: boolean },
+  opts: { actorUserId: string | null; via: string; overrideUnavailability?: boolean; overrideRestGap?: boolean; expectUnassigned?: boolean },
 ): Promise<AssignedShift> {
   assertEmployed(associate);
   // An H-2B worker may only be scheduled at the client on their petition.
@@ -237,6 +237,19 @@ export async function assignWithinRules(
       if (rest) {
         throw new HttpError(409, 'rest_gap', `${associate.firstName} ${associate.lastName} would get only ${rest.gapHours}h rest next to ${describeClash(rest.clash)}.`);
       }
+    }
+    if (opts.expectUnassigned) {
+      // Guarded write: a pick made from a list that may be a minute old
+      // must not silently replace whoever filled the shift since — the
+      // first person was already told it's theirs.
+      const claim = await tx.shift.updateMany({
+        where: { id: shift.id, assignedAssociateId: null, status: { in: ['OPEN', 'DRAFT', 'ASSIGNED'] } },
+        data: { assignedAssociateId: associate.id, assignedAt: new Date(), status: 'ASSIGNED' },
+      });
+      if (claim.count === 0) {
+        throw new HttpError(409, 'shift_taken', 'Someone filled this shift a moment ago — refresh to see who.');
+      }
+      return tx.shift.findUniqueOrThrow({ where: { id: shift.id }, include: ASSIGN_INCLUDE });
     }
     return tx.shift.update({
       where: { id: shift.id },

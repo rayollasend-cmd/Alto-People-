@@ -10,8 +10,8 @@ import { tenantIdForWrite } from '../../lib/tenant.js';
 import { agingReport, recordClientPayment, undoClientPayment, unappliedCredits } from '../../lib/books/posting/receivables.js';
 import { backfillPosting, postingGaps } from '../../lib/books/posting/gaps.js';
 import { cents, ymd } from '../../lib/books/posting/common.js';
-import { accountByKey, toCents } from '../../lib/books/ledger.js';
-import { match as matchBankTxn, transactionView } from '../../lib/books/bank/service.js';
+import { accountByKey } from '../../lib/books/ledger.js';
+import { paymentFromDeposit } from '../../lib/books/bank/service.js';
 
 /**
  * /books/receivables — what clients owe and the money they pay (contract:
@@ -114,38 +114,26 @@ booksReceivablesRouter.post('/payments', MANAGE, async (req, res, next) => {
   try {
     const input = ClientPaymentInputSchema.parse(req.body);
     // Recorded from a bank deposit: it lands in that bank's account, and the deposit is matched to it after.
-    let depositAccountId = input.depositAccountId ?? null;
     const bankTxnId = input.bankTransactionId ?? null;
     if (bankTxnId) {
-      const t = await prisma.bankTransaction.findFirst({ where: { id: bankTxnId, tenantId: tenantIdForWrite() }, include: { feedAccount: { select: { ledgerAccountId: true } } } });
-      if (!t) throw new HttpError(404, 'bank_transaction_not_found', 'Bank transaction not found.');
-      if (t.status !== 'UNMATCHED') throw new HttpError(409, 'already_decided', 'That deposit is already decided — undo it first.');
-      if (toCents(t.amount) !== cents(input.amount) || toCents(t.amount) <= 0) throw new HttpError(400, 'amount_mismatch', 'A payment recorded from a deposit is the deposit’s amount.');
-      if (depositAccountId && depositAccountId !== t.feedAccount.ledgerAccountId) throw new HttpError(400, 'wrong_deposit_account', 'It was deposited to that bank account — record it there.');
-      depositAccountId = t.feedAccount.ledgerAccountId;
+      // From a bank deposit: claimed, recorded on its date into its bank, and matched — one transaction (lib/books/bank).
+      const { paymentId, transaction } = await paymentFromDeposit(prisma, bankTxnId, { ...input, reference: input.reference ?? null, depositAccountId: input.depositAccountId ?? null, userId: req.user!.id });
+      enqueueAudit(
+        { actorUserId: req.user!.id, clientId: input.clientId, action: 'books.client_payment_recorded', entityType: 'ClientPayment', entityId: paymentId, metadata: { amount: input.amount, method: input.method, statements: input.applications.length, bankTransactionId: bankTxnId } },
+        'books.receivables',
+      );
+      enqueueAudit({ actorUserId: req.user!.id, action: 'books.bank.matched', entityType: 'BankTransaction', entityId: bankTxnId, metadata: { lineId: transaction.matched?.lineId ?? null, clientPaymentId: paymentId } }, 'books.bank');
+      const [row] = await paymentRows({ id: paymentId });
+      res.status(201).json({ payment: row, bankTransaction: transaction, depositMatched: transaction.status === 'MATCHED' && !!transaction.matched });
+      return;
     }
-    const payment = await recordClientPayment(prisma, { ...input, reference: input.reference ?? null, depositAccountId, userId: req.user!.id });
+    const payment = await recordClientPayment(prisma, { ...input, reference: input.reference ?? null, depositAccountId: input.depositAccountId ?? null, userId: req.user!.id });
     enqueueAudit(
-      { actorUserId: req.user!.id, clientId: input.clientId, action: 'books.client_payment_recorded', entityType: 'ClientPayment', entityId: payment.id, metadata: { amount: input.amount, method: input.method, statements: input.applications.length, ...(bankTxnId ? { bankTransactionId: bankTxnId } : {}) } },
+      { actorUserId: req.user!.id, clientId: input.clientId, action: 'books.client_payment_recorded', entityType: 'ClientPayment', entityId: payment.id, metadata: { amount: input.amount, method: input.method, statements: input.applications.length } },
       'books.receivables',
     );
-    let bankTransaction = null;
-    if (bankTxnId && depositAccountId) {
-      const entryId = (await prisma.clientPayment.findUniqueOrThrow({ where: { id: payment.id }, select: { journalEntryId: true } })).journalEntryId;
-      const line = entryId ? await prisma.journalLine.findFirst({ where: { tenantId: tenantIdForWrite(), entryId, accountId: depositAccountId } }) : null;
-      if (line) {
-        try {
-          bankTransaction = await matchBankTxn(prisma, bankTxnId, line.id, req.user!.id);
-          enqueueAudit({ actorUserId: req.user!.id, action: 'books.bank.matched', entityType: 'BankTransaction', entityId: bankTxnId, metadata: { lineId: line.id, clientPaymentId: payment.id } }, 'books.bank');
-        } catch (err) {
-          // Someone decided the deposit in the meantime: the payment stands; the deposit says what happened to it.
-          if (!(err instanceof HttpError)) throw err;
-          bankTransaction = await transactionView(prisma, bankTxnId);
-        }
-      }
-    }
     const [row] = await paymentRows({ id: payment.id });
-    res.status(201).json({ payment: row, ...(bankTxnId ? { bankTransaction } : {}) });
+    res.status(201).json({ payment: row });
   } catch (err) {
     next(err);
   }

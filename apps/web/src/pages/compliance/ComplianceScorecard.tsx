@@ -70,8 +70,11 @@ import {
   nudgeScorecardSignal,
   scorecardReportUrl,
   setScorecardActionState,
+  snoozeAttestation,
+  unsnoozeAttestation,
   upsertAttestation,
 } from '@/lib/complianceScorecardApi';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { enrollAssociates } from '@/lib/lms94Api';
 import { useClients } from '@/lib/useClients';
 import type {
@@ -85,6 +88,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { Sparkline } from '@/components/ui/charts/Sparkline';
 
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -385,41 +389,20 @@ function HeroStrip({
   );
 }
 
-/** Tiny inline trend line — 90 days of snapshot scores, no chart library. */
+/** 90 days of snapshot scores — the kit's sparkline (padded scale, so a
+ *  one-point wobble doesn't read as a cliff), green when it rose. */
 function ScoreSparkline({ points }: { points: ScorecardHistoryPoint[] }) {
-  const w = 96;
-  const h = 30;
-  const scores = points.map((p) => p.score);
-  const min = Math.min(...scores);
-  const max = Math.max(...scores);
-  const span = Math.max(1, max - min);
-  const coords = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1)) * (w - 2) + 1;
-      const y = h - 2 - ((p.score - min) / span) * (h - 4);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-  const latest = points[points.length - 1];
-  const first = points[0];
+  if (points.length < 2) return null;
+  const first = points[0]!;
+  const latest = points[points.length - 1]!;
   return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      role="img"
-      aria-label={`Compliance score trend: ${first.score} on ${first.day} to ${latest.score} on ${latest.day}`}
-      className={latest.score >= first.score ? 'text-success' : 'text-alert'}
-    >
-      <polyline
-        points={coords}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
+    <Sparkline
+      series={points.map((p) => p.score)}
+      tone={latest.score >= first.score ? 'good' : 'bad'}
+      width={96}
+      height={30}
+      label={`Compliance score trend: ${first.score} on ${first.day} to ${latest.score} on ${latest.day}`}
+    />
   );
 }
 
@@ -1360,6 +1343,7 @@ function AttestationRow({
           <div className={cn('truncate', colorClass)}>{statusText}</div>
         </div>
       </button>
+      {canManage && (status === 'overdue' || status === 'due_soon') && <SnoozeControl signal={signal} />}
       {onQuickAttest && (
         <Button
           size="xs"
@@ -1374,6 +1358,62 @@ function AttestationRow({
         </Button>
       )}
     </li>
+  );
+}
+
+/**
+ * Put this attestation's daily reminder off — for one you're handling
+ * elsewhere. The digest leaves it out until the date; a new period starts
+ * with reminders on again.
+ */
+function SnoozeControl({ signal }: { signal: ManualAttestationSignal }) {
+  const [until, setUntil] = useState<string | null>(signal.snoozedUntil ?? null);
+  const [busy, setBusy] = useState(false);
+  const snooze = async (days: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    setBusy(true);
+    try {
+      const r = await snoozeAttestation(signal.key, ymdLocal(d));
+      setUntil(r.snoozedUntil);
+      toast.success(`Reminders for “${signal.label}” are off until ${fmtDate(r.snoozedUntil)}.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not snooze it.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const wake = async () => {
+    setBusy(true);
+    try {
+      await unsnoozeAttestation(signal.key);
+      setUntil(null);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not turn reminders back on.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (until && new Date(until) > new Date()) {
+    return (
+      <Button size="xs" variant="ghost" className="shrink-0 mt-0.5 text-silver" loading={busy} onClick={() => void wake()} title="Turn the daily reminder back on">
+        Snoozed to {fmtDate(until)}
+      </Button>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="xs" variant="ghost" className="shrink-0 mt-0.5 text-silver" loading={busy} title="Put the daily reminder off">
+          Snooze
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => void snooze(3)}>3 days</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => void snooze(7)}>1 week</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => void snooze(14)}>2 weeks</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

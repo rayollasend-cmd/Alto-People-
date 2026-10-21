@@ -28,7 +28,10 @@ function trendOf(weeks: TransportTrendWeek[], pick: (w: TransportTrendWeek) => n
   const a = complete[complete.length - 1];
   const b = complete[complete.length - 2];
   if (series.filter((v) => Number.isFinite(v)).length < 2) return undefined;
-  return { series, delta: a != null && b != null ? Math.round((a - b) * 10) / 10 : 0, deltaLabel: 'vs the week before', ...(format ? { format } : {}) };
+  const lastIsPartial = weeks[weeks.length - 1]?.partial ?? false;
+  // A week with nothing to measure has no change to show — a quiet dash, not "0 vs the week before".
+  if (a == null || b == null) return { series, delta: 0, deltaLabel: '', lastIsPartial, ...(format ? { format } : {}) };
+  return { series, delta: Math.round((a - b) * 10) / 10, deltaLabel: 'vs the week before', lastIsPartial, ...(format ? { format } : {}) };
 }
 
 export function TransportTrends() {

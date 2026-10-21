@@ -385,6 +385,62 @@ describe('<TransportHome> — the day in the link, and fees waived together', ()
     expect(screen.getByRole('button', { name: 'Tomorrow' })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  const localYmd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const atSevenPm = () => {
+    const now = new Date();
+    now.setHours(19, 0, 0, 0);
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['Date'] });
+    vi.setSystemTime(now);
+    const next = new Date(now);
+    next.setDate(next.getDate() + 1);
+    return { today: localYmd(now), tomorrow: localYmd(next) };
+  };
+
+  it('in the evening, stays on tonight while a run is still out', async () => {
+    const { today, tomorrow } = atSevenPm();
+    try {
+      routes((path) => {
+        if (path.startsWith('/transport/board')) return board({ date: today });
+        if (path.startsWith('/transport/live')) return { runs: [] };
+        return undefined;
+      });
+      renderAs('TRANSPORTATION_DIRECTOR');
+      await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(`/transport/board?date=${today}`));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(apiFetch).not.toHaveBeenCalledWith(`/transport/board?date=${tomorrow}`);
+      expect(screen.getByLabelText('Day')).toHaveValue(today);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('in the evening, moves to tomorrow once tonight is done', async () => {
+    const { today, tomorrow } = atSevenPm();
+    try {
+      routes((path) => {
+        if (path.startsWith('/transport/board')) return board({ date: path.includes(tomorrow) ? tomorrow : today, runs: [], kpis: { ...board().kpis, needsVan: 0, onBoard: 0 } });
+        if (path.startsWith('/transport/live')) return { runs: [] };
+        return undefined;
+      });
+      renderAs('TRANSPORTATION_DIRECTOR');
+      await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(`/transport/board?date=${tomorrow}`));
+      expect(screen.getByLabelText('Day')).toHaveValue(tomorrow);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a date that isn’t on the calendar', async () => {
+    routes((path) => {
+      if (path.startsWith('/transport/board')) return board();
+      if (path.startsWith('/transport/live')) return { runs: [] };
+      return undefined;
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', '/transport?date=2026-02-31');
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/transport\/board\?date=\d{4}-\d{2}-\d{2}$/)));
+    expect(apiFetch).not.toHaveBeenCalledWith('/transport/board?date=2026-02-31');
+  });
+
   it('waives every no-show on a run in one go — never a ride someone took', async () => {
     const run: RideRun = {
       ...activeRun(),

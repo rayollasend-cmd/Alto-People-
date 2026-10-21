@@ -1,7 +1,6 @@
 import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
-import { chartColor } from '@/lib/chartColors';
+import { PALETTE } from '@/components/ui/charts/palette';
 import { cn } from '@/lib/cn';
-import { useTheme } from '@/lib/theme';
 
 // Chart-only donut (no legend) sized for the Tile 1 hero column. The shared
 // <DonutChart> component bundles its own legend in a flex-row, which doesn't
@@ -12,9 +11,6 @@ import { useTheme } from '@/lib/theme';
 // Lives in its own module so recharts doesn't sit in the ComplianceScorecard
 // chunk; the parent lazy-imports it.
 export function ComplianceDonut({ fully, total }: { fully: number; total: number }) {
-  // Subscribe to the theme context (value unused) so a light/dark flip
-  // re-renders the donut and chartColor() re-reads the swapped CSS vars.
-  useTheme();
   const pct = total === 0 ? 100 : Math.round((fully / total) * 100);
   const gaps = Math.max(0, total - fully);
   const tone = pct === 100 ? 'text-success' : pct >= 80 ? 'text-warning' : 'text-alert';
@@ -27,7 +23,7 @@ export function ComplianceDonut({ fully, total }: { fully: number; total: number
             nothing to measure — and measuring "100%" a tick early during mount
             is what produces recharts' width(-1)/height(-1) warning. */}
         <ResponsiveContainer width={SIZE} height={SIZE}>
-          <PieChart>
+          <PieChart accessibilityLayer={false}>
             <Pie
               data={[
                 { name: 'Fully compliant', value: fully },
@@ -45,11 +41,10 @@ export function ComplianceDonut({ fully, total }: { fully: number; total: number
               isAnimationActive
               animationDuration={500}
             >
-              {/* Token-resolved at render time so a palette retune or the
-                  light/dark flip recolors the donut (chartColor reads the
-                  CSS vars off <html>). */}
-              <Cell fill={chartColor('success')} />
-              <Cell fill={chartColor('alert')} />
+              {/* The kit's state colors — CSS variables, so the light/dark
+                  flip recolors the donut with no re-render. */}
+              <Cell fill={PALETTE.good} />
+              <Cell fill={PALETTE.bad} />
             </Pie>
           </PieChart>
         </ResponsiveContainer>

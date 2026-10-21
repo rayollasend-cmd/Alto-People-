@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useGreeting, greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
+import { useInbox } from '@/lib/inboxApi';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import {
@@ -138,7 +139,8 @@ export function ManagerDashboard() {
   };
 
   const greet = useGreeting();
-  const greetingName = greetingNameOf(user, '');
+  // No first name on the account: a "first.last@" address still names them.
+  const greetingName = greetingNameOf(user, '') || nameFromEmail(user?.email);
   const { t } = useI18n();
 
   // Index of associateId → active time entry (so we can mark "on the
@@ -273,6 +275,8 @@ function NeedsYou({
   };
 
   const total = tsCount + ptoCount;
+  const inbox = useInbox();
+  const companyWaiting = (inbox.data?.sources ?? []).reduce((n, s) => n + (s.count > 0 ? s.count : 0), 0);
   // Ranked: urgent before attention, then the bigger pile first.
   const cards = [
     {
@@ -328,7 +332,8 @@ function NeedsYou({
       />
       {/* The role's own decisions first. While approvals are waiting, its
           empty line stays out of the way; with none, it is the only voice. */}
-      <RoleDecisionQueue title={null} hideWhenEmpty={total > 0 || loading || error} />
+      {/* These decisions are the company's, not this team's — said so. */}
+      <RoleDecisionQueue title={null} hideWhenEmpty={total > 0 || loading || error} scopeLabel="Company-wide" />
       {error ? (
         <QueryErrorCard label={t('managerHome.queuesError')} onRetry={onRetry} />
       ) : loading ? (
@@ -350,7 +355,17 @@ function NeedsYou({
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             </div>
             <div className="text-sm text-silver">
-              <span className="text-white font-medium">{t('managerHome.inboxZero')}</span> — {t('managerHome.inboxZeroBody')}
+              {/* "Inbox zero" read wrong beside a sidebar Inbox of 22: this
+                  is the team's queue; the company's waits in the Inbox. */}
+              <span className="text-white font-medium">{t('managerHome.teamClear')}</span> — {t('managerHome.inboxZeroBody')}
+              {companyWaiting > 0 && (
+                <>
+                  {' '}
+                  <Link to="/inbox" className="text-accent underline-offset-2 hover:underline">
+                    {t('managerHome.companyWaiting', { n: companyWaiting })}
+                  </Link>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -957,4 +972,11 @@ function DueOnYourTeam({ home }: { home: TeamHome | null }) {
       )}
     </section>
   );
+}
+
+/** "dana.reyes@…" → "Dana"; a role address like "manager@" names nobody. */
+function nameFromEmail(email: string | null | undefined): string {
+  const local = email?.split('@')[0] ?? '';
+  const m = /^([a-z]{2,})[._-][a-z]{2,}/i.exec(local);
+  return m ? m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase() : '';
 }

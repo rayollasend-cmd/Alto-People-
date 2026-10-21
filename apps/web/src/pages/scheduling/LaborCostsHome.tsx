@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { disambiguateStores } from '@/lib/laborCostLabels';
 import { termizeText } from '@/lib/modules';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -35,6 +36,7 @@ import type {
   StaffingTargetLocation,
 } from '@alto-people/shared';
 import { DonutChart } from '@/components/ui/DonutChart';
+import { PALETTE, Sparkline as KitSparkline, TICK as KIT_TICK } from '@/components/ui/charts';
 import {
   floorNow,
   otOutlook,
@@ -120,34 +122,29 @@ const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)}h`;
  * darker than a typical dark surface), and the legend + direct labels +
  * table views below carry identity beyond color everywhere.
  */
-const SCHED_COLOR = 'rgb(var(--color-gold-fill))';
-const WORKED_COLOR = 'rgb(var(--color-steel))';
-const GRID_COLOR = 'rgb(var(--color-navy-secondary))';
-const TICK_COLOR = 'rgb(var(--color-silver) / 0.75)';
-const SURFACE_COLOR = 'rgb(var(--color-navy))';
+// The kit's palette (components/ui/charts): its fixed categorical order,
+// so Scheduled/Worked/Billable read the same here as on every other chart.
+const SCHED_COLOR = PALETTE.primary;
+const WORKED_COLOR = PALETTE.secondary;
+const GRID_COLOR = PALETTE.grid;
+const TICK_COLOR = KIT_TICK.fill;
+const SURFACE_COLOR = PALETTE.surface;
 
 const SERIES = [
   { key: 'scheduled', name: 'Scheduled', color: SCHED_COLOR },
   { key: 'worked', name: 'Worked', color: WORKED_COLOR },
 ] as const;
 
-// The trend adds the revenue side. Three hues max — the same validated
-// gold/steel/teal trio the donut uses, in the same fixed order.
+// The trend adds the revenue side — the kit's third hue, in the same fixed order.
 const LINE_SERIES = [
   ...SERIES,
-  { key: 'revenue', name: 'Billable', color: 'rgb(var(--color-chart-teal))' },
+  { key: 'revenue', name: 'Billable', color: PALETTE.tertiary },
 ] as const;
 
-/* Donut slices: three categorical hues (fixed order — gold, steel, teal;
- * validated all-pairs against both surfaces) + the muted de-emphasis gray
- * reserved for the folded "Other" tail. Never more hues — past three named
- * slices the tail folds. */
-const SLICE_COLORS = [
-  'rgb(var(--color-gold-fill))',
-  'rgb(var(--color-steel))',
-  'rgb(var(--color-chart-teal))',
-];
-const OTHER_SLICE_COLOR = 'rgb(var(--color-silver) / 0.45)';
+/* Donut slices: the kit's first three hues + its "Other" token for the
+ * folded tail. Never more hues — past three named slices the tail folds. */
+const SLICE_COLORS = [PALETTE.series[0], PALETTE.series[1], PALETTE.series[2]];
+const OTHER_SLICE_COLOR = PALETTE.other;
 
 function ChartLegend({
   marks,
@@ -372,7 +369,7 @@ function CostByGroupCard({
                 width={130}
               />
               <ChartTooltip
-                cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.35)' }}
+                cursor={{ fill: PALETTE.cursor }}
                 content={<CostTooltip />}
               />
               {SERIES.map((s) => (
@@ -394,7 +391,7 @@ function CostByGroupCard({
                       const n = Number(v);
                       return Number.isFinite(n) && n > 0 ? moneyCompact(n) : '';
                     }}
-                    style={{ fill: 'rgb(var(--color-silver))', fontSize: 10 }}
+                    style={{ fill: KIT_TICK.fill, fontSize: 10 }}
                   />
                 </Bar>
               ))}
@@ -707,33 +704,13 @@ interface StoreTrend {
   hours4w: number;
 }
 
+/** A store's margin per hour, week by week — the kit's sparkline (gaps stay gaps). */
 function Sparkline({ weeks }: { weeks: StoreTrend['weeks'] }) {
   const vals = weeks.map((w) => w.marginPerHour);
   const present = vals.filter((v): v is number => v !== null);
   if (present.length < 2) return <span className="text-2xs text-silver/40">—</span>;
-  const min = Math.min(...present, 0);
-  const max = Math.max(...present, 0.01);
-  const range = max - min || 1;
-  const pts = vals
-    .map((v, i) =>
-      v === null ? null : `${(i / (vals.length - 1)) * 92 + 2},${22 - ((v - min) / range) * 20}`,
-    )
-    .filter((p): p is string => p !== null)
-    .join(' ');
-  const lastUp =
-    present.length >= 2 && present[present.length - 1] >= present[present.length - 2];
-  return (
-    <svg width="96" height="24" viewBox="0 0 96 24" aria-hidden="true" className="shrink-0">
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={lastUp ? 'rgb(var(--color-success))' : 'rgb(var(--color-warning))'}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+  const lastUp = present[present.length - 1]! >= present[present.length - 2]!;
+  return <KitSparkline series={vals} tone={lastUp ? 'good' : 'warn'} width={96} height={24} area={false} />;
 }
 
 function StoreTrendsCard() {
@@ -1815,7 +1792,11 @@ export function LaborCostsHome() {
     enabled: Boolean(from && toInclusive && toInclusive >= from),
     placeholderData: keepPreviousData,
   });
-  const rows: LaborCostRow[] | null = costsQuery.isError ? NO_COST_ROWS : costsQuery.data?.rows ?? null;
+  const rawRows: LaborCostRow[] | null = costsQuery.isError ? NO_COST_ROWS : costsQuery.data?.rows ?? null;
+  // Two stores with one name ("The Grand Hotel" ×4) were four identical
+  // options and four identical rows: name each by its client, and by a
+  // short id when the client is the same too.
+  const rows = useMemo(() => (rawRows ? disambiguateStores(rawRows) : null), [rawRows]);
   const truncated = costsQuery.data?.truncated ?? false;
   const fallbacks = costsQuery.data?.fallbacks ?? null;
   const error = costsQuery.error

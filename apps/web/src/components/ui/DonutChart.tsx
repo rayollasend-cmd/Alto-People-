@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { PieChart as PieIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { EXTENDED_SERIES, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './charts/palette';
+import { PALETTE, TOOLTIP_ITEM_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, seriesColor } from './charts/palette';
 import { EmptyState } from './EmptyState';
 
 export interface DonutDatum {
@@ -30,8 +30,8 @@ interface DonutChartProps {
   className?: string;
 }
 
-// The kit's categorical order (CSS vars, so the donut tracks light/dark).
-const FALLBACK_COLORS = EXTENDED_SERIES;
+/** Slices past the fifth uncolored one fold into "Other" — five hues, never a sixth. */
+const MAX_HUES = 5;
 
 export function DonutChart({
   data,
@@ -48,10 +48,20 @@ export function DonutChart({
 
   const { total, withColors } = useMemo(() => {
     const total = data.reduce((sum, d) => sum + d.value, 0);
-    const withColors = data.map((d, i) => ({
-      ...d,
-      color: d.color ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
-    }));
+    // Callers that color their own slices keep them; uncolored slices take
+    // the kit's order, and past the fifth they fold into one "Other".
+    const uncolored = data.filter((d) => !d.color);
+    const fold = uncolored.length > MAX_HUES + 1;
+    const kept: DonutDatum[] = [];
+    let other = 0;
+    let hue = 0;
+    for (const d of data) {
+      if (d.color) kept.push(d);
+      else if (!fold || hue < MAX_HUES) kept.push({ ...d, color: seriesColor(hue++) });
+      else other += d.value;
+    }
+    if (fold && other > 0) kept.push({ name: 'Other', value: other, color: PALETTE.other });
+    const withColors = kept as Array<DonutDatum & { color: string }>;
     return { total, withColors };
   }, [data]);
 
@@ -69,7 +79,7 @@ export function DonutChart({
             100% measurement is unnecessary and is what triggers recharts'
             width(-1)/height(-1) warning when measured early during mount. */}
         <ResponsiveContainer width={size} height={size}>
-          <PieChart>
+          <PieChart accessibilityLayer={false}>
             <Pie
               data={withColors}
               dataKey="value"
@@ -100,6 +110,7 @@ export function DonutChart({
               wrapperStyle={{ outline: 'none' }}
               contentStyle={TOOLTIP_STYLE}
               labelStyle={TOOLTIP_LABEL_STYLE}
+              itemStyle={TOOLTIP_ITEM_STYLE}
               formatter={(value, name) => {
                 const n = typeof value === 'number' ? value : Number(value) || 0;
                 return [

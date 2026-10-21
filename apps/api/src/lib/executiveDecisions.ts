@@ -18,7 +18,8 @@
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
 import { accountPhotoUrlFor } from './profilePhotoUrl.js';
-import { startOfWeekUTC } from './timeAnomalies.js';
+import { companyWorkweek, startOfWeekUTC } from './timeAnomalies.js';
+import { localDateKey } from './timezone.js';
 
 const DAY_MS = 24 * 3600_000;
 
@@ -126,8 +127,10 @@ async function generateRaw(
       where: { ...T, quarter: quarterKey },
       select: { marginTarget: true },
     }),
+    // The 90 days the queue counts (countApprovalQueues) — older COMPLETED
+    // rows are history, not work.
     prisma.timeEntry.count({
-      where: { ...T, status: 'COMPLETED', clockInAt: { lt: thisWeekStart } },
+      where: { ...T, status: 'COMPLETED', clockInAt: { gte: new Date(now.getTime() - 90 * DAY_MS), lt: thisWeekStart } },
     }),
     prisma.associateAssignment.findMany({
       where: { ...T, endedAt: null },
@@ -262,7 +265,8 @@ async function generateRaw(
       detail: 'Have an administrator set revenue/margin/turnover targets so pace tracking works.',
       stakes: null,
       ageDays: null,
-      linkUrl: '/',
+      // The targets card lives on the executive home.
+      linkUrl: '/#targets',
     });
   } else if (target.marginTarget) {
     // Pace check against last complete org week at standard rates.
@@ -317,7 +321,8 @@ async function generateRaw(
         detail: `Last week's est. margin ($${margin.toFixed(0)}) is under 85% of the $${weeklyPace.toFixed(0)}/week the target implies. Intervene or re-forecast.`,
         stakes: Math.round((weeklyPace - margin) * 100) / 100,
         ageDays: null,
-        linkUrl: '/',
+        // Where the margin is made and lost: labor cost against billing, by store.
+        linkUrl: '/labor-costs',
       });
     }
   }
@@ -332,7 +337,8 @@ async function generateRaw(
       detail: 'Unapproved time is unbillable and delays payroll — have supervisors run timesheet approval.',
       stakes: null,
       ageDays: null,
-      linkUrl: '/time-attendance?tab=queue',
+      // The queue on exactly those weeks: 90 days back through the day before this week.
+      linkUrl: `/time-attendance?tab=queue&from=${localDateKey(new Date(now.getTime() - 90 * DAY_MS), companyWorkweek().timezone)}&to=${localDateKey(new Date(thisWeekStart.getTime() - 1), companyWorkweek().timezone)}`,
     });
   }
   // Store-ops floor signals — keys mirrored with the role engine so a
@@ -446,7 +452,7 @@ async function generateRaw(
       detail: 'Every stalled day risks losing them to another employer — have HR clear the review queue.',
       stakes: null,
       ageDays: null,
-      linkUrl: '/onboarding?status=SUBMITTED',
+      linkUrl: '/onboarding?status=TO_REVIEW',
     });
   }
   if (benchIdle >= 3) {
@@ -477,7 +483,7 @@ async function generateRaw(
       detail: 'Recruiting-to-floor takes weeks — start the replacement wave now or the schedule breaks.',
       stakes: null,
       ageDays: null,
-      linkUrl: '/',
+      linkUrl: '/expirations',
     });
   }
 

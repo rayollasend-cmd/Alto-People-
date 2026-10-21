@@ -62,7 +62,8 @@ import {
   inWindows,
   useShiftFocus,
 } from '@/pages/portal/shiftFocus';
-import { fmtClockMinute, fmtShiftWindow, minuteOfDayInZone } from '@alto-people/shared';
+import { fmtClockMinute, fmtShiftWindow, isOpenShift, minuteOfDayInZone } from '@alto-people/shared';
+import { CoverageGapNotice, coverageGaps } from '@/components/floor/CoverageGapNotice';
 
 /**
  * My floor — the SHIFT_SUPERVISOR's home, in the store manager's grammar.
@@ -285,11 +286,16 @@ export function SupervisorDashboard() {
           zonedDayKey(s.startsAt, s.timezone) === date &&
           (!mine || inWindows(s, myWindows)),
       );
-      const open = onDay.filter((s) => s.status === 'OPEN').length;
+      // isOpenShift: OPEN and not over yet — the definition the schedule's
+      // own count reads (KPIs' openUpcoming), so the two never disagree. A
+      // shift that ended unfilled this morning isn't "open" any more.
+      const now = new Date();
+      const open = onDay.filter((s) => isOpenShift(s, now)).length;
+      const unfilledPast = onDay.filter((s) => s.status === 'OPEN' && !isOpenShift(s, now)).length;
       return {
         date,
         day: weekdayShort(date),
-        filled: onDay.length - open,
+        filled: onDay.length - open - unfilledPast,
         open,
       };
     });
@@ -387,18 +393,6 @@ export function SupervisorDashboard() {
           <Link to="/approvals">Approvals</Link>
         </Button>
       )}
-      {canReport && (
-        <Button size="sm" variant="outline" onClick={() => setIncidentOpen(true)}>
-          <ShieldAlert className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          Report an incident
-        </Button>
-      )}
-      {watchOnly && canReport && (
-        <Button size="sm" variant="outline" onClick={() => setFlagOpen(true)}>
-          <Flag className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          Flag a no-show or hazard
-        </Button>
-      )}
     </div>
   );
   const floorDialogs = (
@@ -480,6 +474,9 @@ export function SupervisorDashboard() {
   const heroWindow = mine && runningNow.length > 0
     ? t('focus.windowTarget', { label: focusName(runningNow) })
     : t('portal.heroContracted');
+  // Short-staffed windows today (their own windows; the store's contract
+  // lines live on those windows). Said in Needs you, with the fix.
+  const gaps = !watchOnly && data.date === data.today ? coverageGaps(data.roster, myWindows) : [];
   const nowHour =
     zonedDayKey(new Date(), storeTz) === data.date
       ? Math.floor(zonedMinutesOfDay(new Date(), storeTz) / 60)
@@ -701,6 +698,14 @@ export function SupervisorDashboard() {
                       </Link>
                     )}
                   </div>
+                  {data.roster.length === 0 ? (
+                    // Nothing scheduled today: one line, not an empty axis.
+                    <div className="flex items-center md:col-span-8">
+                      <p className="text-sm text-ink-muted">
+                        {t('portal.curveTitle')} — {t('portal.noShiftsToday')}
+                      </p>
+                    </div>
+                  ) : (
                   <div className="md:col-span-8">
                     <SectionTitle
                       as="h3"
@@ -733,6 +738,7 @@ export function SupervisorDashboard() {
                       />
                     </div>
                   </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -745,7 +751,18 @@ export function SupervisorDashboard() {
             />
           </div>
         }
-        decisions={{ title: t('home.needsYou'), content: watchOnly ? <WatchNeedsYou /> : <RoleDecisionQueue title={null} /> }}
+        decisions={{
+          title: t('home.needsYou'),
+          content: watchOnly ? (
+            <WatchNeedsYou />
+          ) : (
+            <>
+              <CoverageGapNotice gaps={gaps} today={todayKey} />
+              {/* With a gap above it, an empty queue says nothing — not "all clear". */}
+              <RoleDecisionQueue title={null} hideWhenEmpty={gaps.length > 0} />
+            </>
+          ),
+        }}
         assistant={<HugoSeat />}
         waysIn={waysIn}
       >
@@ -1004,6 +1021,8 @@ export function SupervisorDashboard() {
                 />
                 {aheadDays === null ? (
                   <Skeleton className="mt-3 h-40" />
+                ) : filledAhead + (openAhead ?? 0) === 0 ? (
+                  <p className="mt-2 text-sm text-ink-muted">{'Nothing scheduled in the next seven days.'}</p>
                 ) : (
                   <>
                     <div className="mt-3">
@@ -1037,15 +1056,37 @@ export function SupervisorDashboard() {
             </Card>
           )}
 
-          {/* ---- Fill rate, eight workweeks, against the 95% line ------------- */}
-          {!watchOnly && <FillRateTrendCard className="animate-enter md:col-span-2 xl:col-span-12" />}
-
           {/* ---- Their own plan ---------------------------------------------- */}
           <div className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-5' : 'xl:col-span-12')} style={enterStagger(5)}>
             <MyPlanCard />
           </div>
+
+          {/* ---- Fill rate, eight workweeks, against the 95% line — the look
+               back comes after today and the plan, not before them. ---------- */}
+          {!watchOnly && <FillRateTrendCard className="animate-enter md:col-span-2 xl:col-span-12" />}
         </div>
       </HomeTemplate>
+      {canReport && (
+        // One tap from anywhere on a long page: what happens on the floor
+        // gets reported the moment it happens, not after seven scrolls.
+        <div
+          className="pointer-events-none sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 flex justify-end px-4 md:bottom-4"
+          data-testid="floor-actions"
+        >
+          <div className="pointer-events-auto flex gap-2 rounded-full border border-line bg-surface/95 p-1.5 shadow-lg backdrop-blur">
+            <Button size="sm" variant="secondary" className="rounded-full" onClick={() => setIncidentOpen(true)}>
+              <ShieldAlert className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Report incident
+            </Button>
+            {watchOnly && (
+              <Button size="sm" variant="secondary" className="rounded-full" onClick={() => setFlagOpen(true)}>
+                <Flag className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Raise a flag
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
       {floorDialogs}
     </>
   );
@@ -1071,6 +1112,11 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
   const overdue = ended || late > 0;
   const block = sop.block ?? null;
   const blockLate = block !== null && Date.parse(block.dueAt) < Date.now();
+  // An SOP opened on another day says which day — "was due 8:00 PM" alone
+  // read as tonight on an SOP left open a month ago.
+  const openedDay = ymdLocal(new Date(sop.openedAt));
+  const notToday = openedDay !== ymdLocal();
+  const dayLabel = notToday ? fmtDate(new Date(sop.openedAt)) : null;
   return (
     <Link
       to={`/ops?tab=shift&shift=${sop.id}`}
@@ -1085,6 +1131,7 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
           {sop.coveringFor
             ? `You're running ${sop.coveringFor.name.split(' ')[0]}'s ${sop.windowLabel ?? sop.position} SOP`
             : `Your ${sop.windowLabel ?? sop.position} SOP is open`}
+          {dayLabel && <span className="text-alert"> · from {dayLabel}</span>}
         </div>
         {block && (
           <div className={cn('mt-0.5 truncate text-xs font-medium tabular-nums', blockLate ? 'text-alert' : 'text-gold')}>
@@ -1097,7 +1144,7 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
           {late > 0 && <span className="text-alert"> · {late} overdue</span>}
           {sop.dueAt && (
             <span className={ended ? 'text-alert' : undefined}>
-              {' '}· {ended ? 'was due' : 'due'} {fmtTime(sop.dueAt)}
+              {' '}· {ended ? 'was due' : 'due'} {notToday ? `${dayLabel}, ` : ''}{fmtTime(sop.dueAt)}
             </span>
           )}
           {' '}· submit it before you clock out

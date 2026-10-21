@@ -11,6 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
 import type { RetentionResponse } from '@alto-people/shared';
 import { getRetention } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
@@ -109,16 +110,16 @@ export function RetentionSection() {
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trend} margin={{ top: 8, right: 12, bottom: 0, left: -18 }}>
-                    <CartesianGrid stroke="rgb(var(--color-silver) / 0.12)" vertical={false} />
+                    <CartesianGrid stroke={PALETTE.grid} vertical={false} />
                     <XAxis
                       dataKey="month"
-                      tick={{ fill: 'rgb(var(--color-silver))', fontSize: 11 }}
+                      tick={{ fill: TICK.fill, fontSize: 11 }}
                       axisLine={false}
                       tickLine={false}
                     />
                     <YAxis
                       unit="%"
-                      tick={{ fill: 'rgb(var(--color-silver))', fontSize: 11 }}
+                      tick={{ fill: TICK.fill, fontSize: 11 }}
                       axisLine={false}
                       tickLine={false}
                       width={52}
@@ -129,17 +130,14 @@ export function RetentionSection() {
                           ? [`${Number(value)}%`, 'Turnover']
                           : [String(value), String(name ?? '')]
                       }
-                      contentStyle={{
-                        background: 'rgb(var(--color-navy))',
-                        border: '1px solid rgb(var(--color-navy-secondary))',
-                        borderRadius: 6,
-                        fontSize: 12,
-                      }}
+                      contentStyle={TOOLTIP_STYLE}
+                      labelStyle={TOOLTIP_LABEL_STYLE}
+                      itemStyle={TOOLTIP_ITEM_STYLE}
                     />
                     <Line
                       type="monotone"
                       dataKey="turnover"
-                      stroke="rgb(var(--color-steel))"
+                      stroke={PALETTE.secondary}
                       strokeWidth={2}
                       dot={false}
                       connectNulls

@@ -155,7 +155,7 @@ describe('<RecruiterDashboard>', () => {
     expect(screen.getByText('5 last month')).toBeInTheDocument();
     expect(screen.getByText(/— Screening → Interview/)).toBeInTheDocument();
     expect(screen.queryByText(/net paid/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/all systems nominal/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/nothing needs you/i)).not.toBeInTheDocument();
   });
 
   it('shows the requisitions behind the pipeline, and which still wait on approval', async () => {

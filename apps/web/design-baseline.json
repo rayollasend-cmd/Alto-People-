@@ -1,7 +1,7 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1519,
+    "brand-text": 1507,
     "raw-heading": 143,
     "pill": 37,
     "hex": 33,
@@ -25,7 +25,7 @@
       "raw-heading": 4
     },
     "src/pages/ExecutiveDashboard.tsx": {
-      "brand-text": 31,
+      "brand-text": 30,
       "pill": 2
     },
     "src/pages/FinanceDashboard.tsx": {
@@ -137,7 +137,7 @@
       "brand-text": 2
     },
     "src/pages/admin/TenantProfileHome.tsx": {
-      "brand-text": 2
+      "brand-text": 1
     },
     "src/pages/admin/UsersAdmin.tsx": {
       "brand-text": 4
@@ -225,7 +225,7 @@
       "brand-text": 6
     },
     "src/pages/communications/AdminCommsView.tsx": {
-      "brand-text": 4
+      "brand-text": 3
     },
     "src/pages/communications/AssociateInboxView.tsx": {
       "brand-text": 2
@@ -272,7 +272,7 @@
       "brand-text": 1
     },
     "src/pages/dirComms/DirCommsHome.tsx": {
-      "brand-text": 11
+      "brand-text": 10
     },
     "src/pages/discipline/DisciplineHome.tsx": {
       "brand-text": 8
@@ -369,9 +369,6 @@
     },
     "src/pages/mentorship/MentorshipHome.tsx": {
       "brand-text": 2
-    },
-    "src/pages/messages/MessagesHome.tsx": {
-      "brand-text": 8
     },
     "src/pages/offer/OfferLetterPage.tsx": {
       "brand-text": 9,

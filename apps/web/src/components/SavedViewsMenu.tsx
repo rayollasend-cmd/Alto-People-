@@ -37,6 +37,10 @@ import { Input } from '@/components/ui/Input';
 
 type Query = Record<string, string>;
 
+/** Params that belong to the trip, not the filters: the inbox return bar's, and the applied view's own id (?sv=). */
+const NOT_FILTERS = new Set(['from', 'inbox', 'sv']);
+const filtersOnly = (q: Query): Query => Object.fromEntries(Object.entries(q).filter(([k]) => !NOT_FILTERS.has(k)));
+
 function sameQuery(a: Query, b: Query): boolean {
   const ka = Object.keys(a).filter((k) => a[k]);
   const kb = Object.keys(b).filter((k) => b[k]);
@@ -63,7 +67,8 @@ export function SavedViewsMenu({
   const q = useQuery({ queryKey: ['saved-views', scope], queryFn: () => listSavedViews(scope), staleTime: 60_000 });
   const views = q.data?.views ?? [];
   const active = views.find((v) => v.id === activeId) ?? null;
-  const drifted = active ? !sameQuery(active.query, current) : false;
+  const filters = filtersOnly(current);
+  const drifted = active ? !sameQuery(filtersOnly(active.query), filters) : false;
   const mine = views.filter((v) => v.mine);
   const team = views.filter((v) => !v.mine);
 
@@ -86,7 +91,7 @@ export function SavedViewsMenu({
     setBusy(true);
     try {
       if (naming.mode === 'new') {
-        const v = await createSavedView({ scope, name: name.trim(), query: current, shared: share });
+        const v = await createSavedView({ scope, name: name.trim(), query: filters, shared: share });
         onApply(v.id, v.query);
         toast.success(`Saved “${v.name}”${share ? ' and shared with the team' : ''}.`);
       } else {
@@ -104,7 +109,7 @@ export function SavedViewsMenu({
 
   const updateFilters = async (v: SavedView) => {
     try {
-      await updateSavedView(v.id, { query: current });
+      await updateSavedView(v.id, { query: filters });
       toast.success(`“${v.name}” now shows these filters.`);
       refresh();
     } catch (err) {
@@ -134,7 +139,7 @@ export function SavedViewsMenu({
   };
 
   const item = (v: SavedView) => (
-    <DropdownMenuItem key={v.id} onSelect={() => onApply(v.id, v.query)} className="flex items-center gap-2">
+    <DropdownMenuItem key={v.id} onSelect={() => onApply(v.id, filtersOnly(v.query))} className="flex items-center gap-2">
       <Check className={v.id === activeId ? 'h-3.5 w-3.5' : 'invisible h-3.5 w-3.5'} aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">{v.name}</span>
       {v.shared && v.mine && <Users className="h-3 w-3 text-silver" aria-label="Shared" />}

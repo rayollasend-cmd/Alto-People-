@@ -9,6 +9,18 @@ export interface DirectReport {
   employmentType: string;
   departmentName: string | null;
   jobTitle: string | null;
+  /** When the last 1:1 with them was held (absent on an older API). */
+  lastOneOnOneAt?: string | null;
+  /** The next 1:1 on the calendar. */
+  nextOneOnOne?: { id: string; scheduledFor: string; cadence: string | null } | null;
+}
+
+/** A manager books a 1:1 with their own report — repeating with a cadence. */
+export function bookTeamOneOnOne(
+  associateId: string,
+  input: { scheduledFor: string; cadence?: 'WEEKLY' | 'BIWEEKLY' | null; agenda?: string | null },
+): Promise<{ id: string; scheduledFor: string }> {
+  return apiFetch(`/team/reports/${associateId}/one-on-ones`, { method: 'POST', body: input });
 }
 
 export interface TeamDashboard {

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { STOCK_LEGEND, seriesColor } from '@/components/ui/charts';
 import { ArrowLeft, Download, Users } from 'lucide-react';
 import { useTenant, useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
@@ -226,8 +227,8 @@ export function PeopleAnalytics() {
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
                   <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
+                  <Legend {...STOCK_LEGEND} />
                   <Bar dataKey="hires" name="Hires" fill={CHART.good} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="left" name="Left" fill={CHART.bad} radius={[3, 3, 0, 0]} />
                   <Line dataKey="headcount" name="Headcount" stroke={CHART.series[0]} strokeWidth={2} dot={false} />
@@ -237,10 +238,11 @@ export function PeopleAnalytics() {
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
                   <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
+                  <Legend {...STOCK_LEGEND} />
+                  {/* Five hues, never a sixth: the rest draw thin in "Other" gray, off the legend (the table names them). */}
                   {(d.headcountByStore ?? []).map((s, i) => (
-                    <Line key={s.storeId} dataKey={s.storeName} stroke={CHART.series[i % CHART.series.length]} strokeWidth={2} dot={false} />
+                    <Line key={s.storeId} dataKey={s.storeName} stroke={i < 5 ? seriesColor(i) : CHART.other} strokeWidth={i < 5 ? 2 : 1} dot={false} legendType={i < 5 ? undefined : 'none'} />
                   ))}
                 </LineChart>
               )}
@@ -264,11 +266,15 @@ export function PeopleAnalytics() {
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="day" tick={axis} tickLine={false} axisLine={false} interval={2} />
                   <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} formatter={(v) => pct(v as number | null)} />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  {(d.survival ?? []).map((c, i) => (
-                    <Line key={c.month} dataKey={monthLabel(c.month)} stroke={CHART.series[i % CHART.series.length]} strokeWidth={2} dot={false} connectNulls={false} />
-                  ))}
+                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
+                  <Legend {...STOCK_LEGEND} />
+                  {/* The five most recent hiring months in color; older ones thin and gray. */}
+                  {(d.survival ?? []).map((c, i, all) => {
+                    const rank = all.length - 1 - i;
+                    return (
+                      <Line key={c.month} dataKey={monthLabel(c.month)} stroke={rank < 5 ? seriesColor(rank) : CHART.other} strokeWidth={rank < 5 ? 2 : 1} dot={false} connectNulls={false} legendType={rank < 5 ? undefined : 'none'} />
+                    );
+                  })}
                 </LineChart>
               </ResponsiveContainer>
             </ChartFrame>
@@ -291,7 +297,7 @@ export function PeopleAnalytics() {
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={false} />
                   <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} formatter={(v) => pct(v as number | null)} />
+                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
                   <Bar dataKey="annualizedTurnoverPct" name="Annualized turnover" fill={CHART.series[0]} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -319,7 +325,7 @@ export function PeopleAnalytics() {
                   <CartesianGrid stroke={CHART.grid} horizontal={false} />
                   <XAxis type="number" tick={axis} tickLine={false} axisLine={false} />
                   <YAxis type="category" dataKey="label" width={120} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} />
+                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
                   <Bar dataKey="medianDays" name="Median days" fill={CHART.series[1]} radius={[0, 3, 3, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -343,7 +349,7 @@ export function PeopleAnalytics() {
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
                   <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} formatter={(v) => pct(v as number | null)} />
+                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
                   <Line dataKey="rate" name="Absence rate" stroke={CHART.warn} strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
@@ -368,7 +374,7 @@ export function PeopleAnalytics() {
                   <CartesianGrid stroke={CHART.grid} horizontal={false} />
                   <XAxis type="number" tick={axis} tickLine={false} axisLine={false} />
                   <YAxis type="category" dataKey="label" width={160} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} />
+                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
                   <Bar dataKey="medianDays" name="Median days" fill={CHART.series[2]} radius={[0, 3, 3, 0]} />
                 </BarChart>
               </ResponsiveContainer>

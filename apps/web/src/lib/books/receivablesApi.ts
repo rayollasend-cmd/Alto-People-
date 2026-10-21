@@ -26,7 +26,7 @@ export const listClientPayments = (opts: { clientId?: string; includeUndone?: bo
   const q = p.toString();
   return apiFetch<ClientPaymentListResponse>(`${B}/payments${q ? `?${q}` : ''}`);
 };
-export const recordClientPayment = (input: ClientPaymentInput) => apiFetch<{ payment: ClientPaymentRow; bankTransaction?: BankTxnView | null }>(`${B}/payments`, { method: 'POST', body: input });
+export const recordClientPayment = (input: ClientPaymentInput) => apiFetch<{ payment: ClientPaymentRow; bankTransaction?: BankTxnView | null; depositMatched?: boolean }>(`${B}/payments`, { method: 'POST', body: input });
 export const undoClientPayment = (id: string, reason: string) => apiFetch<void>(`${B}/payments/${id}`, { method: 'DELETE', body: { reason } });
 export const getClientReceivables = (clientId: string) => apiFetch<ClientReceivablesResponse>(`${B}/clients/${clientId}`);
 export const listDepositAccounts = () => apiFetch<{ accounts: ReceivablesDepositAccount[] }>(`${B}/deposit-accounts`);

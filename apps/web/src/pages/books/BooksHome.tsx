@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { StackedBarChart } from '@/components/ui/charts';
+import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChartTooltipContent, LegendKey, PALETTE, TICK } from '@/components/ui/charts';
 import { MetricCard, type MetricTrend } from '@/components/ui/MetricCard';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
@@ -149,6 +150,8 @@ function NeedsYou({ items }: { items: BooksOverview['needsYou'] }) {
   );
 }
 
+const PROFIT_SERIES = { income: { name: 'Income', color: PALETTE.primary }, netIncome: { name: 'Net income', color: PALETTE.tertiary } };
+
 function ProfitTrend({ o }: { o: BooksOverview }) {
   const ytd = o.profit.yearToDate;
   const rows = o.profit.trend.map((t) => ({ month: t.label, income: t.income, netIncome: t.netIncome }));
@@ -178,17 +181,33 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
       csvName="profit-by-month"
       height={220}
     >
-      <StackedBarChart
-        data={rows}
-        x="month"
-        stacked={false}
-        series={[
-          { key: 'income', name: 'Income' },
-          { key: 'netIncome', name: 'Net income' },
-        ]}
-        format={(v) => fmtMoneyCompact(v)}
-        highlight={rows[rows.length - 1]?.month}
-      />
+      <div className="flex h-full w-full flex-col">
+        <div className="min-h-0 flex-1">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barGap={2}>
+              <CartesianGrid stroke={PALETTE.grid} vertical={false} />
+              <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} />
+              <YAxis tick={TICK} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => fmtMoneyCompact(v)} />
+              <ReferenceLine y={0} stroke={PALETTE.ref} />
+              <Tooltip cursor={{ fill: PALETTE.cursor }} content={<ChartTooltipContent series={PROFIT_SERIES} format={(v) => fmtMoney(v)} />} />
+              <Bar dataKey="income" name="Income" fill={PALETTE.primary} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false}>
+                {rows.map((_r, i) => (
+                  <Cell key={i} fillOpacity={i === rows.length - 1 ? 1 : 0.7} />
+                ))}
+              </Bar>
+              {/* A month at a loss is red — the chart says it before the table does. */}
+              <Bar dataKey="netIncome" name="Net income" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false}>
+                {rows.map((r, i) => (
+                  <Cell key={i} fill={r.netIncome < 0 ? PALETTE.bad : PALETTE.tertiary} fillOpacity={i === rows.length - 1 ? 1 : 0.7} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-1">
+          <LegendKey items={[{ name: 'Income', color: PALETTE.primary }, { name: 'Net income', color: PALETTE.tertiary }, ...(losing ? [{ name: 'Net loss', color: PALETTE.bad }] : [])]} />
+        </div>
+      </div>
     </ChartFrame>
   );
 }

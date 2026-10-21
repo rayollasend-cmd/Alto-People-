@@ -346,7 +346,7 @@ function startOfSaturdayWeek(d: Date): Date {
  * `periods` is newest first, as the API sends them. Exported for tests.
  */
 export function defaultQueuePeriod(periods: readonly PayPeriod[], today: string): { period: PayPeriod; which: 'CURRENT' | 'LAST' } | null {
-  const current = periods.find((p) => p.current) ?? periods.find((p) => p.start <= today && today <= p.end) ?? null;
+  const current = periodContaining(periods, today);
   const closed = latestClosedPeriod(periods, today);
   if (closed && !closed.hasRun) {
     const payday = parseYmd(closed.end);
@@ -357,6 +357,13 @@ export function defaultQueuePeriod(periods: readonly PayPeriod[], today: string)
   }
   if (current) return { period: current, which: 'CURRENT' };
   return closed ? { period: closed, which: 'LAST' } : null;
+}
+
+/** The period `today` (the reader's local date) falls in. The API's own
+ *  `current` flag is decided on the server's UTC date, which on a US Friday
+ *  evening is already Saturday — the next period. */
+function periodContaining(periods: readonly PayPeriod[], today: string): PayPeriod | null {
+  return periods.find((p) => p.start <= today && today <= p.end) ?? null;
 }
 
 /** The most recent period that has ended before `today`. */
@@ -894,13 +901,14 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   });
   const pendingCount: number | null = pendingQuery.data?.count ?? null;
 
-  // Pay periods are static config for the tenant — one read per session.
-  // On failure the picker simply stays hidden and the manual From/To range
+  // Pay periods change slowly (a run is finalized, a new period starts) —
+  // re-read every few minutes rather than trusting a day-old cache. On
+  // failure the picker simply stays hidden and the manual From/To range
   // keeps working.
   const payPeriodsQuery = useQuery({
     queryKey: ['time', 'pay-periods'],
     queryFn: () => listPayPeriods(),
-    staleTime: Infinity,
+    staleTime: 5 * 60_000,
   });
   const payPeriods: PayPeriod[] | null = payPeriodsQuery.isError
     ? []
@@ -1152,7 +1160,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     setFromYmd(p.start);
     setToYmd(p.end);
     const today = ymdLocal(new Date());
-    if (p.current) setRangeChoice('CURRENT_PERIOD');
+    if (p === periodContaining(payPeriods ?? [], today)) setRangeChoice('CURRENT_PERIOD');
     else if (latestClosedPeriod(payPeriods ?? [], today) === p) setRangeChoice('LAST_PERIOD');
   };
 
@@ -1192,7 +1200,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     const today = ymdLocal(new Date());
     const target =
       (rangeChoice === 'CURRENT_PERIOD'
-        ? payPeriods.find((p) => p.current)
+        ? periodContaining(payPeriods, today)
         : rangeChoice === 'LAST_PERIOD'
           ? latestClosedPeriod(payPeriods, today)
           : null) ?? defaultQueuePeriod(payPeriods, today)?.period;
@@ -2421,7 +2429,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                     {payPeriods.map((p) => (
                       <option key={`${p.start}|${p.end}`} value={`${p.start}|${p.end}`}>
                         {periodLabel(p)}
-                        {p.current ? ' · current' : p.hasRun ? ' · paid' : ''}
+                        {p === periodContaining(payPeriods, ymdLocal(new Date())) ? ' · current' : p.hasRun ? ' · paid' : ''}
                       </option>
                     ))}
                   </Select>
@@ -2800,7 +2808,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               />
             )}
             {visibleEntries && visibleEntries.length > 0 && !focusAssociate && (
-              <>
+              // The list hook's container: ↑/↓ move the cursor only while
+              // focus is in here — elsewhere they scroll the page.
+              <div {...queueKb.listProps} className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-gold/50">
                 <DataGrid<TimeEntry>
                   id="time-queue"
                   keyboard={false}
@@ -2828,7 +2838,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                       : undefined
                   }
                 />
-              </>
+              </div>
             )}
           </CardContent>
         </Card>

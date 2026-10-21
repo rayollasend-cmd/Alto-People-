@@ -185,7 +185,8 @@ function SourceCharts({ sources }: { sources: SourceRow[] }) {
     .map((r) => ({ source: sourceName(r.source), hires: r.hires, applicants: r.applicants }))
     .sort((a, b) => b.hires - a.hires || b.applicants - a.applicants);
   const cost = sources
-    .filter((r) => r.costPerHire !== null)
+    // A source with nothing spent has no cost to compare — its bar would read as "free".
+    .filter((r) => r.costPerHire !== null && r.costPerHire > 0)
     .map((r) => ({ source: sourceName(r.source), costPerHire: r.costPerHire as number, hires: r.hires }))
     .sort((a, b) => b.costPerHire - a.costPerHire);
   if (hires.length === 0 && cost.length === 0) return null;
@@ -221,8 +222,8 @@ function SourceCharts({ sources }: { sources: SourceRow[] }) {
       {cost.length > 0 && (
         <ChartFrame
           title="Cost per hire, by source"
-          description="Only sources with spend recorded and at least one hire."
-          summary={`${cost[0]!.source} cost the most per hire.`}
+          description="Only sources with money spent and at least one hire."
+          summary={cost.length > 1 ? `${cost[0]!.source} cost the most per hire: ${fmtMoney(cost[0]!.costPerHire)}.` : `${cost[0]!.source}: ${fmtMoney(cost[0]!.costPerHire)} per hire.`}
           csvName="cost-per-hire-by-source"
           height={h(cost.length)}
           columns={[

@@ -72,6 +72,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { CADENCE_LABEL, OneOnOneDrawer } from './OneOnOneDrawer';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
@@ -1213,6 +1214,7 @@ function OneOnOnesTab() {
   const confirm = useConfirm();
   const qc = useQueryClient();
   const [showSchedule, setShowSchedule] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const q = useQuery({
     queryKey: perfKeys.oneOnOnes(),
@@ -1234,8 +1236,10 @@ function OneOnOnesTab() {
       if (!ok) return;
     }
     try {
-      await updateOneOnOne(m.id, { status });
-      toast.success(status === 'COMPLETED' ? '1:1 marked completed.' : '1:1 cancelled.');
+      const r = await updateOneOnOne(m.id, { status });
+      toast.success(
+        status === 'COMPLETED' ? (r.nextId ? '1:1 completed — the next one is booked.' : '1:1 marked completed.') : '1:1 cancelled.',
+      );
       invalidate();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not update the 1:1.');
@@ -1261,7 +1265,7 @@ function OneOnOnesTab() {
             <EmptyState
               icon={CalendarPlus}
               title="No 1:1s scheduled"
-              description="Managers schedule recurring 1:1s with each direct report."
+              description="Schedule a repeating 1:1 with each direct report — completing one books the next and carries open action items onto it."
               action={scheduleButton}
             />
           ) : (
@@ -1273,6 +1277,7 @@ function OneOnOnesTab() {
               search={{ placeholder: `${term('worker')}, manager…` }}
               urlState={false}
               exportCsv={{ filename: 'one-on-ones' }}
+              onRowClick={(m) => setOpenId(m.id)}
               columns={[
                 { key: 'associate', header: term('worker'), accessor: (m) => m.associateName, sortable: true, primary: true, className: 'font-medium text-white', cell: (m) => m.associateName ?? '—' },
                 { key: 'manager', header: 'Manager', accessor: (m) => m.managerEmail, sortable: true, cardMeta: true, cell: (m) => m.managerEmail ?? '—' },
@@ -1284,7 +1289,20 @@ function OneOnOnesTab() {
                   sortable: true,
                   cell: (m) => <Badge variant={m.status === 'COMPLETED' ? 'success' : m.status === 'CANCELLED' ? 'destructive' : 'info'}>{ONE_ON_ONE_STATUS_LABELS[m.status]}</Badge>,
                 },
+                { key: 'repeats', header: 'Repeats', accessor: (m) => (m.cadence ? CADENCE_LABEL[m.cadence] : ''), sortable: true, cardMeta: true, cell: (m) => (m.cadence ? CADENCE_LABEL[m.cadence] : '—') },
                 { key: 'agenda', header: 'Agenda', accessor: (m) => m.agenda, className: 'max-w-md truncate', cell: (m) => m.agenda ?? '—' },
+                {
+                  key: 'items',
+                  header: 'Open items',
+                  accessor: (m) => (m.actionItems ?? []).filter((i) => !i.doneAt).length,
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  cell: (m) => {
+                    const n = (m.actionItems ?? []).filter((i) => !i.doneAt).length;
+                    return n > 0 ? n : '—';
+                  },
+                },
                 {
                   key: 'actions',
                   header: 'Actions',
@@ -1310,6 +1328,14 @@ function OneOnOnesTab() {
           )}
         </CardContent>
       </Card>
+      {openId && rows?.find((m) => m.id === openId) && (
+        <OneOnOneDrawer
+          meeting={rows.find((m) => m.id === openId)!}
+          canManage={canManage}
+          queryKey={perfKeys.oneOnOnes()}
+          onClose={() => setOpenId(null)}
+        />
+      )}
       {showSchedule && user && (
         <ScheduleOneOnOneDrawer
           managerUserId={user.id}
@@ -1337,6 +1363,7 @@ function ScheduleOneOnOneDrawer({
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [when, setWhen] = useState('');
   const [agenda, setAgenda] = useState('');
+  const [cadence, setCadence] = useState<'WEEKLY' | 'BIWEEKLY' | ''>('WEEKLY');
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
@@ -1356,8 +1383,9 @@ function ScheduleOneOnOneDrawer({
         managerUserId,
         scheduledFor: scheduledFor.toISOString(),
         agenda: agenda.trim() || null,
+        cadence: cadence || null,
       });
-      toast.success('1:1 scheduled.');
+      toast.success(cadence ? `1:1 scheduled — repeats ${cadence === 'WEEKLY' ? 'weekly' : 'every two weeks'}.` : '1:1 scheduled.');
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not schedule the 1:1.');
@@ -1386,6 +1414,14 @@ function ScheduleOneOnOneDrawer({
             value={when}
             onChange={(e) => setWhen(e.target.value)}
           />
+        </div>
+        <div>
+          <Label>Repeats</Label>
+          <Select className="mt-1" value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)}>
+            <option value="WEEKLY">Weekly</option>
+            <option value="BIWEEKLY">Every two weeks</option>
+            <option value="">Just this once</option>
+          </Select>
         </div>
         <div>
           <Label>Agenda (optional)</Label>

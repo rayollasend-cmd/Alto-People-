@@ -27,6 +27,7 @@ import { useConfirm, usePrompt } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { STUCK_RUN_MINUTES, fmtDateTime, fmtMinutes, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
 import { workweekStart } from '@/lib/workweek';
+import { Sparkline } from '@/components/ui/charts';
 import {
   cancelRide,
   cancelRun,
@@ -182,11 +183,23 @@ function shiftDay(ymd: string, n: number): string {
 }
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
-/** After 6 PM the desk is planning tomorrow's vans — that's the board it opens on. */
+/** A real calendar day (2026-02-31 is not), so a hand-typed link never opens a blank board. */
+function isRealYmd(s: string | null): s is string {
+  if (!s || !YMD.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d!));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m! - 1 && dt.getUTCDate() === d;
+}
+/**
+ * After 6 PM the desk is usually planning tomorrow's vans — but only once
+ * tonight is done. While a run is still planned or out, or a rider still
+ * waits for a van, the board stays on today.
+ */
 const EVENING_HOUR = 18;
-function defaultBoardDay(now = new Date()): string {
-  const today = ymdLocal(now);
-  return now.getHours() >= EVENING_HOUR ? shiftDay(today, 1) : today;
+function eveningBoardDay(board: Pick<TransportBoard, 'runs' | 'kpis'>, today: string, now = new Date()): string {
+  if (now.getHours() < EVENING_HOUR) return today;
+  const tonightLive = board.runs.some((r) => r.status === 'PLANNED' || r.status === 'ACTIVE') || board.kpis.needsVan > 0 || board.kpis.onBoard > 0;
+  return tonightLive ? today : shiftDay(today, 1);
 }
 
 /**
@@ -237,9 +250,12 @@ export function TransportHome() {
   };
   // The board's day lives in the URL (/transport?date=YYYY-MM-DD) so a link
   // from anywhere opens the right day, and Back returns to it.
-  const [fallbackDay] = useState(() => defaultBoardDay());
   const urlDate = params.get('date');
-  const date = urlDate && YMD.test(urlDate) ? urlDate : fallbackDay;
+  const linkedDay = isRealYmd(urlDate) ? urlDate : null;
+  // With no day in the link: today, then — in the evening, once tonight's
+  // runs are done — tomorrow (decided once, from today's board).
+  const [autoDay, setAutoDay] = useState<string | null>(null);
+  const date = linkedDay ?? autoDay ?? ymdLocal();
   const setDate = (d: string) => {
     const next = new URLSearchParams(params);
     next.set('date', d);
@@ -253,6 +269,10 @@ export function TransportHome() {
     refetchInterval: 30_000,
   });
   const openIssues = board.data?.kpis.openIssues ?? 0;
+  useEffect(() => {
+    if (linkedDay || autoDay || !board.data || board.data.date !== today) return;
+    setAutoDay(eveningBoardDay(board.data, today));
+  }, [linkedDay, autoDay, board.data, today]);
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -2107,23 +2127,12 @@ function periodDates(days: number): { from: string; to: string } {
   return { from: shiftDay(to, -(days - 1)), to };
 }
 
-/** A tiny bar chart of daily revenue. */
-function Spark({ daily, from, to }: { daily: Array<{ date: string; cents: number }>; from: string; to: string }) {
+/** Daily revenue over the period, on the chart kit's sparkline (days with nothing earned read as zero). */
+function Spark({ daily, from, to, label }: { daily: Array<{ date: string; cents: number }>; from: string; to: string; label: string }) {
   const days: string[] = [];
-  for (let d = from; d <= to && days.length < 62; d = shiftDay(d, 1)) days.push(d);
+  for (let d = from; d <= to && days.length < 92; d = shiftDay(d, 1)) days.push(d);
   const by = new Map(daily.map((x) => [x.date, x.cents]));
-  const max = Math.max(1, ...daily.map((x) => x.cents));
-  return (
-    <div className="flex h-10 items-end gap-px" aria-hidden="true">
-      {days.map((d) => (
-        <div
-          key={d}
-          className={cn('flex-1 rounded-sm', (by.get(d) ?? 0) > 0 ? 'bg-gold/70' : 'bg-navy-secondary')}
-          style={{ height: `${Math.max(6, ((by.get(d) ?? 0) / max) * 100)}%` }}
-        />
-      ))}
-    </div>
-  );
+  return <Sparkline series={days.map((d) => (by.get(d) ?? 0) / 100)} tone="primary" width={240} height={40} className="h-10 w-full" label={label} />;
 }
 
 function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoard['drivers'] }) {
@@ -2297,7 +2306,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                     ))}
                   </div>
                   <div className="mt-3">
-                    <Spark daily={st.daily} from={fleet.data!.from} to={fleet.data!.to} />
+                    <Spark daily={st.daily} from={fleet.data!.from} to={fleet.data!.to} label={`${v.name}: earned by day`} />
                   </div>
                   {manage && (
                     // "Call <driver>" dials the moment it's hit and "Take out

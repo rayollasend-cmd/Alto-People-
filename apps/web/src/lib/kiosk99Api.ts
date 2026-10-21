@@ -179,6 +179,10 @@ export const kioskVerifyPin = (payload: {
   apiFetch<{
     ok: true;
     associateFirstName: string;
+    /** "L" for "Maria L." on the who-is-this confirm. */
+    associateLastInitial?: string | null;
+    /** Their saved language (en/es/tr) — the tablet switches for this punch. */
+    language?: string | null;
     predictedAction: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
     /** null = never asked → the kiosk shows the one-time consent screen. */
     faceConsent: FaceConsentStatus | null;
@@ -451,12 +455,51 @@ export type KioskPunchAction =
   | 'BREAK_START'
   | 'BREAK_END';
 
+/** What the result screen says back (lib/kioskPunchSummary on the API). */
+export interface KioskPunchSummary {
+  /** The store's zone — every time on the screen is in it. */
+  timezone: string;
+  shift: { startsAt: string; endsAt: string } | null;
+  /** On a clock-in: minutes from the shift's start (negative = early). */
+  lateMinutes: number | null;
+  /** On a clock-in where the state requires one: when the meal break is due. */
+  mealDueAt: string | null;
+  /** Paid minutes so far this workweek. */
+  weekMinutes: number;
+}
+
 export interface KioskPunchResult {
   action: KioskPunchAction;
   associateName: string;
   at: string;
   punchId: string;
+  summary?: KioskPunchSummary | null;
 }
+
+/** The clock-out gate's details, on a 409 sop_open (lib/storeShiftSop sopBlockSummary). */
+export interface KioskSopBlock {
+  sopId: string;
+  label: string;
+  windowLabel: string | null;
+  dateKey: string;
+  requiredOpen: number;
+  sopDone: number;
+  sopTotal: number;
+}
+
+/** Submit the open shift SOP from the tablet (with a reason when items are left), then clock out. */
+export const kioskSubmitSop = (input: {
+  deviceToken: string;
+  pin?: string;
+  badgeToken?: string;
+  reason?: string | null;
+  handoverNote?: string | null;
+}) =>
+  apiFetch<{ ok: true; submitted: boolean; closedIncomplete: boolean }>('/kiosk/sop/submit', {
+    method: 'POST',
+    body: input,
+    timeoutMs: KIOSK_TIMEOUT_MS,
+  });
 
 export const kioskPunch = (input: {
   deviceToken: string;

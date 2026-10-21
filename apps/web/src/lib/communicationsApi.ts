@@ -27,10 +27,11 @@ export function markAllSeen(): Promise<{ updated: number }> {
   });
 }
 
-/** One request instead of N single-row /read calls. */
-export function markAllRead(): Promise<{ updated: number }> {
+/** One request instead of N single-row /read calls — everything, or just `ids`. */
+export function markAllRead(ids?: string[]): Promise<{ updated: number }> {
   return apiFetch<{ updated: number }>('/communications/me/inbox/read-all', {
     method: 'POST',
+    ...(ids ? { body: { ids } } : {}),
   });
 }
 
@@ -70,4 +71,21 @@ export function deleteSuppression(email: string): Promise<void> {
     `/communications/admin/suppressions/${encodeURIComponent(email)}`,
     { method: 'DELETE' },
   );
+}
+
+export interface ChannelAvailability {
+  channel: NotificationChannel;
+  available: boolean;
+  /** Why it can't be used, when it can't — shown on the disabled chip. */
+  reason: string | null;
+}
+
+/** Which channels can actually deliver here (a channel with no provider is offered disabled, with the reason). */
+export function listChannels(): Promise<{ channels: ChannelAvailability[] }> {
+  return apiFetch<{ channels: ChannelAvailability[] }>('/communications/admin/channels');
+}
+
+/** "Clear all of this kind": every unread notification of a category, not just the loaded ones. */
+export function markKindRead(category: string): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>('/communications/me/inbox/read-kind', { method: 'POST', body: { category } });
 }

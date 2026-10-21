@@ -564,8 +564,23 @@ export const cancelRide = (id: string, reason: string) =>
 export const waiveRide = (id: string, reason: string) =>
   apiFetch<{ ok: true }>(`/transport/rides/${id}/waive`, { method: 'POST', body: { reason } });
 /** Waive several no-show fees with one reason. Rides someone took (and anything already waived or paid) come back in `skipped`. */
-export const waiveRides = (rideIds: string[], reason: string) =>
-  apiFetch<{ waived: number; waivedIds: string[]; skipped: Array<{ id: string; code: string; message: string }> }>('/transport/rides/waive', { method: 'POST', body: { rideIds, reason } });
+export interface WaiveRidesResult {
+  waived: number;
+  waivedIds: string[];
+  skipped: Array<{ id: string; code: string; message: string }>;
+}
+/** The server takes 200 rides a request; a bigger selection goes in turns, one answer back. */
+const WAIVE_CHUNK = 200;
+export async function waiveRides(rideIds: string[], reason: string): Promise<WaiveRidesResult> {
+  const out: WaiveRidesResult = { waived: 0, waivedIds: [], skipped: [] };
+  for (let i = 0; i < rideIds.length; i += WAIVE_CHUNK) {
+    const part = await apiFetch<WaiveRidesResult>('/transport/rides/waive', { method: 'POST', body: { rideIds: rideIds.slice(i, i + WAIVE_CHUNK), reason } });
+    out.waived += part.waived;
+    out.waivedIds.push(...part.waivedIds);
+    out.skipped.push(...part.skipped);
+  }
+  return out;
+}
 
 export interface TransportTrendWeek {
   /** Monday, YYYY-MM-DD. */

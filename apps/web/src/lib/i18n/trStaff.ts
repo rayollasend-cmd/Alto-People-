@@ -28,6 +28,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'grid.countOfNoun': '{total} {noun} içinden {count}',
   'grid.searchAria': '{caption} içinde ara',
   'grid.keysAria': '{caption} — j ve k ile gezin, x ile seçin',
+  'grid.cursorAt': 'Satır {n} / {total}: {label}',
   'grid.chooseColumns': 'Sütunları seç',
   'grid.exportAria': '{caption} öğesini CSV olarak dışa aktar — ekrandakiler',
   'grid.exportTitle': 'Görünen sütunları mevcut sırayla dışa aktarır',

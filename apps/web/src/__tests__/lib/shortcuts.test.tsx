@@ -3,6 +3,14 @@ import { act, fireEvent, render, renderHook, screen } from '@testing-library/rea
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { GlobalShortcuts, isTypingTarget, resolveChord, useListKeyboard } from '@/lib/shortcuts';
 
+// The chords follow what the person can open: an admin's full set here,
+// narrowed in the books test below.
+const auth = vi.hoisted(() => ({ caps: null as null | Set<string> }));
+vi.mock('@/lib/auth', async (orig) => ({
+  ...(await orig<typeof import('@/lib/auth')>()),
+  useAuth: () => ({ user: { id: 'me', role: 'HR_ADMINISTRATOR' }, can: (c: string) => auth.caps === null || auth.caps.has(c) }),
+}));
+
 /**
  * Access pack — keyboard support: g-then-key chords move between the main
  * surfaces; j/k/Enter/a/d work a list; nothing fires while typing.
@@ -39,6 +47,25 @@ function Where() {
 }
 
 describe('<GlobalShortcuts>', () => {
+  it('leaves out a chord whose page the person cannot open', () => {
+    auth.caps = new Set(['view:dashboard', 'view:org']);
+    try {
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <GlobalShortcuts />
+          <Routes>
+            <Route path="*" element={<Where />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      fireEvent.keyDown(window, { key: 'g' });
+      fireEvent.keyDown(window, { key: 'b' });
+      expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/);
+    } finally {
+      auth.caps = null;
+    }
+  });
+
   it('g then p goes to People; typing in a field does not', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
@@ -69,7 +96,15 @@ describe('useListKeyboard', () => {
     act(() => { fireEvent.keyDown(window, { key: 'j' }); });
     expect(result.current.cursor).toBe('a');
     act(() => { fireEvent.keyDown(window, { key: 'j' }); });
+    // ↓ outside the list scrolls the page; it only moves with focus inside.
     act(() => { fireEvent.keyDown(window, { key: 'ArrowDown' }); });
+    expect(result.current.cursor).toBe('b');
+    const list = document.createElement('ul');
+    list.tabIndex = 0;
+    document.body.appendChild(list);
+    act(() => { result.current.listProps.ref(list); });
+    list.focus();
+    act(() => { fireEvent.keyDown(list, { key: 'ArrowDown' }); });
     expect(result.current.cursor).toBe('c');
     act(() => { fireEvent.keyDown(window, { key: 'j' }); });
     expect(result.current.cursor).toBe('c');
@@ -83,6 +118,14 @@ describe('useListKeyboard', () => {
     expect(onDecline).toHaveBeenCalledWith({ id: 'b' });
     expect(result.current.rowProps('b')['aria-selected']).toBe(true);
     expect(result.current.rowProps('a')['data-kb-cursor']).toBeUndefined();
+    // Enter on a button is the button's, not "open the cursor row".
+    const button = document.createElement('button');
+    document.body.appendChild(button);
+    onOpen.mockClear();
+    act(() => { fireEvent.keyDown(button, { key: 'Enter' }); });
+    expect(onOpen).not.toHaveBeenCalled();
+    list.remove();
+    button.remove();
   });
 
   it('does nothing while disabled', () => {

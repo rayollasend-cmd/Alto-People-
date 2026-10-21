@@ -493,7 +493,9 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
       subject: `${actorName} assigned you: ${item.label}`,
       body: `${item.detail}${input.note ? `\n\nNote: ${input.note}` : ''}`,
       category: 'decision_assignment',
-      linkUrl: item.linkUrl,
+      // Worked out when they open it, as they see it: a "today" in the item's
+      // own link would be stale by then, and its page may not be one they reach.
+      linkUrl: `/decisions/open?key=${encodeURIComponent(input.key)}`,
     });
   } else if (input.action === 'postpone') {
     const days = input.days ?? 1;
@@ -521,7 +523,7 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
       subject: `${actorName} tagged you on: ${item.label}`,
       body: `${item.detail}${input.note ? `\n\n"${input.note}"` : ''}`,
       category: 'decision_tag',
-      linkUrl: item.linkUrl,
+      linkUrl: `/decisions/open?key=${encodeURIComponent(input.key)}`,
     });
   } else {
     // Escalate: stamp it and ping every org admin + chairman with the
@@ -553,7 +555,7 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
         subject: `Escalated by ${actorName}: ${item.label}`,
         body: `${item.detail}${input.note ? `\n\nNote: ${input.note}` : ''}`,
         category: 'decision_escalation',
-        linkUrl: item.linkUrl,
+        linkUrl: `/decisions/open?key=${encodeURIComponent(input.key)}`,
       });
     }
   }
@@ -826,7 +828,7 @@ roleDecisionsRouter.post(
           subject: `Next step is yours: ${item.label}`,
           body: `${input.text}${input.dueDay ? ` — by ${input.dueDay}` : ''} (set by ${actorLocal.charAt(0).toUpperCase() + actorLocal.slice(1)})`,
           category: 'decision_next_step',
-          linkUrl: item.linkUrl,
+          linkUrl: `/decisions/open?key=${encodeURIComponent(input.key)}`,
         });
       }
     }
@@ -890,7 +892,7 @@ roleDecisionsRouter.post('/decisions/comment', requireAuth, async (req: Request,
       subject: `${actorName} on: ${item.label}`,
       body: input.body,
       category: 'decision_comment',
-      linkUrl: item.linkUrl,
+      linkUrl: `/decisions/open?key=${encodeURIComponent(input.key)}`,
     });
   }
   res.status(201).json({ ok: true });

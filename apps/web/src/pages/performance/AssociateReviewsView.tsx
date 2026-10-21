@@ -12,6 +12,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
+import { MyNextOneOnOne } from './MyNextOneOnOne';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 
 function ratingStars(n: number): string {
@@ -63,6 +64,7 @@ export function AssociateReviewsView() {
         title={t('reviews.title')}
         subtitle={t('reviews.subtitle')}
     >
+      <MyNextOneOnOne />
 
       {error && (
         <ErrorBanner

@@ -42,8 +42,9 @@ export function AgentRoiTile() {
         ) : undefined
       }
       className="h-full"
+      cta={false}
       wrap={(card) => (
-        <Link to="/agents" className="block h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" aria-label="Agents: hours saved and cost, last 30 days">
+        <Link to="/agents" className="block h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright">
           {card}
         </Link>
       )}

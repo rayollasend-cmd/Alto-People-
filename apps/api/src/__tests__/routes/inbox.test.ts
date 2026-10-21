@@ -83,7 +83,7 @@ describe('GET /me/inbox', () => {
     const byKey = new Map(body.sources.map((s) => [s.key, s]));
     expect(byKey.get('onboarding-review')).toMatchObject({
       count: 1,
-      path: '/onboarding?status=SUBMITTED',
+      path: '/onboarding?status=TO_REVIEW',
     });
     expect(byKey.get('kiosk-review')).toMatchObject({
       count: 1,
@@ -112,7 +112,10 @@ describe('GET /me/inbox', () => {
       a.get('/kiosk-punches?reviewStatus=PENDING'),
     ]);
     const byKey = new Map((inbox.body.sources as Source[]).map((s) => [s.key, s]));
-    expect(byKey.get('approvals')?.count).toBe(approvals.body.total);
+    // The approvals page's own queues, its timesheets and its proposals are
+    // three sources, each opening its own page — together the page's total.
+    expect((byKey.get('approvals')?.count ?? 0) + (byKey.get('timesheets')?.count ?? 0) + (byKey.get('agent-proposals')?.count ?? 0)).toBe(approvals.body.total);
+    expect(byKey.get('timesheets')?.path).toMatch(/^\/time-attendance\?tab=queue&from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
     expect(byKey.get('kiosk-review')?.count).toBe(punches.body.punches.length);
   });
 

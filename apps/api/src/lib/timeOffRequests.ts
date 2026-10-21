@@ -181,8 +181,11 @@ export async function approveRequest(
     });
 
     const decidedAt = new Date();
-    await tx.timeOffRequest.update({
-      where: { id: req.id },
+    // Conditional, so a deny (or cancel) that landed after the read above
+    // wins cleanly: this throws and the whole transaction — ledger entry
+    // and balance debit included — rolls back.
+    const approved = await tx.timeOffRequest.updateMany({
+      where: { id: req.id, status: 'PENDING' },
       data: {
         status: 'APPROVED',
         reviewerUserId,
@@ -190,6 +193,7 @@ export async function approveRequest(
         decidedAt,
       },
     });
+    if (approved.count === 0) throw new IllegalStateError('Someone decided this request a moment ago');
 
     approvedEvent = {
       requestId: req.id,

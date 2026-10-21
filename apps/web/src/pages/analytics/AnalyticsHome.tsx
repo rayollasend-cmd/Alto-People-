@@ -206,6 +206,7 @@ export function AnalyticsHome() {
                 hint={`${fmtHours(kpis.trends.hoursWorked.series.at(-1) ?? 0)} so far this week`}
                 link="/time-attendance"
                 trend={weekly(kpis.trends.hoursWorked, 'vs the week before', fmtHours)}
+                good="neutral"
               />
             )}
           </div>
@@ -227,9 +228,10 @@ export function AnalyticsHome() {
               <Stat
                 label="Shifts scheduled · last week"
                 value={lastComplete(kpis.trends.shiftsScheduled).toLocaleString()}
-                hint={`${(kpis.trends.shiftsScheduled.series.at(-1) ?? 0).toLocaleString()} so far this week`}
+                hint={`${(kpis.trends.shiftsScheduled.series.at(-1) ?? 0).toLocaleString()} on this week's schedule`}
                 link="/scheduling"
                 trend={weekly(kpis.trends.shiftsScheduled, 'vs the week before')}
+                good="neutral"
               />
             )}
           </div>
@@ -277,7 +279,6 @@ export function AnalyticsHome() {
                 accent={kpis.pendingOnboardingApplications > 0}
                 link="/onboarding"
                 trend={weekly(kpis.trends?.applications, 'new vs last wk')}
-                good="neutral"
               />
               <Stat
                 label="I-9 Section 2 backlog"
@@ -392,7 +393,8 @@ function lastComplete(t: KpiTrend): number {
 
 /** The API's weekly series as a tile trend, when it sent one. */
 function weekly(t: KpiTrend | undefined, deltaLabel: string, format?: (n: number) => string): MetricTrend | undefined {
-  return t && t.series.length >= 2 ? { ...t, deltaLabel, format } : undefined;
+  // The final bucket is this week so far — drawn hollow, kept out of the summary.
+  return t && t.series.length >= 2 ? { ...t, deltaLabel, format, lastIsPartial: true } : undefined;
 }
 
 /**

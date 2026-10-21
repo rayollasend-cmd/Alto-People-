@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
 import { cn } from '@/lib/cn';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -42,7 +43,7 @@ const LOWER_IS_BETTER = new Set([
   'price_changes',
 ]);
 
-const SERIES = 'rgb(var(--color-chart-1))';
+const SERIES = PALETTE.primary;
 const MUTED = 'rgb(var(--color-chart-1) / 0.35)';
 
 /** The org week runs Saturday to Friday; the key is that Saturday. */
@@ -117,13 +118,13 @@ function MetricPanel({ t }: { t: Trend }) {
           <BarChart data={data} margin={{ top: 6, right: 4, bottom: 0, left: -24 }}>
             <XAxis
               dataKey="label"
-              tick={{ fill: 'rgb(var(--color-silver) / 0.55)', fontSize: 9 }}
+              tick={{ fill: TICK.fill, fontSize: 9 }}
               axisLine={false}
               tickLine={false}
               interval="preserveStartEnd"
             />
             <YAxis
-              tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 9 }}
+              tick={{ fill: TICK.fill, fontSize: 9 }}
               axisLine={false}
               tickLine={false}
               width={38}
@@ -136,13 +137,10 @@ function MetricPanel({ t }: { t: Trend }) {
               strokeDasharray="3 3"
             />
             <ChartTooltip
-              cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.5)' }}
-              contentStyle={{
-                background: 'rgb(var(--color-navy))',
-                border: '1px solid rgb(var(--color-navy-secondary))',
-                borderRadius: 8,
-                fontSize: 11,
-              }}
+              cursor={{ fill: PALETTE.cursor }}
+              contentStyle={TOOLTIP_STYLE}
+              labelStyle={TOOLTIP_LABEL_STYLE}
+              itemStyle={TOOLTIP_ITEM_STYLE}
               labelFormatter={(v) => `Week of ${String(v)}`}
               formatter={(value) => [
                 `${Number(value).toLocaleString('en-US')} ${t.unit ?? ''}`,

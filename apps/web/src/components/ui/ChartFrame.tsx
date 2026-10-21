@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BarChart3, Download, Table2, LineChart } from 'lucide-react';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
@@ -6,7 +6,7 @@ import { Button } from './Button';
 import { Card, CardContent } from './Card';
 import { EmptyState } from './EmptyState';
 import { InChartFrame } from './charts/frame';
-import { EXTENDED_SERIES, PALETTE, TOOLTIP_STYLE } from './charts/palette';
+import { EXTENDED_SERIES, PALETTE, TOOLTIP_ITEM_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './charts/palette';
 import { SectionTitle } from './SectionTitle';
 
 /**
@@ -38,8 +38,28 @@ export const CHART = {
   bad: PALETTE.bad,
   warn: PALETTE.warn,
   muted: PALETTE.muted,
+  other: PALETTE.other,
   tooltip: TOOLTIP_STYLE,
+  /** Pass as `labelStyle` / `itemStyle` on a stock recharts Tooltip — rows
+   *  read in the text color, never the series color. */
+  tooltipLabel: TOOLTIP_LABEL_STYLE,
+  tooltipItem: TOOLTIP_ITEM_STYLE,
 } as const;
+
+/**
+ * Inside a frame the summary and the table carry the chart for assistive
+ * tech, so recharts' own keyboard layer (an `svg role="application"` tab
+ * stop that announces nothing useful) is switched off — including in
+ * hand-built charts that don't pass `accessibilityLayer={false}`.
+ */
+function quietRecharts(el: HTMLElement) {
+  el.querySelectorAll('svg.recharts-surface').forEach((svg) => {
+    if (svg.getAttribute('tabindex') !== '-1') svg.setAttribute('tabindex', '-1');
+    if (svg.getAttribute('role') === 'application') svg.removeAttribute('role');
+  });
+}
+
+const CONTROLS = 'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 export function ChartFrame({
   title,
@@ -51,6 +71,7 @@ export function ChartFrame({
   height = 260,
   children,
   empty,
+  interactive,
 }: {
   title: string;
   description?: ReactNode;
@@ -63,8 +84,13 @@ export function ChartFrame({
   children: ReactNode;
   /** Shown instead of the chart when there is nothing to draw. Defaults to a quiet empty state. */
   empty?: ReactNode;
+  /** The figure holds controls (a heatmap's cells, buttons): it is not
+   *  wrapped as one image, so they stay reachable. Detected when omitted. */
+  interactive?: boolean;
 }) {
   const [asTable, setAsTable] = useState(false);
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [hasControls, setHasControls] = useState(false);
   const cell = (c: ChartColumn, v: unknown) => (c.format ? c.format(v) : v === null || v === undefined ? '—' : String(v));
   const table = (hidden: boolean) => (
     <div className={hidden ? 'sr-only' : 'overflow-x-auto'}>
@@ -95,6 +121,21 @@ export function ChartFrame({
   );
   const hasData = rows.length > 0;
 
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el) return;
+    const sync = () => {
+      quietRecharts(el);
+      setHasControls(el.querySelector(CONTROLS) !== null);
+    };
+    sync();
+    if (typeof MutationObserver === 'undefined') return;
+    const mo = new MutationObserver(sync);
+    mo.observe(el, { subtree: true, childList: true, attributes: true, attributeFilter: ['tabindex', 'role'] });
+    return () => mo.disconnect();
+  }, [asTable, hasData]);
+  const asImage = !(interactive ?? hasControls);
+
   return (
     <Card>
       <CardContent className="space-y-3 p-4 md:p-5">
@@ -104,7 +145,8 @@ export function ChartFrame({
           trailing={
             hasData ? (
               <div className="flex items-center gap-1">
-                <Button size="sm" variant="ghost" aria-pressed={asTable} onClick={() => setAsTable((v) => !v)}>
+                {/* The label names the view it switches to; no aria-pressed on top of a changing label. */}
+                <Button size="sm" variant="ghost" onClick={() => setAsTable((v) => !v)}>
                   {asTable ? <LineChart className="h-3.5 w-3.5" aria-hidden="true" /> : <Table2 className="h-3.5 w-3.5" aria-hidden="true" />}
                   {asTable ? 'Chart' : 'Table'}
                 </Button>
@@ -127,7 +169,8 @@ export function ChartFrame({
           table(false)
         ) : (
           <>
-            <div role="img" aria-label={summary} style={{ height }}>
+            {!asImage && <p className="sr-only">{summary}</p>}
+            <div ref={plotRef} {...(asImage ? { role: 'img', 'aria-label': summary } : {})} style={{ height }}>
               <InChartFrame.Provider value={true}>{children}</InChartFrame.Provider>
             </div>
             {table(true)}

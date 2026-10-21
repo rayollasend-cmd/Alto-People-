@@ -26,6 +26,7 @@ import { accountBalance, accountIndex, fromCents, postEntry, toCents, voidEntry 
 import { csvToTransactions, detectCsvMapping, isOfx, parseCsv, parseOfx, type ParsedTxn, type ParseResult } from './parse.js';
 import { clientFor, itemToken, plaidRef, requirePlaid, splitPlaidRef, storeItemToken, withPlaidHealth, plaidConnection } from './plaid.js';
 import { contextFor } from '../../providers/connections.js';
+import { recordClientPayment, undoClientPayment, type RecordPaymentInput } from '../posting/receivables.js';
 
 /**
  * The books' bank and card accounts (lib/books/bank). A feed account sits
@@ -480,13 +481,17 @@ const payeeKey = (t: Pick<BankTransaction, 'payee' | 'description'>) =>
     .slice(0, 3)
     .join(' ');
 
-/** What every suggestion on a page shares: the rules, the chart, the feeds. Loaded once per request. */
+type FeedWithLedger = BankFeedAccount & { ledger: LedgerAccount };
+
+/** What every suggestion on a page shares: the rules, the chart, the feeds, the clients. Loaded once per request. */
 interface SuggestCtx {
   rules: BankRule[];
   byId: Map<string, LedgerAccount>;
-  feeds: Map<string, BankFeedAccount>;
-  /** Loaded on the first deposit: who a deposit might be from. */
-  clients?: Array<{ id: string; name: string; key: string }>;
+  feeds: Map<string, FeedWithLedger>;
+  /** Who a deposit might be from: the company's clients (not deleted, not prospects), by the name a bank would carry. */
+  clients: Array<{ id: string; name: string; key: string }>;
+  /** "What the same payee was last time", per feed and payee — many rows on a page share a payee. */
+  lastTime: Map<string, Promise<BankTxnSuggestions['lastTime']>>;
 }
 
 /** A company name, reduced to what a bank description would carry. */
@@ -499,28 +504,47 @@ const nameKey = (s: string) =>
     .filter((w) => w && !NAME_NOISE.has(w))
     .join(' ');
 
-/** Who a deposit is from: the rule's client, or the client whose name the description carries (the longest such name). */
-async function depositClient(db: Db, t: BankTransaction, ruleClientId: string | null, ctx: SuggestCtx): Promise<{ id: string; name: string } | null> {
-  if (Number(t.amount) <= 0) return null;
-  ctx.clients ??= (await db.client.findMany({ where: { tenantId: tenantIdForWrite() }, select: { id: true, name: true } }))
-    .map((c) => ({ ...c, key: nameKey(c.name) }))
-    .filter((c) => c.key.length >= 4);
+/** Money coming back, not a client paying: a refund, a reversal, a return. */
+const NOT_A_PAYMENT = /\b(refund|refunded|reversal|reversed|return|returned|chargeback|chgbk|rebate)\b/i;
+
+/**
+ * Who a deposit is from: the rule's client, or the one client whose name the
+ * description carries (the longest such name; two different clients tied →
+ * nobody). Only money into a bank account — a card's credit is a refund.
+ */
+function depositClient(t: BankTransaction, feed: FeedWithLedger, ruleClientId: string | null, ctx: SuggestCtx): { id: string; name: string } | null {
+  if (Number(t.amount) <= 0 || feed.ledger.subtype !== 'BANK') return null;
   if (ruleClientId) {
     const c = ctx.clients.find((x) => x.id === ruleClientId);
     if (c) return { id: c.id, name: c.name };
   }
-  const text = ` ${nameKey(`${t.payee ?? ''} ${t.description}`)} `;
-  const hit = ctx.clients.filter((c) => text.includes(` ${c.key} `)).sort((a, b) => b.key.length - a.key.length)[0];
-  return hit ? { id: hit.id, name: hit.name } : null;
+  const raw = `${t.payee ?? ''} ${t.description}`;
+  if (NOT_A_PAYMENT.test(raw)) return null;
+  const text = ` ${nameKey(raw)} `;
+  const hits = ctx.clients.filter((c) => text.includes(` ${c.key} `)).sort((a, b) => b.key.length - a.key.length);
+  if (hits.length === 0) return null;
+  if (hits.length > 1 && hits[1]!.key.length === hits[0]!.key.length && hits[1]!.id !== hits[0]!.id) return null;
+  return { id: hits[0]!.id, name: hits[0]!.name };
 }
 
 async function suggestCtx(db: Db): Promise<SuggestCtx> {
-  const [rules, { byId }] = await Promise.all([activeRules(db), accountIndex(db)]);
-  return { rules, byId, feeds: new Map() };
+  const [rules, { byId }, clients] = await Promise.all([
+    activeRules(db),
+    accountIndex(db),
+    db.client.findMany({ where: { tenantId: tenantIdForWrite(), deletedAt: null, status: { not: 'PROSPECT' } }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+  ]);
+  return {
+    rules,
+    byId,
+    feeds: new Map(),
+    clients: clients.map((c) => ({ ...c, key: nameKey(c.name) })).filter((c) => c.key.length >= 4),
+    lastTime: new Map(),
+  };
 }
 
 export async function suggestionsFor(db: Db, id: string): Promise<BankTxnSuggestions> {
-  return suggest(db, await txnOr404(db, id), await suggestCtx(db));
+  const t = await txnOr404(db, id);
+  return (await suggestMany(db, [t], await suggestCtx(db))).get(t.id) ?? NOTHING;
 }
 
 const NOTHING: BankTxnSuggestions = { matches: [], rule: null, lastTime: null, exactLineId: null, client: null };
@@ -528,108 +552,176 @@ const NOTHING: BankTxnSuggestions = { matches: [], rule: null, lastTime: null, e
 /** Suggestions for several transactions in one call — the review list asks once per page. Unknown or decided ids get none. */
 export async function suggestionsForMany(db: Db, ids: string[]): Promise<Record<string, BankTxnSuggestions>> {
   const rows = await db.bankTransaction.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: ids } } });
-  const ctx = await suggestCtx(db);
+  const got = await suggestMany(db, rows, await suggestCtx(db));
   const out: Record<string, BankTxnSuggestions> = {};
-  // A few at a time: each is a handful of small queries.
-  for (let i = 0; i < rows.length; i += 8) {
-    const chunk = rows.slice(i, i + 8);
-    const got = await Promise.all(chunk.map((t) => (t.status === 'UNMATCHED' ? suggest(db, t, ctx) : NOTHING)));
-    chunk.forEach((t, k) => (out[t.id] = got[k]!));
-  }
+  for (const t of rows) out[t.id] = got.get(t.id) ?? NOTHING;
   return out;
 }
 
-async function feedFor(db: Db, t: BankTransaction, ctx: SuggestCtx): Promise<BankFeedAccount> {
-  let feed = ctx.feeds.get(t.feedAccountId);
+async function feedFor(db: Db, feedAccountId: string, ctx: SuggestCtx): Promise<FeedWithLedger> {
+  let feed = ctx.feeds.get(feedAccountId);
   if (!feed) {
-    feed = await feedOr404(db, t.feedAccountId);
-    ctx.feeds.set(t.feedAccountId, feed);
+    feed = await feedOr404(db, feedAccountId);
+    ctx.feeds.set(feedAccountId, feed);
   }
   return feed;
 }
 
-async function suggest(db: Db, t: BankTransaction, ctx: SuggestCtx): Promise<BankTxnSuggestions> {
-  const feed = await feedFor(db, t, ctx);
+const money = (c: number) => new Prisma.Decimal(fromCents(c).toFixed(2));
+
+/**
+ * Suggestions for undecided transactions, a feed at a time: the books' lines
+ * that could be each one (same amount, within five days) in one query per
+ * feed, then the rule, last time, and who a deposit is from.
+ *
+ * A line isn't a candidate when it's already matched, when this feed's own
+ * categorization posted it (still standing, or undone in a closed month and
+ * reversed), when it's a reversal, or when it was reversed.
+ *
+ * exactLineId — what "Match all exact" takes — is a line that is this
+ * transaction's only candidate (or its only same-day one) AND for which this
+ * transaction is the closest-dated of the undecided bank lines that could be
+ * it. Two $1,000 deposits four days apart and one $1,000 entry: the entry is
+ * exact only for the deposit on its day.
+ */
+async function suggestMany(db: Db, rows: BankTransaction[], ctx: SuggestCtx): Promise<Map<string, BankTxnSuggestions>> {
+  const out = new Map<string, BankTxnSuggestions>();
   const tenantId = tenantIdForWrite();
-  const cents = toCents(t.amount);
-  const from = new Date(t.postedOn.getTime() - 5 * DAY);
-  const to = new Date(t.postedOn.getTime() + 5 * DAY);
-  const candidates = await db.journalLine.findMany({
-    where: {
-      tenantId,
-      accountId: feed.ledgerAccountId,
-      entry: { status: 'POSTED', entryDate: { gte: from, lte: to } },
-      ...(cents > 0 ? { debit: new Prisma.Decimal(fromCents(cents).toFixed(2)) } : { credit: new Prisma.Decimal(fromCents(-cents).toFixed(2)) }),
-    },
-    include: { entry: { select: { id: true, number: true, memo: true, entryDate: true, source: true } } },
-    take: 50,
-  });
-  // A line already matched, or one this feed's own categorizations posted, isn't a candidate.
-  const taken = new Set(
-    (await db.bankTransaction.findMany({ where: { tenantId, feedAccountId: feed.id, status: 'MATCHED', matchedLineId: { in: candidates.map((c) => c.id) } }, select: { matchedLineId: true } })).map((x) => x.matchedLineId),
-  );
-  const ownEntries = new Set(
-    (await db.bankTransaction.findMany({ where: { tenantId, feedAccountId: feed.id, journalEntryId: { in: candidates.map((c) => c.entry.id) } }, select: { journalEntryId: true } })).map((x) => x.journalEntryId),
-  );
-  const matches = candidates
-    .filter((c) => !taken.has(c.id) && !ownEntries.has(c.entry.id))
-    .map((c) => ({
-      lineId: c.id,
-      entryId: c.entry.id,
-      entryNumber: c.entry.number,
-      date: ymd(c.entry.entryDate),
-      memo: c.memo ?? c.entry.memo,
-      source: c.entry.source,
-      amount: Number(t.amount),
-      daysApart: Math.round(Math.abs(c.entry.entryDate.getTime() - t.postedOn.getTime()) / DAY),
-    }))
-    .sort((a, b) => a.daysApart - b.daysApart);
-  // Unambiguous: the only candidate, or the only one on the same day.
-  const sameDay = matches.filter((m) => m.daysApart === 0);
-  const exactLineId = matches.length === 1 ? matches[0]!.lineId : sameDay.length === 1 ? sameDay[0]!.lineId : null;
+  const open = rows.filter((t) => t.status === 'UNMATCHED');
+  const byFeed = new Map<string, BankTransaction[]>();
+  for (const t of open) byFeed.set(t.feedAccountId, [...(byFeed.get(t.feedAccountId) ?? []), t]);
 
-  const { byId } = ctx;
-  const rule = ctx.rules.find((r) => ruleFits(r, t)) ?? null;
-  const ruleAcct = rule ? byId.get(rule.accountId) : undefined;
+  for (const [feedId, txns] of byFeed) {
+    const feed = await feedFor(db, feedId, ctx);
+    const times = txns.map((t) => t.postedOn.getTime());
+    const from = new Date(Math.min(...times) - 5 * DAY);
+    const to = new Date(Math.max(...times) + 5 * DAY);
+    const debits = [...new Set(txns.map((t) => toCents(t.amount)).filter((c) => c > 0))];
+    const credits = [...new Set(txns.map((t) => -toCents(t.amount)).filter((c) => c > 0))];
+    const amountOr: Prisma.JournalLineWhereInput[] = [
+      ...(debits.length ? [{ debit: { in: debits.map(money) } }] : []),
+      ...(credits.length ? [{ credit: { in: credits.map(money) } }] : []),
+    ];
+    const lines = amountOr.length
+      ? await db.journalLine.findMany({
+          where: { tenantId, accountId: feed.ledgerAccountId, entry: { status: 'POSTED', entryDate: { gte: from, lte: to } }, OR: amountOr },
+          include: { entry: { select: { id: true, number: true, memo: true, entryDate: true, source: true, sourceType: true, sourceId: true } } },
+          take: 2000,
+        })
+      : [];
+    const lineIds = lines.map((l) => l.id);
+    const entryIds = [...new Set(lines.map((l) => l.entry.id))];
+    const bankSourced = [...new Set(lines.filter((l) => l.entry.sourceType === 'BankTransaction' && l.entry.sourceId).map((l) => l.entry.sourceId!))];
+    const [taken, ownTxns, reversed, claimants] = await Promise.all([
+      lineIds.length ? db.bankTransaction.findMany({ where: { tenantId, status: 'MATCHED', matchedLineId: { in: lineIds } }, select: { matchedLineId: true } }) : [],
+      bankSourced.length ? db.bankTransaction.findMany({ where: { tenantId, id: { in: bankSourced }, feedAccountId: feed.id }, select: { id: true } }) : [],
+      entryIds.length ? db.journalEntry.findMany({ where: { tenantId, status: 'POSTED', sourceKey: { in: entryIds.map((id) => `reversal:${id}`) } }, select: { sourceId: true } }) : [],
+      // Every undecided bank line on this feed that could claim one of these lines (the page's rows and any others).
+      db.bankTransaction.findMany({
+        where: { tenantId, feedAccountId: feed.id, status: 'UNMATCHED', postedOn: { gte: new Date(from.getTime() - 5 * DAY), lte: new Date(to.getTime() + 5 * DAY) }, amount: { in: txns.map((t) => t.amount) } },
+        select: { id: true, amount: true, postedOn: true },
+      }),
+    ]);
+    const takenLines = new Set(taken.map((x) => x.matchedLineId));
+    const own = new Set(ownTxns.map((x) => x.id));
+    const reversedEntries = new Set(reversed.map((x) => x.sourceId));
+    const usable = lines.filter(
+      (l) =>
+        !takenLines.has(l.id) &&
+        l.entry.source !== 'REVERSAL' &&
+        !reversedEntries.has(l.entry.id) &&
+        !(l.entry.sourceType === 'BankTransaction' && l.entry.sourceId && own.has(l.entry.sourceId)),
+    );
 
-  // What the same payee was categorized as last time.
-  let lastTime: BankTxnSuggestions['lastTime'] = null;
-  const key = payeeKey(t);
-  if (key) {
-    const prior = await db.bankTransaction.findMany({
-      where: { tenantId, status: 'CATEGORIZED', id: { not: t.id }, journalEntryId: { not: null }, OR: [{ payee: { contains: key.split(' ')[0]!, mode: 'insensitive' } }, { description: { contains: key.split(' ')[0]!, mode: 'insensitive' } }] },
-      orderBy: { decidedAt: 'desc' },
-      take: 20,
-    });
-    const hit = prior.find((p) => payeeKey(p) === key);
-    if (hit?.journalEntryId) {
-      const pfeed = await db.bankFeedAccount.findFirst({ where: { id: hit.feedAccountId, tenantId } });
-      const line = await db.journalLine.findFirst({ where: { tenantId, entryId: hit.journalEntryId, accountId: { not: pfeed?.ledgerAccountId ?? '' } } });
-      const a = line ? byId.get(line.accountId) : undefined;
-      if (a && a.id !== feed.ledgerAccountId) lastTime = { accountId: a.id, accountCode: a.code, accountName: a.name };
+    for (const t of txns) {
+      const cents = toCents(t.amount);
+      const matches = usable
+        .filter((l) => toCents(l.debit) - toCents(l.credit) === cents && Math.abs(l.entry.entryDate.getTime() - t.postedOn.getTime()) <= 5 * DAY)
+        .map((l) => ({
+          lineId: l.id,
+          entryId: l.entry.id,
+          entryNumber: l.entry.number,
+          date: ymd(l.entry.entryDate),
+          memo: l.memo ?? l.entry.memo,
+          source: l.entry.source,
+          amount: Number(t.amount),
+          daysApart: Math.round(Math.abs(l.entry.entryDate.getTime() - t.postedOn.getTime()) / DAY),
+        }))
+        .sort((a, b) => a.daysApart - b.daysApart)
+        .slice(0, 50);
+      // The candidate: the only one, or the only one on the same day.
+      const sameDay = matches.filter((m) => m.daysApart === 0);
+      const pick = matches.length === 1 ? matches[0]! : sameDay.length === 1 ? sameDay[0]! : null;
+      // …and this bank line must be the one closest to it of all that could claim it.
+      let exactLineId: string | null = null;
+      if (pick) {
+        const lineDate = new Date(`${pick.date}T00:00:00.000Z`).getTime();
+        const gap = (d: Date) => Math.abs(d.getTime() - lineDate);
+        const rivals = claimants.filter((c) => c.id !== t.id && toCents(c.amount) === cents && gap(c.postedOn) <= 5 * DAY);
+        if (rivals.every((c) => gap(c.postedOn) > gap(t.postedOn))) exactLineId = pick.lineId;
+      }
+
+      const rule = ctx.rules.find((r) => ruleFits(r, t)) ?? null;
+      const ruleAcct = rule ? ctx.byId.get(rule.accountId) : undefined;
+      out.set(t.id, {
+        matches,
+        rule: rule && ruleAcct ? { ruleId: rule.id, name: rule.name, accountId: ruleAcct.id, accountCode: ruleAcct.code, accountName: ruleAcct.name, vendorId: rule.vendorId, clientId: rule.clientId, departmentId: rule.departmentId } : null,
+        lastTime: await lastTimeFor(db, t, feed, ctx),
+        exactLineId,
+        client: depositClient(t, feed, rule?.clientId ?? null, ctx),
+      });
     }
   }
-  return {
-    matches,
-    rule: rule && ruleAcct ? { ruleId: rule.id, name: rule.name, accountId: ruleAcct.id, accountCode: ruleAcct.code, accountName: ruleAcct.name, vendorId: rule.vendorId, clientId: rule.clientId, departmentId: rule.departmentId } : null,
-    lastTime,
-    exactLineId,
-    client: await depositClient(db, t, rule?.clientId ?? null, ctx),
-  };
+  return out;
 }
+
+/** What the same payee was categorized as last time — asked once per feed and payee. */
+function lastTimeFor(db: Db, t: BankTransaction, feed: FeedWithLedger, ctx: SuggestCtx): Promise<BankTxnSuggestions['lastTime']> {
+  const key = payeeKey(t);
+  if (!key) return Promise.resolve(null);
+  const memo = `${feed.id}|${key}`;
+  let p = ctx.lastTime.get(memo);
+  if (!p) {
+    p = (async () => {
+      const tenantId = tenantIdForWrite();
+      const word = key.split(' ')[0]!;
+      const prior = await db.bankTransaction.findMany({
+        where: { tenantId, status: 'CATEGORIZED', journalEntryId: { not: null }, OR: [{ payee: { contains: word, mode: 'insensitive' } }, { description: { contains: word, mode: 'insensitive' } }] },
+        orderBy: { decidedAt: 'desc' },
+        take: 20,
+      });
+      const hit = prior.find((x) => payeeKey(x) === key);
+      if (!hit?.journalEntryId) return null;
+      const pfeed = await feedFor(db, hit.feedAccountId, ctx);
+      const line = await db.journalLine.findFirst({ where: { tenantId, entryId: hit.journalEntryId, accountId: { not: pfeed.ledgerAccountId } } });
+      const a = line ? ctx.byId.get(line.accountId) : undefined;
+      return a && a.id !== feed.ledgerAccountId ? { accountId: a.id, accountCode: a.code, accountName: a.name } : null;
+    })();
+    ctx.lastTime.set(memo, p);
+  }
+  return p;
+}
+
+const isUniqueViolation = (err: unknown) => err instanceof Prisma.PrismaClientKnownRequestError && (err.code === 'P2002' || err.code === 'P2034');
+const ALREADY = () => new HttpError(409, 'already_decided', 'This transaction was just decided by someone else.');
 
 /**
  * Decide many at once (For review → "Accept all suggested", "Match all
  * exact", or the selection excluded). Each is its own decision — an accepted
  * one posts its own entry, idempotent by its key — and anything already
  * decided, or with nothing to take, is skipped with why. Sending the same
- * list twice does nothing the second time.
+ * list twice (or two people at once) decides each only once. `onDone` is
+ * called as each one finishes, so its audit line is written even if a later
+ * one fails.
  */
-export async function bulkDecide(db: Db, action: BankBulkAction, ids: string[], userId: string | null): Promise<BankBulkResult> {
-  const rows = await db.bankTransaction.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: [...new Set(ids)] } }, orderBy: [{ postedOn: 'asc' }, { createdAt: 'asc' }] });
+export async function bulkDecide(db: Db, action: BankBulkAction, ids: string[], userId: string | null, onDone?: (id: string) => void): Promise<BankBulkResult> {
+  const unique = [...new Set(ids)];
+  const rows = await db.bankTransaction.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: unique } }, orderBy: [{ postedOn: 'asc' }, { createdAt: 'asc' }] });
   const found = new Set(rows.map((r) => r.id));
-  const result: BankBulkResult = { action, done: [], skipped: ids.filter((id) => !found.has(id)).map((id) => ({ id, reason: 'Not found.' })) };
+  const result: BankBulkResult = { action, done: [], skipped: unique.filter((id) => !found.has(id)).map((id) => ({ id, reason: 'Not found.' })) };
   const ctx = await suggestCtx(db);
+  const suggestions = action === 'EXCLUDE' ? new Map<string, BankTxnSuggestions>() : await suggestMany(db, rows, ctx);
+  const linesUsed = new Set<string>();
   for (const t of rows) {
     if (t.status !== 'UNMATCHED') {
       result.skipped.push({ id: t.id, reason: 'Already decided.' });
@@ -640,20 +732,28 @@ export async function bulkDecide(db: Db, action: BankBulkAction, ids: string[], 
         const done = await db.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'EXCLUDED', decidedById: userId, decidedAt: new Date() } });
         if (done.count === 0) throw new HttpError(409, 'already_decided', 'Already decided.');
       } else {
-        // Asked again for each, so one decided earlier in this batch is seen by the next.
-        const s = await suggest(db, t, ctx);
+        const s = suggestions.get(t.id) ?? NOTHING;
         if (action === 'MATCH') {
-          if (!s.exactLineId) {
-            result.skipped.push({ id: t.id, reason: s.matches.length ? 'More than one entry could be it — match it by hand.' : 'Nothing in the books to match.' });
+          if (!s.exactLineId || linesUsed.has(s.exactLineId)) {
+            result.skipped.push({
+              id: t.id,
+              reason: s.matches.length === 0 ? 'Nothing in the books to match.' : s.matches.length === 1 ? 'Another bank line is a closer match for that entry — match it by hand.' : 'More than one entry could be it — match it by hand.',
+            });
             continue;
           }
           await match(db, t.id, s.exactLineId, userId);
+          linesUsed.add(s.exactLineId);
         } else {
           if (s.matches.length > 0) {
             result.skipped.push({ id: t.id, reason: 'It’s already in the books — match it instead.' });
             continue;
           }
-          const feed = await feedFor(db, t, ctx);
+          if (s.client) {
+            // A client's payment goes through Receivables, so it pays their statements — not straight to a category.
+            result.skipped.push({ id: t.id, reason: `Looks like a payment from ${s.client.name} — record it as a payment.` });
+            continue;
+          }
+          const feed = await feedFor(db, t.feedAccountId, ctx);
           const pick = s.rule ? { accountId: s.rule.accountId, vendorId: s.rule.vendorId, clientId: s.rule.clientId, departmentId: s.rule.departmentId } : s.lastTime ? { accountId: s.lastTime.accountId } : null;
           if (!pick) {
             result.skipped.push({ id: t.id, reason: 'No suggestion to accept.' });
@@ -663,7 +763,12 @@ export async function bulkDecide(db: Db, action: BankBulkAction, ids: string[], 
         }
       }
       result.done.push(t.id);
+      onDone?.(t.id);
     } catch (err) {
+      if (isUniqueViolation(err)) {
+        result.skipped.push({ id: t.id, reason: 'Already decided.' });
+        continue;
+      }
       if (!(err instanceof HttpError)) throw err;
       result.skipped.push({ id: t.id, reason: err.message });
     }
@@ -675,6 +780,11 @@ function assertUndecided(t: BankTransaction): void {
   if (t.status !== 'UNMATCHED') throw new HttpError(409, 'already_decided', 'This transaction is already decided — undo it first.');
 }
 
+/**
+ * Categorize: claim the transaction, then post its entry, in one database
+ * transaction. A second decision on the same transaction (another tab, a
+ * rule on import) waits on the claim, finds it taken, and posts nothing.
+ */
 async function categorizeTxn(db: Db, t: BankTransaction, feed: BankFeedAccount, input: BankCategorizeInput, userId: string | null, ruleId: string | null = null): Promise<void> {
   assertUndecided(t);
   const category = await assertCategoryAccount(db, input.accountId);
@@ -682,32 +792,37 @@ async function categorizeTxn(db: Db, t: BankTransaction, feed: BankFeedAccount, 
   const amount = Math.abs(Number(t.amount));
   const moneyIn = Number(t.amount) > 0;
   const tenantId = tenantIdForWrite();
-  const prior = await db.journalEntry.count({ where: { tenantId, sourceType: 'BankTransaction', sourceId: t.id } });
   const memo = input.memo ?? (t.payee && !t.description.includes(t.payee) ? `${t.payee} — ${t.description}` : t.description);
   const dims = { vendorId: input.vendorId ?? null, clientId: input.clientId ?? null, departmentId: input.departmentId ?? null };
-  const entry = await postEntry(db, {
-    date: ymd(t.postedOn),
-    memo: memo.slice(0, 500),
-    source: 'BANK',
-    sourceType: 'BankTransaction',
-    sourceId: t.id,
-    sourceKey: prior === 0 ? `bank-txn:${t.id}` : `bank-txn:${t.id}#${prior + 1}`,
-    createdById: userId,
-    lines: moneyIn
-      ? [
-          { account: feed.ledgerAccountId, debit: amount, memo: t.description.slice(0, 300) },
-          { account: category.id, credit: amount, memo: input.memo ?? null, ...dims },
-        ]
-      : [
-          { account: category.id, debit: amount, memo: input.memo ?? null, ...dims },
-          { account: feed.ledgerAccountId, credit: amount, memo: t.description.slice(0, 300) },
-        ],
-  });
-  // Only if still undecided (a person and a rule racing on one transaction).
-  const done = await db.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'CATEGORIZED', journalEntryId: entry.id, ruleId, decidedById: userId, decidedAt: new Date() } });
-  if (done.count === 0) {
-    await voidEntry(db, entry.id, { reason: 'Decided twice at once', userId });
-    throw new HttpError(409, 'already_decided', 'This transaction was just decided by someone else.');
+  try {
+    await db.$transaction(async (tx) => {
+      const claimed = await tx.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'CATEGORIZED', ruleId, decidedById: userId, decidedAt: new Date() } });
+      if (claimed.count === 0) throw ALREADY();
+      // An earlier categorization undone in a closed month still stands (reversed) under its key: this one takes the next.
+      const prior = await tx.journalEntry.count({ where: { tenantId, sourceType: 'BankTransaction', sourceId: t.id } });
+      const entry = await postEntry(tx, {
+        date: ymd(t.postedOn),
+        memo: memo.slice(0, 500),
+        source: 'BANK',
+        sourceType: 'BankTransaction',
+        sourceId: t.id,
+        sourceKey: prior === 0 ? `bank-txn:${t.id}` : `bank-txn:${t.id}#${prior + 1}`,
+        createdById: userId,
+        lines: moneyIn
+          ? [
+              { account: feed.ledgerAccountId, debit: amount, memo: t.description.slice(0, 300) },
+              { account: category.id, credit: amount, memo: input.memo ?? null, ...dims },
+            ]
+          : [
+              { account: category.id, debit: amount, memo: input.memo ?? null, ...dims },
+              { account: feed.ledgerAccountId, credit: amount, memo: t.description.slice(0, 300) },
+            ],
+      });
+      await tx.bankTransaction.update({ where: { id: t.id }, data: { journalEntryId: entry.id } });
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) throw ALREADY();
+    throw err;
   }
 }
 
@@ -718,31 +833,55 @@ export async function categorize(db: Db, id: string, input: BankCategorizeInput,
   return transactionView(db, id);
 }
 
+/** The checks a match makes, and the match itself — under a lock on the line, so two bank lines can't both take it. */
+export async function matchTxnTo(tx: Prisma.TransactionClient, t: BankTransaction, ledgerAccountId: string, lineId: string, userId: string | null): Promise<void> {
+  const tenantId = tenantIdForWrite();
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`books-bank-line:${lineId}`}, 0))`;
+  const line = await tx.journalLine.findFirst({ where: { id: lineId, tenantId }, include: { entry: { select: { status: true } } } });
+  if (!line || line.accountId !== ledgerAccountId) throw new HttpError(400, 'wrong_line', 'That line isn’t on this account.');
+  if (line.entry.status !== 'POSTED') throw new HttpError(409, 'line_void', 'That entry is void.');
+  if (toCents(line.debit) - toCents(line.credit) !== toCents(t.amount)) throw new HttpError(400, 'amount_mismatch', 'The amounts differ — categorize it, or match the right line.');
+  const already = await tx.bankTransaction.findFirst({ where: { tenantId, matchedLineId: line.id, status: 'MATCHED' } });
+  if (already) throw new HttpError(409, 'line_taken', 'Another bank transaction is already matched to that line.');
+  const done = await tx.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'MATCHED', matchedLineId: line.id, decidedById: userId, decidedAt: new Date() } });
+  if (done.count === 0) throw ALREADY();
+}
+
 export async function match(db: Db, id: string, lineId: string, userId: string | null): Promise<BankTxnView> {
   const t = await txnOr404(db, id);
   assertUndecided(t);
   const feed = await feedOr404(db, t.feedAccountId);
-  const tenantId = tenantIdForWrite();
-  const line = await db.journalLine.findFirst({ where: { id: lineId, tenantId }, include: { entry: { select: { status: true } } } });
-  if (!line || line.accountId !== feed.ledgerAccountId) throw new HttpError(400, 'wrong_line', 'That line isn’t on this account.');
-  if (line.entry.status !== 'POSTED') throw new HttpError(409, 'line_void', 'That entry is void.');
-  if (toCents(line.debit) - toCents(line.credit) !== toCents(t.amount)) throw new HttpError(400, 'amount_mismatch', 'The amounts differ — categorize it, or match the right line.');
-  const already = await db.bankTransaction.findFirst({ where: { tenantId, matchedLineId: line.id, status: 'MATCHED' } });
-  if (already) throw new HttpError(409, 'line_taken', 'Another bank transaction is already matched to that line.');
-  const done = await db.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'MATCHED', matchedLineId: line.id, decidedById: userId, decidedAt: new Date() } });
-  if (done.count === 0) throw new HttpError(409, 'already_decided', 'This transaction was just decided by someone else.');
+  await db.$transaction((tx) => matchTxnTo(tx, t, feed.ledgerAccountId, lineId, userId));
   return transactionView(db, id);
 }
 
 export async function exclude(db: Db, id: string, userId: string | null): Promise<BankTxnView> {
   const t = await txnOr404(db, id);
   assertUndecided(t);
-  await db.bankTransaction.update({ where: { id: t.id }, data: { status: 'EXCLUDED', decidedById: userId, decidedAt: new Date() } });
+  const done = await db.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'EXCLUDED', decidedById: userId, decidedAt: new Date() } });
+  if (done.count === 0) throw ALREADY();
   return transactionView(db, id);
 }
 
-/** Back to For review. A categorization's entry is voided (or, its month closed, reversed). */
-export async function undo(db: Db, id: string, userId: string | null): Promise<BankTxnView> {
+/** The client payment a matched bank line was matched to, if it was one. */
+async function matchedPayment(db: Db, t: BankTransaction): Promise<{ id: string; clientName: string; voided: boolean } | null> {
+  if (t.status !== 'MATCHED' || !t.matchedLineId) return null;
+  const line = await db.journalLine.findFirst({ where: { id: t.matchedLineId, tenantId: tenantIdForWrite() }, include: { entry: { select: { sourceType: true, sourceId: true } } } });
+  if (line?.entry.sourceType !== 'ClientPayment' || !line.entry.sourceId) return null;
+  const p = await db.clientPayment.findFirst({ where: { id: line.entry.sourceId, tenantId: tenantIdForWrite() }, select: { id: true, voidedAt: true, clientId: true } });
+  if (!p) return null;
+  const c = await db.client.findFirst({ where: { id: p.clientId, tenantId: tenantIdForWrite() }, select: { name: true } });
+  return { id: p.id, clientName: c?.name ?? 'the client', voided: !!p.voidedAt };
+}
+
+/**
+ * Back to For review. A categorization's entry is voided (or, its month
+ * closed, reversed). A match to a client payment: with `undoPayment` the
+ * payment is taken back too (its statements open again, the cash off the
+ * books) — "Record as payment", undone whole. Without it only the match is
+ * undone and the payment stands; the view says so.
+ */
+export async function undo(db: Db, id: string, userId: string | null, opts: { undoPayment?: boolean; reason?: string } = {}): Promise<BankTxnView & { paymentKept?: { id: string; clientName: string } | null; paymentUndone?: boolean }> {
   const t = await txnOr404(db, id);
   if (t.status === 'UNMATCHED') throw new HttpError(409, 'not_decided', 'Nothing to undo.');
   if (t.matchedLineId || t.journalEntryId) {
@@ -750,12 +889,65 @@ export async function undo(db: Db, id: string, userId: string | null): Promise<B
     const cleared = await db.journalLine.count({ where: { id: { in: lineIds }, clearedAt: { not: null } } });
     if (cleared > 0) throw new HttpError(409, 'reconciled', 'This is in a completed reconciliation. Undo that reconciliation first.');
   }
-  if (t.status === 'CATEGORIZED' && t.journalEntryId) {
-    const entry = await db.journalEntry.findFirst({ where: { id: t.journalEntryId, tenantId: tenantIdForWrite() } });
-    if (entry && entry.status === 'POSTED') await voidEntry(db, entry.id, { reason: 'Bank transaction sent back for review', userId });
+  const payment = await matchedPayment(db, t);
+  if (payment && !payment.voided && opts.undoPayment) {
+    // Taking the payment back returns this deposit to review (posting/receivables does both).
+    await undoClientPayment(db, payment.id, { reason: opts.reason ?? 'Recorded from a bank deposit by mistake', userId });
+    const view = await transactionView(db, id);
+    return { ...view, paymentUndone: true, paymentKept: null };
   }
-  await db.bankTransaction.update({ where: { id: t.id }, data: { status: 'UNMATCHED', matchedLineId: null, journalEntryId: null, ruleId: null, decidedById: null, decidedAt: null } });
-  return transactionView(db, id);
+  await db.$transaction(async (tx) => {
+    const back = await tx.bankTransaction.updateMany({
+      where: { id: t.id, status: t.status },
+      data: { status: 'UNMATCHED', matchedLineId: null, journalEntryId: null, ruleId: null, decidedById: null, decidedAt: null },
+    });
+    if (back.count === 0) throw new HttpError(409, 'not_decided', 'Someone just undid this.');
+    if (t.status === 'CATEGORIZED' && t.journalEntryId) {
+      const entry = await tx.journalEntry.findFirst({ where: { id: t.journalEntryId, tenantId: tenantIdForWrite() } });
+      if (entry && entry.status === 'POSTED') await voidEntry(tx, entry.id, { reason: 'Bank transaction sent back for review', userId });
+    }
+  });
+  const view = await transactionView(db, id);
+  return { ...view, paymentKept: payment && !payment.voided ? { id: payment.id, clientName: payment.clientName } : null };
+}
+
+/**
+ * Record a client's payment from a deposit (bank page → "Payment from …"):
+ * the deposit is claimed, the payment recorded into that bank's account on
+ * the deposit's date, and the deposit matched to the payment's line — all in
+ * one database transaction. Two people doing it at once: one payment, the
+ * other told the deposit is already decided.
+ */
+export async function paymentFromDeposit(
+  db: Db,
+  bankTransactionId: string,
+  input: Omit<RecordPaymentInput, 'receivedOn' | 'depositAccountId'> & { depositAccountId?: string | null },
+): Promise<{ paymentId: string; transaction: BankTxnView }> {
+  const tenantId = tenantIdForWrite();
+  const t = await db.bankTransaction.findFirst({ where: { id: bankTransactionId, tenantId } });
+  if (!t) throw new HttpError(404, 'bank_transaction_not_found', 'Bank transaction not found.');
+  if (t.status !== 'UNMATCHED') throw new HttpError(409, 'already_decided', 'That deposit is already decided — undo it first.');
+  const feed = await feedOr404(db, t.feedAccountId);
+  if (feed.ledger.subtype !== 'BANK') throw new HttpError(400, 'invalid_deposit_account', 'A card’s credit isn’t a client payment — categorize it instead.');
+  if (toCents(t.amount) <= 0 || toCents(t.amount) !== Math.round(input.amount * 100)) throw new HttpError(400, 'amount_mismatch', 'A payment recorded from a deposit is the deposit’s amount.');
+  if (input.depositAccountId && input.depositAccountId !== feed.ledgerAccountId) throw new HttpError(400, 'wrong_deposit_account', 'It was deposited to that bank account — record it there.');
+  const ledgerAccountId = feed.ledgerAccountId;
+  try {
+    const paymentId = await db.$transaction(async (tx) => {
+      // Claim the deposit first; a second request waits here and finds it decided.
+      const claimed = await tx.bankTransaction.updateMany({ where: { id: t.id, status: 'UNMATCHED' }, data: { status: 'MATCHED', decidedById: input.userId, decidedAt: new Date() } });
+      if (claimed.count === 0) throw new HttpError(409, 'already_decided', 'That deposit was just decided by someone else.');
+      const payment = await recordClientPayment(tx, { ...input, receivedOn: ymd(t.postedOn), depositAccountId: ledgerAccountId });
+      const line = payment.journalEntryId ? await tx.journalLine.findFirst({ where: { tenantId, entryId: payment.journalEntryId, accountId: ledgerAccountId } }) : null;
+      if (!line) throw new HttpError(500, 'payment_line_missing', 'The payment posted without a line on that bank account.');
+      await tx.bankTransaction.update({ where: { id: t.id }, data: { matchedLineId: line.id } });
+      return payment.id;
+    });
+    return { paymentId, transaction: await transactionView(db, t.id) };
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new HttpError(409, 'already_decided', 'That deposit was just decided by someone else.');
+    throw err;
+  }
 }
 
 /* ---- Plaid ------------------------------------------------------------------ */

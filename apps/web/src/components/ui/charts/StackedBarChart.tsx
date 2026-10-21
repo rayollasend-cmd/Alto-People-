@@ -63,7 +63,7 @@ export function StackedBarChart({
     <div className="flex w-full flex-col" style={{ height: h }}>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart
+          <BarChart accessibilityLayer={false}
             data={data}
             layout={horizontal ? 'vertical' : 'horizontal'}
             margin={{ top: 12, right: 12, bottom: xLabel ? 14 : 0, left: yLabel ? 8 : 0 }}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { hapticConfirm } from '@/lib/haptics';
 import {
@@ -305,10 +305,15 @@ export function ApprovalsHome() {
   // work (in desk order, wrapping) instead of leaving an empty panel —
   // only after it had something in it, so a link to an already-decided
   // item doesn't bounce the reader somewhere they didn't ask for.
+  // A decision still on its way to the server doesn't count: the row leaves
+  // the list before the answer, and a refusal (over balance, already taken)
+  // puts it back — the queue is only clear once that's settled.
+  const decisionsInFlight = useIsMutating();
   const hadWorkRef = useRef<{ key: QueueKey | null; had: boolean }>({ key: null, had: false });
   useEffect(() => {
     if (hadWorkRef.current.key !== picked) hadWorkRef.current = { key: picked, had: false };
     if (!picked || typeof openCount !== 'number') return;
+    if (decisionsInFlight > 0) return;
     if (openCount > 0) {
       hadWorkRef.current.had = true;
       return;
@@ -329,7 +334,7 @@ export function ApprovalsHome() {
     hadWorkRef.current = { key: next?.key ?? picked, had: false };
     // queues is rebuilt every render from the counts already in the deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picked, openCount]);
+  }, [picked, openCount, decisionsInFlight]);
 
   const queue = (
     <div className="space-y-3 animate-enter">

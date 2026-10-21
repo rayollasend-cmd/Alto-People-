@@ -46,6 +46,9 @@ vi.mock('@/lib/books/bankApi', () => api);
 const recv = vi.hoisted(() => ({ getReceivablesAging: vi.fn(), recordClientPayment: vi.fn(), listDepositAccounts: vi.fn() }));
 vi.mock('@/lib/books/receivablesApi', async (orig) => ({ ...(await orig<typeof import('@/lib/books/receivablesApi')>()), ...recv }));
 
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
+vi.mock('@/components/ui/Toaster', () => ({ toast }));
+
 type Sugg = Awaited<ReturnType<typeof import('@/lib/books/bankApi').getTxnSuggestions>>;
 /** The page asks for its suggestions in one call: answer it from a per-transaction function. */
 function suggest(fn: (id: string) => Sugg) {
@@ -220,7 +223,7 @@ describe('reviewing an account’s transactions', () => {
     suggest((id) => (id === 't1' ? { ...NONE, lastTime: { accountId: FUEL, accountCode: '6200', accountName: 'Vehicle fuel' } } : NONE));
     api.categorizeTxn.mockResolvedValue({ transaction: { ...rows[0]!, status: 'CATEGORIZED' } });
     api.excludeTxn.mockResolvedValue({ transaction: { ...rows[1]!, status: 'EXCLUDED' } });
-    api.undoTxn.mockResolvedValue({ transaction: rows[1]! });
+    api.undoTxn.mockResolvedValue({ transaction: rows[1]!, paymentKept: null, paymentUndone: false });
     const user = userEvent.setup();
     renderAccount();
     expect(await screen.findByText(/Same as last time → 6200 Vehicle fuel/)).toBeInTheDocument();
@@ -231,7 +234,7 @@ describe('reviewing an account’s transactions', () => {
     await user.keyboard('x');
     await waitFor(() => expect(api.excludeTxn).toHaveBeenCalledWith('t2'));
     await user.keyboard('u');
-    await waitFor(() => expect(api.undoTxn).toHaveBeenCalledWith('t2'));
+    await waitFor(() => expect(api.undoTxn).toHaveBeenCalledWith('t2', {}));
   });
 
   it('records a deposit as the client’s payment, prefilled, and matches it', async () => {
@@ -261,18 +264,70 @@ describe('reviewing an account’s transactions', () => {
     );
   });
 
+  it('a key never takes an ambiguous match — the row opens its choice instead', async () => {
+    const rows = [txn({ id: 't1', amount: 1000, description: 'TRANSFER IN' })];
+    api.listBankTransactions.mockResolvedValue({ transactions: rows, counts: { UNMATCHED: 1, MATCHED: 0, CATEGORIZED: 0, EXCLUDED: 0 } });
+    const line = (n: number, day: string, apart: number) => ({ lineId: `l${n}`, entryId: `e${n}`, entryNumber: n, date: day, memo: null, source: 'MANUAL', amount: 1000, daysApart: apart });
+    suggest(() => ({ ...NONE, matches: [line(1, '2026-10-01', 1), line(2, '2026-10-03', 1)], exactLineId: null }));
+    api.matchTxn.mockResolvedValue({ transaction: { ...rows[0]!, status: 'MATCHED' } });
+    const user = userEvent.setup();
+    renderAccount();
+    expect(await screen.findByRole('button', { name: 'Choose (2)' })).toBeInTheDocument();
+    await user.keyboard('j');
+    await user.keyboard('m');
+    expect(api.matchTxn).not.toHaveBeenCalled();
+    const list = await screen.findByRole('list', { name: /Entries that could be TRANSFER IN/ });
+    await user.click(within(list).getAllByRole('button', { name: 'Match this' })[1]!);
+    await waitFor(() => expect(api.matchTxn).toHaveBeenCalledWith('t1', 'l2'));
+  });
+
+  it('a deposit with no likely payer preselects nobody; a payer owing nothing is still offered', async () => {
+    const deposit = txn({ id: 't1', amount: 300, postedOn: '2026-10-03', description: 'ACH CREDIT 4471' });
+    api.listBankTransactions.mockResolvedValue({ transactions: [deposit], counts: { UNMATCHED: 1, MATCHED: 0, CATEGORIZED: 0, EXCLUDED: 0 } });
+    suggest(() => NONE);
+    recv.getReceivablesAging.mockResolvedValue({
+      asOf: '2026-10-20',
+      rows: [{ clientId: 'c1', clientName: 'Coastal Resort', buckets: { current: 0, days1to30: 4200, days31to60: 0, days61to90: 0, over90: 0 }, open: 4200, unapplied: 0, statements: 1, oldestDaysPastDue: 8 }],
+      statements: [],
+      totals: { buckets: { current: 0, days1to30: 4200, days31to60: 0, days61to90: 0, over90: 0 }, open: 4200 },
+    });
+    recv.listDepositAccounts.mockResolvedValue({ accounts: [] });
+    const user = userEvent.setup();
+    renderAccount();
+    await user.click(await screen.findByRole('button', { name: /More for ACH CREDIT 4471/ }));
+    await user.click(await screen.findByRole('menuitem', { name: /Record as a client payment/ }));
+    const dialog = await screen.findByRole('dialog');
+    // Not the biggest debtor by default: a choice.
+    expect(within(dialog).getByLabelText('Client')).toHaveValue('');
+    expect(within(dialog).getByRole('button', { name: /Record \$300/ })).toBeDisabled();
+  });
+
+  it('undoing a match to a client payment says the payment stands — and offers to take it back', async () => {
+    const done = txn({ id: 't9', amount: 900, status: 'MATCHED', matched: { lineId: 'l9', entryId: 'e9', entryNumber: 41, memo: 'Payment from Harbor Grill', date: '2026-10-08' } });
+    api.listBankTransactions.mockImplementation(async (_id: string, q: { status?: string }) =>
+      q.status === 'MATCHED' ? { transactions: [done], counts: { UNMATCHED: 0, MATCHED: 1, CATEGORIZED: 0, EXCLUDED: 0 } } : { transactions: [], counts: { UNMATCHED: 0, MATCHED: 1, CATEGORIZED: 0, EXCLUDED: 0 } },
+    );
+    api.undoTxn.mockResolvedValue({ transaction: { ...done, status: 'UNMATCHED', matched: null }, paymentKept: { id: 'p9', clientName: 'Harbor Grill' }, paymentUndone: false });
+    const user = userEvent.setup();
+    renderAccount('FINANCE_ACCOUNTANT', `/books/bank/${FEED}?tab=matched`);
+    await user.click(await screen.findByRole('button', { name: /Undo/ }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/The payment from Harbor Grill is still recorded/), { action: expect.objectContaining({ label: 'Undo the payment too' }) }),
+    );
+  });
+
   it('a decided transaction can be undone', async () => {
     const done = txn({ id: 't9', status: 'CATEGORIZED', category: { accountId: FUEL, code: '6200', name: 'Vehicle fuel', transfer: false }, ruleName: 'Fuel', journalEntryId: 'e9' });
     api.listBankTransactions.mockImplementation(async (_id: string, q: { status?: string }) =>
       q.status === 'CATEGORIZED' ? { transactions: [done], counts: { UNMATCHED: 0, MATCHED: 0, CATEGORIZED: 1, EXCLUDED: 0 } } : { transactions: [], counts: { UNMATCHED: 0, MATCHED: 0, CATEGORIZED: 1, EXCLUDED: 0 } },
     );
-    api.undoTxn.mockResolvedValue({ transaction: { ...done, status: 'UNMATCHED' } });
+    api.undoTxn.mockResolvedValue({ transaction: { ...done, status: 'UNMATCHED' }, paymentKept: null, paymentUndone: false });
     const user = userEvent.setup();
     renderAccount('FINANCE_ACCOUNTANT', `/books/bank/${FEED}?tab=categorized`);
     expect(await screen.findByText(/6200 Vehicle fuel/)).toBeInTheDocument();
     expect(screen.getByText('Rule: Fuel')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Undo/ }));
-    await waitFor(() => expect(api.undoTxn).toHaveBeenCalledWith('t9'));
+    await waitFor(() => expect(api.undoTxn).toHaveBeenCalledWith('t9', {}));
   });
 });
 

@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays, Clock, Eye, Gauge, MessageSquare, Palmtree, Smartphone, Ticket } from 'lucide-react';
 import type { DirectoryEntry, TimeEntry, TimeOffEntitlement, TimeOffRequest } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
+import { personRecordTabs, type PersonTabKey } from '@/lib/personTabs';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
 import { Avatar, Badge, Button, Card, CardContent, EmptyState, Label, MetricCard, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
 import { StateCertificateCard } from '@/components/payroll/StateCertificateCard';
@@ -50,7 +51,7 @@ import { ProtectedLeaveFlag } from '../leave/ProtectedLeaveFlag';
  * existing per-person endpoints and hide themselves from roles the API
  * would turn away.
  */
-type TabKey = 'profile' | 'employment' | 'pay' | 'time' | 'timeoff' | 'performance' | 'cases' | 'documents' | 'thread';
+type TabKey = PersonTabKey;
 
 const TIME_WINDOW_DAYS = 30;
 
@@ -90,16 +91,8 @@ export function PersonRecord() {
   const timeOffRequests = usePersonTimeOffRequests(associateId, canSeeTimeOff && Boolean(a));
   const cases = usePersonCases(associateId, canSeeCases && Boolean(a));
 
-  const visibleTabs = useMemo(() => {
-    const keys: TabKey[] = ['profile', 'employment'];
-    if (canSeeComp || canSeePayments) keys.push('pay');
-    if (canSeeTime) keys.push('time');
-    if (canSeeTimeOff) keys.push('timeoff');
-    if (canSeePerformance) keys.push('performance');
-    if (canSeeCases) keys.push('cases');
-    keys.push('documents', 'thread');
-    return keys;
-  }, [canSeeComp, canSeePayments, canSeeTime, canSeeTimeOff, canSeePerformance, canSeeCases]);
+  // The same rule ⌘K's person shortcuts use (lib/personTabs).
+  const visibleTabs = useMemo(() => personRecordTabs(can, moduleOn), [can, moduleOn]);
 
   const tabParam = searchParams.get('tab');
   const activeTab: TabKey = (visibleTabs as readonly string[]).includes(tabParam ?? '') ? (tabParam as TabKey) : 'profile';

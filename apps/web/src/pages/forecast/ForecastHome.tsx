@@ -22,7 +22,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
-import { DetailsTable, PortalTooltip, SERIES } from '@/pages/portal/portalCharts';
+import { DetailsTable, PALETTE, ChartTooltipContent as PortalTooltip, TICK as KIT_TICK } from '@/components/ui/charts';
 
 /**
  * Brief 3-4 — the labor-demand forecast.
@@ -41,9 +41,11 @@ const SIGNAL_KINDS: ReadonlyArray<{ value: ForecastSignalKind; label: string }> 
 ];
 const kindLabel = (k: ForecastSignalKind) => SIGNAL_KINDS.find((s) => s.value === k)?.label ?? k;
 
-const GRID = 'rgb(var(--color-navy-secondary))';
-const TICK = { fill: 'rgb(var(--color-silver) / 0.75)', fontSize: 10 } as const;
-const REF = 'rgb(var(--color-silver) / 0.55)';
+// The kit's grid, ticks and reference color — one look across every chart.
+const GRID = PALETTE.grid;
+const TICK = { ...KIT_TICK, fontSize: 10 } as const;
+const REF = PALETTE.ref;
+/** The forecast's uncertainty band: the primary hue, faint. */
 const BAND = 'rgb(var(--color-chart-1) / 0.18)';
 
 const hours = (n: number | null | undefined) => (n === null || n === undefined ? '—' : `${Math.round(n).toLocaleString()} h`);
@@ -184,8 +186,8 @@ function ForecastChart({ weeks, siteName }: { weeks: ForecastWeek[]; siteName: s
     band: w.actualHours === null ? [w.p10, w.p90] : null,
   }));
   const series = {
-    actual: { name: 'Verified hours', color: SERIES.secondary },
-    p50: { name: 'Forecast', color: SERIES.primary },
+    actual: { name: 'Verified hours', color: PALETTE.secondary },
+    p50: { name: 'Forecast', color: PALETTE.primary },
   };
   return (
     <Card>
@@ -202,17 +204,17 @@ function ForecastChart({ weeks, siteName }: { weeks: ForecastWeek[]; siteName: s
               <YAxis tick={TICK} axisLine={false} tickLine={false} width={44} tickFormatter={(v: number) => `${Math.round(v)}h`} />
               <ChartTooltip cursor={{ stroke: REF, strokeWidth: 1 }} content={<PortalTooltip series={series} format={(v) => `${Math.round(v).toLocaleString()} h`} />} />
               <Area type="monotone" dataKey="band" stroke="none" fill={BAND} isAnimationActive={false} connectNulls={false} legendType="none" />
-              <Line type="monotone" dataKey="actual" stroke={SERIES.secondary} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />
-              <Line type="monotone" dataKey="p50" stroke={SERIES.primary} strokeWidth={2} strokeDasharray="5 3" dot={false} isAnimationActive={false} connectNulls={false} />
+              <Line type="monotone" dataKey="actual" stroke={PALETTE.secondary} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />
+              <Line type="monotone" dataKey="p50" stroke={PALETTE.primary} strokeWidth={2} strokeDasharray="5 3" dot={false} isAnimationActive={false} connectNulls={false} />
               {anchor && (
-                <ReferenceLine x={weekLabel(anchor)} stroke={REF} strokeDasharray="4 3" label={{ value: 'Now', position: 'insideTopLeft', fill: 'rgb(var(--color-silver) / 0.8)', fontSize: 10 }} />
+                <ReferenceLine x={weekLabel(anchor)} stroke={REF} strokeDasharray="4 3" label={{ value: 'Now', position: 'insideTopLeft', fill: KIT_TICK.fill, fontSize: 10 }} />
               )}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
         <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-silver/80">
-          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: SERIES.secondary }} />Verified hours</li>
-          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: SERIES.primary }} />Forecast</li>
+          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: PALETTE.secondary }} />Verified hours</li>
+          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: PALETTE.primary }} />Forecast</li>
           <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: BAND }} />Band (10th to 90th)</li>
         </ul>
         <DetailsTable

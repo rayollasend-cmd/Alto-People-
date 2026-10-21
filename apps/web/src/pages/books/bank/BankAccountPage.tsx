@@ -25,7 +25,7 @@ import {
   undoTxn,
   updateBankRule,
 } from '@/lib/books/bankApi';
-import { RECEIVABLES_KEY, getReceivablesAging } from '@/lib/books/receivablesApi';
+import { RECEIVABLES_KEY, getReceivablesAging, undoClientPayment } from '@/lib/books/receivablesApi';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { isTypingTarget, useListKeyboard } from '@/lib/shortcuts';
 import { cn } from '@/lib/cn';
@@ -213,25 +213,16 @@ function TxnFacts({ t }: { t: BankTxnView }) {
   );
 }
 
-function useTxnMutation<T>(fn: (v: T) => Promise<unknown>, done: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: fn,
-    onSuccess: () => {
-      toast.success(done);
-      void qc.invalidateQueries({ queryKey: BANK_KEY });
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'That didn’t go through.'),
-  });
-}
-
-/** The category a row would take on "Accept": the rule's, else last time's — none while there's a match in the books. */
+/** The category a row would take on "Accept": the rule's, else last time's — none while there's a match in the books, or it looks like a client's payment. */
 function acceptable(s: BankTxnSuggestions | undefined): BankCategorizeInput | null {
-  if (!s || s.matches.length > 0) return null;
+  // A deposit that looks like a client's payment goes through Receivables (the server's bulk Accept skips it too).
+  if (!s || s.matches.length > 0 || s.client) return null;
   if (s.rule) return { accountId: s.rule.accountId, vendorId: s.rule.vendorId, clientId: s.rule.clientId, departmentId: s.rule.departmentId };
   if (s.lastTime) return { accountId: s.lastTime.accountId };
   return null;
 }
+
+type UndoBatch = { ids: string[]; payment?: boolean };
 
 type RowAction = { id: string; kind: 'categorize'; input: BankCategorizeInput } | { id: string; kind: 'match'; lineId: string } | { id: string; kind: 'exclude' };
 
@@ -244,8 +235,10 @@ type RowAction = { id: string; kind: 'categorize'; input: BankCategorizeInput } 
 function ReviewList({ rows, feed, manage }: { rows: BankTxnView[]; feed: BankFeedAccountView; manage: boolean }) {
   const qc = useQueryClient();
   const ids = rows.map((r) => r.id);
+  // One request per change of the rows shown: a decision drops its row, which re-asks once — the refresh after a
+  // decision leaves this query alone rather than asking a second time.
   const batch = useQuery({
-    queryKey: [...BANK_KEY, 'suggest', feed.id, ids],
+    queryKey: [...BANK_KEY, 'suggest', feed.id, 'UNMATCHED', ids],
     queryFn: () => getTxnSuggestionsBatch(ids),
     enabled: ids.length > 0,
     staleTime: 60_000,
@@ -254,38 +247,53 @@ function ReviewList({ rows, feed, manage }: { rows: BankTxnView[]; feed: BankFee
   const sugg = batch.data?.suggestions ?? {};
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [paying, setPaying] = useState<BankTxnView | null>(null);
-  // The last decisions, newest last — `u` (or the toast) takes them back.
-  const undoStack = useRef<string[][]>([]);
+  // The last decisions, newest last — `u` (or the toast) takes them back. A payment recorded from a deposit
+  // comes back whole: the payment undone and the deposit back in review.
+  const undoStack = useRef<UndoBatch[]>([]);
   const live = new Set(ids);
   const picked = ids.filter((id) => selected.has(id));
   const scope = picked.length > 0 ? rows.filter((r) => selected.has(r.id)) : rows;
   const toAccept = scope.filter((r) => acceptable(sugg[r.id]));
   const toMatch = scope.filter((r) => sugg[r.id]?.exactLineId);
 
-  const refresh = () => void qc.invalidateQueries({ queryKey: BANK_KEY });
+  const refresh = () => void qc.invalidateQueries({ queryKey: BANK_KEY, predicate: (q) => q.queryKey[BANK_KEY.length] !== 'suggest' });
   const undoLast = useMutation({
-    mutationFn: async (batchIds: string[]) => {
-      for (const id of batchIds) await undoTxn(id);
-      return batchIds.length;
+    mutationFn: async (b: UndoBatch) => {
+      const kept: string[] = [];
+      for (let i = 0; i < b.ids.length; i++) {
+        try {
+          const r = await undoTxn(b.ids[i]!, b.payment ? { undoPayment: true } : {});
+          if (r.paymentKept) kept.push(r.paymentKept.clientName);
+        } catch (err) {
+          // What wasn't undone stays on the stack — `u` tries the rest again.
+          const rest = b.ids.slice(i);
+          undoStack.current.push({ ...b, ids: rest });
+          throw Object.assign(err instanceof Error ? err : new Error('Couldn’t undo it.'), { done: i, left: rest.length });
+        }
+      }
+      return { n: b.ids.length, payment: !!b.payment, kept };
     },
-    onSuccess: (n) => {
-      toast.success(n === 1 ? 'Back in For review.' : `${n} back in For review.`);
+    onSuccess: ({ n, payment, kept }) => {
+      const base = payment ? 'Payment taken back; the deposit is back in For review.' : n === 1 ? 'Back in For review.' : `${n} back in For review.`;
+      toast.success(kept.length ? `${base} The payment from ${kept[0]} is still recorded — undo it in Receivables if it was wrong.` : base);
       refresh();
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'Couldn’t undo it.');
+      const left = (err as { left?: number }).left;
+      toast.error(`${err instanceof ApiError ? err.message : 'Couldn’t undo it.'}${left ? ` ${left} still to undo — press u to try again.` : ''}`);
       refresh();
     },
   });
-  const remember = (decided: string[], message: string) => {
+  const remember = (decided: string[], message: string, payment = false) => {
     if (decided.length === 0) return;
-    undoStack.current.push(decided);
+    const b: UndoBatch = { ids: decided, payment };
+    undoStack.current.push(b);
     if (undoStack.current.length > 20) undoStack.current.shift();
-    toast.success(message, { action: { label: 'Undo', onClick: () => takeBack(decided) } });
+    toast.success(message, { action: { label: 'Undo', onClick: () => takeBack(b) } });
   };
-  const takeBack = (decided: string[]) => {
-    undoStack.current = undoStack.current.filter((b) => b !== decided);
-    undoLast.mutate(decided);
+  const takeBack = (b: UndoBatch) => {
+    undoStack.current = undoStack.current.filter((x) => x !== b);
+    undoLast.mutate(b);
   };
 
   const act = useMutation({
@@ -316,14 +324,16 @@ function ReviewList({ rows, feed, manage }: { rows: BankTxnView[]; feed: BankFee
     const at = ids.indexOf(id);
     return ids[at + 1] ?? ids[at - 1] ?? null;
   };
-  const primary = (t: BankTxnView) => {
+  // A key only takes a match that's unambiguous; otherwise the row opens its choice.
+  const [choosing, setChoosing] = useState<string | null>(null);
+  const primary = (t: BankTxnView): 'done' | 'choose' | 'none' => {
     const s = sugg[t.id];
-    const best = s?.matches[0];
     const cat = acceptable(s);
-    if (best) act.mutate({ id: t.id, kind: 'match', lineId: best.lineId });
+    if (s?.exactLineId) act.mutate({ id: t.id, kind: 'match', lineId: s.exactLineId });
+    else if (s && s.matches.length > 0) return 'choose';
     else if (cat) act.mutate({ id: t.id, kind: 'categorize', input: cat });
-    else return false;
-    return true;
+    else return 'none';
+    return 'done';
   };
   const kb = useListKeyboard({
     items: rows,
@@ -331,8 +341,12 @@ function ReviewList({ rows, feed, manage }: { rows: BankTxnView[]; feed: BankFee
     enabled: manage && !paying,
     onApprove: (t) => {
       if (busyId || busyAll) return;
-      if (primary(t)) kb.setCursor(after(t.id));
-      else toast.info('Nothing suggested for this one — pick a category.');
+      const r = primary(t);
+      if (r === 'done') kb.setCursor(after(t.id));
+      else if (r === 'choose') {
+        setChoosing(t.id);
+        toast.info('More than one entry could be it — pick the right one.');
+      } else toast.info('Nothing suggested for this one — pick a category.');
     },
   });
   useEffect(() => {
@@ -350,10 +364,14 @@ function ReviewList({ rows, feed, manage }: { rows: BankTxnView[]; feed: BankFee
       const t = rows.find((r) => r.id === kb.cursor);
       if (!t || busyId || busyAll) return;
       if (e.key === 'm') {
-        const best = sugg[t.id]?.matches[0];
+        const s = sugg[t.id];
         e.preventDefault();
-        if (!best) return void toast.info('Nothing in the books to match it to.');
-        act.mutate({ id: t.id, kind: 'match', lineId: best.lineId });
+        if (!s?.matches.length) return void toast.info('Nothing in the books to match it to.');
+        if (!s.exactLineId) {
+          setChoosing(t.id);
+          return void toast.info('More than one entry could be it — pick the right one.');
+        }
+        act.mutate({ id: t.id, kind: 'match', lineId: s.exactLineId });
         kb.setCursor(after(t.id));
       } else if (e.key === 'x') {
         e.preventDefault();
@@ -428,11 +446,13 @@ function ReviewList({ rows, feed, manage }: { rows: BankTxnView[]; feed: BankFee
             onSelect={(on) => toggle(t.id, on)}
             onAct={(a) => act.mutate(a)}
             onRecordPayment={() => setPaying(t)}
+            choosing={choosing === t.id}
+            onChosen={() => setChoosing(null)}
             rowProps={kb.rowProps(t.id)}
           />
         ))}
       </ul>
-      {paying && <DepositPayment t={paying} clientId={sugg[paying.id]?.client?.id ?? null} feed={feed} onClose={() => setPaying(null)} onRecorded={(id) => remember([id], 'Deposit matched to the payment.')} />}
+      {paying && <DepositPayment t={paying} client={sugg[paying.id]?.client ?? null} feed={feed} onClose={() => setPaying(null)} onRecorded={(id) => remember([id], 'Deposit matched to the payment.', true)} />}
     </div>
   );
 }
@@ -448,6 +468,8 @@ function ReviewRow({
   onSelect,
   onAct,
   onRecordPayment,
+  choosing,
+  onChosen,
   rowProps,
 }: {
   t: BankTxnView;
@@ -460,6 +482,8 @@ function ReviewRow({
   onSelect: (on: boolean) => void;
   onAct: (a: RowAction) => void;
   onRecordPayment: () => void;
+  choosing: boolean;
+  onChosen: () => void;
   rowProps: ReturnType<ReturnType<typeof useListKeyboard>['rowProps']>;
 }) {
   const who = useWho();
@@ -468,7 +492,11 @@ function ReviewRow({
   const best = s?.matches[0];
   const suggestion = s?.rule ?? s?.lastTime ?? null;
   const cat = acceptable(s);
-  const deposit = t.amount > 0;
+  // A card's credit is a refund, never a client's payment.
+  const deposit = t.amount > 0 && feed.subtype !== 'CREDIT_CARD';
+  const ambiguous = !!s && s.matches.length > 0 && !s.exactLineId;
+  const [pickOpen, setPickOpen] = useState(false);
+  const showPick = (choosing || pickOpen) && ambiguous;
   const payLabel = s?.client ? `Record as payment from ${s.client.name}` : `Record as a ${who.one} payment`;
   return (
     <li {...rowProps} className={cn('flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center', selected && 'bg-gold/[0.05]')}>
@@ -488,11 +516,16 @@ function ReviewRow({
               {best.daysApart > 0 ? ` (${best.daysApart} ${best.daysApart === 1 ? 'day' : 'days'} apart)` : ''}
               {s && s.matches.length > 1 && !s.exactLineId ? ` · ${s.matches.length - 1} more could be it` : ''}
             </span>
-            {manage && (
-              <Button size="sm" onClick={() => onAct({ id: t.id, kind: 'match', lineId: best.lineId })} loading={busy} disabled={busy}>
-                Match
-              </Button>
-            )}
+            {manage &&
+              (ambiguous ? (
+                <Button size="sm" variant="secondary" onClick={() => setPickOpen((o) => !o)} disabled={busy} aria-expanded={showPick}>
+                  Choose ({s!.matches.length})
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => onAct({ id: t.id, kind: 'match', lineId: best.lineId })} loading={busy} disabled={busy}>
+                  Match
+                </Button>
+              ))}
           </>
         ) : suggestion && cat && !accountId ? (
           <>
@@ -561,6 +594,29 @@ function ReviewRow({
           </DropdownMenu>
         )}
       </div>
+      {showPick && manage && s && (
+        <ul className="w-full space-y-1 rounded-md border border-line bg-surface-raised p-2" aria-label={`Entries that could be ${t.description}`}>
+          {s.matches.map((m) => (
+            <li key={m.lineId} className="flex items-center gap-2 text-xs">
+              <span className="min-w-0 flex-1 truncate text-ink">
+                Entry #{m.entryNumber} · {m.memo ?? m.source.toLowerCase()} · {fmtDate(m.date)}
+                {m.daysApart > 0 ? ` (${m.daysApart} ${m.daysApart === 1 ? 'day' : 'days'} apart)` : ' (same day)'}
+              </span>
+              <Button
+                size="xs"
+                onClick={() => {
+                  onAct({ id: t.id, kind: 'match', lineId: m.lineId });
+                  setPickOpen(false);
+                  onChosen();
+                }}
+                disabled={busy}
+              >
+                Match this
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
       {best && accountId && manage && (
         <div className="flex w-full items-center gap-2 lg:justify-end">
           <div className="w-full lg:w-64">
@@ -577,7 +633,7 @@ function ReviewRow({
 }
 
 /** A deposit recorded as a client payment: the receivables dialog, prefilled, and the deposit matched once it's recorded. */
-function DepositPayment({ t, clientId, feed, onClose, onRecorded }: { t: BankTxnView; clientId: string | null; feed: BankFeedAccountView; onClose: () => void; onRecorded: (txnId: string) => void }) {
+function DepositPayment({ t, client, feed, onClose, onRecorded }: { t: BankTxnView; client: { id: string; name: string } | null; feed: BankFeedAccountView; onClose: () => void; onRecorded: (txnId: string) => void }) {
   const aging = useQuery({ queryKey: [...RECEIVABLES_KEY, 'aging', 'for-deposit'], queryFn: () => getReceivablesAging() });
   if (aging.isPending) return null;
   if (aging.isError) {
@@ -597,12 +653,13 @@ function DepositPayment({ t, clientId, feed, onClose, onRecorded }: { t: BankTxn
     <PaymentDialog
       open
       onOpenChange={(o) => !o && onClose()}
-      initialClientId={clientId && aging.data.rows.some((r) => r.clientId === clientId) ? clientId : null}
+      initialClientId={client?.id ?? null}
+      extraClient={client}
       rows={aging.data.rows}
       statements={aging.data.statements}
       deposit={{ transaction: t, ledgerAccountId: feed.ledgerAccountId, ledgerLabel: `${feed.ledgerCode} ${feed.ledgerName}` }}
       onRecorded={(r) => {
-        if (r.bankTransaction?.status === 'MATCHED') onRecorded(t.id);
+        if (r.depositMatched ?? r.bankTransaction?.status === 'MATCHED') onRecorded(t.id);
       }}
     />
   );
@@ -614,7 +671,32 @@ function seedFrom(t: BankTxnView): Partial<BankRuleInput> {
 }
 
 function DecidedRow({ t, manage }: { t: BankTxnView; manage: boolean }) {
-  const undo = useTxnMutation(() => undoTxn(t.id), 'Back in For review.');
+  const qc = useQueryClient();
+  const undo = useMutation({
+    mutationFn: (opts: { undoPayment?: boolean } = {}) => undoTxn(t.id, opts),
+    onSuccess: (r, opts) => {
+      void qc.invalidateQueries({ queryKey: ['books'] });
+      if (opts.undoPayment) return void toast.success('Payment taken back; the deposit is back in For review.');
+      if (r.paymentKept) {
+        // Only the match was undone: say so, and offer to take the payment back too.
+        const kept = r.paymentKept;
+        return void toast.success(`Back in For review. The payment from ${kept.clientName} is still recorded.`, {
+          action: {
+            label: 'Undo the payment too',
+            onClick: () =>
+              void undoClientPayment(kept.id, 'Recorded from a bank deposit by mistake')
+                .then(() => {
+                  toast.success('Payment taken back.');
+                  void qc.invalidateQueries({ queryKey: ['books'] });
+                })
+                .catch((err) => toast.error(err instanceof ApiError ? err.message : 'Couldn’t undo the payment.')),
+          },
+        });
+      }
+      toast.success('Back in For review.');
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'That didn’t go through.'),
+  });
   return (
     <li className="flex flex-wrap items-center gap-3 px-4 py-3">
       <TxnFacts t={t} />
@@ -635,7 +717,7 @@ function DecidedRow({ t, manage }: { t: BankTxnView; manage: boolean }) {
       </span>
       <Amount value={t.amount} className="shrink-0 text-sm font-semibold" />
       {manage && (
-        <Button size="sm" variant="ghost" onClick={() => undo.mutate(undefined)} loading={undo.isPending}>
+        <Button size="sm" variant="ghost" onClick={() => undo.mutate({})} loading={undo.isPending}>
           <Undo2 className="h-4 w-4" aria-hidden="true" />
           Undo
         </Button>

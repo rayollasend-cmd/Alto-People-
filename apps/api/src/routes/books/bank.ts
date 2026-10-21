@@ -11,6 +11,7 @@ import {
   BankReconcileStartInputSchema,
   BankRuleInputSchema,
   BankSuggestionsBatchInputSchema,
+  BankUndoInputSchema,
   BankTickInputSchema,
 } from '@alto-people/shared';
 import { prisma } from '../../db.js';
@@ -138,9 +139,9 @@ booksBankRouter.post('/transactions/suggestions', async (req, res) => {
 
 booksBankRouter.post('/transactions/bulk', MANAGE, async (req, res) => {
   const { action, ids } = BankBulkInputSchema.parse(req.body ?? {});
-  const result = await bulkDecide(prisma, action, ids, req.user!.id);
   const verb = action === 'ACCEPT' ? 'categorized' : action === 'MATCH' ? 'matched' : 'excluded';
-  for (const id of result.done) audit(req.user!.id, `books.bank.${verb}`, 'BankTransaction', id, { bulk: true });
+  // Each one audited as it finishes — a later failure doesn't lose the record of the ones done.
+  const result = await bulkDecide(prisma, action, ids, req.user!.id, (id) => audit(req.user!.id, `books.bank.${verb}`, 'BankTransaction', id, { bulk: true }));
   res.json(result);
 });
 
@@ -176,9 +177,10 @@ booksBankRouter.post('/transactions/:id/exclude', MANAGE, async (req, res) => {
 
 booksBankRouter.post('/transactions/:id/undo', MANAGE, async (req, res) => {
   const id = Uuid.parse(req.params.id);
-  const transaction = await undo(prisma, id, req.user!.id);
-  audit(req.user!.id, 'books.bank.undone', 'BankTransaction', id);
-  res.json({ transaction });
+  const body = BankUndoInputSchema.parse(req.body ?? {});
+  const { paymentKept, paymentUndone, ...transaction } = await undo(prisma, id, req.user!.id, body);
+  audit(req.user!.id, 'books.bank.undone', 'BankTransaction', id, paymentUndone ? { paymentUndone: true } : undefined);
+  res.json({ transaction, paymentKept: paymentKept ?? null, paymentUndone: !!paymentUndone });
 });
 
 /* ---- Rules ------------------------------------------------------------------- */

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { listMyInbox, markAllRead as markAllInboxRead, markRead } from '@/lib/communicationsApi';
+import { listMyInbox, markAllRead as markAllInboxRead, markKindRead, markRead } from '@/lib/communicationsApi';
 import { markBroadcastRead, myBroadcasts } from '@/lib/dirCommsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -18,6 +18,7 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
 import { ArrowUpRight, CheckCheck, ChevronRight, Inbox, Megaphone } from 'lucide-react';
+import { toast } from 'sonner';
 
 /**
  * One row in the merged inbox: either a direct IN_APP notification or a
@@ -37,7 +38,12 @@ interface InboxEntry {
   senderEmail: string | null;
   /** In-app deeplink (notifications only) — rendered as an "Open" action. */
   linkUrl: string | null;
+  /** The notification's category (notifications only) — what "clear all of this kind" clears. */
+  category: string | null;
 }
+
+/** The kind a reminder belongs to: its category's first two parts ("compliance.attestation"). */
+const kindOf = (category: string | null) => (category ? category.split('.').slice(0, 2).join('.') : null);
 
 export function AssociateInboxView() {
   const navigate = useNavigate();
@@ -63,6 +69,7 @@ export function AssociateInboxView() {
             readAt: n.readAt,
             senderEmail: n.senderEmail,
             linkUrl: n.linkUrl,
+            category: n.category,
           }),
         ),
         ...bcasts.broadcasts.map(
@@ -78,6 +85,7 @@ export function AssociateInboxView() {
             readAt: b.readAt,
             senderEmail: null,
             linkUrl: null,
+            category: null,
           }),
         ),
       ].sort(
@@ -145,6 +153,33 @@ export function AssociateInboxView() {
   };
 
   const unreadCount = items?.filter((n) => !n.readAt).length ?? 0;
+
+  // Piles of one kind of reminder (a daily compliance nag, a weekly digest):
+  // three or more unread of the same kind get one "clear all of this kind".
+  const piles = useMemo(() => {
+    const by = new Map<string, { kind: string; count: number; subject: string }>();
+    for (const i of items ?? []) {
+      const kind = i.kind === 'message' && !i.readAt ? kindOf(i.category) : null;
+      if (!kind) continue;
+      const cur = by.get(kind);
+      if (cur) cur.count++;
+      else by.set(kind, { kind, count: 1, subject: i.subject ?? kind });
+    }
+    return [...by.values()].filter((p) => p.count >= 3).sort((a, b) => b.count - a.count);
+  }, [items]);
+  const [clearingKind, setClearingKind] = useState<string | null>(null);
+  const clearKind = async (kind: string) => {
+    setClearingKind(kind);
+    try {
+      const r = await markKindRead(kind);
+      toast.success(t('inbox.clearedKind', { count: r.updated }));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t('inbox.markFailed'));
+    } finally {
+      setClearingKind(null);
+    }
+  };
 
   // Same phone gesture as Home/Schedule — the inbox used to ignore it.
   const pullState = usePullToRefresh(refresh);
@@ -222,6 +257,20 @@ export function AssociateInboxView() {
             {markingAll ? t('inbox.marking') : t('inbox.markAll')}
           </Button>
         </div>
+      )}
+
+      {piles.length > 0 && (
+        <ul className="mb-4 space-y-2">
+          {piles.map((p) => (
+            <li key={p.kind} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm">
+              <span className="min-w-0 flex-1 truncate text-ink">{t('inbox.kindPile', { count: p.count, subject: p.subject })}</span>
+              <Button size="sm" variant="outline" loading={clearingKind === p.kind} onClick={() => void clearKind(p.kind)}>
+                <CheckCheck className="mr-1.5 h-3.5 w-3.5" />
+                {t('inbox.clearKind')}
+              </Button>
+            </li>
+          ))}
+        </ul>
       )}
 
       {!items && !error && <SkeletonRows count={5} rowHeight="h-24" />}

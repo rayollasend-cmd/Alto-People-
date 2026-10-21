@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Gift, Plus } from 'lucide-react';
+import { Gift, Megaphone, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
+  announceCampaign,
   createCampaign,
   listCampaignReferrals,
   listCampaigns,
@@ -17,6 +18,7 @@ import {
 } from '@/lib/marketingApi';
 import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
 import { STAGE_LABEL } from '@/pages/recruiting/recruitingLabels';
+import { listJobPostings } from '@/lib/recruiting90Api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -65,7 +67,13 @@ function CampaignDialog({
   const [payAfterDays, setPayAfterDays] = useState(campaign ? String(campaign.payAfterDays) : '30');
   const [startsOn, setStartsOn] = useState(campaign?.startsOn ?? ymdLocal());
   const [endsOn, setEndsOn] = useState(campaign?.endsOn ?? '');
-  const [positions, setPositions] = useState(campaign?.positions.join(', ') ?? '');
+  const [positions, setPositions] = useState<string[]>(campaign?.positions ?? []);
+  // The roles come from the open postings — no retyping, no near-duplicates
+  // ("Cashier" vs "cashiers"). A role saved before keeps its chip.
+  const postings = useQuery({ queryKey: ['marketing', 'postings'], queryFn: listJobPostings, retry: false });
+  const openTitles = [...new Set((postings.data?.postings ?? []).filter((p) => p.status === 'OPEN').map((p) => p.title.trim()))].sort((a, b) => a.localeCompare(b));
+  const options = [...new Set([...openTitles, ...positions])];
+  const togglePosition = (t: string) => setPositions((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
   const save = useMutation({
     mutationFn: () => {
       const input: CampaignInput = {
@@ -75,13 +83,24 @@ function CampaignDialog({
         payAfterDays: Number(payAfterDays),
         startsOn,
         endsOn: endsOn || null,
-        positions: positions.split(',').map((p) => p.trim()).filter(Boolean),
+        positions,
       };
       return campaign ? updateCampaign(campaign.id, input) : createCampaign(input);
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       void queryClient.invalidateQueries({ queryKey: ['marketing', 'campaigns'] });
-      toast.success(campaign ? 'Campaign updated.' : 'Campaign created — it goes live when you switch it on.');
+      if (campaign) toast.success('Campaign updated.');
+      else
+        // The next step is telling people: one click drafts the announcement for HR.
+        toast.success('Campaign created — it goes live when you switch it on.', {
+          action: {
+            label: 'Announce it',
+            onClick: () =>
+              void announceCampaign(saved.id)
+                .then(() => toast.success('Announcement drafted — HR reviews it and sends it.'))
+                .catch((e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Could not draft the announcement.')),
+          },
+        });
       onOpenChange(false);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not save the campaign.'),
@@ -112,11 +131,35 @@ function CampaignDialog({
           <Field label="Ends" hint="Leave empty for open-ended.">
             {(p) => <Input {...p} type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />}
           </Field>
-          <div className="sm:col-span-2">
-            <Field label="Positions" hint="Comma-separated; empty means any role.">
-              {(p) => <Input {...p} value={positions} placeholder="Cashier, Stocker" onChange={(e) => setPositions(e.target.value)} />}
-            </Field>
-          </div>
+          <fieldset className="sm:col-span-2">
+            <legend className="text-sm font-medium text-ink">Positions</legend>
+            <p className="text-xs text-ink-muted">From the open postings. None picked means any role.</p>
+            {options.length === 0 ? (
+              <p className="mt-2 text-xs text-ink-muted">{postings.isPending ? 'Loading postings…' : 'No open postings — the campaign covers any role.'}</p>
+            ) : (
+              <div className="mt-2 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+                {options.map((t) => {
+                  const on = positions.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => togglePosition(t)}
+                      className={
+                        on
+                          ? 'inline-flex items-center gap-1 rounded-full border border-accent bg-accent-fill/15 px-2.5 py-1 text-xs text-ink'
+                          : 'inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-xs text-ink-muted hover:text-ink'
+                      }
+                    >
+                      {t}
+                      {on && <X className="h-3 w-3" aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </fieldset>
           <div className="sm:col-span-2">
             <Field label="What to tell people">
               {(p) => <Textarea {...p} rows={2} maxLength={1000} value={description} onChange={(e) => setDescription(e.target.value)} />}
@@ -152,6 +195,16 @@ export function CampaignsPanel({ canEdit }: { canEdit: boolean }) {
       toast.success(c.status === 'ACTIVE' ? `${c.name} is live.` : `${c.name} closed.`);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not change the campaign.'),
+  });
+  const announce = useMutation({
+    mutationFn: (c: ReferralCampaign) => announceCampaign(c.id),
+    onSuccess: (r, c) =>
+      toast.success(
+        r.notified > 0
+          ? `Announcement for ${c.name} drafted — HR reviews it and sends it.`
+          : `Announcement for ${c.name} drafted. Nobody who sends broadcasts was found to tell — ask HR to open Directory & comms → Broadcasts.`,
+      ),
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not draft the announcement.'),
   });
   const propose = useMutation({
     mutationFn: (r: CampaignReferral) => proposeReferralBonus(r.id, !r.eligible),
@@ -209,6 +262,15 @@ export function CampaignsPanel({ canEdit }: { canEdit: boolean }) {
                         <span className="ml-auto flex gap-1">
                           <Button size="xs" variant="ghost" onClick={() => setEditing(c)}>
                             Edit
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            loading={announce.isPending && announce.variables?.id === c.id}
+                            title="Drafts a company announcement for HR to review and send"
+                            onClick={() => announce.mutate(c)}
+                          >
+                            <Megaphone className="h-3 w-3" aria-hidden="true" /> Announce it
                           </Button>
                           {c.status === 'DRAFT' ? (
                             <Button size="xs" variant="outline" loading={status.isPending} onClick={() => status.mutate({ id: c.id, to: 'ACTIVE' })}>

@@ -703,7 +703,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // first invocation is skipped so a ?client= deep link — which this mount
   // effect pushes INTO the global scope below — can't be clobbered by the
   // scope's pre-click value.
-  const scopeClientId = storeScope.enabled && !boundedClient ? storeScope.clientId : null;
+  // Null until the saved choice is read: its arrival is the baseline, not a click.
+  const scopeClientId = storeScope.enabled && storeScope.ready && !boundedClient ? storeScope.clientId : null;
   const scopeSyncedRef = useRef(false);
   useEffect(() => {
     if (scopeClientId === null) return;
@@ -722,28 +723,37 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // A person link with no store widens the bar to every store the same
   // way — otherwise the bar's saved store, hydrating a beat after mount,
   // re-scopes the page and hides the person the link was about.
+  // (A person or shift link with no store widens THIS page only — the
+  // reader's store choice elsewhere in the app is theirs to keep.)
   useEffect(() => {
     if (boundedClient) return;
     const urlClient = searchParams.get('client');
     if (urlClient) storeScope.setClientId(urlClient);
-    else if (deepLinkAssociate || deepLinkShift) storeScope.setClientId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [locationFilter, setLocationFilter] = useState<string>(
     () => searchParams.get('location') ?? (deepLinkAssociate || deepLinkShift ? '' : (readStoredFilters()?.location ?? '')),
   ); // '' = all
   // Persist the scope + status chip so they survive navigating away and back.
+  // Filters a link set (?shift / ?open / ?associate widen to every store,
+  // open-only) are the link's, not the reader's: they aren't saved until the
+  // reader changes one, so following a link never wipes their saved filters.
+  const linkFiltersRef = useRef<string | null>(
+    focusedLink ? JSON.stringify({ client: clientFilter, location: locationFilter, status: filter, position: posFilter }) : null,
+  );
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(
-      FILTERS_KEY,
-      JSON.stringify({
-        client: clientFilter,
-        location: locationFilter,
-        status: filter,
-        position: posFilter,
-      }),
-    );
+    const current = JSON.stringify({
+      client: clientFilter,
+      location: locationFilter,
+      status: filter,
+      position: posFilter,
+    });
+    if (linkFiltersRef.current !== null) {
+      if (current === linkFiltersRef.current) return;
+      linkFiltersRef.current = null;
+    }
+    window.localStorage.setItem(FILTERS_KEY, current);
   }, [clientFilter, locationFilter, filter, posFilter]);
   // Locations belonging to the currently-selected client, for the cascade.
   // null = loading; [] = client has none (or no client selected).
@@ -962,10 +972,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       let alreadyTotal = 0;
       for (let i = 1; i <= n; i++) {
         const target = shiftWeek(weekStart, i);
+        // The store (and location) on screen — not every store in reach.
         const r = await copyWeek({
           sourceWeekStart: weekStart.toISOString(),
           targetWeekStart: target.toISOString(),
           preserveAssignments: true,
+          ...(clientFilter ? { clientId: clientFilter } : {}),
+          ...(clientFilter && locationFilter ? { locationId: locationFilter } : {}),
         });
         created += r.created;
         assigned += r.assigned ?? 0;
@@ -1266,6 +1279,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     retry: false,
   });
   const shiftJumpDoneRef = useRef(false);
+  const [viewTarget, setViewTarget] = useState<Shift | null>(null);
   useEffect(() => {
     if (!deepLinkShift || shiftJumpDoneRef.current || shiftJump.isPending) return;
     shiftJumpDoneRef.current = true;
@@ -1288,14 +1302,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     first.setDate(1);
     setMonthAnchor(first);
     const dayYmd = ymd(day);
-    setListFrom((cur) => (cur && cur <= dayYmd ? cur : dayYmd));
-    setListTo((cur) => (cur && cur >= dayYmd ? cur : dayYmd));
-    if (target.status === 'OPEN' || target.status === 'DRAFT' || target.status === 'ASSIGNED') {
-      if (canManage) setAssignTarget(target);
-      else setEditTarget(target);
-    } else {
-      setEditTarget(target);
-    }
+    // An empty bound is unbounded — it already includes the day; keep it.
+    setListFrom((cur) => (!cur || cur <= dayYmd ? cur : dayYmd));
+    setListTo((cur) => (!cur || cur >= dayYmd ? cur : dayYmd));
+    // Someone who can't change the schedule gets the shift to read, not an
+    // edit form whose Save would be refused.
+    if (!canManage) setViewTarget(target);
+    else if (target.status === 'OPEN' || target.status === 'DRAFT' || target.status === 'ASSIGNED') setAssignTarget(target);
+    else setEditTarget(target);
     // searchParams changes identity every render; the ref ends the cycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkShift, shiftJump.isPending, shiftJump.data, canManage]);
@@ -1964,11 +1978,34 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [buildSummary, setBuildSummary] = useState<string | null>(null);
   const onBuildNextWeek = async () => {
     if (buildingWeek) return;
+    // One store's week at a time: "every store" would copy all of them while
+    // the review and publish only cover what's on screen.
+    if (!clientFilter && clients.length > 1) {
+      toast.error(`Pick a ${term('label.client').toLowerCase()} first — Build next week works on one ${term('label.client').toLowerCase()}'s schedule at a time.`);
+      return;
+    }
+    if (weekDayCount !== 7) {
+      toast.error('Build next week works on a 7-day week — set the range to one week first.');
+      return;
+    }
     const target = shiftWeek(weekStart, 1);
-    const win = zoneWindow(target, addDaysLocal(target, weekDayCount));
+    const win = zoneWindow(target, addDaysLocal(target, 7));
+    const scope = {
+      ...(clientFilter ? { clientId: clientFilter } : {}),
+      ...(clientFilter && locationFilter ? { locationId: locationFilter } : {}),
+    };
+    let existing = 0;
+    try {
+      const there = await listShifts({ from: win.from.toISOString(), to: win.to.toISOString(), ...scope });
+      existing = there.shifts.filter((x) => x.status !== 'CANCELLED').length;
+    } catch {
+      // The count is a courtesy — the copy itself skips slots already there.
+    }
     const ok = await confirm({
       title: `Build the week of ${fmtDate(target)}?`,
-      description: `Copies this week's shifts — ${term('workers').toLowerCase()} and all — into next week as drafts, then fills what's still open with the best-scoring ${term('worker').toLowerCase()} for each. You review every pick before anything is published.`,
+      description: `Copies this week's shifts — ${term('workers').toLowerCase()} and all — into next week as drafts, then fills the open drafts with the best-scoring ${term('worker').toLowerCase()} for each. Nothing already published changes, and you review every pick before anything is published.${
+        existing > 0 ? ` Next week already has ${existing} shift${existing === 1 ? '' : 's'}; slots already there aren't copied again.` : ''
+      }`,
       confirmLabel: 'Build next week',
     });
     if (!ok) return;
@@ -1978,15 +2015,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         sourceWeekStart: weekStart.toISOString(),
         targetWeekStart: target.toISOString(),
         preserveAssignments: true,
+        ...scope,
       });
-      const scope = clientFilter ? { clientId: clientFilter } : {};
       const before = await listShifts({ from: win.from.toISOString(), to: win.to.toISOString(), ...scope });
       const candidateIds = before.shifts
-        .filter((x) => x.assignedAssociateId === null && x.status !== 'CANCELLED' && x.status !== 'COMPLETED')
+        .filter((x) => x.assignedAssociateId === null && x.status === 'DRAFT')
         .map((x) => x.id);
       const res =
         candidateIds.length > 0
-          ? await autoScheduleWeek({ weekStart: win.from.toISOString(), weekEnd: win.to.toISOString(), ...scope })
+          ? await autoScheduleWeek({ weekStart: win.from.toISOString(), weekEnd: win.to.toISOString(), draftsOnly: true, ...scope })
           : ({ assigned: 0, skipped: [], byAssociate: [] } satisfies AutoScheduleWeekResponse);
       if (view !== 'week') setView('week');
       setWeekStart(target);
@@ -3923,6 +3960,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         />
       )}
 
+      {/* A linked shift, for someone who reads the schedule but can't change it */}
+      <ShiftReadOnlyDialog target={viewTarget} onClose={() => setViewTarget(null)} />
+
       {/* Edit date/time/position/rates/notes */}
       <EditShiftDialog
         target={editTarget}
@@ -5048,6 +5088,61 @@ function DuplicateToEmployeeDialog({
 }
 
 /* ===== Edit-shift dialog ================================================= */
+
+/** One shift, read-only — what a ?shift= link opens for a viewer. */
+function ShiftReadOnlyDialog({ target, onClose }: { target: Shift | null; onClose: () => void }) {
+  const who = target?.assignedAssociateName ?? (target?.status === 'OPEN' || target?.status === 'DRAFT' ? 'Open' : '—');
+  return (
+    <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{target?.position ?? 'Shift'}</DialogTitle>
+          <DialogDescription>
+            {target ? fmtShiftRangeTz(target.startsAt, target.endsAt, target.timezone) : ''}
+          </DialogDescription>
+        </DialogHeader>
+        {target && (
+          <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-2 text-sm">
+            <dt className="text-ink-muted">Status</dt>
+            <dd>
+              <Badge variant={target.status === 'CANCELLED' ? 'outline' : 'default'} size="sm">
+                {target.status.charAt(0) + target.status.slice(1).toLowerCase()}
+              </Badge>
+            </dd>
+            <dt className="text-ink-muted">Who</dt>
+            <dd className="text-ink">{who}</dd>
+            {(target.locationName ?? target.location) && (
+              <>
+                <dt className="text-ink-muted">Where</dt>
+                <dd className="text-ink">
+                  {target.locationName ?? target.location}
+                  {target.clientName ? ` · ${target.clientName}` : ''}
+                </dd>
+              </>
+            )}
+            {target.notes && (
+              <>
+                <dt className="text-ink-muted">Notes</dt>
+                <dd className="whitespace-pre-wrap text-ink">{target.notes}</dd>
+              </>
+            )}
+            {target.cancellationReason && (
+              <>
+                <dt className="text-ink-muted">Cancelled</dt>
+                <dd className="text-ink">{target.cancellationReason}</dd>
+              </>
+            )}
+          </dl>
+        )}
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function EditShiftDialog({
   target,

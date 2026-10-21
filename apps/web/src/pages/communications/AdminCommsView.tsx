@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, Inbox, Megaphone, RotateCw, Send } from 'lucide-react';
+import { Download, Inbox, Megaphone, RotateCw, Send, Users } from 'lucide-react';
 import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
 import { toast } from 'sonner';
 import { performWithUndo } from '@/lib/undoToast';
@@ -12,14 +12,15 @@ import type {
   NotificationStatus,
 } from '@alto-people/shared';
 import {
-  broadcast,
   deleteSuppression,
   listAdmin,
+  listChannels,
   listSuppressions,
   sendNotification,
 } from '@/lib/communicationsApi';
-import { listDirectory } from '@/lib/directoryApi';
-import { listAdminUsers } from '@/lib/usersAdminApi';
+import { listBroadcastTemplates } from '@/lib/dirCommsApi';
+import { cn } from '@/lib/cn';
+import { BroadcastDrawer } from '@/pages/dirComms/BroadcastDrawer';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDateTime, ymdLocal } from '@/lib/format';
@@ -86,8 +87,9 @@ const STATUS_LABELS: Record<NotificationStatus, string> = {
   DELIVERED: 'Delivered',
 };
 
+/** A person's name when the account has one, else the address it went to — never a raw user id. */
 const recipientOf = (n: Notification) =>
-  n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '—';
+  n.recipientName ?? n.recipientEmail ?? n.recipientPhone ?? (n.recipientUserId ? 'A user account' : '—');
 
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   IN_APP: 'In-app',
@@ -101,10 +103,45 @@ interface AdminCommsViewProps {
   canManage: boolean;
 }
 
+/**
+ * One send, as the log shows it: a single message, or one message to many
+ * people (a reminder fanned out to four admins is one row, "4 people",
+ * not four). Grouped by category, subject and the minute it went out.
+ */
+interface SendGroup {
+  key: string;
+  first: Notification;
+  rows: Notification[];
+  sent: number;
+  failed: number;
+  read: number;
+}
+
+const FAILED_STATUSES = new Set<NotificationStatus>(['FAILED', 'BOUNCED', 'COMPLAINED', 'SUPPRESSED']);
+
+export function groupSends(items: Notification[]): SendGroup[] {
+  const groups = new Map<string, SendGroup>();
+  for (const n of items) {
+    const key = [n.channel, n.category ?? '', n.subject ?? '', n.createdAt.slice(0, 16), n.senderUserId ?? ''].join('|');
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, first: n, rows: [], sent: 0, failed: 0, read: 0 };
+      groups.set(key, g);
+    }
+    g.rows.push(n);
+    if (FAILED_STATUSES.has(n.status)) g.failed++;
+    else if (n.status === 'READ' || n.readAt) g.read++;
+    else g.sent++;
+  }
+  return [...groups.values()];
+}
+
+const groupRecipients = (g: SendGroup) => (g.rows.length === 1 ? recipientOf(g.first) : `${g.rows.length} people`);
+
 export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   const [showCompose, setShowCompose] = useState(false);
   const [showBroadcast, setShowBroadcast] = useState(false);
-  const [drawerTarget, setDrawerTarget] = useState<Notification | null>(null);
+  const [drawerTarget, setDrawerTarget] = useState<SendGroup | null>(null);
   const [channelFilter, setChannelFilter] = useState<NotificationChannel | ''>('');
   const [statusFilter, setStatusFilter] = useState<NotificationStatus | ''>('');
   const [resendingId, setResendingId] = useState<string | null>(null);
@@ -118,30 +155,22 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
     queryFn: () => listAdmin(listParams),
   });
   const items: Notification[] | null = refreshQuery.data?.notifications ?? null;
+  const groups = useMemo(() => (items ? groupSends(items) : null), [items]);
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
   const refresh = async () => {
     await refreshQuery.refetch();
   };
 
-
   const exportCsv = () => {
     if (!items || items.length === 0) return;
     downloadCsv(`communications-${ymdLocal()}.csv`, [
-      [
-        'Created',
-        'Channel',
-        'Status',
-        'Recipient',
-        'Subject',
-        'Body',
-        'Sender',
-        'Failure reason',
-      ],
+      ['Created', 'Channel', 'Status', 'Recipient', 'Recipient name', 'Subject', 'Body', 'Sender', 'Failure reason'],
       ...items.map((n) => [
         fmtDateTime(n.createdAt),
         n.channel,
         n.status,
         n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '',
+        n.recipientName ?? '',
         n.subject ?? '',
         n.body,
         n.senderEmail ?? 'system',
@@ -168,7 +197,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
       } else {
         toast.success('Resent.');
       }
-      refresh();
+      void refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Resend failed.');
     } finally {
@@ -176,65 +205,80 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
     }
   };
 
-  const logColumns = useMemo<GridColumn<Notification>[]>(
+  const logColumns = useMemo<GridColumn<SendGroup>[]>(
     () => [
       {
         key: 'time',
         header: 'Time',
-        accessor: (n) => new Date(n.createdAt).getTime(),
-        csv: (n) => n.createdAt,
+        accessor: (g) => new Date(g.first.createdAt).getTime(),
+        csv: (g) => g.first.createdAt,
         sortable: true,
         searchable: false,
         cardMeta: true,
         width: '6rem',
-        className: 'tabular-nums text-silver whitespace-nowrap',
-        cell: (n) => <span title={fmtDateTime(n.createdAt)}>{fmtTimeOnly(n.createdAt)}</span>,
+        className: 'tabular-nums text-ink-muted whitespace-nowrap',
+        cell: (g) => <span title={fmtDateTime(g.first.createdAt)}>{fmtTimeOnly(g.first.createdAt)}</span>,
       },
       {
         key: 'channel',
         header: 'Channel',
-        accessor: (n) => CHANNEL_LABELS[n.channel],
+        accessor: (g) => CHANNEL_LABELS[g.first.channel],
         sortable: true,
         cardMeta: true,
-        cell: (n) => <Badge variant="outline">{CHANNEL_LABELS[n.channel]}</Badge>,
+        cell: (g) => <Badge variant="outline">{CHANNEL_LABELS[g.first.channel]}</Badge>,
       },
       {
         key: 'recipient',
-        header: 'Recipient',
-        accessor: (n) => recipientOf(n),
+        header: 'To',
+        accessor: (g) => (g.rows.length === 1 ? recipientOf(g.first) : g.rows.map(recipientOf).join(', ')),
         sortable: true,
         primary: true,
-        className: 'text-silver',
-        cell: (n) => (
-          <span className="flex min-w-0 items-center gap-2.5">
-            <Avatar src={userPhotoUrl(n.recipientUserId)} name={recipientOf(n)} email={n.recipientEmail ?? undefined} size="xs" />
-            <span className="min-w-0 break-words">{recipientOf(n)}</span>
-          </span>
-        ),
+        cell: (g) =>
+          g.rows.length === 1 ? (
+            <span className="flex min-w-0 items-center gap-2.5">
+              <Avatar src={userPhotoUrl(g.first.recipientUserId)} name={recipientOf(g.first)} email={g.first.recipientEmail ?? undefined} size="xs" />
+              <span className="min-w-0 break-words text-ink">{recipientOf(g.first)}</span>
+            </span>
+          ) : (
+            <span className="flex min-w-0 items-center gap-2.5" title={g.rows.map(recipientOf).join(', ')}>
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-surface-raised text-ink-muted">
+                <Users className="h-3.5 w-3.5" aria-hidden="true" />
+              </span>
+              <span className="min-w-0 text-ink">{groupRecipients(g)}</span>
+            </span>
+          ),
       },
       {
         key: 'subject',
         header: 'Subject / preview',
-        accessor: (n) => n.subject ?? '(no subject)',
+        accessor: (g) => `${g.first.subject ?? ''} ${g.first.body}`,
         sortable: true,
-        cell: (n) => (
+        cell: (g) => (
           <>
-            <div className="max-w-md truncate font-medium text-white">{n.subject ?? '(no subject)'}</div>
-            <div className="max-w-md truncate text-xs text-silver">{n.body}</div>
+            <div className="max-w-md truncate font-medium text-ink">{g.first.subject ?? '(no subject)'}</div>
+            <div className="line-clamp-2 max-w-md text-xs text-ink-muted">{g.first.body}</div>
           </>
         ),
       },
       {
         key: 'status',
         header: 'Status',
-        accessor: (n) => STATUS_LABELS[n.status],
+        accessor: (g) => (g.failed ? 'Failed' : g.read === g.rows.length ? 'Read' : 'Sent'),
         sortable: true,
-        cell: (n) => (
-          <>
-            <Badge variant={statusVariant(n.status)}>{STATUS_LABELS[n.status]}</Badge>
-            {n.failureReason && <div className="mt-1 text-2xs text-alert">{n.failureReason}</div>}
-          </>
-        ),
+        cardMeta: true,
+        cell: (g) =>
+          g.rows.length === 1 ? (
+            <>
+              <Badge variant={statusVariant(g.first.status)}>{STATUS_LABELS[g.first.status]}</Badge>
+              {g.first.failureReason && <div className="mt-1 text-2xs text-alert">{g.first.failureReason}</div>}
+            </>
+          ) : (
+            <span className="flex flex-wrap gap-1 text-2xs">
+              {g.sent > 0 && <Badge variant="success">{g.sent} sent</Badge>}
+              {g.read > 0 && <Badge variant="info">{g.read} read</Badge>}
+              {g.failed > 0 && <Badge variant="destructive">{g.failed} failed</Badge>}
+            </span>
+          ),
       },
       ...(canManage
         ? [
@@ -245,19 +289,14 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
               searchable: false,
               stopRowClick: true,
               align: 'right',
-              cell: (n) =>
-                n.status === 'FAILED' ? (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={resendingId === n.id}
-                    onClick={() => void resend(n)}
-                  >
+              cell: (g) =>
+                g.rows.length === 1 && g.first.status === 'FAILED' ? (
+                  <Button size="xs" variant="outline" disabled={resendingId === g.first.id} onClick={() => void resend(g.first)}>
                     <RotateCw className="mr-1 h-3 w-3" />
-                    {resendingId === n.id ? 'Resending…' : 'Resend'}
+                    {resendingId === g.first.id ? 'Resending…' : 'Resend'}
                   </Button>
                 ) : null,
-            } satisfies GridColumn<Notification>,
+            } satisfies GridColumn<SendGroup>,
           ]
         : []),
     ],
@@ -265,61 +304,41 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
     [canManage, resendingId],
   );
 
-
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Communications"
-        subtitle={
-          canManage
-            ? 'Send notifications via SMS, push, email, or in-app inbox.'
-            : 'Read-only view of sent notifications.'
-        }
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => setShowCompose(true)}>
-              <Send className="h-4 w-4" />
-              Send
-            </Button>
-          ) : undefined
-        }
-        secondaryActions={
-          canManage ? (
-            <Button variant="outline" onClick={() => setShowBroadcast(true)}>
-              <Megaphone className="h-4 w-4" />
-              Broadcast
-            </Button>
-          ) : undefined
-        }
+      title="Communications"
+      subtitle={canManage ? 'Message one person, or broadcast to a client, a department or everyone.' : 'Read-only view of sent notifications.'}
+      primaryAction={
+        canManage ? (
+          <Button onClick={() => setShowCompose(true)}>
+            <Send className="h-4 w-4" />
+            Send
+          </Button>
+        ) : undefined
+      }
+      secondaryActions={
+        canManage ? (
+          <Button variant="outline" onClick={() => setShowBroadcast(true)}>
+            <Megaphone className="h-4 w-4" />
+            Broadcast
+          </Button>
+        ) : undefined
+      }
     >
-
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle className="text-base">Sent log</CardTitle>
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Select
-                size="sm"
-                aria-label="Filter by channel"
-                value={channelFilter}
-                onChange={(e) =>
-                  setChannelFilter(e.target.value as NotificationChannel | '')
-                }
-              >
+              <Select size="sm" aria-label="Filter by channel" value={channelFilter} onChange={(e) => setChannelFilter(e.target.value as NotificationChannel | '')}>
                 <option value="">All channels</option>
                 <option value="IN_APP">In-app</option>
                 <option value="EMAIL">Email</option>
                 <option value="SMS">SMS</option>
                 <option value="PUSH">Push</option>
               </Select>
-              <Select
-                size="sm"
-                aria-label="Filter by status"
-                value={statusFilter}
-                onChange={(e) =>
-                  setStatusFilter(e.target.value as NotificationStatus | '')
-                }
-              >
+              <Select size="sm" aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as NotificationStatus | '')}>
                 <option value="">All statuses</option>
                 <option value="QUEUED">Queued</option>
                 <option value="SENT">Sent</option>
@@ -329,12 +348,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                 <option value="COMPLAINED">Marked as spam</option>
                 <option value="SUPPRESSED">Suppressed</option>
               </Select>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={exportCsv}
-                disabled={!items || items.length === 0}
-              >
+              <Button size="sm" variant="outline" onClick={exportCsv} disabled={!items || items.length === 0}>
                 <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
               </Button>
             </div>
@@ -354,28 +368,28 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
             </ErrorBanner>
           )}
           {!error && (
-            <DataGrid<Notification>
+            <DataGrid<SendGroup>
               id="comms-log"
               caption="Notification log"
-              rows={items}
-              loading={!items}
+              rows={groups}
+              loading={!groups}
               columns={logColumns}
-              rowKey={(n) => n.id}
+              rowKey={(g) => g.key}
               urlState={false}
               exportCsv={false}
-              search={{ placeholder: 'Search recipients and subjects' }}
-              onRowClick={(n) => setDrawerTarget(n)}
-              rowActionLabel={(n) => `Open message to ${recipientOf(n)}`}
+              search={{ placeholder: 'Search people and subjects' }}
+              onRowClick={(g) => setDrawerTarget(g)}
+              rowActionLabel={(g) => `Open message to ${groupRecipients(g)}`}
               // One table, a heading per day; only today starts open so
               // the log is not an endless scroll.
               groupBy={{
-                key: (n) => dayKey(n.createdAt),
+                key: (g) => dayKey(g.first.createdAt),
                 header: (key, rows) => (
                   <span className="flex items-center gap-2">
                     <span>{dayHeading(key)}</span>
-                    <span className="text-xs font-normal text-silver/70">· {key}</span>
-                    <span className="ml-auto text-xs font-normal text-silver">
-                      {rows.length} {rows.length === 1 ? 'message' : 'messages'}
+                    <span className="text-xs font-normal text-ink-muted/70">· {key}</span>
+                    <span className="ml-auto text-xs font-normal text-ink-muted">
+                      {rows.length} {rows.length === 1 ? 'send' : 'sends'}
                     </span>
                   </span>
                 ),
@@ -406,26 +420,51 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         onOpenChange={setShowCompose}
         onSent={() => {
           setShowCompose(false);
-          refresh();
+          void refresh();
         }}
       />
-      <BroadcastDialog
-        open={showBroadcast}
-        onOpenChange={setShowBroadcast}
-        onSent={() => {
-          setShowBroadcast(false);
-          refresh();
-        }}
-      />
+      {showBroadcast && (
+        <BroadcastDrawer
+          broadcast={null}
+          onClose={() => setShowBroadcast(false)}
+          onSaved={() => {
+            setShowBroadcast(false);
+            void refresh();
+          }}
+        />
+      )}
 
-      <Drawer
-        open={!!drawerTarget}
-        onOpenChange={(o) => !o && setDrawerTarget(null)}
-        width="max-w-xl"
-      >
-        {drawerTarget && <NotificationDetailPanel n={drawerTarget} />}
+      <Drawer open={!!drawerTarget} onOpenChange={(o) => !o && setDrawerTarget(null)} width="max-w-xl">
+        {drawerTarget && (drawerTarget.rows.length === 1 ? <NotificationDetailPanel n={drawerTarget.first} /> : <SendGroupPanel g={drawerTarget} />)}
       </Drawer>
     </ListTemplate>
+  );
+}
+
+/** One message to many people: the words once, then who got it and how it went. */
+function SendGroupPanel({ g }: { g: SendGroup }) {
+  const n = g.first;
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle className="truncate">{n.subject ?? '(no subject)'}</DrawerTitle>
+        <DrawerDescription>
+          {g.rows.length} people · {CHANNEL_LABELS[n.channel]} · {fmtDateTime(n.createdAt)}
+        </DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="mb-5 whitespace-pre-wrap rounded-md border border-line bg-surface-raised p-4 text-sm text-ink">{n.body}</div>
+        <ul className="divide-y divide-line" aria-label="Recipients">
+          {g.rows.map((r) => (
+            <li key={r.id} className="flex items-center gap-2.5 py-2 text-sm">
+              <Avatar src={userPhotoUrl(r.recipientUserId)} name={recipientOf(r)} email={r.recipientEmail ?? undefined} size="xs" />
+              <span className="min-w-0 flex-1 truncate text-ink">{recipientOf(r)}</span>
+              <Badge variant={statusVariant(r.status)}>{STATUS_LABELS[r.status]}</Badge>
+            </li>
+          ))}
+        </ul>
+      </DrawerBody>
+    </>
   );
 }
 
@@ -440,7 +479,7 @@ const SUPPRESSION_REASON_LABELS: Record<EmailSuppression['reason'], string> = {
  * bounce / spam complaint; sends to these addresses short-circuit to a
  * Suppressed status. Removing an address resumes delivery.
  */
-function SuppressionListCard() {
+export function SuppressionListCard() {
   // Addresses removed in the UI while their undo window is open.
   const [hiddenEmails, setHiddenEmails] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -550,8 +589,7 @@ function SuppressionListCard() {
 }
 
 function NotificationDetailPanel({ n }: { n: Notification }) {
-  const recipient =
-    n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? 'Unknown';
+  const recipient = recipientOf(n);
   return (
     <>
       <DrawerHeader>
@@ -652,14 +690,20 @@ interface ComposeDialogProps {
   onSent: () => void;
 }
 
+/**
+ * One message to one person. Pick the person — the server finds their
+ * account, email and phone, whichever the channel needs. A channel with
+ * nothing behind it is shown disabled with the reason. An address outside
+ * the directory is a second, explicit choice.
+ */
 function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
   const term = useTerm();
+  const channelsQuery = useQuery({ queryKey: ['communications', 'channels'], queryFn: listChannels, staleTime: 5 * 60_000, enabled: open });
+  const templates = useQuery({ queryKey: ['dirComms', 'broadcast-templates'], queryFn: listBroadcastTemplates, enabled: open, retry: false });
   const [channel, setChannel] = useState<NotificationChannel>('IN_APP');
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
-  const [recipientUserId, setRecipientUserId] = useState('');
+  const [external, setExternal] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState('');
-  const [recipientPhone, setRecipientPhone] = useState('');
-  const [resolveNote, setResolveNote] = useState<string | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -669,80 +713,40 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
     if (open) {
       setChannel('IN_APP');
       setAssociate(null);
-      setRecipientUserId('');
+      setExternal(false);
       setRecipientEmail('');
-      setRecipientPhone('');
-      setResolveNote(null);
       setSubject('');
       setBody('');
       setError(null);
     }
   }, [open]);
 
-  /**
-   * A picked associate resolves in two steps: the directory row carries
-   * email/phone (auto-filled into the external fields when they're empty),
-   * and the admin user list maps associate → linked User id, which is what
-   * IN_APP / PUSH delivery actually targets.
-   */
-  const onPickAssociate = async (picked: PickedAssociate | null) => {
-    setAssociate(picked);
-    setRecipientUserId('');
-    setResolveNote(null);
-    if (!picked) return;
-    // Search by first name token — the directory matches on individual
-    // name fields, not the concatenated display name.
-    const nameToken = picked.name.split(/\s+/)[0] ?? picked.name;
-    let email: string | null = null;
-    try {
-      const dir = await listDirectory({ q: nameToken });
-      const entry = dir.associates.find((a) => a.id === picked.id) ?? null;
-      if (entry) {
-        email = entry.email;
-        const entryEmail = entry.email;
-        const entryPhone = entry.phone;
-        setRecipientEmail((cur) => cur || entryEmail);
-        if (entryPhone) setRecipientPhone((cur) => cur || entryPhone);
-      }
-    } catch {
-      // Directory lookup is best-effort; the manual fields still work.
-    }
-    try {
-      const res = await listAdminUsers({ q: email ?? nameToken });
-      const u = res.users.find((x) => x.associateId === picked.id);
-      if (u) {
-        setRecipientUserId(u.id);
-        setRecipientEmail((cur) => cur || u.email);
-      } else {
-        setResolveNote(
-          'No linked user account found — in-app/push needs one. Email or SMS will still work.',
-        );
-      }
-    } catch {
-      setResolveNote(
-        'Could not resolve a user account for in-app delivery. Email or SMS will still work.',
-      );
-    }
-  };
+  const channels = channelsQuery.data?.channels ?? [
+    { channel: 'IN_APP' as NotificationChannel, available: true, reason: null },
+  ];
+  const chosen = channels.find((c) => c.channel === channel);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
     setError(null);
-    if (!recipientUserId && !recipientEmail && !recipientPhone) {
-      setError(`${pickOne(term).replace(/\.$/, '')} or fill in an email/phone.`);
+    if (!external && !associate) {
+      setError(`${pickOne(term).replace(/\.$/, '')}.`);
+      return;
+    }
+    if (external && !recipientEmail) {
+      setError('Enter the email address.');
       return;
     }
     setSubmitting(true);
     try {
       await sendNotification({
-        channel,
-        recipientUserId: recipientUserId || undefined,
-        recipientEmail: recipientEmail || undefined,
-        recipientPhone: recipientPhone || undefined,
+        channel: external ? 'EMAIL' : channel,
+        ...(external ? { recipientEmail } : { recipientAssociateId: associate!.id }),
         subject: subject || undefined,
         body,
       });
+      toast.success(external ? `Sent to ${recipientEmail}.` : `Sent to ${associate!.name}.`);
       onSent();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Send failed.');
@@ -751,180 +755,109 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
     }
   };
 
+  const emailReady = channels.find((c) => c.channel === 'EMAIL')?.available ?? false;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Send notification</DialogTitle>
-          <DialogDescription>
-            Pick the channel and the recipient. Every send is recorded here.
-          </DialogDescription>
+          <DialogTitle>Send a message</DialogTitle>
+          <DialogDescription>To one person. Every send is recorded in the log.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Channel">
-              <Select
-                value={channel}
-                onChange={(e) => setChannel(e.target.value as NotificationChannel)}
-              >
-                <option value="IN_APP">In-app inbox</option>
-                <option value="EMAIL">Email (stub)</option>
-                <option value="SMS">SMS (stub)</option>
-                <option value="PUSH">Push (stub)</option>
-              </Select>
+          {!external ? (
+            <Field label="To">
+              {(p) => <AssociatePicker id={p.id} value={associate} onChange={setAssociate} />}
             </Field>
-            <Field label="Recipient (associate)">
-              <AssociatePicker
-                value={associate}
-                onChange={(v) => void onPickAssociate(v)}
-              />
+          ) : (
+            <Field label="Email address">
+              {(p) => <Input {...p} type="email" value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)} />}
             </Field>
-            {resolveNote && (
-              <p className="text-xs2 text-warning mt-1">{resolveNote}</p>
-            )}
-            <Field label="Recipient email (for EMAIL / external)">
-              <Input
-                type="email"
-                value={recipientEmail}
-                onChange={(e) => setRecipientEmail(e.target.value)}
-              />
+          )}
+          <button
+            type="button"
+            className="-mt-2 justify-self-start text-xs text-accent hover:underline disabled:text-ink-muted disabled:no-underline"
+            disabled={!external && !emailReady}
+            title={!external && !emailReady ? 'No email provider connected' : undefined}
+            onClick={() => setExternal((v) => !v)}
+          >
+            {external ? 'Pick someone from the directory instead' : 'Someone not in the directory? Send by email'}
+          </button>
+
+          {!external && (
+            <fieldset>
+              <legend className="text-sm font-medium text-ink">Channel</legend>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {channels.map((c) => (
+                  <button
+                    key={c.channel}
+                    type="button"
+                    aria-pressed={channel === c.channel}
+                    disabled={!c.available}
+                    title={c.reason ?? undefined}
+                    onClick={() => setChannel(c.channel)}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-xs',
+                      channel === c.channel ? 'border-accent bg-accent-fill/15 text-ink' : 'border-line text-ink-muted hover:text-ink',
+                      !c.available && 'cursor-not-allowed opacity-60 hover:text-ink-muted',
+                    )}
+                  >
+                    {CHANNEL_LABELS[c.channel]}
+                  </button>
+                ))}
+              </div>
+              {channels.some((c) => !c.available) && (
+                <ul className="mt-1.5 space-y-0.5 text-xs text-ink-muted">
+                  {channels
+                    .filter((c) => !c.available && c.reason)
+                    .map((c) => (
+                      <li key={c.channel}>
+                        <span className="text-ink">{CHANNEL_LABELS[c.channel]}:</span> {c.reason}
+                      </li>
+                    ))}
+                </ul>
+              )}
+              {chosen && !chosen.available && <p className="mt-1 text-xs text-warning">{chosen.reason}</p>}
+            </fieldset>
+          )}
+
+          {(templates.data?.broadcasts.length ?? 0) > 0 && (
+            <Field label="Start from a template">
+              {(p) => (
+                <Select
+                  {...p}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const t = templates.data?.broadcasts.find((x) => x.id === e.target.value);
+                    if (t) {
+                      setSubject(t.title);
+                      setBody(t.body);
+                    }
+                  }}
+                >
+                  <option value="">Blank</option>
+                  {templates.data!.broadcasts.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.templateName}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </Field>
-            <Field label="Recipient phone (for SMS / external)">
-              <Input
-                type="tel"
-                inputMode="tel"
-                autoComplete="tel"
-                value={recipientPhone}
-                onChange={(e) => setRecipientPhone(e.target.value)}
-              />
-            </Field>
-          </div>
+          )}
           <Field label="Subject">
-            <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+            {(p) => <Input {...p} value={subject} onChange={(e) => setSubject(e.target.value)} />}
           </Field>
-          <Field label="Body" required>
-            <Textarea
-              required
-              rows={4}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-            />
+          <Field label="Message" required>
+            {(p) => <Textarea {...p} required rows={4} value={body} onChange={(e) => setBody(e.target.value)} />}
           </Field>
           {error && <ErrorBanner>{error}</ErrorBanner>}
           <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => onOpenChange(false)}
-              disabled={submitting}
-            >
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button type="submit" loading={submitting} disabled={submitting}>
+            <Button type="submit" loading={submitting} disabled={submitting || (!external && chosen !== undefined && !chosen.available)}>
               Send
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-interface BroadcastDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSent: () => void;
-}
-
-function BroadcastDialog({
-  open,
-  onOpenChange,
-  onSent,
-}: BroadcastDialogProps) {
-  const [audience, setAudience] = useState<'ALL_ASSOCIATES' | 'ALL_HR'>(
-    'ALL_ASSOCIATES',
-  );
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setAudience('ALL_ASSOCIATES');
-      setSubject('');
-      setBody('');
-      setError(null);
-    }
-  }, [open]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting) return;
-    setError(null);
-    setSubmitting(true);
-    try {
-      const res = await broadcast({
-        channel: 'IN_APP',
-        audience,
-        subject: subject || undefined,
-        body,
-      });
-      toast.success(
-        `Sent to ${res.count} recipient${res.count === 1 ? '' : 's'}.`,
-      );
-      onSent();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Broadcast failed.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Broadcast to in-app inbox</DialogTitle>
-          <DialogDescription>
-            Reaches every active recipient in the chosen audience.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="grid gap-4">
-          <Field label="Audience">
-            <Select
-              value={audience}
-              onChange={(e) =>
-                setAudience(e.target.value as 'ALL_ASSOCIATES' | 'ALL_HR')
-              }
-            >
-              <option value="ALL_ASSOCIATES">All active associates</option>
-              <option value="ALL_HR">All HR administrators</option>
-            </Select>
-          </Field>
-          <Field label="Subject">
-            <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
-          </Field>
-          <Field label="Body" required>
-            <Textarea
-              required
-              rows={4}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-            />
-          </Field>
-          {error && <ErrorBanner>{error}</ErrorBanner>}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => onOpenChange(false)}
-              disabled={submitting}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" loading={submitting} disabled={submitting}>
-              Broadcast
             </Button>
           </DialogFooter>
         </form>

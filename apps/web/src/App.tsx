@@ -99,6 +99,7 @@ const TransportHome = lazyNamed(() => import('@/pages/transport/TransportHome'),
 const EmergencyHome = lazyNamed(() => import('@/pages/emergency/EmergencyHome'), 'EmergencyHome');
 const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'), 'ApprovalsHome');
 const InboxHome = lazyNamed(() => import('@/pages/inbox/InboxHome'), 'InboxHome');
+const DecisionOpen = lazyNamed(() => import('@/pages/inbox/DecisionOpen'), 'DecisionOpen');
 const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
 const PayrollConfigView = lazyNamed(
   () => import('@/pages/payroll/PayrollConfigView'),
@@ -289,6 +290,7 @@ const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'),
 const ProductAnalytics = lazyNamed(() => import('@/pages/analytics/ProductAnalytics'), 'ProductAnalytics');
 const DesignSystemPage = lazyNamed(() => import('@/pages/platform/DesignSystemPage'), 'DesignSystemPage');
 const SettingsArea = lazyNamed(() => import('@/pages/settings/SettingsArea'), 'SettingsArea');
+const CommunicationsSettings = lazyNamed(() => import('@/pages/settings/CommunicationsSettings'), 'CommunicationsSettings');
 const TrustCenterPage = lazyNamed(() => import('@/pages/trust/TrustCenterPage'), 'TrustCenterPage');
 const PublicTrustPage = lazyNamed(() => import('@/pages/trust/PublicTrustPage'), 'PublicTrustPage');
 const PublicStatusPage = lazyNamed(() => import('@/pages/status/PublicStatusPage'), 'PublicStatusPage');
@@ -545,6 +547,7 @@ const LAYOUT_ROUTES = [
   // Every decision waiting on the signed-in person; the API decides which
   // queues they may see, so any authenticated role can open it.
   { path: 'inbox', element: <InboxHome /> },
+  { path: 'decisions/open', element: <DecisionOpen /> },
   // notClientBounded: the shift supervisor holds manage:scheduling, but labor
   // cost is org economics — the API refuses bounded roles on every read here.
   { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']} notClientBounded><LaborCostsHome /></RequireCapability> },
@@ -593,6 +596,8 @@ const LAYOUT_ROUTES = [
     // the decision record and the kill switches. The agents themselves live in People (/agents).
     { path: 'admin/agents', element: <RequireCapability cap="view:org"><AgentGovernance /></RequireCapability> },
     { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
+    // Settings & trust → Communications: channels, WhatsApp, the do-not-email list, routing.
+    { path: 'admin/communications', element: <RequireCapability cap="manage:communications"><CommunicationsSettings /></RequireCapability> },
     { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
     { path: 'admin/sign-in', element: <RequireCapability cap="manage:org"><SignInSettings /></RequireCapability> },
     // Access pack: certification campaigns — any signed-in reviewer may open theirs; running one needs manage:org (the page gates the button).

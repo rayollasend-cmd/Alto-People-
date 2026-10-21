@@ -4,8 +4,8 @@
  * summary, Chart/Table switch, CSV and empty state; kit charts inside it
  * fill its plot box.
  */
-export { PALETTE, seriesColor, toneColor, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, type Tone } from './palette';
-export { ChartTooltipContent, PortalTooltip, LegendKey, DetailsTable } from './ChartTooltip';
+export { PALETTE, seriesColor, toneColor, foldToOther, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE, type Tone } from './palette';
+export { ChartTooltipContent, PortalTooltip, LegendKey, DetailsTable, STOCK_LEGEND } from './ChartTooltip';
 export { Sparkline, sparkDomain, type SparklineProps } from './Sparkline';
 export { RingMeter } from './RingMeter';
 export { StatTile } from './StatTile';

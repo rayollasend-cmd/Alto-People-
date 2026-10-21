@@ -35,6 +35,8 @@ export function TeamHoursCard({ className }: { className?: string }) {
     projected: p.projectedHours,
     status: p.projectedHours > d.thresholdHours ? 'Heading into overtime' : p.onClock ? 'On the clock' : '',
   }));
+  // Each person keeps a readable bar; a big team scrolls inside the frame.
+  const natural = Math.max(160, rows.length * 30 + 48);
   const summary =
     over.length === 0
       ? `Nobody on your team is on course to pass ${d.thresholdHours} hours this week.`
@@ -63,12 +65,12 @@ export function TeamHoursCard({ className }: { className?: string }) {
         ]}
         rows={rows}
         csvName="team-hours-this-week"
-        height={Math.min(480, Math.max(160, rows.length * 30 + 48))}
+        height={Math.min(480, natural)}
         empty={<EmptyState size="sm" icon={Clock} title="No hours yet this week" description="Punches and scheduled shifts show here as the week fills in." />}
       >
         <div className="flex h-full w-full flex-col">
-          <div className="min-h-0 flex-1">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className={natural > 480 ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1'}>
+            <ResponsiveContainer width="100%" height={natural > 480 ? natural - 24 : '100%'}>
               <BarChart data={rows} layout="vertical" margin={{ top: 12, right: 16, bottom: 0, left: 0 }} barCategoryGap="28%">
                 <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
                 {/* Forty is always on the scale, however short the week. */}

@@ -41,7 +41,7 @@ export function FloorFlagsCard({ className }: { className?: string }) {
   };
 
   return (
-    <Card className={cn('animate-enter border-warning/40', className)} data-testid="floor-flags">
+    <Card id="floor-flags" className={cn('animate-enter border-warning/40', className)} data-testid="floor-flags">
       <CardContent className="p-5">
         <SectionTitle icon={Flag} title="From the floor" trailing={<span className="text-xs tabular-nums text-ink-muted">{flags.length}</span>} />
         <ul className="divide-y divide-navy-secondary/60">

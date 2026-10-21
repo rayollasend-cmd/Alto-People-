@@ -295,6 +295,8 @@ const TABLES = [
   'QboCompanyConnection',
   // Photo-at-punch rules (2027-01).
   'PunchPhotoRule',
+  // Attestation reminder snoozes (2027-01).
+  'AttestationSnooze',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

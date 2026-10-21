@@ -329,7 +329,8 @@ floorTeamRouter.post('/shift-covers', requireAuth, async (req, res) => {
         `and submit it before you clock out.` +
         (input.note ? `\n\n${firstName(lead)}: ${input.note}` : ''),
       category: 'ops.sop',
-      linkUrl: '/',
+      // The store's shifts and their SOPs.
+      linkUrl: '/ops',
     }),
   );
   if (!selfService) {
@@ -338,7 +339,7 @@ floorTeamRouter.post('/shift-covers', requireAuth, async (req, res) => {
         subject: `${personName(cover)} covers your shift — ${span}`,
         body: `Your ${labels} shift and its SOP go to ${personName(cover)} on ${span}. Clock in on one of those days and it comes back to you.`,
         category: 'ops.sop',
-        linkUrl: '/',
+        linkUrl: '/ops',
       }),
     );
   }
@@ -382,7 +383,8 @@ floorTeamRouter.delete('/shift-covers/:id', requireAuth, async (req, res) => {
       subject: `${firstName(row.lead)} took their shift back — ${fmtDateSpan(row.fromDate, row.toDate)}`,
       body: `You're no longer covering ${firstName(row.lead)}'s shift on ${fmtDateSpan(row.fromDate, row.toDate)}. Help on their SOP as usual.`,
       category: 'ops.sop',
-      linkUrl: '/',
+      // The store's shifts and their SOPs.
+      linkUrl: '/ops',
     }),
   );
   res.status(204).end();

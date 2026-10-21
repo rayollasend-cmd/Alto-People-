@@ -37,6 +37,7 @@ import {
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
+import { OpsActivityFeed } from '@/components/home/OpsActivityFeed';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { Avatar } from '@/components/ui/Avatar';
@@ -47,7 +48,7 @@ import { LiveNow } from '@/components/ui/LiveNow';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricCard, type TrendGood } from '@/components/ui/MetricCard';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
@@ -136,6 +137,9 @@ export function AdminDashboard() {
   // pointless 403 round-trip and keeps the section out of view entirely
   // for everyone else.
   const canSeeAudit = can('view:audit');
+  // The floor's record (call-outs, publishes, swaps, incidents) replaces the
+  // audit feed — on most days a list of sign-ins — for anyone who runs ops.
+  const canSeeOps = can('manage:scheduling') || can('manage:time') || can('view:executive') || can('view:analytics');
   const canSeeOnboarding = can('view:onboarding');
   // Every "Action required" item needs one of these. A role holding none
   // (the watch-only FLOOR_SUPERVISOR lands here) would only ever see the
@@ -182,7 +186,7 @@ export function AdminDashboard() {
   const activityQuery = useQuery({
     queryKey: ['audit', 'recent', 15],
     queryFn: () => searchAuditLogs({ limit: 15 }),
-    enabled: canSeeAudit,
+    enabled: canSeeAudit && !canSeeOps,
   });
   const kpis: DashboardKPIs | null = kpisQuery.data ?? null;
   const activity: AuditSearchEntry[] | null = canSeeAudit
@@ -258,7 +262,9 @@ export function AdminDashboard() {
         {/* J-1 / H-2B dates coming due (Brief 1C-2). Quiet when nothing is. */}
         <ProgramAlertsCard />
         {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
-        {canSeeAudit && (
+        {canSeeOps ? (
+          <OpsActivityFeed auditLink={canSeeAudit} />
+        ) : canSeeAudit && (
           <ActivityFeed
             entries={activity}
             error={Boolean(activityQuery.error)}
@@ -319,7 +325,7 @@ function NeedsYou({
         hint: t('adminHome.appsHint'),
         // Straight to the review slice — the URL param beats the user's
         // persisted status chip on the applications list.
-        to: '/onboarding?status=SUBMITTED',
+        to: '/onboarding?status=TO_REVIEW',
         cta: t('adminHome.openOnboarding'),
         icon: ClipboardList,
         severity: toReview > 10 ? 'urgent' : 'attention',
@@ -523,7 +529,9 @@ interface Kpi {
   to?: string;
   /** 8-week micro-trend (sparkline + week-over-week delta chip),
    *  present only when the API computed a matching series. */
-  trend?: KpiTrend & { deltaLabel: string; format?: (n: number) => string };
+  trend?: KpiTrend & { deltaLabel: string; format?: (n: number) => string; lastIsPartial?: boolean };
+  /** Which way is good news for the trend under the figure. */
+  trendGood?: TrendGood;
 }
 
 function KpiSection({
@@ -567,7 +575,8 @@ function withLabel(
   trend: KpiTrend | undefined,
   deltaLabel: string,
 ): Kpi['trend'] {
-  return trend ? { ...trend, deltaLabel } : undefined;
+  // The API's last bucket is this week so far.
+  return trend ? { ...trend, deltaLabel, lastIsPartial: true } : undefined;
 }
 
 function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => string): Kpi[] {
@@ -584,10 +593,9 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
       // Brief 2-1b: the tenant's word for its people (a hotel says team members).
       label: `Active ${term('workers').toLowerCase()}`,
       value: fmtInt(k.activeAssociates),
-      hint:
-        k.associatesClockedIn > 0
-          ? `${fmtInt(k.associatesClockedIn)} clocked in now`
-          : 'No one on the clock',
+      // Says what "active" means: placed AND working — not everyone on the
+      // roster. "0 active" beside a 10-person list read as a bug without it.
+      hint: `${k.associatesClockedIn > 0 ? `${fmtInt(k.associatesClockedIn)} clocked in now` : 'No one on the clock'} · placed and working (worked recently or on the schedule)`,
       icon: Users,
       to: linkTo('/people?status=ACTIVE', 'view:org'),
       // Series is weekly *hires* — the leading edge of headcount.
@@ -600,7 +608,10 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
       icon: CalendarPlus,
       to: linkTo('/scheduling', 'view:scheduling'),
       // Series is shifts scheduled per week (all non-cancelled statuses).
-      trend: withLabel(k.trends?.shiftsScheduled, 'scheduled vs last wk'),
+      // The line counts shifts scheduled, not open ones — a proxy, so it
+      // stays neutral rather than calling more scheduling "good".
+      trend: withLabel(k.trends?.shiftsScheduled, 'shifts scheduled/wk'),
+      trendGood: 'neutral',
     },
   ];
   // Hours worked: the last complete week as the figure, the week so far
@@ -615,7 +626,8 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
       hint: soFar > 0 ? `${fmtHours(soFar)} so far this week` : 'None clocked yet this week',
       icon: Clock,
       to: linkTo('/time-attendance', 'view:time'),
-      trend: { ...hours, deltaLabel: 'vs the week before', format: fmtHours },
+      trend: { ...hours, deltaLabel: 'vs the week before', format: fmtHours, lastIsPartial: true },
+      trendGood: 'neutral',
     });
   }
   // Onboarding pipeline (and its I-9 Section 2 hint — compliance-adjacent)
@@ -664,6 +676,7 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
       value={kpi.value}
       hint={kpi.hint}
       trend={kpi.trend}
+      trendGood={kpi.trendGood}
       wrap={
         kpi.to
           ? (card) => (

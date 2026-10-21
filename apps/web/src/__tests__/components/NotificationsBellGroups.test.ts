@@ -32,16 +32,19 @@ const note = (over: Partial<Notification>): Notification =>
   }) as Notification;
 
 describe('needsMe', () => {
-  it('keeps unread items with somewhere to go, and anything urgent', () => {
+  it('keeps unread items with somewhere to go, and anything urgent — while unread', () => {
     expect(needsMe(note({}))).toBe(true);
     expect(needsMe(note({ readAt: new Date().toISOString() }))).toBe(false);
     expect(needsMe(note({ linkUrl: null }))).toBe(false);
-    expect(needsMe(note({ category: 'payroll_failed', readAt: new Date().toISOString() }))).toBe(true);
+    expect(needsMe(note({ category: 'payroll_failed', linkUrl: null }))).toBe(true);
+    // Read is dealt with, urgent or not — the chip agrees with the badge after "Mark all read".
+    expect(needsMe(note({ category: 'payroll_failed', readAt: new Date().toISOString() }))).toBe(false);
   });
   it('leaves out what only informs: digests, announcements, earnings', () => {
     expect(needsMe(note({ category: 'schedule_digest' }))).toBe(false);
     expect(needsMe(note({ category: 'broadcast' }))).toBe(false);
     expect(needsMe(note({ category: 'earnings' }))).toBe(false);
+    expect(needsMe(note({ category: 'paystub' }))).toBe(false);
   });
 });
 

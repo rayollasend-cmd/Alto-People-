@@ -22,6 +22,9 @@ import { scopeActiveAssociates, scopeAssociates, scopeAssociatesIncludingFormer,
 import { canUseMessenger } from '../lib/messaging.js';
 import { buildFieldglassQueue } from '../lib/fieldglassQueue.js';
 import { countApprovalQueues, deciderOf } from './approvals.js';
+import { billTabWhere } from '../lib/books/payables/bills.js';
+import { companyWorkweek } from '../lib/timeAnomalies.js';
+import { localDateKey } from '../lib/timezone.js';
 import { countDecidableApprovals } from '../lib/proposalDecisions.js';
 import { countDecidable } from '../lib/approvalRequests.js';
 import { deciderFrom } from './approvalRequests.js';
@@ -75,6 +78,26 @@ interface SourceDef {
   count: (user: SessionUser) => Promise<number | { count: number; description?: string; path?: string }>;
 }
 
+/**
+ * One request asks two sources (approvals, timesheets) for the same queue
+ * counts — share the computation per user for the request's lifetime.
+ */
+const approvalCountMemo = new WeakMap<SessionUser, ReturnType<typeof countApprovalQueues>>();
+function approvalCounts(u: SessionUser): ReturnType<typeof countApprovalQueues> {
+  let hit = approvalCountMemo.get(u);
+  if (!hit) {
+    hit = countApprovalQueues(u);
+    approvalCountMemo.set(u, hit);
+  }
+  return hit;
+}
+
+/** The timesheet queue opened on the 90 days its count covers, as company-local days. */
+export function timesheetQueuePath(now: Date = new Date()): string {
+  const tz = companyWorkweek().timezone;
+  return `/time-attendance?tab=queue&from=${localDateKey(new Date(now.getTime() - 90 * DAY_MS), tz)}&to=${localDateKey(now, tz)}`;
+}
+
 /** Same clamp as kioskClientClamp in kiosk99.ts: bounded callers see
  *  their own client's devices; an unassigned bounded caller sees none. */
 function clientClamp(user: SessionUser): string | undefined {
@@ -93,23 +116,38 @@ const SOURCES: SourceDef[] = [
   {
     key: 'approvals',
     label: 'Approvals',
-    description: 'Shift swaps, open-shift pickups, time off, timesheets and walk-in clock-ins waiting for a manager.',
+    description: 'Shift swaps, open-shift pickups, time off and walk-in clock-ins waiting for a manager.',
     path: '/approvals',
     module: 'scheduling',
     visible: (u) => can(u, 'manage:scheduling'),
-    // Agent proposals are their own source below; the badge total carries both.
-    // When the work is all in one queue, the link opens that queue.
+    // Only what the Approvals page lists: agent proposals and timesheets are
+    // their own sources (their own pages), so this count reaches 0 exactly
+    // when the page is empty. When the work is all in one queue, the link
+    // opens that queue.
     count: async (u) => {
-      const c = await countApprovalQueues(u);
+      const c = await approvalCounts(u);
       const queues: Array<[number, string]> = [
         [c.swaps, '/approvals?tab=swaps'],
         [c.pickups, '/approvals?tab=pickups'],
         [c.timeOff, '/approvals?tab=timeoff'],
         [c.clockIns, '/approvals?tab=walkins'],
-        [c.timesheets, '/time-attendance?tab=queue'],
       ];
       const busy = queues.filter(([n]) => n > 0);
-      return { count: c.total - c.proposals, path: busy.length === 1 ? busy[0]![1] : undefined };
+      return { count: c.swaps + c.pickups + c.timeOff + c.clockIns, path: busy.length === 1 ? busy[0]![1] : undefined };
+    },
+  },
+  {
+    key: 'timesheets',
+    label: 'Timesheets to approve',
+    description: 'Finished punches from the last 90 days waiting for approval — unapproved time can’t be paid or billed.',
+    path: '/time-attendance?tab=queue',
+    module: 'time',
+    // Whoever approves time — the queue's own gate.
+    visible: (u) => can(u, 'manage:time'),
+    // The link opens the queue on the same 90 days the count covers.
+    count: async (u) => {
+      const c = await approvalCounts(u);
+      return { count: c.timesheets, path: timesheetQueuePath() };
     },
   },
   {
@@ -212,7 +250,7 @@ const SOURCES: SourceDef[] = [
     key: 'onboarding-review',
     label: 'Applications to review',
     description: 'New hires who submitted their paperwork and are waiting on HR.',
-    path: '/onboarding?status=SUBMITTED',
+    path: '/onboarding?status=TO_REVIEW',
     visible: (u) => can(u, 'view:onboarding') && can(u, 'manage:onboarding'),
     count: (u) =>
       prisma.application.count({
@@ -817,19 +855,21 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'books-bills',
-    label: 'Bills',
-    description: 'Vendor bills waiting for your approval, and approved bills due in the next week.',
+    label: 'Bills to approve',
+    description: 'Vendor bills a second person entered, waiting for your approval.',
     path: '/books/bills?tab=approve',
     visible: (u) => can(u, 'manage:books'),
-    count: async (u) => {
-      const tenantId = tenantIdForWrite();
-      const [toApprove, dueSoon] = await Promise.all([
-        prisma.bill.count({ where: { tenantId, status: 'PENDING_APPROVAL', NOT: { createdById: u.id } } }),
-        prisma.bill.count({ where: { tenantId, status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, dueDate: { lte: new Date(Date.now() + 7 * DAY_MS) } } }),
-      ]);
-      // Nothing to approve: the link opens the bills that are due instead.
-      return { count: toApprove + dueSoon, path: toApprove > 0 ? undefined : '/books/bills' };
-    },
+    // Your own bills are a second person's to approve — not counted here.
+    count: (u) => prisma.bill.count({ where: { tenantId: tenantIdForWrite(), status: 'PENDING_APPROVAL', NOT: { createdById: u.id } } }),
+  },
+  {
+    key: 'books-bills-due',
+    label: 'Bills due this week',
+    description: 'Approved vendor bills due in the next seven days, or already overdue.',
+    path: '/books/bills?tab=due',
+    visible: (u) => can(u, 'manage:books'),
+    // billTabWhere('due') — the tab this opens lists exactly these.
+    count: () => prisma.bill.count({ where: { tenantId: tenantIdForWrite(), ...billTabWhere('due') } }),
   },
 ];
 

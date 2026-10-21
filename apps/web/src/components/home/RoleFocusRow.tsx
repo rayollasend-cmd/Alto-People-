@@ -121,7 +121,7 @@ function HrRow() {
       label: 'Applications to review',
       value: count('onboarding-review'),
       hint: `New ${term('workers').toLowerCase()} waiting on HR`,
-      to: '/onboarding?status=SUBMITTED',
+      to: '/onboarding?status=TO_REVIEW',
       icon: Users,
       tone: (count('onboarding-review') ?? 0) > 10 ? 'urgent' : (count('onboarding-review') ?? 0) > 0 ? 'attention' : 'calm',
     },

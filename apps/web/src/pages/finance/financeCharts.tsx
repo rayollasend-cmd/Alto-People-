@@ -45,7 +45,7 @@ export function CashFlowChart({ weeks, compact = false }: { weeks: CashWeek[]; c
             />
             <Tooltip
               cursor={{ fill: PALETTE.cursor }}
-              content={<ChartTooltipContent series={CASH_SERIES} heading={(x) => `Week of ${x}`} format={(v) => fmtMoney(Math.abs(v))} />}
+              content={<ChartTooltipContent series={CASH_SERIES} heading={(x) => `Week of ${x}`} format={(v, key) => fmtMoney(key === 'outflowNeg' ? Math.abs(v) : v)} />}
             />
             <ReferenceLine y={0} stroke={PALETTE.ref} />
             <Bar dataKey="inflow" stackId="flow" fill={CASH_COLORS.in} radius={[4, 4, 0, 0]} maxBarSize={compact ? 20 : 32} isAnimationActive={false} />
@@ -80,6 +80,7 @@ export function MarginChart({ weeks, words }: { weeks: MarginWeek[]; words: { re
     revenue: w.revenue,
     wages: w.wages,
     pct: w.marginPct === null ? '—' : `${Math.round(w.marginPct * 100)}%`,
+    marginPct: w.marginPct,
     inProgress: w.inProgress,
   }));
   const series = { revenue: { ...MARGIN_SERIES.revenue, name: words.revenue }, wages: { ...MARGIN_SERIES.wages, name: words.wages } };
@@ -96,7 +97,21 @@ export function MarginChart({ weeks, words }: { weeks: MarginWeek[]; words: { re
               {rows.map((r, i) => (
                 <Cell key={i} fillOpacity={r.inProgress ? 0.55 : 1} />
               ))}
-              <LabelList dataKey="pct" position="top" style={{ fill: TICK.fill, fontSize: 10, fontWeight: 600 }} />
+              <LabelList
+                dataKey="pct"
+                position="top"
+                content={(p: { x?: number | string; y?: number | string; width?: number | string; index?: number; value?: unknown }) => {
+                  const r = rows[p.index ?? 0];
+                  if (!r) return null;
+                  // Under 10% margin reads as a warning, as it always has.
+                  const fill = r.marginPct === null ? TICK.fill : r.marginPct < 0.1 ? PALETTE.warn : PALETTE.good;
+                  return (
+                    <text x={Number(p.x) + Number(p.width) / 2} y={Number(p.y) - 4} textAnchor="middle" fill={fill} fontSize={10} fontWeight={600}>
+                      {String(p.value ?? '')}
+                    </text>
+                  );
+                }}
+              />
             </Bar>
             <Bar dataKey="wages" fill={series.wages.color} radius={[4, 4, 0, 0]} maxBarSize={18} isAnimationActive={false}>
               {rows.map((r, i) => (

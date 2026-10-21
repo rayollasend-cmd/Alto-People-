@@ -90,9 +90,16 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     }),
   );
   const reasonBy = new Map(separations.map((s) => [s.associateId, s.reason]));
-  const rows = associates.map((a) => ({
+  // Only people actually hired: a hire date, or (older records without one)
+  // someone working today. An onboarding invite creates an Associate with
+  // neither — counting it would add a "hire" and an employee who never started.
+  const hiredOnly = associates.flatMap((a) => {
+    const hired = a.hireDate ?? (activeIds.has(a.id) ? a.createdAt : null);
+    return hired ? [{ a, hired }] : [];
+  });
+  const rows = hiredOnly.map(({ a, hired }) => ({
     id: a.id,
-    hired: a.hireDate ?? a.createdAt,
+    hired,
     separatedAt: a.separatedAt,
     reason: reasonBy.get(a.id) ?? null,
     managerId: a.managerId,

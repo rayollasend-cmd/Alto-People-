@@ -18,6 +18,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { fmtDateTz } from '@/lib/format';
 
 /**
  * IS ANYONE ACTUALLY USING THIS?
@@ -38,7 +39,8 @@ const WINDOWS = [
 ];
 
 /** Charts want a short axis label, not a full ISO date. */
-const shortDay = (day: string) => day.slice(5);
+/** "Oct 21" — the API's days are UTC calendar days. */
+const shortDay = (day: string) => fmtDateTz(`${day}T00:00:00Z`, 'UTC');
 
 const pct = (v: number) => `${(v * 100).toFixed(v < 0.01 ? 2 : 1)}%`;
 
@@ -103,12 +105,19 @@ export function ProductAnalytics() {
     [adoption.data],
   );
 
-  // The day-by-day line behind the daily-active figure: the window's
-  // series, its change against the day before.
+  // The day-by-day line behind the daily-active figure. Today is still
+  // filling up (a UTC day), so the change compares the last two whole
+  // days — yesterday against the day before — and today draws hollow.
   const dailyTrend = useMemo<MetricTrend | undefined>(() => {
     const series = activeSeries.map((p) => p.activeUsers);
-    if (series.length < 2) return undefined;
-    return { series, delta: series[series.length - 1]! - series[series.length - 2]!, deltaLabel: 'vs the day before', unit: 'day' };
+    if (series.length < 3) return undefined;
+    return {
+      series,
+      delta: series[series.length - 2]! - series[series.length - 3]!,
+      deltaLabel: 'yesterday vs the day before',
+      unit: 'day',
+      lastIsPartial: true,
+    };
   }, [activeSeries]);
 
   const totalRequests = useMemo(
@@ -142,7 +151,7 @@ export function ProductAnalytics() {
           <MetricCard
             label="Daily active"
             value={active.isLoading ? '—' : String(active.data?.dau ?? 0)}
-            hint="Signed in today"
+            hint="Signed in today so far"
             trend={dailyTrend}
           />
           <MetricCard
@@ -178,7 +187,7 @@ export function ProductAnalytics() {
           height={220}
           empty={<EmptyState icon={Users} title="Nothing recorded yet" description="Activity is counted from the first authenticated request after this shipped." />}
         >
-          <TrendLineChart data={activeSeries} x="label" yLabel="People" heading={(l) => `Day ${l}`} series={[{ key: 'activeUsers', name: 'Active users', area: true }]} />
+          <TrendLineChart data={activeSeries} x="label" yLabel="People" heading={(l) => String(l)} series={[{ key: 'activeUsers', name: 'Active users', area: true }]} />
         </ChartFrame>
       )}
 
@@ -228,7 +237,7 @@ export function ProductAnalytics() {
             height={200}
             empty={<EmptyState icon={TrendingUp} title="No new accounts in this window" size="sm" />}
           >
-            <StackedBarChart data={signupSeries} x="label" yLabel="Accounts" heading={(l) => `Day ${l}`} series={[{ key: 'accounts', name: 'Accounts' }]} />
+            <StackedBarChart data={signupSeries} x="label" yLabel="Accounts" heading={(l) => String(l)} series={[{ key: 'accounts', name: 'Accounts' }]} />
           </ChartFrame>
         )}
 
@@ -298,7 +307,7 @@ export function ProductAnalytics() {
               data={trafficSeries}
               x="label"
               yLabel="Requests"
-              heading={(l) => `Day ${l}`}
+              heading={(l) => String(l)}
               series={[
                 { key: 'requests', name: 'Requests' },
                 { key: 'serverError', name: 'Server errors', color: PALETTE.bad },

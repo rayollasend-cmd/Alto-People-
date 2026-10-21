@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { STOCK_LEGEND } from '@/components/ui/charts';
 import { CalendarRange } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useTenant, useTerm } from '@/lib/auth';
@@ -168,8 +169,8 @@ export function StaffingPlanView() {
                 <CartesianGrid stroke={CHART.grid} vertical={false} />
                 <XAxis dataKey="week" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
                 <YAxis allowDecimals={false} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={CHART.tooltip} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
+                <Legend {...STOCK_LEGEND} />
                 <Bar dataKey="inPlace" name="In place" stackId="heads" fill={CHART.series[1]} />
                 <Bar dataKey="short" name="Short" stackId="heads" fill={CHART.bad} radius={[3, 3, 0, 0]} />
                 <Line dataKey="scheduled" name="Scheduled" stroke={CHART.series[0]} strokeWidth={2} dot={false} />

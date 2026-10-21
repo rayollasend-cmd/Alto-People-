@@ -453,7 +453,7 @@ interface DoorRowProps {
  */
 function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPinned, onTogglePin, onToggle, onOpen }: DoorRowProps) {
   const Icon = DOOR_ICONS[door.key];
-  const single = door.children.length === 1 && door.target.key === door.children[0]!.key;
+  const single = door.flat || (door.children.length === 1 && door.target.key === door.children[0]!.key);
   const waiting = door.children.reduce((n, c) => n + (badgeFor(c) ?? 0), 0) + (door.children.includes(door.target) ? 0 : (badgeFor(door.target) ?? 0));
 
   if (single) {
@@ -461,7 +461,7 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
       <PinnableRow
         module={{ ...door.target, label: door.label }}
         icon={Icon}
-        active={activePath === door.target.path}
+        active={door.flat ? active : activePath === door.target.path}
         railCollapsed={railCollapsed}
         badge={badgeFor(door.target)}
         pinned={isPinned(door.target.key)}

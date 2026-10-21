@@ -20,6 +20,8 @@ import type {
   BankTxnStatus,
   BankTxnSuggestions,
   BankTxnView,
+  BankUndoInput,
+  BankUndoResult,
 } from '@alto-people/shared';
 import { apiFetch } from '@/lib/api';
 
@@ -50,13 +52,20 @@ export const syncBankAccount = (id: string) => apiFetch<BankImportResult>(`${B}/
 
 export const getTxnSuggestions = (id: string) => apiFetch<BankTxnSuggestions>(`${B}/transactions/${id}/suggestions`);
 /** A page of suggestions in one request. */
-export const getTxnSuggestionsBatch = (ids: string[]) => apiFetch<BankSuggestionsBatch>(`${B}/transactions/suggestions`, { method: 'POST', body: { ids } });
+/** A page's suggestions — asked in chunks of 200 (the API's limit), so "Show more" never outgrows it. */
+export async function getTxnSuggestionsBatch(ids: string[]): Promise<BankSuggestionsBatch> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+  const got = await Promise.all(chunks.map((chunk) => apiFetch<BankSuggestionsBatch>(`${B}/transactions/suggestions`, { method: 'POST', body: { ids: chunk } })));
+  return { suggestions: Object.assign({}, ...got.map((g) => g.suggestions)) };
+}
 /** Decide many at once — each its own decision; already decided ones come back skipped. */
 export const bulkDecideTxns = (action: BankBulkAction, ids: string[]) => apiFetch<BankBulkResult>(`${B}/transactions/bulk`, { method: 'POST', body: { action, ids }, timeoutMs: 120_000 });
 export const categorizeTxn = (id: string, body: BankCategorizeInput) => apiFetch<{ transaction: BankTxnView }>(`${B}/transactions/${id}/categorize`, { method: 'POST', body });
 export const matchTxn = (id: string, lineId: string) => apiFetch<{ transaction: BankTxnView }>(`${B}/transactions/${id}/match`, { method: 'POST', body: { lineId } });
 export const excludeTxn = (id: string) => apiFetch<{ transaction: BankTxnView }>(`${B}/transactions/${id}/exclude`, { method: 'POST' });
-export const undoTxn = (id: string) => apiFetch<{ transaction: BankTxnView }>(`${B}/transactions/${id}/undo`, { method: 'POST' });
+/** Undo a decision. `undoPayment`: a deposit matched to a client payment takes the payment back too. */
+export const undoTxn = (id: string, body: BankUndoInput = {}) => apiFetch<BankUndoResult>(`${B}/transactions/${id}/undo`, { method: 'POST', body });
 
 export const listBankRules = () => apiFetch<{ rules: BankRuleView[] }>(`${B}/rules`);
 export const createBankRule = (body: BankRuleInput) => apiFetch<{ rule: BankRuleView }>(`${B}/rules`, { method: 'POST', body });

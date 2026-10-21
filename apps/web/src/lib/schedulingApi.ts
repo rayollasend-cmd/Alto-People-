@@ -93,6 +93,10 @@ export interface SchedulingKpis {
   draftShifts: number;
   completedShifts: number;
   totalShifts: number;
+  /** OPEN and not over yet (isOpenShift) — what "open shifts" means. */
+  openUpcoming?: number;
+  /** Ended while still OPEN. */
+  wentUnfilled?: number;
   fillRatePercent: number;
   totalScheduledMinutes: number;
   /** Null for client-bound roles (SHIFT_SUPERVISOR) — the API withholds
@@ -284,6 +288,12 @@ export function getShiftConflicts(
 
 export function getAutoFillCandidates(shiftId: string): Promise<AutoFillResponse> {
   return apiFetch<AutoFillResponse>(`/scheduling/shifts/${shiftId}/auto-fill`);
+}
+
+/** The same ranking for several shifts in one request (≤ 25) — the call-outs
+ *  desk's top pick per row. Each list is the top 5. */
+export function getAutoFillBatch(shiftIds: string[]): Promise<{ byShift: Record<string, AutoFillResponse['candidates']> }> {
+  return apiFetch('/scheduling/auto-fill/batch', { method: 'POST', body: { shiftIds } });
 }
 
 export function getMyAvailability(): Promise<AvailabilityListResponse> {

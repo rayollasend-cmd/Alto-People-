@@ -633,20 +633,24 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
       select: { invitedAt: true, submittedAt: true },
     });
 
-    const monthlyMap = new Map<string, { invited: number; completed: number }>();
+    const monthlyMap = new Map<string, { invited: number; completed: number; invitedCompleted: number }>();
     // Pre-seed with empty months so the chart has full coverage even if
     // a quiet month had zero of both.
     for (let i = 0; i < ANALYTICS_MONTHS; i++) {
       const d = new Date(
         Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)
       );
-      monthlyMap.set(monthKey(d), { invited: 0, completed: 0 });
+      monthlyMap.set(monthKey(d), { invited: 0, completed: 0, invitedCompleted: 0 });
     }
     for (const a of monthlyApps) {
       if (a.invitedAt >= monthlyStart) {
         const k = monthKey(a.invitedAt);
         const entry = monthlyMap.get(k);
-        if (entry) entry.invited += 1;
+        if (entry) {
+          entry.invited += 1;
+          // The invite month's cohort: finished at any time since.
+          if (a.submittedAt) entry.invitedCompleted += 1;
+        }
       }
       if (a.submittedAt && a.submittedAt >= monthlyStart) {
         const k = monthKey(a.submittedAt);
@@ -655,7 +659,7 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
       }
     }
     const monthly: OnboardingMonthlyPoint[] = Array.from(monthlyMap.entries())
-      .map(([month, v]) => ({ month, invited: v.invited, completed: v.completed }))
+      .map(([month, v]) => ({ month, invited: v.invited, completed: v.completed, invitedCompleted: v.invitedCompleted }))
       .sort((a, b) => a.month.localeCompare(b.month));
 
     const payload: OnboardingAnalyticsResponse =

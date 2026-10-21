@@ -111,18 +111,21 @@ const SHOW_LIMIT = 50;
 
 /* ---- "Only what needs me", and grouping ------------------------------- */
 
-/** Told, not asked: digests, announcements, earnings, the store's daily reads. */
-const FYI_CATEGORY = /digest|earnings|broadcast|announce|celebrat|kudos|week_ahead|whats_new|newsletter|recap/;
+/** Told, not asked: digests, announcements, earnings, paystubs and other
+ *  "it's done" notices, the store's daily reads. */
+const FYI_CATEGORY = /digest|earnings|broadcast|announce|celebrat|kudos|week_ahead|whats_new|newsletter|recap|paystub|payslip|emailed|receipt|confirmed|_sent$/;
 const FYI_BUCKETS: ReadonlySet<NotificationCategory> = new Set(['broadcast', 'growth', 'store_daily', 'store_reports']);
 
 /**
- * Does this one ask something of the person? Anything urgent does; an
- * unread item with somewhere to go does, unless it is the kind that only
- * informs. Read items have been dealt with.
+ * Does this one ask something of the person? An unread item does when it is
+ * urgent, or has somewhere to go and isn't the kind that only informs. Read
+ * items have been dealt with — urgent ones too, so the count agrees with
+ * the badge after "Mark all read".
  */
 export function needsMe(n: Notification): boolean {
+  if (n.readAt) return false;
   if (isUrgentCategory(n.category)) return true;
-  if (n.readAt || !n.linkUrl) return false;
+  if (!n.linkUrl) return false;
   const bucket = bucketForCategory(n.category);
   if (bucket && FYI_BUCKETS.has(bucket)) return false;
   return !FYI_CATEGORY.test(n.category ?? '');
@@ -159,9 +162,9 @@ export function groupNotifications(list: readonly Notification[], min = 3): Bell
 
 type BellFilter = 'all' | 'mine';
 const FILTER_KEY = 'alto.bell.filter.v1';
-function readFilter(): BellFilter {
+function readFilter(key: string): BellFilter {
   try {
-    return window.localStorage.getItem(FILTER_KEY) === 'mine' ? 'mine' : 'all';
+    return window.localStorage.getItem(key) === 'mine' ? 'mine' : 'all';
   } catch {
     return 'all';
   }
@@ -170,7 +173,7 @@ function readFilter(): BellFilter {
 export function NotificationsBell() {
   // The full inbox page is a communications screen; portal accounts read
   // their notifications here in the panel only.
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const hasInboxPage = can('view:communications');
   const [items, setItems] = useState<Notification[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -182,12 +185,14 @@ export function NotificationsBell() {
   // One-shot swing on arrival; cleared by onAnimationEnd so a later
   // arrival can replay it.
   const [swing, setSwing] = useState(false);
-  // Everything, or only what asks something of you — remembered per browser.
-  const [filter, setFilterState] = useState<BellFilter>(readFilter);
+  // Everything, or only what asks something of you — remembered per person
+  // on this browser (a shared desk keeps each person's choice).
+  const filterKey = `${FILTER_KEY}:${user?.id ?? 'anon'}`;
+  const [filter, setFilterState] = useState<BellFilter>(() => readFilter(filterKey));
   const setFilter = (f: BellFilter) => {
     setFilterState(f);
     try {
-      window.localStorage.setItem(FILTER_KEY, f);
+      window.localStorage.setItem(filterKey, f);
     } catch {
       /* a per-viewer convenience */
     }
@@ -323,7 +328,7 @@ export function NotificationsBell() {
     const ids = new Set(unread.map((x) => x.id));
     const now = new Date().toISOString();
     setItems((prev) => prev?.map((x) => (ids.has(x.id) ? { ...x, readAt: now, seenAt: x.seenAt ?? now } : x)) ?? null);
-    Promise.all(unread.map((x) => markRead(x.id))).catch(() => {
+    markAllRead([...ids]).catch(() => {
       toast.error('Could not mark as read');
       refresh();
     });
@@ -333,6 +338,9 @@ export function NotificationsBell() {
   const shown = filtered.slice(0, SHOW_LIMIT);
   const rows = groupNotifications(shown);
   const needsMeCount = (items ?? []).filter(needsMe).length;
+  // The footer says how many more there are, in either view.
+  const listTotal = filter === 'mine' ? needsMeCount : total;
+  const moreHidden = listTotal > shown.length;
 
   const renderItem = (n: Notification, nested = false) => {
     const meta = categoryMeta(n.category);
@@ -609,15 +617,15 @@ export function NotificationsBell() {
             </div>
           )}
         </div>
-        {items && filter === 'all' && total > shown.length && !hasInboxPage && (
+        {items && moreHidden && !hasInboxPage && (
           <>
             <DropdownMenuSeparator className="m-0" />
             <p className="px-3 py-2 text-center text-2xs text-silver/60">
-              Showing the latest {shown.length} of {total}
+              Showing the latest {shown.length} of {listTotal}
             </p>
           </>
         )}
-        {items && filter === 'all' && total > shown.length && hasInboxPage && (
+        {items && moreHidden && hasInboxPage && (
           <>
             <DropdownMenuSeparator className="m-0" />
             <button
@@ -628,7 +636,7 @@ export function NotificationsBell() {
               }}
               className="w-full px-3 py-2 coarse:min-h-11 text-2xs text-center text-silver/80 hover:text-gold-bright hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:bg-navy-secondary"
             >
-              Showing {shown.length} of {total} —{' '}
+              Showing {shown.length} of {listTotal} —{' '}
               <span className="text-gold">View all in Inbox</span>
             </button>
           </>

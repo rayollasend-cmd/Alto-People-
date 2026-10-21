@@ -181,6 +181,16 @@ describe('DataGrid', () => {
     expect(actions).toHaveBeenLastCalledWith(['b'], expect.any(Function));
   });
 
+  it('says where the cursor is, and x works with Shift or Caps Lock on', async () => {
+    const actions = vi.fn((ids: string[]) => <span>acting on {ids.length}</span>);
+    renderGrid({ selectable: { actions } });
+    screen.getByRole('group', { name: /Test rows — j and k move/ }).focus();
+    await userEvent.keyboard('j');
+    expect(screen.getByRole('status')).toHaveTextContent(/^Row 1 of 3: /);
+    await userEvent.keyboard('{Shift>}X{/Shift}');
+    expect(actions).toHaveBeenLastCalledWith(['a'], expect.any(Function));
+  });
+
   it('shift-click takes every row between the two boxes', async () => {
     const actions = vi.fn((ids: string[]) => <span>acting on {ids.length}</span>);
     renderGrid({ selectable: { actions } });

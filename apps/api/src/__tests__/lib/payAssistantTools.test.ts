@@ -101,7 +101,8 @@ describe('pay tools', () => {
     });
     expect(out.reply).toBe('Tu pago bruto fue $500.00.');
     expect(out.toolsUsed).toEqual(['PAYSTUB']);
-    expect(out.linkUrl).toBe('/payroll');
+    // The link opens that paystub, not the payroll page in general.
+    expect(out.linkUrl).toMatch(/^\/payroll\?item=[0-9a-f-]{36}$/);
   });
 
   it('check_my_withholding points to the estimator when there is no W-4', async () => {

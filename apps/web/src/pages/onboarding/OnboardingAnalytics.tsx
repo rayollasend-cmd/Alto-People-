@@ -356,7 +356,9 @@ function MonthlyChart({
     month: fmtMonth(p.month),
     invited: p.invited,
     completed: p.completed,
-    rate: p.invited > 0 ? Math.round((p.completed / p.invited) * 100) : null,
+    // The month's invitees who have finished — a cohort rate. (Completions in a
+    // month are often last month's invites, so completed ÷ invited isn't one.)
+    rate: p.invited > 0 && p.invitedCompleted !== undefined ? Math.round((p.invitedCompleted / p.invited) * 100) : null,
   }));
   const invited = points.reduce((n, p) => n + p.invited, 0);
   const completed = points.reduce((n, p) => n + p.completed, 0);
@@ -370,7 +372,7 @@ function MonthlyChart({
         { key: 'month', label: 'Month' },
         { key: 'invited', label: 'Invited', numeric: true },
         { key: 'completed', label: 'Completed', numeric: true },
-        { key: 'rate', label: 'Completed of invited', numeric: true, format: (v) => (v === null || v === undefined ? '—' : `${v}%`) },
+        { key: 'rate', label: 'Of that month’s invites, finished', numeric: true, format: (v) => (v === null || v === undefined ? '—' : `${v}%`) },
       ]}
       rows={invited + completed > 0 ? rows : []}
       empty={<p className="text-sm text-silver">Nobody was invited in the last {points.length} months.</p>}

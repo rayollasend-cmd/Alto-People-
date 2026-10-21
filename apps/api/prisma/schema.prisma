@@ -1304,6 +1304,7 @@ model AttendanceEvent {
   @@index([associateId, occurredOn])
   @@index([clientId, occurredOn])
   @@index([tenantId])
+  @@index([tenantId, occurredOn])
 }
 
 // Finance worklist state: the associate has been registered in
@@ -3431,6 +3432,7 @@ model TimeEntry {
   @@index([projectId])
   @@index([shiftId])
   @@index([tenantId])
+  @@index([tenantId, clockInAt])
 }
 
 model Shift {
@@ -6380,14 +6382,41 @@ model OneOnOne {
   managerNotes   String?
   associateNotes String?
   status         OneOnOneStatus @default(SCHEDULED)
+  /// WEEKLY | BIWEEKLY — set for a repeating 1:1; completing one schedules the next.
+  cadence        String?        @db.VarChar(16)
+  /// Every meeting of one repeating 1:1 shares this id (the first meeting's id).
+  seriesId       String?        @db.Uuid
   createdAt      DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
 
-  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  manager   User      @relation("OneOnOneManager", fields: [managerUserId], references: [id], onDelete: Cascade)
+  associate   Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  manager     User                 @relation("OneOnOneManager", fields: [managerUserId], references: [id], onDelete: Cascade)
+  actionItems OneOnOneActionItem[]
 
   @@index([associateId, scheduledFor(sort: Desc)])
   @@index([managerUserId, scheduledFor(sort: Desc)])
+  @@index([tenantId])
+  @@index([seriesId])
+}
+
+/// A follow-up agreed in a 1:1. Open ones carry forward to the next meeting
+/// of the series (a new row pointing at the one it came from).
+model OneOnOneActionItem {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  oneOnOneId     String    @db.Uuid
+  text           String    @db.VarChar(500)
+  /// The manager owns it (true) or the associate does.
+  ownerIsManager Boolean   @default(true)
+  doneAt         DateTime? @db.Timestamptz(6)
+  carriedFromId  String?   @db.Uuid
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  oneOnOne OneOnOne @relation(fields: [oneOnOneId], references: [id], onDelete: Cascade)
+
+  @@index([oneOnOneId])
   @@index([tenantId])
 }
 
@@ -6755,6 +6784,8 @@ model Broadcast {
   clientId     String?            @db.Uuid
   departmentId String?            @db.Uuid
   costCenterId String?            @db.Uuid
+  /// Set = a saved template ("Save as template"): never sent, listed apart, copied by "Use".
+  templateName String?            @db.VarChar(120)
   status       BroadcastStatus    @default(DRAFT)
   scheduledFor DateTime?          @db.Timestamptz(6)
   sentAt       DateTime?          @db.Timestamptz(6)
@@ -10518,6 +10549,22 @@ model ManualComplianceAttestation {
 
   @@unique([key, periodStart])
   @@index([key, periodEnd])
+  @@index([tenantId])
+}
+
+/// HR put off one attestation's reminders until a date — the daily digest
+/// leaves it out until then. One row per (tenant, signal, period).
+model AttestationSnooze {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  key          String   @db.VarChar(64)
+  periodStart  DateTime @db.Date
+  snoozedUntil DateTime @db.Timestamptz(6)
+  createdById  String?  @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, key, periodStart])
   @@index([tenantId])
 }
 

@@ -6,13 +6,12 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { ArrowDownRight, ArrowUpRight, Download, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtMoney, fmtMoneyCompact, fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtMoney, fmtMoneyCompact, fmtRelativeDate } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
 import { getOpsBoard, getOpsScorecard } from '@/lib/opsApi';
@@ -27,7 +26,8 @@ import { LiveNow } from '@/components/ui/LiveNow';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { MetricCard, type MetricTrend, type TrendGood } from '@/components/ui/MetricCard';
-import { DetailsTable, PALETTE, StackedBarChart, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, TrendLineChart } from '@/components/ui/charts';
+import { DetailsTable, PALETTE, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
+import { DonutChart } from '@/components/ui/DonutChart';
 import { AgentRoiTile } from '@/pages/executive/AgentRoiTile';
 import { ClientNpsCard } from '@/pages/executive/ClientNpsCard';
 import { WhatIfClientCard } from '@/pages/executive/WhatIfClientCard';
@@ -385,7 +385,7 @@ function DecisionQueueCard({
         {open.length === 0 && delegated.length === 0 ? (
           <p className="flex items-center gap-2 text-sm text-silver">
             <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />
-            All systems nominal — nothing needs your decision.
+            {'Nothing needs you.'}
           </p>
         ) : (
           <>
@@ -700,9 +700,16 @@ function Tile({
       trend={trend}
       trendGood={good}
       className="h-full"
+      cta={false}
       wrap={to ? (card) => <Link to={to} className="block h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright">{card}</Link> : undefined}
     />
   );
+}
+
+/** "Oct 12" for a week starting on that day (the API sends ISO dates). */
+function weekOf(start: string): string {
+  // A calendar date: read it as that day in UTC so no zone shifts it.
+  return fmtDateTz(`${start.slice(0, 10)}T00:00:00Z`, 'UTC');
 }
 
 function withLabel(t: MetricTrend | undefined, deltaLabel: string): MetricTrend | undefined {
@@ -847,7 +854,7 @@ export function ExecutiveDashboard() {
   const trendData = useMemo(
     () =>
       (summary?.trend ?? []).map((w) => ({
-        week: w.start.slice(5, 10),
+        week: weekOf(w.start),
         billed: w.estBilled,
         margin: w.estMargin,
         laborCost: w.estLaborCost,
@@ -1379,7 +1386,7 @@ export function ExecutiveDashboard() {
           </div>
 
           {/* Targets vs actuals + receivables aging. */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div id="targets" className="grid scroll-mt-20 grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
@@ -1964,31 +1971,7 @@ export function ExecutiveDashboard() {
               csvName="workforce-composition"
               height={232}
             >
-              <div className="flex h-full flex-col">
-                <div className="min-h-0 flex-1">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={composition} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="90%" paddingAngle={2} stroke="none" isAnimationActive={false}>
-                        {composition.map((s) => (
-                          <Cell key={s.name} fill={s.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value, name) => [String(value), String(name)]} contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <ul className="mt-2 space-y-1 text-xs text-silver">
-                  {composition.map((s) => (
-                    <li key={s.name} className="flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
-                        {s.name}
-                      </span>
-                      <span className="tabular-nums text-white">{s.value}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <DonutChart data={composition} size={150} centerSublabel="people" className="h-full md:flex-col" empty={null} />
             </ChartFrame>
           </div>
 

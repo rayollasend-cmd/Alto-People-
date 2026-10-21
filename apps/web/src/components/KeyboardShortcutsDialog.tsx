@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useGoToTargets } from '@/lib/shortcuts';
 import {
   Dialog,
   DialogContent,
@@ -28,16 +29,8 @@ const SHORTCUTS: ShortcutGroup[] = [
     items: [
       { keys: ['⌘', 'K'], description: 'Open command palette (search & jump)' },
       { keys: ['⌘', 'J'], description: 'Open the assistant' },
-      { keys: ['g', 'h'], description: 'Go home' },
-      { keys: ['g', 'i'], description: 'Go to Inbox' },
-      { keys: ['g', 's'], description: 'Go to Schedule' },
-      { keys: ['g', 'p'], description: 'Go to People' },
-      { keys: ['g', 'a'], description: 'Go to Approvals' },
-      { keys: ['g', 't'], description: 'Go to Timesheets' },
-      { keys: ['g', 'y'], description: 'Go to Payroll' },
-      { keys: ['g', 'b'], description: 'Go to Books' },
-      { keys: ['g', 'o'], description: 'Go to Onboarding' },
-      { keys: ['g', ','], description: 'Go to Settings' },
+      // The go-to chords (g then a key) are added per person — only the
+      // pages they can open (useGoToTargets).
       { keys: ['Esc'], description: 'Close dialogs and overlays' },
       { keys: ['?'], description: 'Show this overlay' },
     ],
@@ -54,7 +47,7 @@ const SHORTCUTS: ShortcutGroup[] = [
   {
     label: 'Tables',
     items: [
-      { keys: ['j', 'k'], description: 'Move the cursor down / up a row (click a row first)' },
+      { keys: ['j', 'k'], description: 'Move the cursor down / up a row (Tab into the table first)' },
       { keys: ['Enter'], description: 'Open the row under the cursor' },
       { keys: ['x'], description: 'Select the row under the cursor' },
       { keys: ['Shift', 'click'], description: 'Select every row between two checkboxes' },
@@ -73,6 +66,23 @@ export function KeyboardShortcutsDialog({
   open,
   onOpenChange,
 }: KeyboardShortcutsDialogProps) {
+  const goTo = useGoToTargets();
+  const groups = useMemo<ShortcutGroup[]>(
+    () =>
+      SHORTCUTS.map((g, i) =>
+        i === 0
+          ? {
+              ...g,
+              items: [
+                ...g.items.slice(0, 2),
+                ...goTo.map((t) => ({ keys: ['g', t.key], description: t.path === '/' ? 'Go home' : `Go to ${t.label}` })),
+                ...g.items.slice(2),
+              ],
+            }
+          : g,
+      ),
+    [goTo],
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -83,7 +93,7 @@ export function KeyboardShortcutsDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
-          {SHORTCUTS.map((group) => (
+          {groups.map((group) => (
             <section key={group.label}>
               <h3 className="text-2xs uppercase tracking-widest text-silver mb-2">
                 {group.label}

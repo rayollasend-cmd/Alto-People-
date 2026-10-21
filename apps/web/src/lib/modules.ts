@@ -1913,7 +1913,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'tenant-profile',
     path: '/admin/organization',
-    label: 'Organization profile',
+    label: 'Organization',
     description: 'Business model, the modules this organization runs, and what it calls things.',
     requires: 'view:hr-admin',
     group: 'platform',
@@ -2155,6 +2155,10 @@ export interface NavDoor {
   /** The door's own page when it has one; otherwise the first visible child. */
   hub?: ModuleKey;
   children: ModuleKey[];
+  /** Drawn as one link to its hub: the pages behind it have their own rail
+   *  (Settings & trust), so the sidebar doesn't list them a second time,
+   *  under different names. The children still count as covered. */
+  flat?: boolean;
 }
 
 /** Always-on rows above the doors, one row each, in this order. */
@@ -2203,6 +2207,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
     key: 'settings',
     label: 'Settings & trust',
     hub: 'settings',
+    flat: true,
     children: ['tenant-profile', 'employers', 'document-retention', 'org-units', 'sites', 'branding', 'users', 'sign-in', 'access-certifications', 'workflows', 'integrations', 'billing', 'trust-center', 'compliance-evidence', 'reliability', 'product-analytics', 'design-system'],
   },
   // The associate's doors — the same modules, in the first person.
@@ -2236,6 +2241,8 @@ export interface NavDoorView {
   /** Where the door row goes: its hub page, else its first child. */
   target: ModuleNav;
   children: ModuleNav[];
+  /** One link to the target — see NavDoor.flat. */
+  flat?: boolean;
 }
 
 export interface NavShape {
@@ -2277,7 +2284,7 @@ export function navShapeFor(
     for (const c of children) used.add(c.key);
     const target = hub ?? children[0];
     if (!target) continue;
-    doors.push({ key: doorKey, label: typeof door.label === 'function' ? door.label(term) : door.label, target, children });
+    doors.push({ key: doorKey, label: typeof door.label === 'function' ? door.label(term) : door.label, target, children, ...(door.flat && hub ? { flat: true } : {}) });
   }
   const left = visible.filter((m) => !used.has(m.key));
   // An explicit rail leaves the rest out on purpose. The default rail has

@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, ShieldAlert } from 'lucide-react';
 import type { PayrollException, PayrollExceptionsResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { bulkApproveTimeEntries, listAdminTimeEntries } from '@/lib/timeApi';
+import { approveRunCleanTime } from '@/lib/payrollApi';
 import { cn } from '@/lib/cn';
-import { parseYmd, ymdLocal } from '@/lib/format';
+import { ymdLocal } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { toast } from '@/components/ui/Toaster';
@@ -15,7 +15,8 @@ import { toast } from '@/components/ui/Toaster';
  *  hero. Blocking → warning → info, expanded on its own when anything
  *  blocks. Each row's Fix link lands on the right page with the run's
  *  period already applied, and unapproved time is approved in place: the
- *  clean entries (no flags) for the people it names, in this period.
+ *  clean entries for the people it names, in the run's own cut (server-side,
+ *  /payroll/runs/approve-clean-time).
  * -------------------------------------------------------------------------- */
 
 export const EXCEPTION_COPY: Partial<Record<string, { label: string }>> = {
@@ -40,14 +41,22 @@ export const EXCEPTION_COPY: Partial<Record<string, { label: string }>> = {
 export interface ExceptionPeriod {
   start: string;
   end: string;
+  /** The run's client and pay schedule — the same cut the scan used. */
+  clientId?: string | null;
+  payrollScheduleId?: string | null;
 }
 
-/** The day after a YMD, for the time queue's end-exclusive window. */
-function dayAfter(ymd: string): string {
-  const d = parseYmd(ymd);
-  if (!d) return ymd;
-  d.setDate(d.getDate() + 1);
-  return ymdLocal(d);
+/**
+ * The run pays whole UTC days; the time queue reads local days. The local
+ * days that hold the run's first and last instant cover every entry the
+ * run would pay, whatever the browser's zone.
+ */
+export function localWindowFor(period: ExceptionPeriod): { from: string; to: string } {
+  const start = new Date(`${period.start}T00:00:00.000Z`);
+  const endExclusive = new Date(`${period.end}T00:00:00.000Z`);
+  endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(endExclusive.getTime())) return { from: period.start, to: period.end };
+  return { from: ymdLocal(start), to: ymdLocal(new Date(endExclusive.getTime() - 1)) };
 }
 
 /**
@@ -64,8 +73,9 @@ export function fixHref(ex: PayrollException, period?: ExceptionPeriod | null): 
     case 'OT_SPIKE': {
       const qs = new URLSearchParams({ tab: 'queue', associate: ex.associateId, name: ex.associateName });
       if (period) {
-        qs.set('from', period.start);
-        qs.set('to', period.end);
+        const w = localWindowFor(period);
+        qs.set('from', w.from);
+        qs.set('to', w.to);
       }
       return `/time-attendance?${qs.toString()}`;
     }
@@ -78,6 +88,11 @@ export function fixHref(ex: PayrollException, period?: ExceptionPeriod | null): 
       return '/payroll/tax-jurisdictions';
     case 'UNSUPPORTED_STATE':
       return '/payroll/state-tax';
+    case 'BELOW_PREVAILING_WAGE':
+    case 'APPRENTICE_RATIO':
+      return '/payroll/certified';
+    case 'UNASSIGNED_SCHEDULE':
+      return '/payroll/schedules';
     case 'TERMINATED_IN_RUN':
       return person('employment');
     case 'MISSING_W4':
@@ -110,27 +125,25 @@ export function SeverityDot({ severity }: { severity: PayrollException['severity
 }
 
 /**
- * Approve the clean time (finished, no flags) these people have in the
- * period. Flagged entries stay for a person to read on the timesheet.
- * Resolves with what happened so the caller can re-check.
+ * Approve the clean time these people have in the run's cut. The server
+ * decides what is clean: no anomaly flags, no kiosk punch waiting for a
+ * supervisor, no correction the worker asked for — those stay for a
+ * person to read on the timesheet.
  */
-export async function approveCleanTime(
-  associateIds: string[],
-  period: ExceptionPeriod,
-): Promise<{ approved: number; failed: number; flagged: number }> {
-  const want = new Set(associateIds);
-  const res = await listAdminTimeEntries({ status: 'COMPLETED', from: period.start, to: dayAfter(period.end) });
-  const theirs = res.entries.filter((e) => want.has(e.associateId));
-  const clean = theirs.filter((e) => (e.anomalies?.length ?? 0) === 0).map((e) => e.id);
-  const flagged = theirs.length - clean.length;
-  if (clean.length === 0) return { approved: 0, failed: 0, flagged };
-  const done = await bulkApproveTimeEntries({ entryIds: clean });
-  return { approved: done.succeeded, failed: done.failed, flagged };
+export async function approveCleanTime(associateIds: string[], period: ExceptionPeriod) {
+  return approveRunCleanTime({
+    periodStart: period.start,
+    periodEnd: period.end,
+    clientId: period.clientId ?? null,
+    payrollScheduleId: period.payrollScheduleId ?? null,
+    associateIds,
+  });
 }
 
 export function ExceptionStrip({
   exceptions,
   loading,
+  error,
   onRecheck,
   paychecks,
   period,
@@ -139,6 +152,8 @@ export function ExceptionStrip({
 }: {
   exceptions: PayrollExceptionsResponse | null;
   loading: boolean;
+  /** The scan failed — never read as an all-clear. */
+  error?: string | null;
   onRecheck?: () => void;
   /** People with a paycheck in this run: the all-clear is only said about real people. */
   paychecks: number;
@@ -157,6 +172,19 @@ export function ExceptionStrip({
       <div className="flex items-center gap-2 text-xs2 text-silver/70 py-2">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Checking pre-flight exceptions…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div role="alert" className="flex items-center gap-2 rounded border border-alert/40 bg-alert/5 px-3 py-2 text-xs2 text-alert">
+        <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />
+        <span className="flex-1">The pre-flight check didn’t run ({error}). Nothing has been checked — run it again before you finalize.</span>
+        {onRecheck && (
+          <button type="button" onClick={onRecheck} className="shrink-0 text-2xs text-gold hover:underline">
+            Run the check
+          </button>
+        )}
       </div>
     );
   }
@@ -190,6 +218,8 @@ export function ExceptionStrip({
       const parts: string[] = [];
       if (r.approved > 0) parts.push(`${r.approved} time ${r.approved === 1 ? 'entry' : 'entries'} approved`);
       if (r.flagged > 0) parts.push(`${r.flagged} flagged — read ${r.flagged === 1 ? 'it' : 'them'} on the timesheet`);
+      if (r.awaitingReview > 0) parts.push(`${r.awaitingReview} with a kiosk punch a supervisor hasn’t confirmed`);
+      if (r.awaitingCorrection > 0) parts.push(`${r.awaitingCorrection} with a correction waiting`);
       if (r.failed > 0) parts.push(`${r.failed} could not be approved`);
       if (parts.length === 0) parts.push('No clean time left to approve in this period');
       (r.failed > 0 ? toast.error : toast.success)(`${parts.join(' · ')}.`);

@@ -22,7 +22,8 @@ export interface PayPeriod {
   end: string;
   /** True when today falls inside the period. */
   current: boolean;
-  /** True when a REGULAR PayrollRun exists for exactly this window. */
+  /** True when a REGULAR PayrollRun for exactly this window is finalized or
+   *  paid — a draft run doesn't mean the period's time is done. */
   hasRun: boolean;
 }
 
@@ -56,7 +57,7 @@ export function recentSchedulePeriods(
  *  A window present in both collapses to one entry with hasRun=true. */
 export function mergePayPeriods(
   scheduleWindows: PeriodWindow[],
-  runWindows: Array<{ start: string; end: string }>,
+  runWindows: Array<{ start: string; end: string; finalized?: boolean }>,
   now: Date,
 ): PayPeriod[] {
   const byKey = new Map<string, PayPeriod>();
@@ -78,7 +79,7 @@ export function mergePayPeriods(
   };
 
   for (const w of scheduleWindows) push(w.periodStart, w.periodEnd, false);
-  for (const r of runWindows) push(r.start, r.end, true);
+  for (const r of runWindows) push(r.start, r.end, r.finalized ?? true);
 
   return [...byKey.values()].sort((a, b) => b.start.localeCompare(a.start));
 }
@@ -98,13 +99,13 @@ export async function listPayPeriods(
       where: { status: { not: 'CANCELLED' }, kind: 'REGULAR' },
       orderBy: { periodEnd: 'desc' },
       take: 12,
-      select: { periodStart: true, periodEnd: true },
+      select: { periodStart: true, periodEnd: true, status: true },
     }),
   ]);
 
   return mergePayPeriods(
     schedule ? recentSchedulePeriods(schedule, now, 8) : [],
-    runs.map((r) => ({ start: ymdUTC(r.periodStart), end: ymdUTC(r.periodEnd) })),
+    runs.map((r) => ({ start: ymdUTC(r.periodStart), end: ymdUTC(r.periodEnd), finalized: r.status !== 'DRAFT' })),
     now,
   );
 }

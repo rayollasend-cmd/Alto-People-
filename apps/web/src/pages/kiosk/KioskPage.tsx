@@ -10,8 +10,11 @@ import {
   kioskFaceConsent,
   kioskPunch,
   kioskVerifyPin,
+  kioskSubmitSop,
   type FaceConsentStatus,
   type KioskPunchAction,
+  type KioskPunchSummary,
+  type KioskSopBlock,
 } from '@/lib/kiosk99Api';
 import {
   extractDescriptor,
@@ -21,7 +24,7 @@ import {
   type FaceModelsState,
 } from '@/lib/faceMatch';
 import { Logo } from '@/components/Logo';
-import { AlertTriangle, Check, Delete, Timer } from 'lucide-react';
+import { AlertTriangle, Check, ClipboardList, Delete, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
 import {
@@ -78,7 +81,12 @@ type Stage =
   // Neutral outcome screen (e.g. "not on today's schedule — supervisor
   // notified"): informational, not a failure, so it must not wear the
   // red alert dress.
-  | 'notice';
+  | 'notice'
+  // "Maria L. — Clock in?": the name on screen before the punch, so a
+  // mistyped number that landed on a coworker's is caught (3s auto-confirm).
+  | 'confirmWho'
+  // A supervisor's clock-out held by their open shift SOP: submit it here.
+  | 'sopBlock';
 
 interface PunchResult {
   action: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
@@ -86,6 +94,9 @@ interface PunchResult {
   at: string;
   /** True when the punch was queued offline rather than sent live. */
   queued?: boolean;
+  /** Queued offline after a preflight that knew who and what: name it. */
+  queuedKnown?: boolean;
+  summary?: KioskPunchSummary | null;
 }
 
 type Intent = 'BREAK' | null;
@@ -169,6 +180,35 @@ interface KioskStrings {
   droppedMany: string;
   cameraNoStart: string;
   langToggleLabel: string;
+  /** Who-is-this confirm, before every punch that isn't a clock-out (that one asks "done for the day?"). */
+  confirmWhoIsThis: string;
+  confirmQuestion: Record<KioskPunchAction, string>;
+  confirmYes: string;
+  confirmNotMe: string;
+  confirmAuto: (seconds: number) => string;
+  notMeRetype: string;
+  /** The clock-out SOP gate, at the tablet. */
+  sopTitle: string;
+  sopBody: (label: string, done: number, total: number) => string;
+  sopBodyDone: (label: string) => string;
+  sopWhy: string;
+  sopReasons: string[];
+  sopOther: string;
+  sopOtherPlaceholder: string;
+  sopNoteLabel: string;
+  sopNotePlaceholder: string;
+  sopSubmitOut: string;
+  sopInApp: string;
+  sopFailed: string;
+  /** Result screen: what the punch means for today and the week. */
+  shiftWindow: (from: string, to: string) => string;
+  onTime: string;
+  minLate: (n: number) => string;
+  minEarly: (n: number) => string;
+  mealDue: (time: string) => string;
+  thisWeek: string;
+  hoursShort: (h: string) => string;
+  willSend: string;
 }
 
 const STRINGS: Record<Lang, KioskStrings> = {
@@ -257,6 +297,37 @@ const STRINGS: Record<Lang, KioskStrings> = {
     droppedMany: 'punches could not be recorded — tell HR',
     cameraNoStart: 'The camera did not start. You can clock in without a photo.',
     langToggleLabel: 'Español',
+    confirmWhoIsThis: 'Is this you?',
+    confirmQuestion: {
+      CLOCK_IN: 'Clock in?',
+      CLOCK_OUT: 'Clock out?',
+      BREAK_START: 'Start your break?',
+      BREAK_END: 'End your break?',
+    },
+    confirmYes: 'Yes, that’s me',
+    confirmNotMe: 'Not me',
+    confirmAuto: (n) => `Continuing in ${n}…`,
+    notMeRetype: 'Type your own clock-in number.',
+    sopTitle: 'Your SOP is still open',
+    sopBody: (label, done, total) => `Your ${label} isn’t submitted — ${done} of ${total} done. Submit it before you clock out.`,
+    sopBodyDone: (label) => `Your ${label} is done but not submitted. Submit it before you clock out.`,
+    sopWhy: 'Why is it incomplete?',
+    sopReasons: ['Short-staffed — no time to finish', 'Family emergency — leaving early', 'Equipment or supplies problem', 'Busy floor — guests came first'],
+    sopOther: 'Something else',
+    sopOtherPlaceholder: 'Say why in a few words',
+    sopNoteLabel: 'Note for the next shift (optional)',
+    sopNotePlaceholder: 'Cooler 2 running warm, maintenance called',
+    sopSubmitOut: 'Submit and clock out',
+    sopInApp: 'Or finish it in the Alto app first, then clock out.',
+    sopFailed: 'Couldn’t submit it. Try again, or finish it in the Alto app.',
+    shiftWindow: (from, to) => `Shift ${from} – ${to}`,
+    onTime: 'On time',
+    minLate: (n) => `${n} min late`,
+    minEarly: (n) => `${n} min early`,
+    mealDue: (time) => `Meal break by ${time}`,
+    thisWeek: 'this week',
+    hoursShort: (h) => `${h} h`,
+    willSend: 'will send',
   },
   es: {
     locale: 'es-US',
@@ -343,6 +414,37 @@ const STRINGS: Record<Lang, KioskStrings> = {
     droppedMany: 'marcaciones no pudieron registrarse — avisa a RR. HH.',
     cameraNoStart: 'La cámara no inició. Puedes marcar sin foto.',
     langToggleLabel: 'English',
+    confirmWhoIsThis: '¿Eres tú?',
+    confirmQuestion: {
+      CLOCK_IN: '¿Marcar entrada?',
+      CLOCK_OUT: '¿Marcar salida?',
+      BREAK_START: '¿Iniciar tu descanso?',
+      BREAK_END: '¿Terminar tu descanso?',
+    },
+    confirmYes: 'Sí, soy yo',
+    confirmNotMe: 'No soy yo',
+    confirmAuto: (n) => `Continúa en ${n}…`,
+    notMeRetype: 'Escribe tu propio número para marcar.',
+    sopTitle: 'Tu SOP sigue abierto',
+    sopBody: (label, done, total) => `Tu ${label} no está enviado — ${done} de ${total} hechos. Envíalo antes de marcar salida.`,
+    sopBodyDone: (label) => `Tu ${label} está hecho pero no enviado. Envíalo antes de marcar salida.`,
+    sopWhy: '¿Por qué está incompleto?',
+    sopReasons: ['Faltó personal — no hubo tiempo', 'Emergencia familiar — me voy temprano', 'Problema con equipo o suministros', 'Mucho trabajo en piso — los clientes primero'],
+    sopOther: 'Otra razón',
+    sopOtherPlaceholder: 'Di por qué en pocas palabras',
+    sopNoteLabel: 'Nota para el siguiente turno (opcional)',
+    sopNotePlaceholder: 'El refrigerador 2 está caliente, ya se llamó a mantenimiento',
+    sopSubmitOut: 'Enviar y marcar salida',
+    sopInApp: 'O termínalo primero en la app de Alto y luego marca salida.',
+    sopFailed: 'No se pudo enviar. Inténtalo de nuevo o termínalo en la app de Alto.',
+    shiftWindow: (from, to) => `Turno ${from} – ${to}`,
+    onTime: 'A tiempo',
+    minLate: (n) => `${n} min tarde`,
+    minEarly: (n) => `${n} min antes`,
+    mealDue: (time) => `Descanso para comer antes de las ${time}`,
+    thisWeek: 'esta semana',
+    hoursShort: (h) => `${h} h`,
+    willSend: 'se enviará',
   },
 };
 
@@ -383,6 +485,7 @@ export function KioskPage() {
   // camera screen falls back to a generic prompt.
   const [preflight, setPreflight] = useState<{
     firstName: string;
+    lastInitial?: string | null;
     predictedAction: KioskPunchAction;
     faceConsent: FaceConsentStatus | null;
     missedClockOutAt?: string | null;
@@ -406,7 +509,17 @@ export function KioskPage() {
   // Associate-facing language. Persisted per device — a site whose crew
   // prefers Spanish sets it once and the tablet stays Spanish.
   const [lang, setLang] = useState<Lang>(() => readStoredLang());
-  const t = STRINGS[lang];
+  // The worker's own saved language, for this punch only (verify-pin returns
+  // it): one person's Spanish no longer carries over to the next in line,
+  // and the tablet's own setting comes back at idle.
+  const [punchLang, setPunchLang] = useState<Lang | null>(null);
+  const t = STRINGS[punchLang ?? lang];
+  // The clock-out SOP gate's details (409 sop_open), for its screen.
+  const [sopBlock, setSopBlock] = useState<KioskSopBlock | null>(null);
+  const [sopBusy, setSopBusy] = useState(false);
+  const [sopError, setSopError] = useState<string | null>(null);
+  // Typing on the SOP screen counts as activity for the abandoned-screen timer.
+  const [sopTyping, setSopTyping] = useState(0);
   const toggleLang = () => {
     const next: Lang = lang === 'en' ? 'es' : 'en';
     setLang(next);
@@ -651,6 +764,10 @@ export function KioskPage() {
     setError(null);
     setPinError(null);
     setPreflight(null);
+    setPunchLang(null);
+    setSopBlock(null);
+    setSopBusy(false);
+    setSopError(null);
     photoRequiredRef.current = false;
     setStage('idle');
   };
@@ -672,11 +789,11 @@ export function KioskPage() {
   // timers; the selfie screen self-advances in ~1s.
   const ABANDONED_AFTER_MS = 60_000;
   useEffect(() => {
-    if (stage !== 'pin' && stage !== 'consent' && stage !== 'confirmOut' && stage !== 'breakQ') return;
+    if (stage !== 'pin' && stage !== 'consent' && stage !== 'confirmOut' && stage !== 'breakQ' && stage !== 'sopBlock') return;
     const t = window.setTimeout(reset, ABANDONED_AFTER_MS);
     return () => window.clearTimeout(t);
-    // touches stable setters; pin/intent are deliberate "activity" deps.
-  }, [stage, pin, intent]);
+    // touches stable setters; pin/intent/sopTyping are deliberate "activity" deps.
+  }, [stage, pin, intent, sopTyping]);
 
   // Best-effort geolocation, tuned for a stationary wall-mounted tablet:
   //
@@ -783,6 +900,7 @@ export function KioskPage() {
       // the only tell.
       setPreflight({
         firstName: v.associateFirstName,
+        lastInitial: v.associateLastInitial ?? null,
         predictedAction: v.predictedAction,
         faceConsent: v.faceConsent,
         missedClockOutAt: v.missedClockOut?.clockInAt ?? null,
@@ -800,10 +918,16 @@ export function KioskPage() {
       // first: leaving, or just on break? Most mid-shift
       // clock-outs are a forgotten break toggle, and answering
       // here keeps the shift in one piece.
+      // Their own language for the rest of this punch (the tablet has en/es).
+      if (v.language === 'es' || v.language === 'en') setPunchLang(v.language);
+      // Every punch shows who it's for before it happens: a clock-out
+      // asks "done for the day, Maria?"; anything else gets "Maria L. —
+      // Clock in?" (auto-confirms in 3s). A number typed one digit off
+      // that lands on a coworker's is caught here, photo or not.
       if (v.predictedAction === 'CLOCK_OUT') {
         setStage('confirmOut');
       } else {
-        routeByConsent(v.faceConsent);
+        setStage('confirmWho');
       }
     } catch (err) {
       if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
@@ -849,6 +973,14 @@ export function KioskPage() {
         if (err.code === 'not_on_schedule') {
           setStage('notice');
           scheduleReset(12_000);
+          return;
+        }
+        // Their shift SOP holds the clock-out: its own screen, with the
+        // way out (submit it incomplete with a reason) right here.
+        if (err.code === 'sop_open' && isSopBlock(err.details)) {
+          setSopBlock(err.details);
+          setSopError(null);
+          setStage('sopBlock');
           return;
         }
         // Deactivated/separated badge — localized, no server English.
@@ -933,10 +1065,12 @@ export function KioskPage() {
         action: r.action,
         associateName: r.associateName,
         at: r.at,
+        summary: r.summary ?? null,
       });
       hapticSuccess();
       setStage('result');
-      scheduleReset(4000);
+      // A little longer when there's a summary to read (shift, week).
+      scheduleReset(r.summary ? 6000 : 4000);
       // Fire-and-forget: upload the selfie + attach the descriptor now that
       // the associate is already clocked in.
       if (selfieData) void attachSelfieAndFace(selfieData, r.punchId, token);
@@ -993,6 +1127,12 @@ export function KioskPage() {
           scheduleReset(12_000);
           return;
         }
+        if (err.code === 'sop_open' && isSopBlock(err.details)) {
+          setSopBlock(err.details);
+          setSopError(null);
+          setStage('sopBlock');
+          return;
+        }
         // Deactivated/separated badge — localized, no server English.
         if (err.code === 'inactive_associate') {
           setError(t.inactiveBadge);
@@ -1021,13 +1161,20 @@ export function KioskPage() {
         intent: effIntent,
       });
       setQueued(queueSize());
-      // Optimistic display — we don't actually know CLOCK_IN vs CLOCK_OUT
-      // until the server resolves it, so use a neutral verb.
+      // When the preflight reached the server (the network dropped between
+      // it and the punch), we know who and what: "Maria — Clocked in 1:58
+      // PM (will send)". Otherwise a neutral "saved offline" — never a guess.
+      const known = preflight;
       setResult({
-        action: 'CLOCK_IN',
-        associateName: 'Saved',
+        action: known
+          ? effIntent === 'BREAK' && known.predictedAction === 'CLOCK_OUT'
+            ? 'BREAK_START'
+            : known.predictedAction
+          : 'CLOCK_IN',
+        associateName: known ? known.firstName : 'Saved',
         at: capturedAt,
         queued: true,
+        queuedKnown: !!known,
       });
       hapticSuccess();
       setStage('result');
@@ -1178,11 +1325,67 @@ export function KioskPage() {
           onCancel={reset}
         />
       )}
+      {stage === 'confirmWho' && preflight && (
+        <ConfirmWho
+          t={t}
+          name={`${preflight.firstName}${preflight.lastInitial ? ` ${preflight.lastInitial}.` : ''}`}
+          action={preflight.predictedAction}
+          missedClockOutAt={preflight.missedClockOutAt ?? null}
+          onConfirm={() => routeByConsent(preflight.faceConsent)}
+          onNotMe={() => {
+            // Wrong person: back to the keypad, number cleared, nothing punched.
+            setPin('');
+            badgeRef.current = null;
+            setPreflight(null);
+            setPunchLang(null);
+            photoRequiredRef.current = false;
+            setPinError(t.notMeRetype);
+            setStage('pin');
+          }}
+        />
+      )}
+      {stage === 'sopBlock' && sopBlock && (
+        <SopBlockScreen
+          t={t}
+          info={sopBlock}
+          busy={sopBusy}
+          error={sopError}
+          onActivity={() => setSopTyping((n) => n + 1)}
+          onSubmit={async ({ reason, note }) => {
+            if (!token || sopBusy) return;
+            setSopBusy(true);
+            setSopError(null);
+            try {
+              await kioskSubmitSop({
+                deviceToken: token,
+                ...(badgeRef.current ? { badgeToken: badgeRef.current } : { pin }),
+                reason: reason || null,
+                handoverNote: note || null,
+              });
+              setSopBlock(null);
+              setSopBusy(false);
+              // Submitted: carry on to the clock-out as if nothing had held
+              // it. Back on the keypad with the same number kept, the pad's
+              // auto-advance runs the preflight again ("Done for the day?");
+              // a badge has no typed number, so it's re-run here.
+              setStage('pin');
+              if (badgeRef.current) void runPreflight();
+            } catch (err) {
+              setSopBusy(false);
+              setSopError(err instanceof ApiError && err.status < 500 ? err.message : t.sopFailed);
+            }
+          }}
+          onCancel={reset}
+        />
+      )}
       {stage === 'confirmOut' && preflight && (
         <div className="flex flex-col items-center max-w-lg px-6 text-center">
           <div className="text-3xl text-white mb-8">
             {t.confirmOutTitle}{' '}
-            <span className="text-gold-bright">{preflight.firstName}</span>?
+            <span className="text-gold-bright">
+              {preflight.firstName}
+              {preflight.lastInitial ? ` ${preflight.lastInitial}.` : ''}
+            </span>?
           </div>
           <Button
             onClick={() => {
@@ -1962,7 +2165,7 @@ function SelfieCapture({
       <div className="relative">
         <video
           ref={videoRef}
-          className="w-96 h-72 rounded-2xl bg-black object-cover scale-x-[-1]"
+          className="aspect-[4/3] w-[min(24rem,calc(100vw-2rem))] rounded-2xl bg-black object-cover scale-x-[-1]"
           muted
           playsInline
         />
@@ -2038,13 +2241,17 @@ function SelfieCapture({
 }
 
 function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
-  // Kiosk language toggle, not the user locale — see ClockFace.
-  // eslint-disable-next-line no-restricted-syntax
-  const time = new Date(result.at).toLocaleTimeString(t.locale, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  // Kiosk language toggle, not the user locale — see ClockFace. In the
+  // store's zone when the punch came back with one.
+  const tz = result.summary?.timezone;
+  const clock = (iso: string) =>
+    // eslint-disable-next-line no-restricted-syntax
+    new Date(iso).toLocaleTimeString(t.locale, { hour: 'numeric', minute: '2-digit', ...(tz ? { timeZone: tz } : {}) });
+  const time = clock(result.at);
   if (result.queued) {
+    // Known person (the preflight answered before the network dropped):
+    // "Maria — Clocked in · 1:58 PM · will send". Unknown: neutral.
+    const known = result.queuedKnown;
     return (
       <div className="relative text-center px-6">
         <style>{`@keyframes kiosk-celebrate-in {
@@ -2059,12 +2266,14 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
             <Timer className="h-16 w-16" strokeWidth={2.5} aria-hidden="true" />
           </div>
           <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
-            {t.punchSaved}
+            {known ? `${t.resultPrefix[result.action]}, ${result.associateName}` : t.punchSaved}
           </div>
           <div className="font-display text-7xl md:text-8xl leading-none text-white">
-            {t.savedOffline}
+            {known ? t.resultVerb[result.action] : t.savedOffline}
           </div>
-          <div className="mt-6 text-2xl text-silver">{t.syncWhenBack}</div>
+          <div className="mt-6 text-2xl text-silver">
+            {known ? `${t.savedOffline} — ${t.willSend}` : t.syncWhenBack}
+          </div>
           <div className="mt-2 text-3xl text-gold-bright tabular-nums">{time}</div>
         </div>
       </div>
@@ -2088,6 +2297,17 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
       : result.action === 'CLOCK_OUT'
         ? '[--glow:rgb(var(--color-gold)/0.24)]'
         : '[--glow:rgb(var(--color-warning)/0.24)]';
+  const sum = result.summary;
+  // On time inside the 7-minute grace the attendance rules use; early only
+  // when it's worth saying.
+  const lateness =
+    sum?.lateMinutes == null
+      ? null
+      : sum.lateMinutes >= 7
+        ? { text: t.minLate(sum.lateMinutes), tone: 'text-warning' }
+        : sum.lateMinutes <= -5
+          ? { text: t.minEarly(-sum.lateMinutes), tone: 'text-silver' }
+          : { text: t.onTime, tone: 'text-success' };
   return (
     <div className="relative text-center px-6">
       <style>{`@keyframes kiosk-celebrate-in {
@@ -2124,7 +2344,245 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
           {verb}
         </div>
         <div className="mt-6 text-3xl text-gold-bright tabular-nums">{time}</div>
+        {sum && (
+          <div className="mx-auto mt-6 flex max-w-xl flex-wrap items-center justify-center gap-x-6 gap-y-3 text-lg">
+            {sum.shift && (
+              <span className="text-silver tabular-nums">
+                {t.shiftWindow(clock(sum.shift.startsAt), clock(sum.shift.endsAt))}
+                {lateness && <span className={`ml-2 font-medium ${lateness.tone}`}>· {lateness.text}</span>}
+              </span>
+            )}
+            {!sum.shift && lateness && <span className={`font-medium ${lateness.tone}`}>{lateness.text}</span>}
+            {sum.mealDueAt && <span className="text-silver tabular-nums">{t.mealDue(clock(sum.mealDueAt))}</span>}
+            <WeekRing minutes={sum.weekMinutes} t={t} />
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** Hours this week as a small ring toward 40 — gold, amber past 40. */
+function WeekRing({ minutes, t }: { minutes: number; t: KioskStrings }) {
+  const hours = minutes / 60;
+  const frac = Math.min(1, hours / 40);
+  const r = 16;
+  const c = 2 * Math.PI * r;
+  const over = hours > 40;
+  const label = t.hoursShort((Math.round(hours * 10) / 10).toLocaleString(t.locale, { maximumFractionDigits: 1 }));
+  return (
+    <span className="inline-flex items-center gap-2 text-silver">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+        <circle cx="20" cy="20" r={r} fill="none" strokeWidth="4" stroke="currentColor" className="text-navy-secondary" />
+        <circle
+          cx="20"
+          cy="20"
+          r={r}
+          fill="none"
+          strokeWidth="4"
+          strokeLinecap="round"
+          stroke="currentColor"
+          className={over ? 'text-warning' : 'text-gold'}
+          strokeDasharray={`${c * frac} ${c}`}
+          transform="rotate(-90 20 20)"
+        />
+      </svg>
+      <span className="tabular-nums">
+        <span className="font-medium text-ink">{label}</span> {t.thisWeek}
+      </span>
+    </span>
+  );
+}
+
+function isSopBlock(d: unknown): d is KioskSopBlock {
+  return !!d && typeof d === 'object' && typeof (d as KioskSopBlock).sopId === 'string' && typeof (d as KioskSopBlock).requiredOpen === 'number';
+}
+
+const CONFIRM_SECONDS = 3;
+
+/**
+ * "Maria L. — Clock in?" before the punch, for everyone — photo or no
+ * photo. The number auto-submits on its 4th digit, so a one-digit slip
+ * that lands on a coworker's number used to punch them in without either
+ * person seeing a name. Confirms itself after 3 seconds: the line keeps
+ * moving, and "Not me" is the big second button.
+ */
+function ConfirmWho({
+  t,
+  name,
+  action,
+  missedClockOutAt,
+  onConfirm,
+  onNotMe,
+}: {
+  t: KioskStrings;
+  name: string;
+  action: KioskPunchAction;
+  missedClockOutAt: string | null;
+  onConfirm: () => void;
+  onNotMe: () => void;
+}) {
+  const [left, setLeft] = useState(CONFIRM_SECONDS);
+  const doneRef = useRef(false);
+  const confirmRef = useRef(onConfirm);
+  confirmRef.current = onConfirm;
+  const fire = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    confirmRef.current();
+  };
+  useEffect(() => {
+    const id = window.setInterval(() => setLeft((n) => n - 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  useEffect(() => {
+    if (left <= 0) fire();
+    // fire reads refs only
+  }, [left]);
+  return (
+    <div className="flex w-full max-w-lg flex-col items-center px-6 text-center">
+      <div className="mb-3 text-sm uppercase tracking-[0.3em] text-silver/80">{t.confirmWhoIsThis}</div>
+      <div className="font-display text-6xl leading-tight text-gold-bright break-words">{name}</div>
+      <div className="mt-3 text-3xl text-ink">{t.confirmQuestion[action]}</div>
+      {missedClockOutAt && (
+        <div role="status" className="mt-4 rounded-lg border border-warning/60 bg-warning/10 px-4 py-2 text-base text-warning">
+          {t.missedOut(fmtDate(missedClockOutAt))}
+        </div>
+      )}
+      <Button onClick={fire} size="lg" className="mt-10 min-h-[64px] w-full rounded-xl py-4 text-2xl font-medium">
+        {t.confirmYes}
+      </Button>
+      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-navy-secondary" aria-hidden="true">
+        <div
+          className="h-full rounded-full bg-gold"
+          style={{ width: `${(Math.max(0, left - 1) / CONFIRM_SECONDS) * 100}%`, transition: 'width 1s linear' }}
+        />
+      </div>
+      <div className="mt-2 text-sm text-silver" aria-live="polite">
+        {t.confirmAuto(Math.max(0, left))}
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          doneRef.current = true;
+          onNotMe();
+        }}
+        className="mt-6 min-h-[56px] w-full rounded-xl border border-navy-secondary bg-navy-secondary/40 py-3 text-xl text-ink transition-colors hover:bg-navy-secondary/70"
+      >
+        {t.confirmNotMe}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The clock-out SOP gate as its own screen, not the red error: what's open,
+ * and the way out — pick (or type) why it's incomplete, add a note for the
+ * next shift if you like, submit, and the clock-out carries on. All done
+ * but not submitted: no reason needed, just submit.
+ */
+function SopBlockScreen({
+  t,
+  info,
+  busy,
+  error,
+  onActivity,
+  onSubmit,
+  onCancel,
+}: {
+  t: KioskStrings;
+  info: KioskSopBlock;
+  busy: boolean;
+  error: string | null;
+  onActivity: () => void;
+  onSubmit: (v: { reason: string; note: string }) => void;
+  onCancel: () => void;
+}) {
+  const [pick, setPick] = useState<string | null>(null);
+  const [other, setOther] = useState('');
+  const [note, setNote] = useState('');
+  const incomplete = info.requiredOpen > 0;
+  const reason = pick === '__other' ? other.trim() : (pick ?? '');
+  const ready = !incomplete || reason.length >= 5;
+  return (
+    <div className="flex max-h-[100dvh] w-full max-w-xl flex-col overflow-y-auto px-6 py-10 text-left">
+      <div className="mb-4 text-warning">
+        <ClipboardList className="h-14 w-14" strokeWidth={2} aria-hidden="true" />
+      </div>
+      <div className="text-3xl text-ink">{t.sopTitle}</div>
+      <p className="mt-2 text-lg text-silver">
+        {incomplete ? t.sopBody(info.label, info.sopDone, info.sopTotal) : t.sopBodyDone(info.label)}
+      </p>
+      {incomplete && (
+        <fieldset className="mt-6">
+          <legend className="mb-2 text-base text-ink">{t.sopWhy}</legend>
+          <div className="flex flex-col gap-2">
+            {[...t.sopReasons, '__other'].map((r) => (
+              <button
+                key={r}
+                type="button"
+                aria-pressed={pick === r}
+                onClick={() => {
+                  setPick(r);
+                  onActivity();
+                }}
+                className={`min-h-[52px] rounded-xl border px-4 py-3 text-left text-lg transition-colors ${
+                  pick === r ? 'border-gold bg-gold/15 text-ink' : 'border-navy-secondary bg-navy-secondary/40 text-ink hover:bg-navy-secondary/70'
+                }`}
+              >
+                {r === '__other' ? t.sopOther : r}
+              </button>
+            ))}
+          </div>
+          {pick === '__other' && (
+            <Textarea
+              aria-label={t.sopOther}
+              className="mt-3 text-lg"
+              rows={2}
+              maxLength={1000}
+              value={other}
+              placeholder={t.sopOtherPlaceholder}
+              onChange={(e) => {
+                setOther(e.target.value);
+                onActivity();
+              }}
+            />
+          )}
+        </fieldset>
+      )}
+      <label className="mt-6 block text-base text-ink" htmlFor="kiosk-sop-note">
+        {t.sopNoteLabel}
+      </label>
+      <Textarea
+        id="kiosk-sop-note"
+        className="mt-2 text-lg"
+        rows={2}
+        maxLength={1000}
+        value={note}
+        placeholder={t.sopNotePlaceholder}
+        onChange={(e) => {
+          setNote(e.target.value);
+          onActivity();
+        }}
+      />
+      {error && (
+        <div role="alert" className="mt-4 rounded-lg border border-alert/60 bg-alert/10 px-4 py-2 text-base text-alert">
+          {error}
+        </div>
+      )}
+      <Button
+        size="lg"
+        className="mt-6 min-h-[60px] w-full rounded-xl text-xl font-medium"
+        disabled={!ready}
+        loading={busy}
+        onClick={() => onSubmit({ reason: incomplete ? reason : '', note: note.trim() })}
+      >
+        {t.sopSubmitOut}
+      </Button>
+      <p className="mt-3 text-center text-sm text-silver">{t.sopInApp}</p>
+      <button type="button" onClick={onCancel} className="mt-4 min-h-[44px] self-center px-6 text-base text-silver transition hover:text-ink">
+        {t.cancel}
+      </button>
     </div>
   );
 }

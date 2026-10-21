@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -89,18 +90,74 @@ teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
     },
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
   });
+  // The 1:1 rhythm per report: the last one held and the next on the
+  // calendar — "Next Tue · last 12d ago" without opening Performance.
+  const ids = reports.map((r) => r.id);
+  const [lastHeld, upcoming] = ids.length
+    ? await Promise.all([
+        prisma.oneOnOne.groupBy({
+          by: ['associateId'],
+          where: { associateId: { in: ids }, status: 'COMPLETED' },
+          _max: { completedAt: true },
+        }),
+        prisma.oneOnOne.findMany({
+          where: { associateId: { in: ids }, status: 'SCHEDULED', scheduledFor: { gte: new Date(Date.now() - 86_400_000) } },
+          orderBy: { scheduledFor: 'asc' },
+          select: { id: true, associateId: true, scheduledFor: true, cadence: true },
+        }),
+      ])
+    : [[], []];
+  const lastBy = new Map(lastHeld.map((g) => [g.associateId, g._max.completedAt]));
+  const nextBy = new Map<string, (typeof upcoming)[number]>();
+  for (const m of upcoming) if (!nextBy.has(m.associateId)) nextBy.set(m.associateId, m);
   res.json({
-    reports: reports.map((r) => ({
-      id: r.id,
-      firstName: r.firstName,
-      lastName: r.lastName,
-      email: r.email,
-      phone: r.phone,
-      employmentType: r.employmentType,
-      departmentName: r.department?.name ?? null,
-      jobTitle: r.jobProfile?.title ?? null,
-    })),
+    reports: reports.map((r) => {
+      const next = nextBy.get(r.id);
+      return {
+        id: r.id,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        email: r.email,
+        phone: r.phone,
+        employmentType: r.employmentType,
+        departmentName: r.department?.name ?? null,
+        jobTitle: r.jobProfile?.title ?? null,
+        lastOneOnOneAt: lastBy.get(r.id)?.toISOString() ?? null,
+        nextOneOnOne: next ? { id: next.id, scheduledFor: next.scheduledFor.toISOString(), cadence: next.cadence } : null,
+      };
+    }),
   });
+});
+
+/**
+ * POST /team/reports/:associateId/one-on-ones — a manager books a 1:1 with
+ * their own report (a repeating one with a cadence). Team-scoped: the
+ * Performance desk's 1:1 routes are HR's; this one is the manager's.
+ */
+const TeamOneOnOneSchema = z.object({
+  scheduledFor: z.string().datetime(),
+  cadence: z.enum(['WEEKLY', 'BIWEEKLY']).nullable().optional(),
+  agenda: z.string().max(4000).nullable().optional(),
+});
+teamRouter.post('/reports/:associateId/one-on-ones', VIEW, async (req: Request, res: Response) => {
+  const user = req.user!;
+  const associateId = z.string().uuid().parse(req.params.associateId);
+  await requireTeamAssociate(user, associateId);
+  const input = TeamOneOnOneSchema.parse(req.body ?? {});
+  const id = randomUUID();
+  const created = await prisma.oneOnOne.create({
+    data: {
+      id,
+      associateId,
+      managerUserId: user.id,
+      scheduledFor: new Date(input.scheduledFor),
+      agenda: input.agenda ?? null,
+      cadence: input.cadence ?? null,
+      seriesId: input.cadence ? id : null,
+    },
+    select: { id: true, scheduledFor: true },
+  });
+  res.status(201).json({ id: created.id, scheduledFor: created.scheduledFor.toISOString() });
 });
 
 // ----- Dashboard summary --------------------------------------------------

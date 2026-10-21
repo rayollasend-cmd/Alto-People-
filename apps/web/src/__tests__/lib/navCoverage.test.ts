@@ -48,6 +48,7 @@ const NOT_IN_THE_RAIL: Record<string, string> = {
   '/admin/task-policy': 'the Settings & trust rail',
   '/worktags': 'opened from Payroll',
   '/admin/regions': 'old link — redirects to the Org chart field view',
+  '/decisions/open': 'a hand-off, not a page: an assigned decision\'s notification lands here and is sent on to the item\'s own page',
 };
 
 const term = (key: string) => key;

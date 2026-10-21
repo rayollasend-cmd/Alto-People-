@@ -18,6 +18,7 @@ import {
   refreshBranding,
 } from '../lib/branding.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { env } from '../config/env.js';
 
 /**
  * Org branding (Phase: settings audit row #8), one row per tenant. The
@@ -288,3 +289,30 @@ orgSettingsRouter.get(
     res.end(Buffer.from(row.logoBytes));
   },
 );
+
+
+/**
+ * GET /admin/settings-health — a badge per Settings & trust card that has
+ * something wrong right now, so the overview says where to look: a failing
+ * integration, no email provider, an access review past due. Nothing here
+ * = no badge. Counts only; the page behind each card has the detail.
+ */
+orgSettingsRouter.get('/admin/settings-health', requireCapability('view:hr-admin'), async (_req, res) => {
+  const tenantId = tenantIdForWrite();
+  const now = new Date();
+  const [vendorFailing, providers, overdueReviews] = await Promise.all([
+    prisma.integrationConnection.count({ where: { tenantId, status: 'ERROR' } }),
+    prisma.providerConnection.findMany({
+      where: { tenantId, active: true, lastErrorAt: { not: null } },
+      select: { lastErrorAt: true, lastSuccessAt: true },
+    }),
+    prisma.accessCertification.count({ where: { tenantId, status: 'OPEN', dueAt: { lt: now } } }),
+  ]);
+  const providerFailing = providers.filter((p) => p.lastErrorAt && (!p.lastSuccessAt || p.lastErrorAt > p.lastSuccessAt)).length;
+  const failing = vendorFailing + providerFailing;
+  const items: Array<{ key: string; tone: 'bad' | 'warn'; label: string }> = [];
+  if (failing > 0) items.push({ key: 'integrations', tone: 'bad', label: `${failing} failing` });
+  if (!(env.RESEND_API_KEY && env.RESEND_FROM)) items.push({ key: 'communications', tone: 'warn', label: 'Email not connected' });
+  if (overdueReviews > 0) items.push({ key: 'access-certifications', tone: 'warn', label: `${overdueReviews} past due` });
+  res.json({ items });
+});

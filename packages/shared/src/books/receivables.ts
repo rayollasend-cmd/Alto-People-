@@ -83,7 +83,9 @@ export const ClientPaymentInputSchema = z.object({
   /**
    * The bank deposit this payment is (Bank → For review → "Record as payment").
    * The payment lands in that bank's account and the deposit is matched to its
-   * entry, so the money isn't typed twice. Same amount, money in, not yet decided.
+   * entry, so the money isn't typed twice. Same amount, money in, not yet decided;
+   * received on the deposit's date whatever receivedOn says. The answer carries
+   * `depositMatched` — true only when the deposit is matched to this payment.
    */
   bankTransactionId: z.string().uuid().optional(),
 });

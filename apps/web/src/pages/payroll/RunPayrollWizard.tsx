@@ -135,7 +135,12 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
   // Wave 8 — pre-flight exceptions, fetched in parallel with the preview.
   const [exceptions, setExceptions] = useState<PayrollExceptionsResponse | null>(null);
   const [exceptionsLoading, setExceptionsLoading] = useState(false);
+  const [exceptionsError, setExceptionsError] = useState<string | null>(null);
   const [overrideBlocking, setOverrideBlocking] = useState(false);
+  // The blockers the person acknowledged — a re-check that finds new ones asks again.
+  const ackedBlockersRef = useRef('');
+  // When the preview and scan last arrived — the focus re-check is throttled from here.
+  const lastCheckedRef = useRef(0);
   // Seeded opens collapse to a single review screen while the preview is
   // clean (zero blocking exceptions). quickPending bridges the gap between
   // open and the schedule list resolving (the auto-preview needs it).
@@ -302,19 +307,24 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     4: canSubmit,
   };
 
+  const runCut = { clientId: activeSchedule?.clientId ?? null, payrollScheduleId: scheduleId || null };
+
   const fetchPreview = async () => {
     setPreviewLoading(true);
     setExceptionsLoading(true);
     setPreviewError(null);
+    setExceptionsError(null);
     setPreview(null);
     setExceptions(null);
     setOverrideBlocking(false);
+    ackedBlockersRef.current = '';
     const clientId = activeSchedule?.clientId ?? null;
     const payrollScheduleId = scheduleId || null;
     const exceptionsInput: PayrollExceptionsInput = { clientId, periodStart, periodEnd, payrollScheduleId };
     try {
       // Run preview + exceptions in parallel — exceptions don't need
-      // defaultHourlyRate; they reuse the same set of associates.
+      // defaultHourlyRate; they reuse the same set of associates. A failed
+      // scan is an error state, never an empty (all-clear) list.
       const [previewRes, exceptionsRes] = await Promise.all([
         previewPayrollRun({
           clientId,
@@ -323,13 +333,14 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
           payrollScheduleId,
           defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined,
         }),
-        listPayrollExceptions(exceptionsInput).catch(() => ({
-          exceptions: [],
-          counts: { blocking: 0, warning: 0, info: 0 },
-        })),
+        listPayrollExceptions(exceptionsInput).catch((err: unknown) => {
+          setExceptionsError(err instanceof ApiError ? err.message : 'the check failed');
+          return null;
+        }),
       ]);
       setPreview(previewRes);
       setExceptions(exceptionsRes);
+      lastCheckedRef.current = Date.now();
     } catch (err) {
       setPreviewError(err instanceof ApiError ? err.message : 'Preview failed.');
     } finally {
@@ -360,34 +371,53 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     }
   }, [quickReview, exceptions]);
 
-  // Re-run just the pre-flight exception scan in place, so "Fix in a new
+  // Re-run the pre-flight scan — and the paycheck preview, so totals
+  // never go stale behind a cleared warning — in place, so "Fix in a new
   // tab → Re-check" never costs the wizard its state.
+  const [rechecking, setRechecking] = useState(false);
   const recheckExceptions = async () => {
-    if (exceptionsLoading) return;
+    if (exceptionsLoading || rechecking) return;
     setExceptionsLoading(true);
+    setRechecking(true);
     const clientId = activeSchedule?.clientId ?? null;
-    const exceptionsInput: PayrollExceptionsInput = { clientId, periodStart, periodEnd, payrollScheduleId: scheduleId || null };
+    const payrollScheduleId = scheduleId || null;
+    const exceptionsInput: PayrollExceptionsInput = { clientId, periodStart, periodEnd, payrollScheduleId };
     try {
-      const res = await listPayrollExceptions(exceptionsInput);
+      const [res, fresh] = await Promise.all([
+        listPayrollExceptions(exceptionsInput),
+        runKind === 'REGULAR' && preview
+          ? previewPayrollRun({ clientId, periodStart, periodEnd, payrollScheduleId, defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
       setExceptions(res);
+      setExceptionsError(null);
+      if (fresh) setPreview(fresh);
+      // An acknowledgement covers the blockers it was given for — not new ones.
+      const sig = blockerSignature(res);
+      if (overrideBlocking && sig !== ackedBlockersRef.current) setOverrideBlocking(false);
+      lastCheckedRef.current = Date.now();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Exception re-check failed.');
+      setExceptionsError(err instanceof ApiError ? err.message : 'the check failed');
     } finally {
       setExceptionsLoading(false);
+      setRechecking(false);
     }
+  };
+  const acknowledgeBlocking = (on: boolean) => {
+    ackedBlockersRef.current = on ? blockerSignature(exceptions) : '';
+    setOverrideBlocking(on);
   };
 
   // Fixes happen in other tabs (each Fix link opens one): coming back to
-  // the wizard re-runs the scan, at most every 10 seconds.
+  // the wizard re-runs the check, at most every 10 seconds after the last
+  // one arrived.
   const recheckRef = useRef(recheckExceptions);
   recheckRef.current = recheckExceptions;
-  const hasScan = exceptions !== null;
+  const hasScan = exceptions !== null || exceptionsError !== null;
   useEffect(() => {
     if (!open || !hasScan) return;
-    let last = Date.now();
     const onFocus = () => {
-      if (document.visibilityState === 'hidden' || Date.now() - last < 10_000) return;
-      last = Date.now();
+      if (document.visibilityState === 'hidden' || Date.now() - lastCheckedRef.current < 10_000) return;
       void recheckRef.current();
     };
     window.addEventListener('focus', onFocus);
@@ -407,6 +437,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
         setPreview(null);
         setPreviewError(null);
         setExceptions(null);
+        setExceptionsError(null);
         setOverrideBlocking(false);
         setStep(2);
         return;
@@ -429,7 +460,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
   };
 
   // Nothing blocks and it's a regular run: create and finalize in one step.
-  const canCreateAndFinalize = runKind === 'REGULAR' && canSubmit && blockingCount === 0 && !!preview && preview.items.length > 0;
+  const canCreateAndFinalize =
+    runKind === 'REGULAR' && canSubmit && blockingCount === 0 && !!exceptions && !exceptionsError && !exceptionsLoading && !rechecking && !!preview && preview.items.length > 0;
 
   const submit = async (andFinalize = false) => {
     if (submitting || !canSubmit) return;
@@ -446,12 +478,20 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
       });
       let detail = created;
       if (andFinalize) {
-        try {
-          detail = await finalizePayrollRun(created.id);
-          toast.success(`Run created and finalized — ${detail.items.length} paystubs, ready to pay.`);
-        } catch (err) {
-          // The run exists either way: open it as a draft and say why it stopped there.
-          toast.error(`Run created, not finalized: ${err instanceof ApiError ? err.message : 'finalize failed'}.`);
+        // Finalize only the numbers that were reviewed: the run that was
+        // built must be the preview's people and net pay. Anything else (time
+        // approved or edited since) leaves a draft to look at first.
+        const drift = preview ? previewDrift(preview, created) : 'no preview to compare against';
+        if (drift) {
+          toast.error(`Run created as a draft, not finalized — ${drift}. Review it, then finalize.`);
+        } else {
+          try {
+            detail = await finalizePayrollRun(created.id);
+            toast.success(`Run created and finalized — ${detail.items.length} paystubs, ready to pay.`);
+          } catch (err) {
+            // The run exists either way: open it as a draft and say why it stopped there.
+            toast.error(`Run created, not finalized: ${err instanceof ApiError ? err.message : 'finalize failed'}.`);
+          }
         }
       } else {
         toast.success(
@@ -508,6 +548,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               exceptions={runExceptions}
               exceptionsLoading={exceptionsLoading}
               onRecheck={recheckExceptions}
+              exceptionsError={exceptionsError}
+              runCut={runCut}
               notes={notes}
               setNotes={setNotes}
             />
@@ -545,6 +587,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               exceptions={runExceptions}
               exceptionsLoading={exceptionsLoading}
               onRecheck={recheckExceptions}
+              exceptionsError={exceptionsError}
+              runCut={runCut}
             />
           )}
           {!quickReview && step === 3 && (
@@ -561,6 +605,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               exceptions={runExceptions}
               exceptionsLoading={exceptionsLoading}
               onRecheck={recheckExceptions}
+              exceptionsError={exceptionsError}
+              runCut={runCut}
             />
           )}
           {!quickReview && step === 4 && (
@@ -575,7 +621,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               preview={preview}
               exceptions={runExceptions}
               overrideBlocking={overrideBlocking}
-              setOverrideBlocking={setOverrideBlocking}
+              setOverrideBlocking={acknowledgeBlocking}
             />
           )}
         </div>
@@ -1050,6 +1096,10 @@ interface PreviewProps {
   exceptions: PayrollExceptionsResponse | null;
   exceptionsLoading: boolean;
   onRecheck: () => void;
+  /** The scan failed: shown as an error, never as an all-clear. */
+  exceptionsError: string | null;
+  /** The run's client and pay schedule — approving clean time uses the scan's cut. */
+  runCut: { clientId: string | null; payrollScheduleId: string | null };
 }
 
 function PreviewStateBanner({
@@ -1489,6 +1539,8 @@ function Step2({
   exceptions,
   exceptionsLoading,
   onRecheck,
+  exceptionsError,
+  runCut,
 }: PreviewProps) {
   const exMap = exceptionsByAssociate(exceptions);
   if (offCycle) {
@@ -1510,7 +1562,7 @@ function Step2({
     <div className="space-y-3 text-sm">
       <RunTruthPanel truth={truth} preview={preview} periodStart={periodStart} periodEnd={periodEnd} unassigned={unassigned} />
 
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd }} onTimeApproved={onRetry} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} error={exceptionsError} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd, ...runCut }} onTimeApproved={onRetry} />
 
       <p className="text-silver/70 text-xs">
         Hours come from <strong>APPROVED</strong> time entries in this period.
@@ -1556,6 +1608,8 @@ function Step3({
   exceptions,
   exceptionsLoading,
   onRecheck,
+  exceptionsError,
+  runCut,
 }: PreviewProps) {
   void periodStart;
   void periodEnd;
@@ -1574,7 +1628,7 @@ function Step3({
   }
   return (
     <div className="space-y-3 text-sm">
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd }} onTimeApproved={onRetry} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} error={exceptionsError} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd, ...runCut }} onTimeApproved={onRetry} />
 
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
 
@@ -1651,6 +1705,8 @@ function QuickReview({
   exceptions,
   exceptionsLoading,
   onRecheck,
+  exceptionsError,
+  runCut,
   notes,
   setNotes,
 }: {
@@ -1665,6 +1721,8 @@ function QuickReview({
   exceptions: PayrollExceptionsResponse | null;
   exceptionsLoading: boolean;
   onRecheck: () => void;
+  exceptionsError: string | null;
+  runCut: { clientId: string | null; payrollScheduleId: string | null };
   notes: string;
   setNotes: (v: string) => void;
 }) {
@@ -1676,9 +1734,10 @@ function QuickReview({
       <ExceptionStrip
         exceptions={exceptions}
         loading={exceptionsLoading}
+        error={exceptionsError}
         onRecheck={onRecheck}
         paychecks={preview?.items.length ?? 0}
-        period={{ start: periodStart, end: periodEnd }}
+        period={{ start: periodStart, end: periodEnd, ...runCut }}
         onTimeApproved={onRetry}
       />
 
@@ -1918,4 +1977,24 @@ function Pill({ children, icon }: { children: React.ReactNode; icon?: React.Reac
       {children}
     </span>
   );
+}
+
+/** The blocking exceptions, as a stable string — what an acknowledgement covered. */
+function blockerSignature(ex: PayrollExceptionsResponse | null): string {
+  if (!ex) return '';
+  return ex.exceptions
+    .filter((e) => e.severity === 'BLOCKING')
+    .map((e) => `${e.associateId}:${e.kind}`)
+    .sort()
+    .join('|');
+}
+
+/** Why the created run isn't the previewed one — or null when it is (people and net pay, to the cent). */
+export function previewDrift(preview: PayrollRunPreviewResponse, run: { items: unknown[]; totalNet: number }): string | null {
+  const people = preview.items.length;
+  if (run.items.length !== people) return `${run.items.length} paychecks were built, the preview showed ${people}`;
+  if (Math.abs(run.totalNet - preview.totals.totalNet) >= 0.01) {
+    return `net pay came to ${fmtMoney(run.totalNet)}, the preview showed ${fmtMoney(preview.totals.totalNet)}`;
+  }
+  return null;
 }

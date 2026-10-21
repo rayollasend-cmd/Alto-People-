@@ -56,8 +56,38 @@ export function getPayrollUpcoming(): Promise<PayrollUpcomingSummary> {
   return apiFetch<PayrollUpcomingSummary>('/payroll/upcoming');
 }
 
-export function finalizePayrollRun(id: string): Promise<PayrollRunDetail> {
-  return apiFetch<PayrollRunDetail>(`/payroll/runs/${id}/finalize`, { method: 'POST' });
+/**
+ * Finalize from the app: the server re-scans a regular run for blockers
+ * that appeared since the preview (409 blocking_exceptions) unless the
+ * person finalizing acknowledged them.
+ */
+export function finalizePayrollRun(id: string, opts: { acknowledgeBlocking?: boolean } = {}): Promise<PayrollRunDetail> {
+  return apiFetch<PayrollRunDetail>(`/payroll/runs/${id}/finalize`, {
+    method: 'POST',
+    body: { recheckExceptions: true, ...(opts.acknowledgeBlocking ? { acknowledgeBlocking: true } : {}) },
+  });
+}
+
+export interface ApproveCleanTimeResult {
+  approved: number;
+  failed: number;
+  /** Entries with anomaly flags — read on the timesheet first. */
+  flagged: number;
+  /** Entries with a kiosk punch waiting for a supervisor (no photo, face mismatch…). */
+  awaitingReview: number;
+  /** Entries the worker asked to correct. */
+  awaitingCorrection: number;
+}
+
+/** Approve the clean time behind a run's unapproved-time warning — the run's own cut, on the server. */
+export function approveRunCleanTime(body: {
+  periodStart: string;
+  periodEnd: string;
+  clientId?: string | null;
+  payrollScheduleId?: string | null;
+  associateIds: string[];
+}): Promise<ApproveCleanTimeResult> {
+  return apiFetch<ApproveCleanTimeResult>('/payroll/runs/approve-clean-time', { method: 'POST', body });
 }
 
 export function disbursePayrollRun(id: string): Promise<PayrollRunDetail> {

@@ -100,3 +100,15 @@ export function upsertAttestation(
     body,
   });
 }
+
+/** Put one attestation's reminders off until a date (YYYY-MM-DD) — the daily digest leaves it out. */
+export function snoozeAttestation(key: string, until: string): Promise<{ key: string; snoozedUntil: string }> {
+  return apiFetch<{ key: string; snoozedUntil: string }>(`${ROOT}/attestations/${encodeURIComponent(key)}/snooze`, {
+    method: 'POST',
+    body: { until },
+  });
+}
+
+export function unsnoozeAttestation(key: string): Promise<void> {
+  return apiFetch<void>(`${ROOT}/attestations/${encodeURIComponent(key)}/snooze`, { method: 'DELETE' });
+}

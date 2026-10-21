@@ -312,7 +312,8 @@ export async function startReadyToWorkHandoff(input: {
     subject: `You're ready to work at ${store?.name ?? client.name}`,
     body: associateBody,
     category: 'onboarding',
-    linkUrl: '/',
+    // Their schedule — where the first shift appears.
+    linkUrl: '/scheduling',
     emailFallback: true,
   });
 

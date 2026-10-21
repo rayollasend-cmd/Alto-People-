@@ -26,6 +26,20 @@ export interface Broadcast {
   sentAt: string | null;
   receiptCount: number;
   createdAt: string;
+  /** Set = a saved template (never sent). */
+  templateName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
+}
+
+/** Who a targeting reaches — the send confirm names these numbers. */
+export interface BroadcastAudience {
+  people: number;
+  /** Has an account: what in-app and push reach. */
+  withAccount: number;
+  /** Has a phone: what SMS reaches. */
+  withPhone: number;
+  withEmail: number;
 }
 
 export interface MyBroadcast {
@@ -90,6 +104,15 @@ export const searchDirectory = (q?: string) =>
 
 export const listBroadcasts = () =>
   apiFetch<{ broadcasts: Broadcast[] }>('/broadcasts');
+export const listBroadcastTemplates = () =>
+  apiFetch<{ broadcasts: Broadcast[] }>('/broadcasts?templates=1');
+export const broadcastAudienceCount = (t: { clientId?: string | null; departmentId?: string | null; costCenterId?: string | null }) =>
+  apiFetch<BroadcastAudience>('/broadcasts/audience-count', { method: 'POST', body: t });
+export const savedBroadcastAudience = (id: string) => apiFetch<BroadcastAudience>(`/broadcasts/${id}/audience-count`);
+export const duplicateBroadcast = (id: string) => apiFetch<{ id: string }>(`/broadcasts/${id}/duplicate`, { method: 'POST', body: {} });
+export const saveBroadcastAsTemplate = (id: string, name: string) =>
+  apiFetch<{ id: string }>(`/broadcasts/${id}/template`, { method: 'POST', body: { name } });
+export const deleteBroadcast = (id: string) => apiFetch<void>(`/broadcasts/${id}`, { method: 'DELETE' });
 export const createBroadcast = (input: {
   title: string;
   body: string;

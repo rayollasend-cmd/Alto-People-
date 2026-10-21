@@ -257,19 +257,32 @@ oshaWcEeoRouter.get('/osha/300a', VIEW_COMP, async (req, res) => {
   });
 });
 
-/** Hours on the clock for one client in a calendar year (closed, accepted entries) — summed in SQL; a raw query sees no tenant guard, so it names the tenant. */
+/**
+ * Hours actually worked for one client in a calendar year (closed, accepted
+ * entries) — the 300A's "total hours worked by all employees". Unpaid meal
+ * breaks are not hours worked, so they come off; paid rest breaks stay.
+ * Summed in SQL; a raw query sees no tenant guard, so it names the tenant.
+ */
 async function clientHoursInYear(clientId: string, year: number): Promise<number> {
   const start = new Date(Date.UTC(year, 0, 1));
   const end = new Date(Date.UTC(year + 1, 0, 1));
+  const tenantId = tenantIdForWrite();
   const rows = await prisma.$queryRaw<Array<{ hours: unknown }>>(Prisma.sql`
-    SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt"))) / 3600, 0) AS hours
-    FROM "TimeEntry"
-    WHERE "clockOutAt" IS NOT NULL
-      AND "status"::text IN ('COMPLETED', 'APPROVED')
-      AND "clockInAt" >= ${start} AND "clockInAt" < ${end}
-      AND "clientId" = ${clientId}::uuid
-      AND "tenantId" = ${tenantIdForWrite()}::uuid`);
-  return Number(rows[0]?.hours ?? 0);
+    SELECT COALESCE(SUM(
+      EXTRACT(EPOCH FROM (te."clockOutAt" - te."clockInAt"))
+      - COALESCE((
+          SELECT SUM(EXTRACT(EPOCH FROM (LEAST(COALESCE(b."endedAt", te."clockOutAt"), te."clockOutAt") - b."startedAt")))
+          FROM "BreakEntry" b
+          WHERE b."timeEntryId" = te."id" AND b."type"::text = 'MEAL' AND b."startedAt" < te."clockOutAt"
+        ), 0)
+    ) / 3600, 0) AS hours
+    FROM "TimeEntry" te
+    WHERE te."clockOutAt" IS NOT NULL
+      AND te."status"::text IN ('COMPLETED', 'APPROVED')
+      AND te."clockInAt" >= ${start} AND te."clockInAt" < ${end}
+      AND te."clientId" = ${clientId}::uuid
+      AND te."tenantId" = ${tenantId}::uuid`);
+  return Math.max(0, Number(rows[0]?.hours ?? 0));
 }
 
 // ----- Workers' Comp class codes -----------------------------------------

@@ -14,6 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
 import { cn } from '@/lib/cn';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { FilterChip } from '@/components/ui/FilterBar';
@@ -94,10 +95,10 @@ function HandoverBar({ totals }: { totals: Scorecard['totals'] }) {
   // The validated chart token for the neutral "it moved forward" outcome,
   // and the reserved status tokens for the two that are judgements.
   const segs = [
-    { key: 'Carried', value: totals.handoverCarried, color: 'rgb(var(--color-chart-1))' },
-    { key: 'Reviewed', value: totals.handoverReviewed, color: 'rgb(var(--color-success))' },
-    { key: 'Dismissed', value: totals.handoverDismissed, color: 'rgb(var(--color-steel))' },
-    { key: 'Undecided', value: totals.handoverPending, color: 'rgb(var(--color-alert))' },
+    { key: 'Carried', value: totals.handoverCarried, color: PALETTE.primary },
+    { key: 'Reviewed', value: totals.handoverReviewed, color: PALETTE.good },
+    { key: 'Dismissed', value: totals.handoverDismissed, color: PALETTE.secondary },
+    { key: 'Undecided', value: totals.handoverPending, color: PALETTE.bad },
   ].filter((s) => s.value > 0);
   const total = totals.handoverCreated;
   if (total === 0) {
@@ -281,7 +282,7 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
         <span className="flex items-center gap-1.5 text-2xs text-silver/70">
           <span
             className="h-0.5 w-4 rounded"
-            style={{ background: 'rgb(var(--color-chart-1))' }}
+            style={{ background: PALETTE.primary }}
             aria-hidden="true"
           />
           SOP completion
@@ -295,13 +296,13 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -22 }}>
             <CartesianGrid
-              stroke="rgb(var(--color-navy-secondary))"
+              stroke={PALETTE.grid}
               vertical={false}
               strokeDasharray="0"
             />
             <XAxis
               dataKey="label"
-              tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 10 }}
+              tick={{ fill: TICK.fill, fontSize: 10 }}
               axisLine={false}
               tickLine={false}
             />
@@ -309,7 +310,7 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
               yAxisId="pct"
               domain={[0, 100]}
               ticks={[0, 50, 100]}
-              tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 10 }}
+              tick={{ fill: TICK.fill, fontSize: 10 }}
               axisLine={false}
               tickLine={false}
               width={38}
@@ -324,13 +325,10 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
               strokeDasharray="4 4"
             />
             <ChartTooltip
-              cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.4)' }}
-              contentStyle={{
-                background: 'rgb(var(--color-navy))',
-                border: '1px solid rgb(var(--color-navy-secondary))',
-                borderRadius: 8,
-                fontSize: 11,
-              }}
+              cursor={{ fill: PALETTE.cursor }}
+              contentStyle={TOOLTIP_STYLE}
+              labelStyle={TOOLTIP_LABEL_STYLE}
+              itemStyle={TOOLTIP_ITEM_STYLE}
               labelFormatter={(v) => `Week of ${String(v)}`}
               formatter={(value, name) =>
                 name === 'sopPct'
@@ -354,9 +352,9 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
               yAxisId="pct"
               type="monotone"
               dataKey="sopPct"
-              stroke="rgb(var(--color-chart-1))"
+              stroke={PALETTE.primary}
               strokeWidth={2}
-              dot={{ r: 3, strokeWidth: 0, fill: 'rgb(var(--color-chart-1))' }}
+              dot={{ r: 3, strokeWidth: 0, fill: PALETTE.primary }}
               connectNulls
             />
           </ComposedChart>

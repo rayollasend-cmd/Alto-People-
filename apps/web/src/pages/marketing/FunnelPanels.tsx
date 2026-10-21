@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { PALETTE, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
 import type { MarketingOverview, SourceFunnelRow } from '@/lib/marketingApi';
-import { fmtMoney } from '@/lib/format';
+import { fmtDayShort, fmtMoney, parseYmd } from '@/lib/format';
 import { SOURCE_LABEL } from '@/pages/recruiting/recruitingLabels';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -21,15 +22,25 @@ export const sourceName = (s: string | null) =>
 
 const pct = (v: number | null) => (v === null ? '—' : `${v}%`);
 
+/** A week series as a tile trend: the last week is the one in progress. */
+function weekTrend(series: number[]) {
+  if (series.length < 3) return undefined;
+  const complete = series.slice(0, -1);
+  const last = complete[complete.length - 1] ?? 0;
+  const before = complete[complete.length - 2] ?? 0;
+  return { series, lastIsPartial: true, delta: last - before, deltaLabel: 'vs the week before', unit: 'week' };
+}
+
 export function FunnelHero({ o }: { o: MarketingOverview }) {
   const f = o.funnel;
   const step = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)}% of the step before` : undefined);
+  const w = o.weekly;
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <MetricCard label="Careers site views" value={f.views} hint="list and posting pages" />
-      <MetricCard label="Applicants" value={f.applicants} hint={step(f.applicants, f.views)} />
+      <MetricCard label="Careers site views" value={f.views} hint="list and posting pages" trend={weekTrend(w.map((x) => x.views))} />
+      <MetricCard label="Applicants" value={f.applicants} hint={step(f.applicants, f.views)} trend={weekTrend(w.map((x) => x.applicants))} />
       <MetricCard label="Interviewed" value={f.interviewed} hint={step(f.interviewed, f.applicants)} />
-      <MetricCard label="Hires" value={f.hires} hint={step(f.hires, f.applicants)} accent />
+      <MetricCard label="Hires" value={f.hires} hint={step(f.hires, f.applicants)} accent trend={weekTrend(w.map((x) => x.hires))} />
     </div>
   );
 }
@@ -84,7 +95,15 @@ export function PostingsPanel({ o }: { o: MarketingOverview }) {
       <CardContent>
         <SectionTitle title="By posting" description="Views and applicants per job on the careers site." as="h3" />
         {rows.length === 0 ? (
-          <EmptyState title="No postings in the range" description="Open a posting and its views and applicants show here." className="py-6" />
+          o.funnel.views > 0 ? (
+            <EmptyState
+              title="No posting was opened"
+              description={`The ${o.funnel.views} view${o.funnel.views === 1 ? ' was' : 's were'} on the job list page. When someone opens a posting, its views and applicants show here.`}
+              className="py-6"
+            />
+          ) : (
+            <EmptyState title="No postings in the range" description="Open a posting and its views and applicants show here." className="py-6" />
+          )
         ) : (
           <ul className="mt-2 divide-y divide-line">
             {rows.map((p) => (
@@ -106,38 +125,104 @@ export function PostingsPanel({ o }: { o: MarketingOverview }) {
   );
 }
 
-const ACCENT = 'rgb(var(--color-chart-1))';
-const STEEL = 'rgb(var(--color-chart-2))';
-const GOOD = 'rgb(var(--color-chart-3))';
-const MUTED = 'rgb(var(--color-silver))';
+/** "Mon, Oct 12" from a week's YYYY-MM-DD start. */
+const weekLabel = (ymd: string) => fmtDayShort(parseYmd(ymd) ?? ymd, { anchored: true });
 
-export function WeeklyChart({ o }: { o: MarketingOverview }) {
-  const data = o.weekly.map((w) => ({ week: w.weekStart.slice(5), views: w.views, applicants: w.applicants, hires: w.hires }));
+const pctOf = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+
+/**
+ * The funnel as stages: each bar is how many reached that step, labelled
+ * with the share of the step before — where the funnel loses people is the
+ * shortest jump, at a glance. Views, applicants and hires on one bar axis
+ * hid hires entirely; here each stage reads on its own.
+ */
+export function StageFunnel({ o }: { o: MarketingOverview }) {
+  const f = o.funnel;
+  const rows = [
+    { stage: 'Viewed', people: f.views, step: null as number | null },
+    { stage: 'Applied', people: f.applicants, step: pctOf(f.applicants, f.views) },
+    { stage: 'Interviewed', people: f.interviewed, step: pctOf(f.interviewed, f.applicants) },
+    { stage: 'Hired', people: f.hires, step: pctOf(f.hires, f.interviewed) },
+  ];
+  const worst = rows.slice(1).filter((r) => r.step !== null).sort((a, b) => (a.step ?? 0) - (b.step ?? 0))[0];
   return (
-    <Card>
-      <CardContent>
-        <SectionTitle title="Week by week" description="Views against applicants and hires." as="h3" />
-        {data.length === 0 ? (
-          <EmptyState title="No activity in the range" description="Views and applications show here week by week." className="py-6" />
-        ) : (
-          <div className="mt-2 h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -12 }}>
-                <CartesianGrid stroke="rgb(var(--color-silver) / 0.12)" vertical={false} />
-                <XAxis dataKey="week" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} width={40} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background: 'rgb(var(--color-surface-raised))', border: '1px solid rgb(var(--color-line))', borderRadius: 8, fontSize: 12 }}
-                  labelFormatter={(l) => `Week of ${l}`}
-                />
-                <Bar dataKey="views" name="Views" fill={STEEL} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="applicants" name="Applicants" fill={ACCENT} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="hires" name="Hires" fill={GOOD} radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <ChartFrame
+      title="Where the funnel loses people"
+      description="Everyone who reached each step, and the share of the step before who made it."
+      summary={
+        f.views === 0
+          ? 'No views in the range.'
+          : `${f.views} views became ${f.applicants} applicants, ${f.interviewed} interviews and ${f.hires} hires.${worst ? ` The steepest drop is into “${worst.stage}” (${worst.step}% made it).` : ''}`
+      }
+      csvName="careers-funnel"
+      height={200}
+      columns={[
+        { key: 'stage', label: 'Step' },
+        { key: 'people', label: 'People', numeric: true },
+        { key: 'step', label: 'Of the step before', numeric: true, format: (v) => (v === null || v === undefined ? '—' : `${v}%`) },
+      ]}
+      rows={f.views + f.applicants === 0 ? [] : rows}
+    >
+      <StackedBarChart
+        data={rows.map((r) => ({ ...r, label: r.step === null ? r.stage : `${r.stage} · ${r.step}%` }))}
+        x="label"
+        layout="horizontal"
+        stacked={false}
+        series={[{ key: 'people', name: 'People', color: PALETTE.primary }]}
+        xLabel="People"
+      />
+    </ChartFrame>
   );
 }
+
+/**
+ * Week by week as rates, not raw counts: view → apply and apply → hire on a
+ * percent axis, so a week with more traffic but worse conversion shows as
+ * the dip it is. The week in progress is left off.
+ */
+export function ConversionChart({ o }: { o: MarketingOverview }) {
+  const weeks = o.weekly.slice(0, -1);
+  const data = weeks.map((w) => ({
+    week: weekLabel(w.weekStart),
+    viewToApply: pctOf(w.applicants, w.views),
+    applyToHire: pctOf(w.hires, w.applicants),
+    views: w.views,
+    applicants: w.applicants,
+    hires: w.hires,
+  }));
+  const any = data.some((d) => d.viewToApply !== null || d.applyToHire !== null);
+  const last = [...data].reverse().find((d) => d.viewToApply !== null);
+  return (
+    <ChartFrame
+      title="Conversion, week by week"
+      description="Views that became applications, and applications that became hires. Complete weeks only."
+      summary={last ? `In the week of ${last.week}, ${last.viewToApply}% of views became applications.` : 'Not enough activity to show a rate yet.'}
+      csvName="careers-conversion"
+      height={220}
+      columns={[
+        { key: 'week', label: 'Week of' },
+        { key: 'views', label: 'Views', numeric: true },
+        { key: 'applicants', label: 'Applicants', numeric: true },
+        { key: 'hires', label: 'Hires', numeric: true },
+        { key: 'viewToApply', label: 'View → apply', numeric: true, format: (v) => (v === null || v === undefined ? '—' : `${v}%`) },
+        { key: 'applyToHire', label: 'Apply → hire', numeric: true, format: (v) => (v === null || v === undefined ? '—' : `${v}%`) },
+      ]}
+      rows={any ? data : []}
+    >
+      <TrendLineChart
+        data={data}
+        x="week"
+        series={[
+          { key: 'viewToApply', name: 'View → apply' },
+          { key: 'applyToHire', name: 'Apply → hire' },
+        ]}
+        format={(v) => `${v}%`}
+        yLabel="Percent"
+        heading={(w) => `Week of ${w}`}
+      />
+    </ChartFrame>
+  );
+}
+
+/** @deprecated The stage funnel and the conversion chart replace it. */
+export const WeeklyChart = ConversionChart;

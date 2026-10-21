@@ -28,6 +28,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -40,6 +41,7 @@ import { FilterBar, FilterChip } from '@/components/ui/FilterBar';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { NeverClosedCard } from './NeverClosedCard';
 import {
   getOpsBoard,
   getOpsFeed,
@@ -723,18 +725,18 @@ export function OpsBoard() {
                   <div className="h-40">
                     <ResponsiveContainer width="100%" height="100%">
                       <ScatterChart margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
-                        <CartesianGrid stroke="rgb(var(--color-silver) / 0.10)" />
+                        <CartesianGrid stroke={PALETTE.grid} />
                         <XAxis
                           dataKey="ts"
                           type="number"
                           domain={['dataMin', 'dataMax']}
                           tick={false}
-                          axisLine={{ stroke: 'rgb(var(--color-silver) / 0.2)' }}
+                          axisLine={{ stroke: PALETTE.grid }}
                         />
                         <YAxis
                           dataKey="value"
                           type="number"
-                          tick={{ fill: 'rgb(var(--color-silver) / 0.7)', fontSize: 10 }}
+                          tick={{ fill: TICK.fill, fontSize: 10 }}
                           axisLine={false}
                           tickLine={false}
                           width={40}
@@ -754,13 +756,10 @@ export function OpsBoard() {
                           stroke="none"
                         />
                         <Tooltip
-                          cursor={{ stroke: 'rgb(var(--color-gold) / 0.4)' }}
-                          contentStyle={{
-                            background: 'rgb(var(--color-navy))',
-                            border: '1px solid rgb(var(--color-navy-secondary))',
-                            borderRadius: 8,
-                            fontSize: 11,
-                          }}
+                          cursor={{ stroke: PALETTE.ref }}
+                          contentStyle={TOOLTIP_STYLE}
+                          labelStyle={TOOLTIP_LABEL_STYLE}
+                          itemStyle={TOOLTIP_ITEM_STYLE}
                           formatter={(value) => [`${String(value)}°F`, 'reading']}
                           labelFormatter={() => ''}
                         />
@@ -775,8 +774,8 @@ export function OpsBoard() {
                               key={i}
                               fill={
                                 t.out
-                                  ? 'rgb(var(--color-alert))'
-                                  : 'rgb(var(--color-teal))'
+                                  ? PALETTE.bad
+                                  : PALETTE.tertiary
                               }
                             />
                           ))}
@@ -816,37 +815,34 @@ export function OpsBoard() {
                     margin={{ top: 8, right: 8, bottom: 0, left: -22 }}
                   >
                     <CartesianGrid
-                      stroke="rgb(var(--color-silver) / 0.10)"
+                      stroke={PALETTE.grid}
                       vertical={false}
                     />
                     <XAxis
                       dataKey="hour"
-                      tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 9 }}
+                      tick={{ fill: TICK.fill, fontSize: 9 }}
                       interval={3}
                       axisLine={false}
                       tickLine={false}
                     />
                     <YAxis
-                      tick={{ fill: 'rgb(var(--color-silver) / 0.7)', fontSize: 10 }}
+                      tick={{ fill: TICK.fill, fontSize: 10 }}
                       axisLine={false}
                       tickLine={false}
                       allowDecimals={false}
                       width={34}
                     />
                     <Tooltip
-                      cursor={{ fill: 'rgb(var(--color-gold) / 0.08)' }}
-                      contentStyle={{
-                        background: 'rgb(var(--color-navy))',
-                        border: '1px solid rgb(var(--color-navy-secondary))',
-                        borderRadius: 8,
-                        fontSize: 11,
-                      }}
+                      cursor={{ fill: PALETTE.cursor }}
+                      contentStyle={TOOLTIP_STYLE}
+                      labelStyle={TOOLTIP_LABEL_STYLE}
+                      itemStyle={TOOLTIP_ITEM_STYLE}
                       formatter={(value) => [`${String(value)} tasks`, 'completed']}
                     />
                     <Bar
                       dataKey="count"
                       radius={[3, 3, 0, 0]}
-                      fill="rgb(var(--color-gold) / 0.75)"
+                      fill={PALETTE.primary}
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -897,48 +893,45 @@ export function OpsBoard() {
                         <linearGradient id="sopFill" x1="0" y1="0" x2="0" y2="1">
                           <stop
                             offset="0%"
-                            stopColor="rgb(var(--color-success))"
+                            stopColor={PALETTE.good}
                             stopOpacity={0.35}
                           />
                           <stop
                             offset="100%"
-                            stopColor="rgb(var(--color-success))"
+                            stopColor={PALETTE.good}
                             stopOpacity={0}
                           />
                         </linearGradient>
                       </defs>
                       <CartesianGrid
-                        stroke="rgb(var(--color-silver) / 0.10)"
+                        stroke={PALETTE.grid}
                         vertical={false}
                       />
                       <XAxis
                         dataKey="dateKey"
                         tickFormatter={(v: string) => v.slice(5)}
-                        tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 9 }}
+                        tick={{ fill: TICK.fill, fontSize: 9 }}
                         axisLine={false}
                         tickLine={false}
                       />
                       <YAxis
                         domain={[0, 100]}
-                        tick={{ fill: 'rgb(var(--color-silver) / 0.7)', fontSize: 10 }}
+                        tick={{ fill: TICK.fill, fontSize: 10 }}
                         axisLine={false}
                         tickLine={false}
                         width={34}
                         unit="%"
                       />
                       <Tooltip
-                        contentStyle={{
-                          background: 'rgb(var(--color-navy))',
-                          border: '1px solid rgb(var(--color-navy-secondary))',
-                          borderRadius: 8,
-                          fontSize: 11,
-                        }}
+                        contentStyle={TOOLTIP_STYLE}
+                        labelStyle={TOOLTIP_LABEL_STYLE}
+                        itemStyle={TOOLTIP_ITEM_STYLE}
                         formatter={(value) => [`${String(value)}%`, 'SOP compliance']}
                       />
                       <Area
                         type="monotone"
                         dataKey="pct"
-                        stroke="rgb(var(--color-success))"
+                        stroke={PALETTE.good}
                         strokeWidth={2}
                         fill="url(#sopFill)"
                         connectNulls
@@ -954,6 +947,9 @@ export function OpsBoard() {
 
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <div className="space-y-4 min-w-0">
+          {/* ===== Never closed — left running past their end: exceptions, not live ===== */}
+          <NeverClosedCard shifts={board.neverClosed ?? []} onOpenRecord={setRecordId} />
+
           {/* ===== Live mission tiles ===== */}
           <Card>
             <CardHeader className="pb-2">

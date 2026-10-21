@@ -92,10 +92,14 @@ async function notifyIfThresholdCrossed(
         { role: { in: TIME_ADMIN_ROLES } },
       ],
     },
-    select: { id: true },
+    select: { id: true, role: true },
   });
   if (recipients.length === 0) return;
   const now = new Date();
+  // Time admins open the person's record; a shift supervisor can't (no
+  // view:org), so theirs opens that person's timesheet instead.
+  const recordLink = `/people/${opts.associateId}?tab=time`;
+  const timesheetLink = `/time-attendance?associate=${opts.associateId}&name=${encodeURIComponent(opts.associateName)}`;
   await db.notification.createMany({
     data: recipients.map((u) => ({
       channel: 'IN_APP' as const,
@@ -104,7 +108,7 @@ async function notifyIfThresholdCrossed(
       subject: `Attendance threshold: ${opts.associateName}`,
       body: `${opts.associateName} is at ${opts.scoreAfter} attendance points (rolling 90 days) — policy calls for a ${crossed.step}. Review their attendance record and issue the step if warranted.`,
       category: 'attendance',
-      linkUrl: `/people/${opts.associateId}?tab=time`,
+      linkUrl: u.role === 'SHIFT_SUPERVISOR' ? timesheetLink : recordLink,
       sentAt: now,
     })),
   });
