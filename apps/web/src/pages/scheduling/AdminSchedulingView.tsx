@@ -2367,7 +2367,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const onQuickDuplicate = async (s: Shift) => {
     try {
       await createShift({
-        clientId: s.clientId,
+        clientId: s.clientId ?? undefined,
         position: s.position,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -4714,7 +4714,7 @@ function DuplicateToEmployeeDialog({
   // the page reads for that client.
   const rosterQuery = useQuery({
     queryKey: ['scheduling', 'roster', source.clientId, '', ''],
-    queryFn: () => listSchedulingAssociates({ clientId: source.clientId }),
+    queryFn: () => listSchedulingAssociates({ clientId: source.clientId ?? undefined }),
   });
   const associates: AssociateLite[] | null = rosterQuery.isError
     ? []
@@ -4735,7 +4735,7 @@ function DuplicateToEmployeeDialog({
       // it's reviewable before publishing (and won't surprise-notify). The
       // bulk endpoint skips the associate if they're already booked then.
       const res = await bulkCreateShifts({
-        clientId: source.clientId,
+        clientId: source.clientId ?? undefined,
         ...(source.locationId ? { locationId: source.locationId } : {}),
         position: source.position,
         startsAt: source.startsAt,

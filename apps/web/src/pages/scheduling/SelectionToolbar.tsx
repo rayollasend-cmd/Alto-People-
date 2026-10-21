@@ -252,7 +252,7 @@ export function SelectionToolbar({ selected, onClear, onSelectOnly, onAfterActio
       // locationId carries over so copies keep their geofence + filters.
       await runBatch<Shift>(async (s) => {
         return createShift({
-          clientId: s.clientId,
+          clientId: s.clientId ?? undefined,
           position: s.position,
           startsAt: plusDaysIso(s.startsAt, 7),
           endsAt: plusDaysIso(s.endsAt, 7),

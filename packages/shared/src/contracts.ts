@@ -1883,7 +1883,8 @@ export type ShiftStatus = z.infer<typeof ShiftStatusSchema>;
 
 export const ShiftSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
-  clientId: UuidSchema,
+  /** Null for a shift at a location with no client (a direct employer, the company's own staff). */
+  clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
   position: z.string(),
   startsAt: z.string().datetime(),

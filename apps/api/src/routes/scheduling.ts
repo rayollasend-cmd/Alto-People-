@@ -355,8 +355,8 @@ function toShift(row: RawShift, effectivePayRate?: number | null): Shift {
   const explicitPay = row.payRate ? Number(row.payRate) : null;
   return {
     id: row.id,
-    // A direct employer's shift names no client; the contract still says string.
-    clientId: row.clientId ?? '',
+    // A direct employer's (or the company's own) shift names no client.
+    clientId: row.clientId ?? null,
     clientName: row.client?.name ?? null,
     position: row.position,
     startsAt: row.startsAt.toISOString(),
