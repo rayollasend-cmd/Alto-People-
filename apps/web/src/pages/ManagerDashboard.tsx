@@ -361,7 +361,7 @@ function NeedsYou({
               {companyWaiting > 0 && (
                 <>
                   {' '}
-                  <Link to="/inbox" className="text-accent underline-offset-2 hover:underline">
+                  <Link to="/inbox" className="text-accent underline underline-offset-2">
                     {t('managerHome.companyWaiting', { n: companyWaiting })}
                   </Link>
                 </>
