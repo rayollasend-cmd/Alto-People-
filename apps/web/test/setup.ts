@@ -13,10 +13,15 @@ afterEach(() => cleanup());
 // jsdom has no matchMedia. Breakpoint-gated components (the perf fix that
 // mounts only the desktop OR mobile variant of big lists) call it at
 // render, so stub it as "desktop": min-width queries match, others don't.
+// Reduced motion matches too: the KPI tile counts 0→N over 600ms on first
+// paint when motion is allowed, and under a loaded CI runner a waitFor
+// read the half-way frame ("1" for 2) — three tile tests failed on three
+// runs in a row (2026-10-22). A unit test wants the final value, not the
+// flourish, and no unit test asserts the animation frames.
 if (typeof window !== 'undefined' && !window.matchMedia) {
   window.matchMedia = (query: string): MediaQueryList =>
     ({
-      matches: /min-width/.test(query),
+      matches: /min-width|prefers-reduced-motion/.test(query),
       media: query,
       onchange: null,
       addListener: () => {},
