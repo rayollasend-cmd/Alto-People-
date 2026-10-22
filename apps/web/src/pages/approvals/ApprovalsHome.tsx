@@ -460,7 +460,7 @@ export function ApprovalsHome() {
         {/* TIME's panel: the clean ones approve in one tap, the flagged ones
             listed with their reason (pages/time/PendingTimesheetsPanel). */}
         <PendingTimesheetsPanel />
-        <Link to={timesheetLink} className="inline-flex items-center gap-1 text-sm text-accent underline-offset-2 hover:underline">
+        <Link to={timesheetLink} className="inline-flex items-center gap-1 text-sm text-accent underline underline-offset-2">
           {t('appr.openFullQueue')}
         </Link>
       </div>

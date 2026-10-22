@@ -776,7 +776,7 @@ function GridCore<T>({
           {selectable && !child && !selectable.disabled?.(row) && (
             <input
               type="checkbox"
-              className="mt-1 h-4 w-4 accent-gold"
+              className="mt-0.5 h-6 w-6 shrink-0 accent-gold"
               checked={selected.has(key)}
               onChange={(e) => pick(key, shiftOf(e))}
               onClick={(e) => e.stopPropagation()}

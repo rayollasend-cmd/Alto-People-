@@ -959,6 +959,18 @@ export function WeekCalendarView({
                 {coverageTarget != null && coverageTarget > 0 && (() => {
                   const peak = dayPeaks.get(dayKeys[i]) ?? 0;
                   const gap = coverageTarget - peak;
+                  // A past day can't be covered any more, and the dimmed cell
+                  // would drop the alert red below contrast: say it plainly.
+                  if (gap > 0 && pastKeys.has(dayKeys[i])) {
+                    return (
+                      <div
+                        className="mt-0.5 text-xs2 tabular-nums text-silver"
+                        title={`Peak ${peak} scheduled vs a floor target of ${coverageTarget}.`}
+                      >
+                        {peak} / {coverageTarget} · {gap} short
+                      </div>
+                    );
+                  }
                   return gap > 0 ? (
                     <button
                       type="button"
