@@ -83,7 +83,7 @@ import type {
 } from '@alto-people/shared';
 import { Input, Textarea, Label } from '@/components/ui';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
-import { fmtDate, fmtRelativeDate, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, fmtStatementNo, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
@@ -1171,7 +1171,7 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
                       className="flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 hover:bg-navy-secondary/40"
                     >
                       <span className="text-white truncate">
-                        {s.clientName} · statement #{s.number ?? '—'}
+                        {s.clientName} · statement {fmtStatementNo(s.number)}
                         {s.amount !== null && (
                           <span className="text-silver/80">
                             {' '}· ${s.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}

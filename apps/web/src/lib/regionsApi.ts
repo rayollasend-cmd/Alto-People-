@@ -8,7 +8,21 @@ export interface StoreSnapshot {
   clientId: string;
   clientName: string;
   timezone: string;
-  now: { onFloor: number; target: number | null; targetLabel: string | null; short: number };
+  /**
+   * Two meanings of short, named (apps/api/src/lib/storeSnapshot.ts):
+   * `shortOfContract` (contract minus on the floor; null with no target) and
+   * `missingFromSchedule` (scheduled now, not on the floor). `short` is the
+   * headline one — the contract when there is a target — per `shortBasis`.
+   */
+  now: {
+    onFloor: number;
+    target: number | null;
+    targetLabel: string | null;
+    short: number;
+    shortBasis?: 'contract' | 'schedule';
+    shortOfContract?: number | null;
+    missingFromSchedule?: number;
+  };
   today: { expected: number; present: number; open: number; missedSoFar: number };
   tomorrow: { expected: number; open: number; unconfirmed: number };
   reliability: {
@@ -45,7 +59,12 @@ export interface RegionOverview {
     stores: number;
     onFloor: number;
     target: number | null;
+    /** Stores short by their headline basis (the contract where set). */
     shortNow: number;
+    /** Stores below their contract right now. */
+    belowContract?: number;
+    /** People scheduled now who are not on the floor, across the region. */
+    missingFromSchedule?: number;
     alerts: number;
     openToday: number;
     openTomorrow: number;

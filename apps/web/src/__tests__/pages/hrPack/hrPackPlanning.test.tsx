@@ -107,16 +107,17 @@ describe('the role-differentiated first row', () => {
     expect(await screen.findByRole('region', { name: 'Your people desk' })).toBeInTheDocument();
     const leave = screen.getByRole('link', { name: /Leave notices due/ });
     expect(leave).toHaveAttribute('href', '/leave');
-    expect(leave).toHaveTextContent('2');
+    // The tile is the app's KPI tile now, which counts up on first paint.
+    await waitFor(() => expect(leave).toHaveTextContent('2'));
     const claims = screen.getByRole('link', { name: /Claims to answer/ });
-    expect(claims).toHaveTextContent('3');
+    await waitFor(() => expect(claims).toHaveTextContent('3'));
     expect(claims).toHaveTextContent('1 unemployment · 2 workers’ comp');
     expect(claims).toHaveAttribute('href', '/claims/unemployment');
     // The filtered link the Inbox built — her case, not an A–Z list.
     expect(screen.getByRole('link', { name: /E-Verify mismatches/ })).toHaveAttribute('href', '/compliance?tab=everify&status=issue&associateId=a-maria');
     const stuck = screen.getByRole('link', { name: /Stuck onboarding/ });
     expect(stuck).toHaveAttribute('href', '/onboarding?status=STUCK');
-    expect(stuck).toHaveTextContent('3');
+    await waitFor(() => expect(stuck).toHaveTextContent('3'));
     // Collecting an invoice is not on the HR desk.
     expect(screen.queryByText(/statement/i)).toBeNull();
   });

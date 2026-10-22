@@ -6,6 +6,7 @@ import { loadApprovalPolicy, rolesHolding, secondPersonExists } from './approval
 import { enqueueAudit } from './audit.js';
 import { notifyUser } from './notify.js';
 import { tenantIdForWrite } from './tenant.js';
+import { runTotalsChecks } from './payrollRunTotals.js';
 
 /**
  * The pre-payroll review. Before a run's money moves, an accountant reads
@@ -99,6 +100,10 @@ export interface PayrollReviewReport {
     finalizedAt: string | null;
     /** The gross stored on the run itself — beside the paychecks so a run with money and no checks is seen (finance walk 11). */
     storedGross: number;
+    /** The net stored on the run itself. */
+    storedNet?: number;
+    /** Stored totals and paycheck totals agree to the cent (lib/payrollRunTotals) — false: don't sign off. */
+    totalsAgree?: boolean;
   };
   totals: {
     people: number;
@@ -362,6 +367,7 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
 
   const flagCounts: Partial<Record<ReviewFlag, number>> = {};
   for (const r of rows) for (const f of r.flags) flagCounts[f] = (flagCounts[f] ?? 0) + 1;
+  const totalsCheck = (await runTotalsChecks(db, [run])).get(run.id)!;
 
   return {
     company: org?.orgName ?? 'Payroll',
@@ -378,6 +384,8 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
       createdAt: run.createdAt.toISOString(),
       finalizedAt: run.finalizedAt?.toISOString() ?? null,
       storedGross: num(run.totalGross),
+      storedNet: num(run.totalNet),
+      totalsAgree: totalsCheck.totalsAgree,
     },
     totals: {
       people: rows.length,

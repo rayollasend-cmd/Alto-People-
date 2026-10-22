@@ -193,10 +193,10 @@ function ForecastChart({ weeks, siteName }: { weeks: ForecastWeek[]; siteName: s
       <CardContent>
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
+            <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
               <XAxis dataKey="label" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={28} />
-              <YAxis tick={TICK} axisLine={false} tickLine={false} width={44} tickFormatter={(v: number) => `${Math.round(v)}h`} />
+              <YAxis tick={TICK} axisLine={false} tickLine={false} width="auto" tickFormatter={(v: number) => `${Math.round(v)}h`} />
               <ChartTooltip cursor={{ stroke: REF, strokeWidth: 1 }} content={<PortalTooltip series={series} format={(v) => `${Math.round(v).toLocaleString()} h`} />} />
               <Area type="monotone" dataKey="band" stroke="none" fill={BAND} isAnimationActive={false} connectNulls={false} legendType="none" />
               <Line type="monotone" dataKey="actual" stroke={PALETTE.secondary} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />

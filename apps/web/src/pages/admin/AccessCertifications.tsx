@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, ClipboardCheck, Download, Plus } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, Download, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useRoleLabel } from '@/lib/auth';
@@ -267,8 +267,16 @@ export function AccessCertificationPage() {
     },
     onError: (err) => toast.error(message(err)),
   });
-  if (q.isPending) return <SkeletonRows count={6} />;
-  if (q.isError || !q.data) return <QueryError what="this certification" query={q} />;
+  // Loading or failed, the page still has its header (and the top bar its
+  // name) — the error used to stand alone (F500 G4).
+  if (q.isPending || q.isError || !q.data) {
+    return (
+      <div className="space-y-[var(--d-stack)]">
+        <PageHeader title="Access certification" breadcrumbs={[{ label: 'Access certifications', to: '/admin/access-certifications' }, { label: 'Access certification' }]} />
+        {q.isPending ? <SkeletonRows count={6} /> : <QueryError what="this certification" query={q} />}
+      </div>
+    );
+  }
   const c = q.data;
   const closed = c.status === 'CLOSED';
   const undecided = c.items.filter((i) => !i.decision).length;
@@ -279,21 +287,16 @@ export function AccessCertificationPage() {
         title={c.name}
         subtitle={`${SCOPE_LABEL[c.scope]} · ${c.items.length} account${c.items.length === 1 ? '' : 's'} · ${closed ? `closed ${fmtDate(c.closedAt)}` : `due ${fmtDate(c.dueAt)}`}`}
         breadcrumbs={[{ label: 'Access certifications', to: '/admin/access-certifications' }, { label: c.name }]}
+        // The trail goes back to every certification (the phone's Back too);
+        // an "All certifications" button beside it was a second way.
         secondaryActions={
-          <>
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/admin/access-certifications">
-                <ArrowLeft className="h-4 w-4" aria-hidden="true" /> All certifications
-              </Link>
+          c.runs ? (
+            <Button asChild variant="outline" size="sm">
+              <a href={certificationExportUrl(c.id)} download>
+                <Download className="h-4 w-4" aria-hidden="true" /> Export CSV
+              </a>
             </Button>
-            {c.runs && (
-              <Button asChild variant="outline" size="sm">
-                <a href={certificationExportUrl(c.id)} download>
-                  <Download className="h-4 w-4" aria-hidden="true" /> Export CSV
-                </a>
-              </Button>
-            )}
-          </>
+          ) : undefined
         }
         primaryAction={
           c.runs && !closed ? (

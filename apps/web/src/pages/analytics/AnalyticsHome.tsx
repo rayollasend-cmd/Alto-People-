@@ -112,7 +112,8 @@ export function AnalyticsHome() {
     downloadCsv(`alto-analytics-${ymdLocal()}.csv`, [
       ['Metric', 'Value'],
       ['Window (days)', kpis.windowDays],
-      [`Active ${workers.toLowerCase()}`, kpis.activeAssociates],
+      ...(kpis.onTheBooks !== undefined ? [['On the books', kpis.onTheBooks] as [string, number]] : []),
+      [`Working (${kpis.activeWindowDays ?? 14} days)`, kpis.activeAssociates],
       [`${workers} clocked in`, kpis.associatesClockedIn],
       [`Open shifts (next ${kpis.windowDays}d)`, kpis.openShiftsNext30d],
       ['Pending onboarding applications', kpis.pendingOnboardingApplications],
@@ -183,18 +184,29 @@ export function AnalyticsHome() {
       >
         {kpis ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {/* The two named numbers every page shows (apps/api/src/lib/peopleStatus.ts):
+                "On the books" and "Working", each with its definition. The weekly
+                hires series is not either number's trend, so neither tile carries it. */}
+            {kpis.onTheBooks !== undefined && (
+              <Stat
+                label="On the books"
+                value={kpis.onTheBooks.toString()}
+                hint="Hired and not separated"
+                link="/people"
+              />
+            )}
             <Stat
-              label={`Active ${workers.toLowerCase()}`}
+              label={`Working (${kpis.activeWindowDays ?? 14} days)`}
               value={kpis.activeAssociates.toString()}
-              link={hasClients ? '/clients' : '/people'}
-              trend={weekly(kpis.trends?.hires, 'hires vs last wk')}
+              hint={`Placed, and worked in the last ${kpis.activeWindowDays ?? 14} days or has a shift ahead`}
+              link="/people?workStatus=ACTIVE"
             />
             <Stat
               label="Clocked in right now"
               value={kpis.associatesClockedIn.toString()}
               hint={
                 kpis.activeAssociates > 0
-                  ? `${Math.round((kpis.associatesClockedIn / kpis.activeAssociates) * 100)}% of active`
+                  ? `${Math.round((kpis.associatesClockedIn / kpis.activeAssociates) * 100)}% of those working`
                   : undefined
               }
               link="/time-attendance"

@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlarmClock,
   AlertTriangle,
-  ArrowLeft,
   Ban,
   Camera,
   Check,
@@ -118,15 +117,9 @@ export function PortalOps() {
         className="mx-auto max-w-6xl print-area"
         title="Store operations"
         subtitle="Every department's SOP, shift by shift — what's late, what's unsafe, what got done."
-        breadcrumbs={[{ label: 'My store', to: `/portal${scopeQs}` }]}
-        secondaryActions={
-          <Button size="sm" variant="ghost" asChild>
-            <Link to={`/portal${scopeQs}`}>
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              My store
-            </Link>
-          </Button>
-        }
+        // The trail is the way back to the store (the phone's Back too); the
+        // "← My store" button beside it was a third control for the same trip.
+        breadcrumbs={[{ label: 'My store', to: `/portal${scopeQs}` }, { label: 'Store operations' }]}
     >
       <StoreOps />
     </ListTemplate>

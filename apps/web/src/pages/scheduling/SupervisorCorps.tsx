@@ -54,9 +54,9 @@ export function SupervisorCorps() {
 
   return (
     <ListTemplate
-      title="Supervisor corps"
+      title={`${term('site')} leads`}
+      topbarTitle={`${term('site')} leads`}
       subtitle={`Who leads which ${term('site').toLowerCase()} and shift. Place a supervisor here; roles and access stay with HR.`}
-      breadcrumbs={[{ label: 'Time & scheduling' }, { label: 'Supervisor corps' }]}
       filters={
         <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
           {(
@@ -75,7 +75,7 @@ export function SupervisorCorps() {
       }
     >
       {q.isError ? (
-        <QueryError what="the supervisor corps" query={q} />
+        <QueryError what={`the ${term('site').toLowerCase()} leads`} query={q} />
       ) : !q.data ? (
         <Skeleton className="h-64" />
       ) : rows.length === 0 ? (

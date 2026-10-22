@@ -48,7 +48,7 @@ import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useSelection } from '@/lib/useSelection';
 import { useListKeyboard } from '@/lib/shortcuts';
-import { DeskTemplate } from '@/components/templates';
+import { DeskTemplate, useDeskItem } from '@/components/templates';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AsOf } from '@/components/ui/AsOf';
 import { Button } from '@/components/ui/Button';
@@ -161,6 +161,7 @@ const when = (iso: string, tz?: string | null) => `${fmtRelativeDayTz(iso, tz)} 
 
 /** The queues on the desk, in the order they are worked. */
 type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'proposals' | 'requests' | 'timesheets' | 'unconfirmed';
+const QUEUE_KEYS: readonly QueueKey[] = ['walk-ins', 'time-off', 'swaps', 'pickups', 'proposals', 'requests', 'timesheets', 'unconfirmed'];
 
 /** ?tab= names a queue (the links' contract: swaps, pickups, walkins,
  *  timeoff, proposals, requests, unconfirmed); an item param names one row
@@ -226,7 +227,19 @@ export function ApprovalsHome() {
   // desk opens the first queue with work on desktop, and on a phone the
   // queue list is the page.
   const [searchParams, setSearchParams] = useSearchParams();
-  const [picked, setPicked] = useState<QueueKey | null>(() => queueFromParams(searchParams));
+  // The open queue lives in the URL (?queue=), so a refresh, a shared link
+  // and the phone's Back all keep it (it was component state — F500 G5). A
+  // notification's older params (?request=, ?tab=…) still pick the first one.
+  const desk = useDeskItem('queue');
+  const queueParam = QUEUE_KEYS.includes(desk.openId as QueueKey) ? (desk.openId as QueueKey) : null;
+  const [legacyPick] = useState<QueueKey | null>(() => queueFromParams(searchParams));
+  const [legacyLive, setLegacyLive] = useState(legacyPick !== null);
+  const picked: QueueKey | null = queueParam ?? (legacyLive ? legacyPick : null);
+  const setPicked = (key: QueueKey | null) => {
+    setLegacyLive(false);
+    if (key) desk.open(key);
+    else desk.close();
+  };
   // ?approval=<id> (a request's notification, the Inbox, a pay-change row) lands on that card.
   const [focusRequest, setFocusRequest] = useState<string | null>(() => searchParams.get('approval'));
   const [coverOpen, setCoverOpen] = useState(false);

@@ -359,8 +359,9 @@ function MoneySplit({ item }: { item: PayrollItem }) {
 
 /**
  * The first thing a worker opens Pay for: when's the next check, and what
- * days does it cover. From their pay schedule (theirs, else their client's,
- * else the org default); nothing when none is set up.
+ * days does it cover — on the pay schedule they are on (the rule a run pays
+ * by). Someone on none is told so, plainly, instead of being promised a
+ * date; nothing shows when the company has no schedules at all.
  */
 /** "Sep 7" — the year is noise on a date this close. */
 function shortDay(ymd: string): string {
@@ -372,10 +373,22 @@ export function NextPaydayCard() {
   const { t } = useI18n();
   const q = useQuery({
     queryKey: ['me', 'nextPayday'],
-    queryFn: () => getMyNextPayday().catch(() => ({ nextPayday: null })),
+    queryFn: () => getMyNextPayday().catch(() => ({ nextPayday: null, notOnSchedule: false })),
     staleTime: 10 * 60_000,
   });
   const p = q.data?.nextPayday;
+  if (!p && q.data?.notOnSchedule) {
+    return (
+      <section aria-label={t('pay.nextPayday')} className="mb-4 rounded-lg border border-warning/30 bg-warning/[0.06] p-5" data-testid="not-on-schedule">
+        <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-warning">
+          <CalendarCheck className="h-3.5 w-3.5" aria-hidden="true" />
+          {t('pay.nextPayday')}
+        </span>
+        <p className="mt-2 text-base font-semibold text-ink">{t('pay.notOnSchedule')}</p>
+        <p className="mt-1 text-sm text-ink-muted">{t('pay.notOnScheduleBody')}</p>
+      </section>
+    );
+  }
   if (!p) return null;
   const pay = parseYmd(p.payDate);
   const today = new Date();

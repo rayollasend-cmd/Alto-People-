@@ -8,7 +8,6 @@ import {
   Activity,
   AlertCircle,
   ArrowRight,
-  Calendar,
   CalendarOff,
   CheckCircle2,
   ChevronDown,
@@ -27,7 +26,9 @@ import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtRelativeDate, fmtShiftSpanTz, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDayShort, fmtRelativeDate, fmtShiftSpanTz, ymdLocal } from '@/lib/format';
+import { HomeMeta } from '@/components/home/HomeMeta';
+import { useNeedsYouCount } from '@/lib/meDecisions';
 import { useConfirm } from '@/lib/confirm';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
@@ -170,12 +171,7 @@ export function ManagerDashboard() {
               : t('managerHome.nReports', { n: summary.directReports })
             : t('managerHome.teamScoped')
         }
-        meta={
-          <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
-            <Calendar className="h-3 w-3" aria-hidden="true" />
-            <LiveNow render={(now) => fmtDate(now)} />
-          </span>
-        }
+        meta={<HomeMeta items={[<LiveNow key="today" render={(now) => fmtDayShort(now)} />]} />}
         banners={error ? <ErrorBanner>{error}</ErrorBanner> : undefined}
         // The one thing a manager opens this page for: everything waiting on
         // them, counted and ranked, in ONE section. It used to be two lists —
@@ -276,7 +272,8 @@ function NeedsYou({
 
   const total = tsCount + ptoCount;
   const inbox = useInbox();
-  const companyWaiting = (inbox.data?.sources ?? []).reduce((n, s) => n + (s.count > 0 ? s.count : 0), 0);
+  // The Inbox's own count: the queues this person owns, not the ones another desk does (packages/shared queues.ts).
+  const companyWaiting = inbox.data?.total ?? 0;
   // Ranked: urgent before attention, then the bigger pile first.
   const cards = [
     {
@@ -314,6 +311,10 @@ function NeedsYou({
       a.severity === b.severity ? b.count - a.count : a.severity === 'urgent' ? -1 : 1,
     );
 
+  // The number beside "Needs you" counts what is listed under it: the
+  // company queue's rows and these cards, one each.
+  const shownCount = useNeedsYouCount({ queue: true, cards: cards.length });
+
   return (
     <section aria-labelledby="manager-needs-you" className="space-y-3">
       <SectionTitle
@@ -322,9 +323,9 @@ function NeedsYou({
         title={
           <>
             {title}
-            {total > 0 && (
-              <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">
-                {total}
+            {!!shownCount && shownCount > 0 && (
+              <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on" data-testid="needs-you-count">
+                {shownCount}
               </span>
             )}
           </>

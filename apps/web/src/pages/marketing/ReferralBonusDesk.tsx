@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { attachBonusPayout, decideBonusPayout, listBonusPayouts, type BonusPayout } from '@/lib/marketingApi';
 import { fmtDate, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { DeskTemplate } from '@/components/templates';
+import { DeskTemplate, useDeskItem } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -35,7 +35,10 @@ export function ReferralBonusDesk() {
   const finance = can('process:payroll');
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ['marketing', 'bonus-payouts'], queryFn: () => listBonusPayouts() });
-  const [openId, setOpenId] = useState<string | null>(null);
+  // The open bonus is in the URL (?bonus=), so a refresh or a shared link
+  // reopens it and a phone's Back returns to the list.
+  const desk = useDeskItem('bonus');
+  const openId = desk.openId;
   const [runId, setRunId] = useState('');
   const [note, setNote] = useState('');
   const payouts = q.data?.payouts ?? null;
@@ -73,7 +76,7 @@ export function ReferralBonusDesk() {
         <li key={p.id}>
           <button
             type="button"
-            onClick={() => setOpenId(p.id)}
+            onClick={() => desk.open(p.id)}
             aria-current={open?.id === p.id ? 'true' : undefined}
             className={cn('flex w-full items-center gap-3 px-3 py-3 text-left text-sm transition-colors hover:bg-surface-raised', open?.id === p.id && 'bg-surface-raised')}
           >
@@ -183,7 +186,10 @@ export function ReferralBonusDesk() {
       counts={toDecide > 0 ? <Badge variant="pending">{toDecide} to decide</Badge> : undefined}
       queue={queue}
       item={item}
-      itemOpen={open !== null}
+      // On a phone the list is the screen until a bonus is picked; on a wide
+      // screen the first one waiting is shown beside it.
+      itemParam="bonus"
+      backLabel="All bonuses"
     />
   );
 }

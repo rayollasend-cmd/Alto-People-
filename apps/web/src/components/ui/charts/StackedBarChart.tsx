@@ -1,6 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartTooltipContent, LegendKey } from './ChartTooltip';
-import { AXIS, xAxisLabel, yAxisLabel } from './axes';
+import { AXIS, Y_AXIS_WIDTH, dateHeading, dateTicks, xAxisLabel, yAxisLabel, type DateGrain } from './axes';
 import { useChartHeight } from './frame';
 import { PALETTE, seriesColor, TICK } from './palette';
 
@@ -33,6 +33,8 @@ export interface StackedBarChartProps {
   /** The x value to keep at full strength; others dim. */
   highlight?: string;
   onBarClick?: (row: Record<string, unknown>) => void;
+  /** The x values are dates of this grain: ticks read "Oct 3" / "Oct" / "Q3 2026", never ISO. */
+  xDates?: DateGrain;
   height?: number;
 }
 
@@ -49,6 +51,7 @@ export function StackedBarChart({
   target,
   highlight,
   onBarClick,
+  xDates,
   height,
 }: StackedBarChartProps) {
   const horizontal = layout === 'horizontal';
@@ -59,6 +62,8 @@ export function StackedBarChart({
   const radius = (key: string): [number, number, number, number] =>
     stacked && key !== lastKey ? [0, 0, 0, 0] : horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0];
   const valueAxis = { tick: TICK, tickLine: false, axisLine: false, tickFormatter: (v: number) => format(v) } as const;
+  const xTick = xDates ? dateTicks(xDates, data.map((r) => r[x])) : undefined;
+  const head = heading ?? (xDates ? (v: string) => dateHeading(v, xDates) : undefined);
   return (
     <div className="flex w-full flex-col" style={{ height: h }}>
       <div className="min-h-0 flex-1">
@@ -74,15 +79,15 @@ export function StackedBarChart({
             {horizontal ? (
               <>
                 <XAxis type="number" {...valueAxis} label={xAxisLabel(xLabel)} />
-                <YAxis type="category" dataKey={x} {...AXIS} axisLine={false} width={120} />
+                <YAxis type="category" dataKey={x} {...AXIS} axisLine={false} width={120} tickFormatter={xTick} />
               </>
             ) : (
               <>
-                <XAxis dataKey={x} {...AXIS} label={xAxisLabel(xLabel)} />
-                <YAxis {...valueAxis} width={yLabel ? 64 : 48} label={yAxisLabel(yLabel)} />
+                <XAxis dataKey={x} {...AXIS} label={xAxisLabel(xLabel)} tickFormatter={xTick} />
+                <YAxis {...valueAxis} width={Y_AXIS_WIDTH} label={yAxisLabel(yLabel)} />
               </>
             )}
-            <Tooltip cursor={{ fill: PALETTE.cursor }} content={<ChartTooltipContent series={lookup} heading={heading} format={(v) => format(v)} />} />
+            <Tooltip cursor={{ fill: PALETTE.cursor }} content={<ChartTooltipContent series={lookup} heading={head} format={(v) => format(v)} />} />
             {target && (
               <ReferenceLine
                 {...(horizontal ? { x: target.value } : { y: target.value })}

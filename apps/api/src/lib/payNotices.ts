@@ -131,7 +131,7 @@ export async function gatherNoticeFacts(db: Db, associateId: string, state: stri
   });
   if (!comp) return null;
   const employer = await employerFor(db, associateId, effectiveDate);
-  const schedule = await payScheduleFor(associateId);
+  const schedule = await payScheduleFor(associateId, { orLikely: true });
   const exempt = a.jobProfile?.isExempt === true;
   const rate = Number(comp.amount);
   const missing: string[] = [];

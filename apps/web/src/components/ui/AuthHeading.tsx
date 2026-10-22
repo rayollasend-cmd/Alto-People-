@@ -1,57 +1,60 @@
 import * as React from 'react';
+import { Link } from 'react-router-dom';
+import { Logo } from '@/components/Logo';
 import { cn } from '@/lib/cn';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Headings for the signed-out pages (sign in, forgot / reset password,
  * accept an invite, confirm an email change, install). They sit outside
  * the app shell, so PageHeader (breadcrumbs, the topbar title, the hero
- * observer) does not fit: there is one centred wordmark above one card.
+ * observer) does not fit: there is one centred lockup above one card.
  *
- *   <AuthHero title="Reset password" eyebrow="Alto People" />
- *   <AuthCardTitle>Forgot password?</AuthCardTitle>
- *   <AuthCardTitle size="md">Check your email</AuthCardTitle>
+ *   <AuthShell>
+ *     <form className={AUTH_CARD}>
+ *       <AuthCardTitle>Forgot password?</AuthCardTitle>
+ *       …
+ *     </form>
+ *   </AuthShell>
+ *
+ * AuthShell is the ONE lockup every signed-out page wears (F500 G5: three
+ * different headers, and only /login had the Status · Trust Center ·
+ * Accessibility footer): the logo, the wordmark, the tagline, the card, and
+ * the footer. The page's own name is the card's title — the page's h1.
  */
 
-const HERO_SIZE = {
-  /** The app's own name on the invite page. */
-  lg: 'text-5xl md:text-6xl',
-  /** A task's name ("Reset password") in place of the wordmark. */
-  md: 'text-4xl md:text-5xl',
-  /** The install page's plain title. */
-  sm: 'text-3xl sm:text-4xl',
-} as const;
+/** The signed-out card's surface. */
+export const AUTH_CARD = 'bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in';
 
-export function AuthHero({
-  title,
-  eyebrow,
-  size = 'md',
-  tone = 'gold',
-  className,
-}: {
-  title: React.ReactNode;
-  /** The tracked, upper-case line under the title ("Alto People"). */
-  eyebrow?: React.ReactNode;
-  size?: keyof typeof HERO_SIZE;
-  /** gold: the brand wordmark; ink: a plain page title. */
-  tone?: 'gold' | 'ink';
-  className?: string;
-}) {
+export function AuthShell({ children, wide = false }: { children: React.ReactNode; /** The install page's wider card. */ wide?: boolean }) {
+  const { t } = useI18n();
   return (
-    <>
-      <h1
-        className={cn(
-          'font-display mb-2',
-          HERO_SIZE[size],
-          tone === 'gold' ? 'text-gold leading-none' : 'text-ink',
-          className,
-        )}
-      >
-        {title}
-      </h1>
-      {eyebrow && (
-        <p className="text-silver text-xs md:text-sm tracking-[0.3em] uppercase">{eyebrow}</p>
-      )}
-    </>
+    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora" data-testid="auth-shell">
+      <div className={cn('w-full', wide ? 'max-w-xl' : 'max-w-md')}>
+        <div className="text-center mb-8 animate-fade-in">
+          <Logo size="lg" className="mx-auto mb-4 rounded-xl ring-1 ring-gold/25 shadow-[0_8px_32px_rgba(217,185,103,0.15)]" />
+          <div className="font-display text-4xl md:text-5xl text-ink leading-none">
+            Alto <span className="text-gold">People</span>
+          </div>
+          <p className="text-silver/70 text-xs2 tracking-[0.32em] uppercase mt-2">{t('login.brandTagline')}</p>
+        </div>
+        {children}
+        <p className="text-center text-xs text-silver/70 mt-6">© {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR</p>
+        <nav aria-label={t('login.publicPages')} className="mt-2 flex items-center justify-center gap-3 text-xs text-silver/70">
+          <Link to="/status" className="hover:text-gold-bright underline-offset-2 hover:underline">
+            {t('login.status')}
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link to="/trust-center" className="hover:text-gold-bright underline-offset-2 hover:underline">
+            {t('login.trustCenter')}
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link to="/accessibility" className="hover:text-gold-bright underline-offset-2 hover:underline">
+            {t('login.accessibility')}
+          </Link>
+        </nav>
+      </div>
+    </div>
   );
 }
 
@@ -64,15 +67,17 @@ const CARD_SIZE = {
   sm: 'text-xl mb-1',
 } as const;
 
-/** The title inside the signed-out card. */
+/** The title inside the signed-out card — the page's name, so its h1 (the lockup above is the brand, not a heading). */
 export function AuthCardTitle({
   children,
   size = 'lg',
+  as: Tag = 'h1',
   className,
 }: {
   children: React.ReactNode;
   size?: keyof typeof CARD_SIZE;
+  as?: 'h1' | 'h2';
   className?: string;
 }) {
-  return <h2 className={cn('text-ink', CARD_SIZE[size], className)}>{children}</h2>;
+  return <Tag className={cn('text-ink', CARD_SIZE[size], className)}>{children}</Tag>;
 }

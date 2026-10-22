@@ -6,7 +6,7 @@ import { AGING_BUCKET_KEYS, AGING_BUCKET_LABELS, type ReceivablesAgingRow } from
 import { ApiError } from '@/lib/api';
 import { usePrompt } from '@/lib/confirm';
 import { pauseClientDunning, resumeClientDunning } from '@/lib/clientsApi';
-import { fmtDate, fmtMoney, fmtMoneyCompact, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtMoneyCompact, fmtStatementNo, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   RECEIVABLES_KEY,
@@ -48,7 +48,7 @@ export const REMINDER_STAGE: Record<number, string> = {
   5: '30 days late (final)',
 };
 
-const statementNo = (n: number | null) => (n !== null ? `No. ${String(n).padStart(4, '0')}` : 'Statement');
+const statementNo = (n: number | null) => fmtStatementNo(n, 'Statement');
 
 /** Send now, promise to pay, pause / resume — one set of actions for the worklist and the client's expanded row. */
 export function useCollectionActions() {

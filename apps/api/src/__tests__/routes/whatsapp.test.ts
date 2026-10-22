@@ -185,7 +185,10 @@ describe('the assistant', () => {
 
   it('answers payday, ride and schedule from the person’s own data only, and hands the rest to a supervisor', async () => {
     const w = await world();
-    await prisma.payrollSchedule.create({ data: { name: 'Weekly', clientId: w.client.id, frequency: 'WEEKLY', anchorDate: new Date('2026-01-05'), payDateOffsetDays: 5 } });
+    const weekly = await prisma.payrollSchedule.create({ data: { name: 'Weekly', clientId: w.client.id, frequency: 'WEEKLY', anchorDate: new Date('2026-01-05'), payDateOffsetDays: 5 } });
+    // A payday is the one a run would pay (lib/payScheduleMembership): Maria is
+    // ON the schedule (a legacy member, as earnedWage.test seeds it).
+    await prisma.associate.update({ where: { id: w.maria.id }, data: { payrollScheduleId: weekly.id } });
     const maria = await loginAs(agent(), w.mariaUser.email);
     await maria.post('/whatsapp/me/consent').send({ optIn: true });
     const bo = await loginAs(agent(), w.boUser.email);

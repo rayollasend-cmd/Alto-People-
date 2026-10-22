@@ -1,6 +1,7 @@
 import type { SeasonWeekMix } from './tasks.js';
 import { z } from 'zod';
 import { TenantProfileSchema } from './tenantProfile.js';
+import { WorkStatusSchema, type WorkStatusCounts } from './peopleStatus.js';
 import { httpUrl } from './safeUrl.js';
 
 /* -------------------------------------------------------------------------- *
@@ -322,6 +323,8 @@ export const ApplicationSummarySchema = /* @__PURE__ */ (() => z.object({
   blockedOnTitle: z.string().nullable().optional(),
   /** Most recent movement: latest task completion, else the invite. */
   lastActivityAt: z.string().datetime().nullable().optional(),
+  /** Stuck by the one rule (apps/api/src/lib/applicationFilters.ts): in flight, unfinished, nothing moved in 7 days. */
+  stuck: z.boolean().optional(),
   /** The hire's headshot (cache-busted); null when none is on file. */
   photoUrl: z.string().nullable().optional(),
 }))();
@@ -3172,6 +3175,16 @@ export const PayrollRunSummarySchema = /* @__PURE__ */ (() => z.object({
   payDate: z.string().nullable().optional(),
   /** When the review report was signed off on the run's current numbers (null: not yet, or not required). */
   reviewSignedAt: z.string().datetime().nullable().optional(),
+  /**
+   * The stored totals above, checked against the run's non-voided paychecks
+   * (apps/api/src/lib/payrollRunTotals.ts). `totalsAgree` false means the
+   * run records money its paychecks don't add up to — every page that shows
+   * the run's money says so.
+   */
+  itemsGross: z.number().optional(),
+  itemsNet: z.number().optional(),
+  paychecks: z.number().int().nonnegative().optional(),
+  totalsAgree: z.boolean().optional(),
   /** What the run waits on next, from the same lifecycle the guided close shows (finance walk 10). */
   nextStep: z
     .object({
@@ -3594,8 +3607,15 @@ export const PayrollUpcomingSummarySchema = /* @__PURE__ */ (() => z.object({
       periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       status: z.enum(['DRAFT', 'FINALIZED', 'DISBURSED', 'CANCELLED']),
+      /** Non-voided paychecks. */
       itemCount: z.number().int().nonnegative(),
+      /** The run's STORED net — the number the runs grid and the close page show (apps/api/src/lib/payrollRunTotals.ts). */
       totalNet: z.number(),
+      totalGross: z.number().optional(),
+      /** The same sums over its paychecks, and whether they agree with the stored totals. */
+      itemsNet: z.number().optional(),
+      itemsGross: z.number().optional(),
+      totalsAgree: z.boolean().optional(),
       finalizedAt: z.string().datetime().nullable(),
       disbursedAt: z.string().datetime().nullable(),
     })
@@ -4336,7 +4356,12 @@ export const KpiTrendSchema = /* @__PURE__ */ (() => z.object({
 export type KpiTrend = z.infer<typeof KpiTrendSchema>;
 
 export const DashboardKPIsSchema = /* @__PURE__ */ (() => z.object({
+  /** "Working": the one definition of active (lib/activeDefinition) over activeWindowDays. */
   activeAssociates: z.number().int().nonnegative(),
+  /** "On the books": hired and not separated (peopleStatus.ts), in the caller's reach. */
+  onTheBooks: z.number().int().nonnegative().optional(),
+  /** The company's active window in days (OrgSetting.activeWindowDays) — what "Working" is measured over. */
+  activeWindowDays: z.number().int().positive().optional(),
   openShiftsNext30d: z.number().int().nonnegative(),
   associatesClockedIn: z.number().int().nonnegative(),
   pendingOnboardingApplications: z.number().int().nonnegative(),
@@ -6371,7 +6396,10 @@ export const DirectoryEntrySchema = /* @__PURE__ */ (() => z.object({
   phone: z.string().nullable(),
   employmentType: z.string(),
   j1Status: z.boolean(),
+  /** The older three words, derived from workStatus (directoryStatusOf). */
   status: DirectoryStatusSchema,
+  /** Where the person stands, in the one vocabulary every page uses (peopleStatus.ts). */
+  workStatus: WorkStatusSchema.optional(),
   // Workplace = the open AssociateAssignment's client when one exists
   // (Phase 131 — a transfer moves the live workplace immediately);
   // otherwise the client of the most-recent ACTIVE application, falling
@@ -9569,8 +9597,12 @@ export interface ReconciliationSummary {
 export interface HeadcountOverview {
   asOf: string;
   windowDays: number;
-  /** The one definition, company-wide. */
+  /** The one definition, company-wide ("Working"). */
   active: number;
+  /** Hired and not separated (peopleStatus.ts): the same number Analytics and the People directory show. */
+  onTheBooks?: number;
+  /** Everyone by the one status, from the same reading (lib/peopleStatus). */
+  statusCounts?: WorkStatusCounts;
   /** Associates on an ASSIGNED shift in the current org week. */
   scheduledThisWeek: number;
   /** Associates the payroll engine would pay for the last closed period, or null when no run exists. */
@@ -9610,6 +9642,11 @@ export const InboxSourceSchema = /* @__PURE__ */ (() => z.object({
   dueAt: z.string().datetime().nullable().optional(),
   /** A task's own progress ("2 of 8 done") — the associate's onboarding. */
   progress: z.object({ done: z.number().int().min(0), total: z.number().int().min(1) }).optional(),
+  /**
+   * Another desk owns this company-wide queue (queues.ts QUEUE_REGISTRY):
+   * shown under "Also watching", never counted in `total` or a badge.
+   */
+  watching: z.boolean().optional(),
 }))();
 export type InboxSource = z.infer<typeof InboxSourceSchema>;
 
@@ -9626,6 +9663,7 @@ export function rankInboxSources<T extends Pick<InboxSource, 'count' | 'urgency'
 
 /** GET /me/inbox — only the sources the caller may see. */
 export const InboxResponseSchema = /* @__PURE__ */ (() => z.object({
+  /** Items in the queues this person owns (not the "Also watching" ones). */
   total: z.number().int().min(0),
   sources: z.array(InboxSourceSchema),
 }))();

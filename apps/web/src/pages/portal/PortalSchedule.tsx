@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, FileText, Printer } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileText, Printer } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -173,15 +173,11 @@ export function PortalSchedule() {
               })
             : undefined
         }
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${homeQs}` }]}
+        // The trail is the way back to the store (the phone's Back too); the
+        // "← My store" button beside it was a third control for the same trip.
+        breadcrumbs={[{ label: t('portal.title'), to: `/portal${homeQs}` }, { label: t('portal.schedule') }]}
         secondaryActions={
           <>
-            <Button size="sm" variant="ghost" className="print:hidden" asChild>
-              <Link to={`/portal${homeQs}`}>
-                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('portal.backHome')}
-              </Link>
-            </Button>
             <Button size="sm" variant="outline" className="print:hidden" onClick={() => setReportOpen(true)}>
               <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.svcReport')}

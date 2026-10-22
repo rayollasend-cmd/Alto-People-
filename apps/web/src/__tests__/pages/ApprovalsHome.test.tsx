@@ -211,7 +211,8 @@ describe('<ApprovalsHome> second-person requests', () => {
     vi.mocked(listApprovalRequests).mockResolvedValue({ requests: [requestFixtureA] });
     vi.mocked(decideApprovalRequest).mockResolvedValue({ ...requestFixtureA, status: 'APPROVED', mayDecide: false, decidedBy: { id: 'u', name: 'You' }, decidedAt: new Date().toISOString(), appliedAt: new Date().toISOString() });
     renderPage('HR_ADMINISTRATOR', `/approvals?tab=requests&approval=${requestFixtureA.id}`);
-    expect(await screen.findByText('Second person')).toBeInTheDocument();
+    // One name per queue (packages/shared queues.ts): the Inbox calls it the same (F500 SH-4).
+    expect(await screen.findByText('Pay & access changes')).toBeInTheDocument();
     const card = await screen.findByTestId('approval-request-card');
     expect(card).toHaveTextContent('Ana Lopez: $20.00 → $25.00 per hour');
     expect(card).toHaveTextContent('$20.00 per hour');
@@ -240,7 +241,7 @@ describe('<ApprovalsHome> agent proposals', () => {
     vi.mocked(listMyProposals).mockResolvedValue({ approvals: [proposalFixture] });
     renderPage('SHIFT_SUPERVISOR', `/approvals?tab=proposals&proposal=${proposalFixture.id}`);
     // The queue tile with its count…
-    expect(await screen.findByText('Agent proposals')).toBeInTheDocument();
+    expect(await screen.findByText('Suggested by an agent')).toBeInTheDocument();
     expect(await screen.findByText('1 decision waiting.')).toBeInTheDocument();
     // …and the open item: the card with the proposal, the evidence and the decision.
     expect(await screen.findByRole('heading', { name: /Assign Tess Free to Housekeeper/ })).toBeInTheDocument();
@@ -260,10 +261,10 @@ describe('<ApprovalsHome>', () => {
     const chips = within(within(clear).getByRole('list', { name: 'Queues with nothing waiting' })).getAllByRole('button');
     // Walk-ins hide when the kiosk queue is not this person's; the rest fold.
     expect(chips.map((c) => c.textContent)).toEqual(
-      expect.arrayContaining(['Time off0', 'Swaps0', 'Pickups0', 'Timesheets0', 'Not confirmed yet0']),
+      expect.arrayContaining(['Time off0', 'Swaps0', 'Pickups0', 'Timesheets0', 'Unconfirmed shifts (48h)0']),
     );
     // No tile pressed for an empty queue, and no bell while everyone has confirmed.
-    expect(screen.queryByRole('button', { name: /Not confirmed yet.*Next 48 hours/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Unconfirmed shifts \(48h\).*Next 48 hours/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /^Swaps/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /Open-shift pickups/ })).not.toBeInTheDocument();
   });
@@ -284,7 +285,7 @@ describe('<ApprovalsHome>', () => {
   it('a supervisor’s unconfirmed shifts are counted, with the bell only when someone is unconfirmed', async () => {
     vi.mocked(listUnconfirmedShifts).mockResolvedValue({ shifts: [{ id: 's1' }, { id: 's2' }] } as never);
     renderPage('SHIFT_SUPERVISOR');
-    const tile = await screen.findByRole('button', { name: /Not confirmed yet.*Next 48 hours.*2/ });
+    const tile = await screen.findByRole('button', { name: /Unconfirmed shifts \(48h\).*Next 48 hours.*2/ });
     expect(tile.querySelector('svg')).not.toBeNull();
   });
 
@@ -360,6 +361,16 @@ describe('<ApprovalsHome> links, context and flow', () => {
     await user.keyboard('j');
     await user.keyboard('a');
     await waitFor(() => expect(managerApproveSwap).toHaveBeenCalledWith('swap-1'));
+  });
+
+  it('?queue=swaps (the desk’s own URL state) reopens the swaps queue on a refresh or a shared link', async () => {
+    vi.mocked(listAdminRequests).mockResolvedValue({ requests: [requestFixture] });
+    vi.mocked(listAdminSwaps).mockResolvedValue({ requests: [swapFixture] } as never);
+    renderPage('HR_ADMINISTRATOR', '/approvals?queue=swaps');
+    // Time off has work and would open first; the URL says swaps.
+    expect(await screen.findByText('Ana Reyes')).toBeInTheDocument();
+    expect(screen.queryByText('Maria Lopez')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Queue' }).className).toContain('hidden lg:block');
   });
 
   it('time off shows the balance and the shifts approving would release', async () => {

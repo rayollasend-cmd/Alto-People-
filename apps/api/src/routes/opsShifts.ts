@@ -15,6 +15,7 @@ import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
+import { orgTimeZone } from '../lib/siteDay.js';
 import {
   OPS_DEPARTMENTS,
   departmentForPosition,
@@ -85,13 +86,16 @@ const DAY_MS = 24 * 3_600_000;
 
 /** Cached org-local hour lookup (period fallback when a position name
  *  doesn't say morning/evening/overnight). */
-const HOUR_FMT = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York',
-  hour: 'numeric',
-  hour12: false,
-});
+const HOUR_FMTS = new Map<string, Intl.DateTimeFormat>();
 function orgHour(d: Date): number {
-  return Number(HOUR_FMT.format(d));
+  // The company's clock (lib/siteDay), never a zone written into the code (F500 SH-4).
+  const tz = orgTimeZone();
+  let f = HOUR_FMTS.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hour12: false });
+    HOUR_FMTS.set(tz, f);
+  }
+  return Number(f.format(d));
 }
 
 /** Bounded roles (SHIFT_SUPERVISOR) are locked to their own client. */
@@ -791,7 +795,7 @@ opsRouter.get('/open-options', RUN, async (req, res, next) => {
     const clientId = resolveClientId(req, req.query.clientId?.toString());
     const now = new Date();
     const dateKey = orgDateKey(now);
-    const dayStart = utcInstantOfLocalMidnight(dateKey, 'America/New_York');
+    const dayStart = utcInstantOfLocalMidnight(dateKey, orgTimeZone());
     const dayEnd = new Date(dayStart.getTime() + DAY_MS);
     const [shifts, mine] = await Promise.all([
       prisma.shift.groupBy({
@@ -1006,7 +1010,7 @@ opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
 
     // Auto-populated header facts + the checklist, snapshotted from today's
     // library (lib/storeShiftSop — the clock-in opens shifts the same way).
-    const dayStart = utcInstantOfLocalMidnight(dateKey, 'America/New_York');
+    const dayStart = utcInstantOfLocalMidnight(dateKey, orgTimeZone());
     const shift = await createOpsShift(prisma, {
       clientId,
       locationId,
@@ -2255,7 +2259,7 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
   try {
     const now = new Date();
     const todayKey = orgDateKey(now);
-    const dayStart = utcInstantOfLocalMidnight(todayKey, 'America/New_York');
+    const dayStart = utcInstantOfLocalMidnight(todayKey, orgTimeZone());
     const filters = opsFilters(req);
     const [active, closedToday] = await Promise.all([
       prisma.opsShift.findMany({
@@ -2299,6 +2303,8 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
     );
     res.json({
       dateKey: todayKey,
+      // The clock "today" and every time on the board are read on (F500 SH-4: the company's zone, named).
+      timezone: orgTimeZone(),
       generatedAt: new Date().toISOString(),
       active: activeWithCounts,
       // Past their end by 6h+ and never submitted: not live, an exception.
@@ -2354,7 +2360,7 @@ opsRouter.get('/history', BOARD, async (req, res, next) => {
       typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
     const to = isDay(req.query.to) ? req.query.to : today;
     const defaultFrom = new Date(
-      utcInstantOfLocalMidnight(to, 'America/New_York').getTime() - 6 * DAY_MS,
+      utcInstantOfLocalMidnight(to, orgTimeZone()).getTime() - 6 * DAY_MS,
     );
     const from = isDay(req.query.from) ? req.query.from : orgDateKey(defaultFrom);
     if (from > to) {
@@ -2414,6 +2420,7 @@ opsRouter.get('/history', BOARD, async (req, res, next) => {
 
     res.json({
       range: { from, to },
+      timezone: orgTimeZone(),
       generatedAt: new Date().toISOString(),
       sort,
       /** True when the cap trimmed the answer — narrow the range. */
@@ -2694,7 +2701,7 @@ opsRouter.get('/insights', BOARD, async (req, res, next) => {
 
     // 24h activity rhythm by org-local hour.
     const hourFmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
+      timeZone: orgTimeZone(),
       hour: 'numeric',
       hour12: true,
     });

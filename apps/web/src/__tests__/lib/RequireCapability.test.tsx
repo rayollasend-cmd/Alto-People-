@@ -33,11 +33,13 @@ describe('RequireCapability — notClientBounded (the /labor-costs guard)', () =
   // The shift supervisor holds manage:scheduling, which alone would open
   // the page by URL; labor cost is org economics, so the route refuses
   // client-bound roles outright.
-  it('shows both store supervisors the not-found page', () => {
+  it('shows both store supervisors the access page — who to ask, the way home, nothing of the page', () => {
     for (const r of ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] as Role[]) {
       const { unmount } = renderLaborCosts(r);
       expect(screen.queryByText('labor board')).toBeNull();
-      expect(screen.getByRole('heading', { name: /couldn.t find that page/ })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: /don.t have access to this page/ })).toBeTruthy();
+      expect(screen.getByText(/ask an administrator in your organization/)).toBeTruthy();
+      expect(screen.getByRole('link', { name: /go home/i }).getAttribute('href')).toBe('/');
       unmount();
     }
   });

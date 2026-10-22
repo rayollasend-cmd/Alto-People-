@@ -213,6 +213,7 @@ export function AssociateInboxView() {
             )}
           </>
         }
+        topbarTitle={t('inbox.title')}
         subtitle={t('inbox.subtitle')}
       >
 

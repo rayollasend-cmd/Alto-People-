@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ControlRoomResponse } from '@alto-people/shared';
@@ -72,7 +73,10 @@ describe('<ControlRoomPage> (Brief 3-3)', () => {
     expect(screen.getByText('2 robots for 1 crew lead (4 per lead allowed).')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /Site map with 1 zones and 2 robots/ })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Stop/ }).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: /Suspend all agents/ })).toBeInTheDocument();
+    // Stopping every agent is destructive: it waits in "More", behind its own confirm.
+    expect(screen.queryByRole('button', { name: /Suspend all agents/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /Suspend all agents/ })).toBeInTheDocument();
   });
 
   it('while the site loads, the page says so and offers nothing to act on', async () => {

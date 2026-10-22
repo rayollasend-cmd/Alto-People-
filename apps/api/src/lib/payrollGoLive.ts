@@ -6,7 +6,7 @@ import { NO_SIT_STATES, isStateTaxSupported, primeStateAcknowledgments, stateAwa
 import { LOCAL_TAX_STATES } from './deductionTaxability.js';
 import { bankingProfile, originationGaps, ownAccount, usesOurAch } from './banking/ach.js';
 import { loadApprovalPolicy, rolesHolding } from './approvalPolicy.js';
-import { unscheduledWithTime } from './payScheduleMembership.js';
+import { PAY_RUN_POPULATION_WHERE, scheduleMembershipFor, unscheduledWithTime } from './payScheduleMembership.js';
 import { postingGaps } from './books/posting/gaps.js';
 
 /**
@@ -215,16 +215,19 @@ export async function payrollGoLive(db: Db, now: Date = new Date()): Promise<Pay
       ? done('unscheduled', 'Everyone with hours is on a schedule', 'Nobody with approved time in the last two weeks is left off a pay schedule.')
       : missing('unscheduled', 'Everyone with hours is on a schedule', `${plural(unscheduled.length, 'person has', 'people have')} approved time in the last two weeks and no pay schedule — no run would pay them (${list(unscheduled.slice(0, 3).map((u) => u.name))}${unscheduled.length > 3 ? ' …' : ''}).`, { label: 'Open pay schedules', to: '/payroll/schedules' }),
   );
-  // The per-person readiness (the /payroll/readiness flags): W-4 or TIN, tax state, payout, schedule.
+  // The per-person readiness (the /payroll/readiness flags, same people, same
+  // rules): W-4 or TIN, tax state, payout, and a schedule by the one
+  // membership rule (lib/payScheduleMembership).
   const staff = await db.associate.findMany({
-    where: { tenantId, deletedAt: null, separatedAt: null },
-    select: { employmentType: true, state: true, payrollScheduleId: true, tinEncrypted: true, w4Submission: { select: { id: true } }, payoutMethods: { where: { isPrimary: true }, take: 1, select: { branchCardId: true, accountNumberEnc: true } } },
+    where: { AND: [{ tenantId }, PAY_RUN_POPULATION_WHERE] },
+    select: { id: true, employmentType: true, state: true, tinEncrypted: true, w4Submission: { select: { id: true } }, payoutMethods: { where: { isPrimary: true }, take: 1, select: { branchCardId: true, accountNumberEnc: true } } },
   });
+  const membership = await scheduleMembershipFor(db, staff.map((a) => a.id), ymd(now));
   const notReady = staff.filter((a) => {
     const w4 = a.employmentType === 'W2_EMPLOYEE' ? !!a.w4Submission : !!a.tinEncrypted;
     const p = a.payoutMethods[0];
     const payout = !!p && (p.branchCardId !== null || p.accountNumberEnc !== null);
-    return !(w4 && isStateTaxSupported(a.state) && payout && a.payrollScheduleId);
+    return !(w4 && isStateTaxSupported(a.state) && payout && membership.get(a.id));
   }).length;
   peopleChecks.push(
     staff.length === 0

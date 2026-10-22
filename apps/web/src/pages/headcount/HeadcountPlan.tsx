@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Wallet } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Wallet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useTenant, useTerm } from '@/lib/auth';
 import { useClients } from '@/lib/useClients';
@@ -9,7 +9,6 @@ import { fmtMoney } from '@/lib/format';
 import { getHeadcountPlan, type PlanDepartment, type PlanPosition } from '@/lib/positionsApi';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -136,14 +135,9 @@ export function HeadcountPlan() {
           : 'Each office seat’s budget against what it costs: the person’s pay annualized, and what payroll has actually paid this year.'
       }
       breadcrumbs={[{ label: 'Headcount', to: '/headcount' }, { label: 'Headcount plan' }]}
-      secondaryActions={
-        <Button asChild variant="outline">
-          <Link to="/headcount">
-            <ArrowLeft className="h-4 w-4" />
-            Headcount
-          </Link>
-        </Button>
-      }
+      // Navigation is a link, not the page's primary button (the crumb above
+      // already goes back to Headcount).
+      related={[{ label: 'Season planner', to: '/season-planner' }]}
       filters={
         <SegmentedControl
           ariaLabel="Which plan"

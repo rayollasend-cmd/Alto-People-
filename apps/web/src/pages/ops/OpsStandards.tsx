@@ -294,7 +294,7 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
       </div>
       <div className="h-40">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -22 }}>
+          <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
             <CartesianGrid
               stroke={PALETTE.grid}
               vertical={false}
@@ -313,7 +313,7 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
               tick={{ fill: TICK.fill, fontSize: 10 }}
               axisLine={false}
               tickLine={false}
-              width={38}
+              width="auto"
               unit="%"
             />
             {/* Exceptions ride the same axis as a count scaled to it, so

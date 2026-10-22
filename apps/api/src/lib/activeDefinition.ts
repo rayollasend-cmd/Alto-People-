@@ -188,6 +188,23 @@ export async function activeAssociateIds(opts: ActiveDefinitionOptions = {}, now
   return workedOrScheduled([...placed.keys()], opts, since, now, db);
 }
 
+/**
+ * The active set and every placement it was read from, in one pass, for
+ * the one status per person (lib/peopleStatus): "No recent shifts" is
+ * placed but not active, so it needs both halves of the same reading.
+ */
+export async function activeAndPlaced(
+  opts: ActiveDefinitionOptions = {},
+  now: Date = new Date(),
+  db: Db = defaultPrisma,
+): Promise<{ active: Set<string>; placed: Map<string, Placement>; windowDays: number }> {
+  const windowDays = opts.windowDays ?? (await activeWindowDays(db));
+  const placed = await placements(opts, db);
+  if (placed.size === 0) return { active: new Set(), placed, windowDays };
+  const since = new Date(now.getTime() - windowDays * DAY_MS);
+  return { active: await workedOrScheduled([...placed.keys()], opts, since, now, db), placed, windowDays };
+}
+
 export async function activeHeadcount(opts: ActiveDefinitionOptions = {}, now: Date = new Date(), db: Db = defaultPrisma): Promise<number> {
   return (await activeAssociateIds(opts, now, db)).size;
 }

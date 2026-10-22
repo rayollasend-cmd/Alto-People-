@@ -57,6 +57,7 @@ import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
+import { dateTicks } from '@/components/ui/charts/axes';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { ymd } from './calendarDates';
@@ -285,7 +286,7 @@ function CostTrendCard({
               <CartesianGrid stroke={GRID_COLOR} strokeWidth={1} vertical={false} />
               <XAxis
                 dataKey="date"
-                tickFormatter={(d: string) => d.slice(5).replace('-', '/')}
+                tickFormatter={dateTicks('day')}
                 tick={{ fill: TICK_COLOR, fontSize: 10 }}
                 axisLine={{ stroke: GRID_COLOR }}
                 tickLine={false}

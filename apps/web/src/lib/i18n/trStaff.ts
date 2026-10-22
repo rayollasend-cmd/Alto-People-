@@ -35,7 +35,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'grid.bulkActions': 'Toplu işlemler',
   'grid.selected': '{count} seçildi',
   'grid.loadingAria': '{caption} yükleniyor',
-  'grid.emptyTitle': 'Henüz burada bir şey yok',
+  'grid.emptyNoun': 'Henüz {noun} yok',
   'grid.noMatchTitle': 'Eşleşen yok',
   'grid.noMatchDesc': 'Daha az kelime deneyin veya aramayı temizleyin.',
   'grid.clearSearch': 'Aramayı temizle',

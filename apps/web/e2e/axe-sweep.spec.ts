@@ -43,6 +43,49 @@ interface Allowed {
 }
 
 const ALLOWLIST = JSON.parse(readFileSync('e2e/axe-allowlist.json', 'utf8')) as Allowed[];
+
+/**
+ * Phone: no page scrolls sideways. Every page the phone sweep opens is
+ * measured at 390px — the page (and the shell's <main>, which clips its own
+ * x-overflow, so its scrollWidth is what a reader would have had to pan)
+ * must be no wider than the screen. The pages the F500 audit (2026-10-22)
+ * found overflowing are listed here with the finding; the list only
+ * shrinks: a listed page that fits again fails the run until its line is
+ * deleted, and an unlisted page that overflows fails it outright.
+ */
+const PHONE_OVERFLOW_ALLOWLIST: Record<string, string> = {
+  '/agents': 'F500 G2: AgentCards.tsx grid has no base column count; cards widen the page (~81px)',
+  '/ops': 'F500 G2: OpsBoard.tsx:946 `grid xl:grid-cols-[1fr_360px]` lets a min-content child widen the page (~69px)',
+  '/fieldglass': 'F500 G2: FieldglassSetup.tsx start/end date row overflows by ~15px',
+};
+
+/** Pages the audit found overflowing that no persona's sweep opens — measured on the admin's phone pass. */
+const PHONE_OVERFLOW_EXTRA = ['/ops', '/fieldglass', '/admin/branding', '/marketing'];
+
+/** How far (px) a page is wider than a phone screen: the document, or the shell's <main>. */
+async function phoneOverflowPx(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const over = (el: Element | null) => (el ? el.scrollWidth - el.clientWidth : 0);
+    return Math.max(over(document.documentElement), over(document.getElementById('main-content')));
+  });
+}
+
+async function phoneOverflowSweep(page: Page, routes: string[]): Promise<string[]> {
+  // The narrowest phone the product is held to (an iPhone 12–15), not the
+  // Pixel 7's 412px the rest of the phone sweep runs at.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const problems: string[] = [];
+  for (const route of routes) {
+    await page.goto(route, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2000);
+    await settleWalk(page);
+    const px = await phoneOverflowPx(page);
+    const listed = PHONE_OVERFLOW_ALLOWLIST[route];
+    if (px > 1 && !listed) problems.push(`${route} is ${px}px wider than the phone screen`);
+    if (px <= 1 && listed) problems.push(`${route} fits the phone now — delete its line from PHONE_OVERFLOW_ALLOWLIST`);
+  }
+  return problems;
+}
 const allowed = (f: Finding) => ALLOWLIST.some((a) => a.id === f.id && (!a.route || f.route.startsWith(a.route)));
 
 async function auditRoute(page: Page, persona: string, theme: string, route: string): Promise<Finding[]> {
@@ -130,21 +173,30 @@ test.describe('desktop', () => {
 
 test.describe('phone', () => {
   test('associate (dark, light)', async ({ page }, testInfo) => {
-    test.setTimeout(ASSOCIATE.routes.length * 2 * 10_000 + 60_000);
+    test.setTimeout(ASSOCIATE.routes.length * 3 * 10_000 + 60_000);
     await walkLogin(page, ASSOCIATE.email, ASSOCIATE.pass);
     report(await sweep(page, ASSOCIATE, ['dark', 'light']), 'associate', testInfo);
+    expect(await phoneOverflowSweep(page, ASSOCIATE.routes.map(([r]) => r)), 'phone overflow as associate').toEqual([]);
   });
 
   test('driver (dark)', async ({ page }, testInfo) => {
-    test.setTimeout(90_000);
+    test.setTimeout(120_000);
     await walkLogin(page, DRIVER.email, DRIVER.pass);
     report(await sweep(page, DRIVER, ['dark']), 'driver', testInfo);
+    expect(await phoneOverflowSweep(page, DRIVER.routes.map(([r]) => r)), 'phone overflow as driver').toEqual([]);
   });
 
   test('admin on the go (dark)', async ({ page }, testInfo) => {
-    test.setTimeout(ADMIN_ROUTES.length * 10_000 + 60_000);
+    test.setTimeout(ADMIN_ROUTES.length * 10_000 + 180_000);
     await walkLogin(page, 'admin@altohr.com', 'alto-admin-dev');
     const onTheGo: WalkPersona = { key: 'admin-phone', email: '', pass: '', routes: [['/', 'home'], ['/approvals', 'approvals'], ['/people', 'people'], ['/scheduling', 'scheduling'], ['/time-attendance', 'time'], ['/agents', 'agents'], ['/audit', 'audit'], ['/admin/users', 'users'], ['/settings', 'settings']] };
     report(await sweep(page, onTheGo, ['dark']), 'admin-phone', testInfo);
+    const routes = [...new Set([...onTheGo.routes.map(([r]) => r), ...PHONE_OVERFLOW_EXTRA])];
+    expect(await phoneOverflowSweep(page, routes), 'phone overflow as admin').toEqual([]);
+  });
+
+  test('every phone-overflow allowlist line names a page the sweep opens', () => {
+    const swept = new Set([...ASSOCIATE.routes.map(([r]) => r), ...DRIVER.routes.map(([r]) => r), '/', '/approvals', '/people', '/scheduling', '/time-attendance', '/agents', '/audit', '/admin/users', '/settings', ...PHONE_OVERFLOW_EXTRA]);
+    expect(Object.keys(PHONE_OVERFLOW_ALLOWLIST).filter((r) => !swept.has(r))).toEqual([]);
   });
 });

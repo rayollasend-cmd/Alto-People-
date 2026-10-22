@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { fmtDateOnly, fmtMoney, fmtMoneyCompact } from '@/lib/format';
 import { getTransportTrends, type TransportTrendWeek } from '@/lib/transportApi';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
@@ -16,10 +16,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
  */
 
 const dollars = (c: number) => fmtMoney(c / 100);
-const weekLabel = (ymd: string) => {
-  const [, m, d] = ymd.split('-').map(Number);
-  return `${m}/${d}`;
-};
+/** "Aug 31": the app's short date (the axis read "8/31", the picker "10/22/2026"). */
+const weekLabel = (ymd: string) => fmtDateOnly(ymd, { year: false });
 
 /** The tile's trend: the series, and the last complete week against the one before. */
 function trendOf(weeks: TransportTrendWeek[], pick: (w: TransportTrendWeek) => number | null, format?: (n: number) => string): MetricTrend | undefined {

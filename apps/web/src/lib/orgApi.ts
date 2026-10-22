@@ -20,6 +20,7 @@ import type {
   SiteType,
 } from '@alto-people/shared';
 import { apiFetch, ApiError, NetworkError } from './api';
+import { forgetMissingPhotos } from './photoUrl';
 
 export function patchAssociateProfile(
   associateId: string,
@@ -80,6 +81,8 @@ export async function uploadAssociatePhoto(
       parsed?.error?.message ?? 'Failed to upload photo.',
     );
   }
+  // The face that was missing is there now: let every Avatar ask again.
+  forgetMissingPhotos();
   return (await res.json()) as { photoUrl: string };
 }
 

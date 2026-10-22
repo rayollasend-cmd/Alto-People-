@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  ArrowLeft,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -90,7 +89,6 @@ export function PortalToday() {
 
   const enabled = isPortal || isFloorLead || (canPreview && !!previewId);
   const homeTo = isFloorLead ? '/' : `/portal${scopeQs}`;
-  const homeLabel = isFloorLead ? t('floor.title') : t('portal.backHome');
   const query = useQuery({
     queryKey: ['clientPortal', 'day', qs],
     queryFn: () => apiFetch<DayPayload>(`/client-portal/day${qs}`),
@@ -157,15 +155,9 @@ export function PortalToday() {
               }`
             : undefined
         }
-        breadcrumbs={[{ label: isFloorLead ? t('floor.title') : t('portal.title'), to: homeTo }]}
-        secondaryActions={
-          <Button size="sm" variant="ghost" asChild>
-            <Link to={homeTo}>
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {homeLabel}
-            </Link>
-          </Button>
-        }
+        // The trail is the way back to the store (the phone's Back too); the
+        // "← My store" button beside it was a third control for the same trip.
+        breadcrumbs={[{ label: isFloorLead ? t('floor.title') : t('portal.title'), to: homeTo }, { label: t('portal.todayNav') }]}
         primaryAction={
           <>
             {/* The service report is the client's document — portal only. */}

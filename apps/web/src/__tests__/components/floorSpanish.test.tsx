@@ -73,8 +73,9 @@ describe('floor screens in Spanish', () => {
     });
     renderAs('SHIFT_SUPERVISOR', inSpanish(<RoleDecisionQueue />));
     expect(await screen.findByText('Necesita tu decisión')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Yo me encargo' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Abrir →' })).toBeInTheDocument();
+    // The rows arrive through the shared decisions query (a tick after the heading).
+    expect(await screen.findByRole('button', { name: 'Yo me encargo' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Ir a ello' })).toBeInTheDocument();
     expect(screen.getByText('esperando 2 d')).toBeInTheDocument();
   });
 

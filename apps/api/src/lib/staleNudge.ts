@@ -63,13 +63,8 @@ export async function runStaleNudgeSweep(
   const now = opts.now ?? new Date();
 
   const rows = await fetchInFlightApplications(scope);
-  const stale = rows.filter((row) =>
-    isStaleApplication(
-      row.invitedAt,
-      computePercent(row.checklist?.tasks ?? []),
-      now.getTime(),
-    ),
-  );
+  // Stuck by the one rule (lib/applicationFilters): nothing moved in a week.
+  const stale = rows.filter((row) => isStaleApplication(row, now.getTime()));
 
   // One user fetch for the whole set (same batching as bulk-resend).
   const userRows = await prisma.user.findMany({

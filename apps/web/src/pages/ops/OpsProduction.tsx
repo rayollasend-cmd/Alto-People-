@@ -115,7 +115,7 @@ function MetricPanel({ t }: { t: Trend }) {
       </div>
       <div className="mt-1.5 h-24">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 6, right: 4, bottom: 0, left: -24 }}>
+          <BarChart data={data} margin={{ top: 6, right: 4, bottom: 0, left: 0 }}>
             <XAxis
               dataKey="label"
               tick={{ fill: TICK.fill, fontSize: 9 }}
@@ -127,7 +127,7 @@ function MetricPanel({ t }: { t: Trend }) {
               tick={{ fill: TICK.fill, fontSize: 9 }}
               axisLine={false}
               tickLine={false}
-              width={38}
+              width="auto"
               allowDecimals={false}
             />
             {/* The window's mean, so an unusual week looks unusual. */}

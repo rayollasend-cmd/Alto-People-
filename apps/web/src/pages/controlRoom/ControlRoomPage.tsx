@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { AlertTriangle, Bot, Cpu, Hand, OctagonX, Play, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
 import { ROBOT_STATUS_LABELS, WORKER_STATUS_LABELS, type ControlRoomException, type ControlRoomResponse, type ControlRoomRobot, type ControlRoomWaiting } from '@alto-people/shared';
 import { DeskTemplate } from '@/components/templates';
+import type { PageAction } from '@/components/ui/PageHeader';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -16,7 +17,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ApiError } from '@/lib/api';
-import { useAuth, useTenant } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePrompt } from '@/lib/confirm';
 import { fmtRelativeDate, fmtShiftSpanTz, fmtShiftTz, fmtTime } from '@/lib/format';
@@ -39,7 +40,6 @@ const POLL_MS = 15_000;
  */
 export function ControlRoomPage() {
   const { can } = useAuth();
-  const { moduleOn } = useTenant();
   const canAct = can('manage:scheduling');
   const canSuspendAll = can('manage:org');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -110,16 +110,35 @@ export function ControlRoomPage() {
     </div>
   );
 
-  const actions =
-    canSuspendAll && data ? (
-      data.agentsSuspended ? (
-        <ResumeAllButton onDone={refresh} />
-      ) : (
-        <Button variant="outline" className="border-alert/50 text-alert hover:border-alert hover:text-alert coarse:h-11" onClick={() => setSuspending(true)}>
-          <ShieldAlert className="h-4 w-4" aria-hidden="true" /> Suspend all agents
-        </Button>
-      )
-    ) : undefined;
+  // "Suspend all agents" stops every agent in the organization: it lives in
+  // the header's "More", behind its own confirm (SuspendAllDialog), not as
+  // the one red button on a floor screen (F500 G2 — the Clients lesson).
+  const resumeAll = useMutation({
+    mutationFn: resumeAllAgents,
+    onSuccess: async () => {
+      toast.success('Agents resumed. No credential was restored — issue new ones per agent.');
+      await refresh();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not resume the agents.'),
+  });
+  const actions: PageAction[] = [
+    {
+      key: 'resume',
+      label: 'Resume all agents',
+      icon: Play,
+      hidden: !(canSuspendAll && data?.agentsSuspended),
+      loading: resumeAll.isPending,
+      onSelect: () => resumeAll.mutate(),
+    },
+    {
+      key: 'suspend',
+      label: 'Suspend all agents',
+      icon: ShieldAlert,
+      destructive: true,
+      hidden: !(canSuspendAll && data && !data.agentsSuspended),
+      onSelect: () => setSuspending(true),
+    },
+  ];
 
   const queue = !data ? (
     room.error ? (
@@ -283,13 +302,15 @@ export function ControlRoomPage() {
         title="Control room"
         topbarTitle="Control room"
         subtitle={data ? `${data.site.name}${data.site.clientName ? ` · ${data.site.clientName}` : ''}: people, robots and agents on one screen.` : 'People, robots and agents on one screen, per site.'}
-        breadcrumbs={[{ label: 'Operations' }, { label: 'Control room' }]}
         counts={counts}
         actions={actions}
         filters={filters}
         queue={queue}
         item={item}
-        itemOpen={!!data && !!moduleOn}
+        // The crew column is a second panel of the same screen, not a record
+        // picked from a list: below lg the exceptions and what waits come
+        // first, then the crew — neither hidden (it hid the whole queue).
+        narrow="stack"
       />
       {suspending && data && (
         <SuspendAllDialog
@@ -302,22 +323,6 @@ export function ControlRoomPage() {
         />
       )}
     </>
-  );
-}
-
-function ResumeAllButton({ onDone }: { onDone: () => Promise<unknown> }) {
-  const m = useMutation({
-    mutationFn: resumeAllAgents,
-    onSuccess: async () => {
-      toast.success('Agents resumed. No credential was restored — issue new ones per agent.');
-      await onDone();
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not resume the agents.'),
-  });
-  return (
-    <Button variant="secondary" className="coarse:h-11" loading={m.isPending} onClick={() => m.mutate()}>
-      Resume all agents
-    </Button>
   );
 }
 

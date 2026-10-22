@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle2, FileText, History } from 'lucide-react';
+import { CheckCircle2, FileText, History } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtHours, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtHours, fmtMoney, fmtStatementNo, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -17,6 +17,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { DetailsTable, HoursChart, RingMeter, StatTile, WeekFillChart } from './portalCharts';
+import { fmtDateTick } from '@/components/ui/charts/axes';
 import { scopeParams, shiftDays } from './scope';
 import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
@@ -245,11 +246,14 @@ export function PortalHistory() {
     { key: 'custom', label: t('portal.rangeCustom') },
   ];
 
+  // A month reads "Sep 2", like every other chart (it read "9/2"); a week reads the weekday.
   const dayLabel = (ymd: string) =>
-    new Intl.DateTimeFormat(
-      typeof document !== 'undefined' && document.documentElement.lang === 'es' ? 'es-US' : 'en-US',
-      data && data.range.days > 14 ? { month: 'numeric', day: 'numeric' } : { weekday: 'short' },
-    ).format(parseYmd(ymd) ?? new Date());
+    data && data.range.days > 14
+      ? fmtDateTick(ymd, 'day')
+      : new Intl.DateTimeFormat(
+          typeof document !== 'undefined' && document.documentElement.lang === 'es' ? 'es-US' : 'en-US',
+          { weekday: 'short' },
+        ).format(parseYmd(ymd) ?? new Date());
   const days = (data?.days ?? []).map((d) => ({ ...d, day: dayLabel(d.date) }));
   const sopPct = data?.ops && data.ops.sopTotal > 0 ? Math.round((data.ops.sopDone / data.ops.sopTotal) * 100) : null;
   const hoursPct =
@@ -268,15 +272,11 @@ export function PortalHistory() {
             ? `${data.store ? data.store.name : data.client.name} · ${fmtDate(parseYmd(data.range.from))} – ${fmtDate(parseYmd(data.range.to))}`
             : undefined
         }
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${scopeQs}` }]}
+        // The trail is the way back to the store (the phone's Back too); the
+        // "← My store" button beside it was a third control for the same trip.
+        breadcrumbs={[{ label: t('portal.title'), to: `/portal${scopeQs}` }, { label: t('portal.historyNav') }]}
         secondaryActions={
           <>
-            <Button size="sm" variant="ghost" asChild>
-              <Link to={`/portal${scopeQs}`}>
-                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('portal.backHome')}
-              </Link>
-            </Button>
             <Button size="sm" variant="outline" onClick={() => setReportOpen(true)}>
               <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.svcReport')}
@@ -575,15 +575,14 @@ export function PortalHistory() {
                 <SectionTitle size="sm" className="mb-0" title={t('portal.safety')} />
                 <div className="mt-2 text-4xl font-bold tracking-tight text-white">
                   {data.safety.incidents}
-                  <span className="ml-2 text-base font-normal text-silver">{t('portal.safetyInRange')}</span>
+                  <span className="ml-2 text-base font-normal text-silver">{t('portal.safetyInRange', { count: data.safety.incidents })}</span>
                 </div>
-                <p className={cn('mt-1.5 text-sm tabular-nums', data.safety.open > 0 ? 'text-warning' : 'text-silver')}>
-                  {data.safety.incidents === 0
-                    ? t('portal.safetyCleanRange')
-                    : data.safety.open > 0
-                      ? t('portal.safetyOpen', { count: data.safety.open })
-                      : t('portal.safetyAllResolved')}
-                </p>
+                {/* "0 incidents in the period. No incidents in this period." said it twice. */}
+                {data.safety.incidents > 0 && (
+                  <p className={cn('mt-1.5 text-sm tabular-nums', data.safety.open > 0 ? 'text-warning' : 'text-silver')}>
+                    {data.safety.open > 0 ? t('portal.safetyOpen', { count: data.safety.open }) : t('portal.safetyAllResolved')}
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -601,7 +600,7 @@ export function PortalHistory() {
                         <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2.5">
                           <div className="min-w-0">
                             <div className="text-sm font-medium text-white tabular-nums">
-                              {s.number !== null ? t('portal.stNumber', { n: s.number }) : t('portal.statements')}
+                              {s.number !== null ? t('portal.stNumber', { n: fmtStatementNo(s.number) }) : t('portal.statements')}
                             </div>
                             <div className="text-xs text-silver/70 tabular-nums">
                               {fmtDate(parseYmd(s.periodStart))} – {fmtDate(parseYmd(s.periodEnd))}

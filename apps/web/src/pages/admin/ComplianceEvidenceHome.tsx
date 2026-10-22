@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ComplianceControlView, ControlState, EvidenceRow } from '@alto-people/shared';
+import { CONTROL_STATUS_LABELS, controlStatusOf, type ComplianceControlView, type ControlStatus, type EvidenceRow } from '@alto-people/shared';
+import { controlStatusBadge } from '@/components/trust/TrustBlocks';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getComplianceEvidence, getControlHistory, signOffEvidence } from '@/lib/complianceEvidenceApi';
@@ -33,21 +34,12 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * current. Evidence is append-only; a sign-off is its own row.
  */
 
-const STATE_LABEL: Record<ControlState, string> = {
-  current: 'Current',
-  stale: 'Stale',
-  failing: 'Failing',
-  missing: 'No evidence',
-  'awaiting-signoff': 'Needs sign-off',
-};
-
-const STATE_VARIANT: Record<ControlState, 'success' | 'destructive' | 'pending' | 'outline' | 'accent'> = {
-  current: 'success',
-  stale: 'destructive',
-  failing: 'destructive',
-  missing: 'outline',
-  'awaiting-signoff': 'pending',
-};
+/**
+ * A control's status: the one vocabulary the Trust Center shows too
+ * (packages/shared complianceEvidence.ts controlStatusOf) — Passing,
+ * Needs sign-off, Failing, No evidence (F500 SH-4).
+ */
+const statusOfRow = (c: ComplianceControlView): ControlStatus => c.status ?? controlStatusOf(c);
 
 const age = (d: number | null) => (d === null ? '—' : d === 0 ? 'Today' : d === 1 ? '1 day' : `${d} days`);
 
@@ -67,11 +59,11 @@ const COLUMNS: GridColumn<ComplianceControlView>[] = [
   },
   {
     key: 'state',
-    header: 'State',
-    accessor: (c) => STATE_LABEL[c.state],
+    header: 'Status',
+    accessor: (c) => CONTROL_STATUS_LABELS[statusOfRow(c)],
     sortable: true,
     cardMeta: true,
-    cell: (c) => <Badge variant={STATE_VARIANT[c.state]}>{STATE_LABEL[c.state]}</Badge>,
+    cell: (c) => controlStatusBadge(statusOfRow(c)),
   },
   {
     key: 'latest',
@@ -90,8 +82,14 @@ export function ComplianceEvidenceHome() {
   const [open, setOpen] = useState<ComplianceControlView | null>(null);
   const controls = useMemo(() => q.data?.controls ?? [], [q.data]);
   const total = controls.length;
-  const current = q.data?.counts.current ?? 0;
-  const attention = q.data ? q.data.counts.stale + q.data.counts.failing + q.data.counts['awaiting-signoff'] : 0;
+  // The Trust Center's count: controls PASSING by the one status.
+  const byStatus = useMemo(() => {
+    const out: Record<ControlStatus, number> = { PASSING: 0, NEEDS_SIGNOFF: 0, FAILING: 0, NO_EVIDENCE: 0 };
+    for (const c of controls) out[statusOfRow(c)] += 1;
+    return out;
+  }, [controls]);
+  const passing = byStatus.PASSING;
+  const attention = byStatus.NEEDS_SIGNOFF + byStatus.FAILING + byStatus.NO_EVIDENCE;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -107,18 +105,22 @@ export function ComplianceEvidenceHome() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-gold" aria-hidden="true" />
-            Controls with current evidence
+            Controls passing
           </CardTitle>
-          <CardDescription>A control is current when its latest evidence passed inside its window and, where it needs one, is signed off.</CardDescription>
+          <CardDescription>A control passes when its latest evidence passed inside its window and, where it needs one, is signed off. The Trust Center counts the same way.</CardDescription>
         </CardHeader>
         <CardContent>
           {q.isPending ? (
             <Skeleton className="h-24" />
           ) : (
             <MetricCard
-              label="Current"
-              value={`${current} of ${total}`}
-              hint={attention > 0 ? `${attention} need attention` : 'Nothing stale or failing'}
+              label="Passing"
+              value={`${passing} of ${total}`}
+              hint={
+                attention > 0
+                  ? `${byStatus.FAILING} failing · ${byStatus.NEEDS_SIGNOFF} need sign-off · ${byStatus.NO_EVIDENCE} no evidence`
+                  : 'Every control is passing'
+              }
               accent={attention > 0}
             />
           )}

@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_TEST_PASSWORD,
+  createAssociate,
   createUser,
   prisma,
   truncateAll,
@@ -48,6 +49,29 @@ describe('GET /admin/users', () => {
     expect(users.length).toBe(1);
     expect(users[0].role).toBe('ASSOCIATE');
     expect(users[0].status).toBe('DISABLED');
+  });
+
+  it('gives each row its face, or null when none is on file, so the list never asks for a photo that isn’t there', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    // An associate with a headshot, a staff account with its own photo, and one with neither.
+    const withHeadshot = await createAssociate({ firstName: 'Rosa', lastName: 'Martinez' });
+    const shotAt = new Date('2026-10-01T12:00:00Z');
+    await prisma.associate.update({ where: { id: withHeadshot.id }, data: { photoS3Key: 'profile-photos/rosa.jpg', photoUpdatedAt: shotAt } });
+    const { user: rosa } = await createUser({ role: 'ASSOCIATE', associateId: withHeadshot.id });
+    const { user: staff } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    await prisma.user.update({ where: { id: staff.id }, data: { photoS3Key: 'profile-photos/staff.jpg', photoUpdatedAt: shotAt } });
+    const noPhoto = await createAssociate({ firstName: 'Dee', lastName: 'Kpakpo' });
+    const { user: dee } = await createUser({ role: 'ASSOCIATE', associateId: noPhoto.id });
+
+    const a = agent();
+    await loginAs(a, hr.email, DEFAULT_TEST_PASSWORD);
+    const res = await a.get('/admin/users');
+    expect(res.status).toBe(200);
+    const byId = new Map((res.body.users as Array<{ id: string; photoUrl: string | null }>).map((u) => [u.id, u.photoUrl]));
+    expect(byId.get(rosa.id)).toBe(`/api/associates/${withHeadshot.id}/photo?v=${shotAt.getTime()}`);
+    expect(byId.get(staff.id)).toBe(`/api/users/${staff.id}/photo?v=${shotAt.getTime()}`);
+    expect(byId.get(dee.id)).toBeNull();
+    expect(byId.get(hr.id)).toBeNull();
   });
 
   it('forbids associate from listing users', async () => {

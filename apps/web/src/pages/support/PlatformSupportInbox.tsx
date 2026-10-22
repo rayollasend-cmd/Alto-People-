@@ -3,6 +3,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
+import { fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -48,7 +49,7 @@ function Row({ r, onDone }: { r: InboxRequest; onDone: () => void }) {
           {r.status === 'OPEN' ? 'Open' : 'In progress'}
         </Badge>
         <span className="text-xs text-silver">
-          {r.tenant ?? 'Unknown organization'} · {r.requester} · {r.category.toLowerCase()} · {r.createdAt.slice(0, 10)}
+          {r.tenant ?? 'Unknown organization'} · {r.requester} · {r.category.toLowerCase()} · {fmtDateTime(r.createdAt)}
         </span>
       </div>
       <p className="whitespace-pre-wrap text-silver">{r.body}</p>

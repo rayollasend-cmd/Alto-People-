@@ -1,4 +1,4 @@
-import { formatBytes, isDateOnly, parseDateOnly } from '@alto-people/shared';
+import { TIMEZONE_LABELS, formatBytes, isDateOnly, parseDateOnly } from '@alto-people/shared';
 /**
  * Centralized formatters. Pages have spawned ~3 implementations of money
  * (`toLocaleString(currency)`, custom `fmtPay`, bare `$${n}`) and a
@@ -7,10 +7,30 @@ import { formatBytes, isDateOnly, parseDateOnly } from '@alto-people/shared';
  * convention for an EU client) updates the whole app at once.
  *
  * Conventions:
- *   - Money: en-US, 2 decimals always (never strip trailing zeros — the
- *     visual rhythm of `$24.00` next to `$24.50` matters in a table).
+ *   - Money: en-US. Pick the formatter by what the reader does with the
+ *     number, and keep ONE formatter per surface (a tile that says "$1.2k"
+ *     next to one that says "$1,180.00" reads as two different numbers):
+ *       fmtMoney        cents, always ("$24.00" next to "$24.50"). Anything
+ *                       that is added up, reconciled, paid or printed: tables,
+ *                       paychecks, statements, invoices, dialogs, the books.
+ *       fmtMoneyWhole   whole dollars ("$48,210"). A headline total where the
+ *                       cents are noise but every dollar matters: a KPI tile,
+ *                       a hero figure, a card's total line. Never in a
+ *                       column that sums.
+ *       fmtMoneyCompact "$840" / "$1.2k" / "$3.4M". Dense surfaces only:
+ *                       chart axes, calendar day totals, a tile on a phone
+ *                       strip that would otherwise clip. Never where the
+ *                       exact amount is asked about.
+ *       fmtMoneyEst     "~$102". A forecast, never an actual.
  *   - Dates: prefer "May 13, 2026" over "5/13/26"; year is included
- *     because HR data spans years.
+ *     because HR data spans years. A DATE-ONLY value (a @db.Date column, a
+ *     due date, a pay period) goes through fmtDateOnly / fmtMonth, which
+ *     read it as the calendar day it names — never through `new Date()`,
+ *     which shows the day before everywhere west of UTC. Charts use the
+ *     kit's date ticks (components/ui/charts/axes): "Oct 3", "Oct", "Q3 2026".
+ *   - Times: hours and minutes ("9:31 AM"); seconds only where they are the
+ *     evidence (the audit log).
+ *   - Phones: fmtPhone for display, "(850) 555-0102"; phoneHref for tel: links.
  *   - Percent: 1 decimal by default, no `.0` if integer.
  *   - All formatters accept null/undefined and return '—' so callers
  *     don't have to scatter null guards.
@@ -89,6 +109,26 @@ export function fmtMoney(
     // `precise` keeps 4 decimals — for things like hourly rates derived
     // from cents-precision data (24.0625/hr instead of 24.06).
     maximumFractionDigits: opts.precise ? 4 : 2,
+  });
+}
+
+/**
+ * Whole dollars — "$48,210", "-$1,250". For a headline figure (a KPI tile, a
+ * hero total, a card's total line) where cents are noise but every dollar
+ * still matters. Rounds to the nearest dollar. Exact amounts (tables,
+ * paychecks, statements, anything summed) stay on `fmtMoney`.
+ */
+export function fmtMoneyWhole(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return DASH;
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (!Number.isFinite(n)) return DASH;
+  // Math.round(-0.4) is -0, which Intl prints as "-$0".
+  const rounded = Math.round(n) || 0;
+  return rounded.toLocaleString(displayLocale(), {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   });
 }
 
@@ -474,6 +514,115 @@ export function fmtMonthShortYear(value: string | Date | null | undefined): stri
   });
 }
 
+/**
+ * The calendar day a date-only value names, as a local-midnight Date — or
+ * null. Accepts "YYYY-MM-DD", the midnight-UTC instant a @db.Date column
+ * serializes to ("2026-01-31T00:00:00.000Z"), and a Date (taken as a
+ * calendar anchor: its local Y/M/D). Never `new Date("2026-01-31")`, which
+ * is UTC midnight and therefore Jan 30 everywhere west of Greenwich (the
+ * Inbox read "Overdue · Jan 30" next to "due 2026-01-31").
+ */
+function calendarDate(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|T00:00:00(?:\.000)?Z$)/.exec(value.trim());
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // "10/16/2026" — a US date some payloads still send for display.
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
+  if (us) return new Date(Number(us[3]), Number(us[1]) - 1, Number(us[2]));
+  // A real instant: the day it falls on in the display zone.
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const [y, mo, day] = zonedDayKey(d, displayTimeZone()).split('-').map(Number);
+  return new Date(y!, mo! - 1, day!);
+}
+
+/**
+ * A date-only value as the day it names: "Jan 31, 2026", or with
+ * `weekday` "Sat, Jan 31, 2026", and without the year when `year: false`
+ * (or `'auto'`: only when it isn't this year). For due dates, pay periods,
+ * hire dates, statement dates — anything stored as a calendar day.
+ */
+export function fmtDateOnly(
+  value: string | Date | null | undefined,
+  opts: { weekday?: boolean; year?: boolean | 'auto' } = {},
+): string {
+  const d = calendarDate(value);
+  if (!d) return DASH;
+  const year = opts.year === 'auto' ? d.getFullYear() !== new Date().getFullYear() : opts.year !== false;
+  return d.toLocaleDateString(displayLocale(), {
+    ...(opts.weekday ? { weekday: 'short' as const } : {}),
+    month: 'short',
+    day: 'numeric',
+    ...(year ? { year: 'numeric' as const } : {}),
+  });
+}
+
+/** "Oct 3 – 16, 2026" / "Sep 27 – Oct 10, 2026" / "Dec 28, 2025 – Jan 10, 2026": a date-only range, said once. */
+export function fmtDateOnlyRange(
+  from: string | Date | null | undefined,
+  to: string | Date | null | undefined,
+): string {
+  const a = calendarDate(from);
+  const b = calendarDate(to);
+  if (!a || !b) return a ? fmtDateOnly(a) : b ? fmtDateOnly(b) : DASH;
+  const loc = displayLocale();
+  if (a.getFullYear() !== b.getFullYear()) return `${fmtDateOnly(a)} – ${fmtDateOnly(b)}`;
+  const tail = b.toLocaleDateString(loc, { month: 'short', day: 'numeric', year: 'numeric' });
+  if (a.getMonth() === b.getMonth()) {
+    if (a.getDate() === b.getDate()) return tail;
+    // "Oct 3 – 16, 2026": the month once, the year once (English word order only).
+    if (loc === EN_US) return `${a.toLocaleDateString(loc, { month: 'short', day: 'numeric' })} – ${b.getDate()}, ${b.getFullYear()}`;
+  }
+  return `${a.toLocaleDateString(loc, { month: 'short', day: 'numeric' })} – ${tail}`;
+}
+
+/**
+ * A month: "Nov 2025" (short, the default), "November 2025" (long) or
+ * "Nov ’25" (axis). Takes "YYYY-MM", "YYYY-MM-DD", a midnight-UTC date-only
+ * instant or a Date. A "2026-10" heading used to print as is.
+ */
+export function fmtMonth(
+  value: string | Date | null | undefined,
+  style: 'short' | 'long' | 'axis' = 'short',
+): string {
+  if (!value) return DASH;
+  const ym = typeof value === 'string' ? /^(\d{4})-(\d{2})$/.exec(value.trim()) : null;
+  const d = ym ? new Date(Number(ym[1]), Number(ym[2]) - 1, 1) : calendarDate(value);
+  if (!d) return DASH;
+  const loc = displayLocale();
+  if (style === 'axis') {
+    return `${d.toLocaleDateString(loc, { month: 'short' })} ’${String(d.getFullYear()).slice(2)}`;
+  }
+  return d.toLocaleDateString(loc, { month: style === 'long' ? 'long' : 'short', year: 'numeric' });
+}
+
+/**
+ * An IANA zone the way a person says it: "Central (Chicago)", "Pacific (Los
+ * Angeles)" — the app's own labels (TIMEZONE_LABELS) for the zones it
+ * offers, and the runtime's name ("Central European Time (Berlin)") for any
+ * other. Settings, Sites and Branding printed the raw id
+ * ("America/Chicago"). Falls back to the id when nothing can name it.
+ */
+export function fmtTimeZone(timeZone: string | null | undefined): string {
+  if (!timeZone) return DASH;
+  const known = (TIMEZONE_LABELS as Record<string, string>)[timeZone];
+  if (known) return known;
+  if (timeZone === 'Etc/UTC') return 'UTC';
+  const city = timeZone.split('/').pop()!.replace(/_/g, ' ');
+  try {
+    const name = new Intl.DateTimeFormat(displayLocale(), { timeZone, timeZoneName: 'longGeneric' })
+      .formatToParts(new Date())
+      .find((p) => p.type === 'timeZoneName')?.value;
+    if (!name || /^GMT[+-]/.test(name)) return timeZone;
+    return name.includes(city) ? name : `${name} (${city})`;
+  } catch {
+    return timeZone;
+  }
+}
+
 /** The viewer's own IANA timezone (e.g. "America/Los_Angeles"). */
 export function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -848,4 +997,74 @@ export function fmtShiftSpanTz(
   const zone = timeZone || displayTimeZone();
   if (!endsAt) return fmtShiftTz(startsAt, zone, { day: false });
   return `${fmtTimeTz(startsAt, zone)}–${fmtShiftTz(endsAt, zone, { day: false })}`;
+}
+
+/**
+ * A phone number the one way the app shows it: "(850) 555-0102", with
+ * "ext. 12" kept. Accepts what people type and what imports carry
+ * ("850-555-0102", "+1-850-555-0142", "+18505550142", "850.555.0102").
+ * A number outside the US/Canada plan is shown as entered — reformatting a
+ * foreign number by US rules would garble it. Pair with `phoneHref` for the
+ * tel: link, which keeps the E.164 form.
+ */
+export function fmtPhone(value: string | null | undefined): string {
+  if (!value || !value.trim()) return DASH;
+  const raw = value.trim();
+  const { national, ext } = splitPhone(raw);
+  if (!national) return raw;
+  const main = `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}`;
+  return ext ? `${main} ext. ${ext}` : main;
+}
+
+/**
+ * The tel: link for a phone number: "tel:+18505550102" (E.164) for a US
+ * number, "tel:+442079460958" for a foreign one written with its +, and
+ * ";ext=12" for an extension — a "(305) 555-0101 ext 2" dialed the
+ * extension digits into the number. Null when there is nothing to dial.
+ */
+export function phoneHref(value: string | null | undefined): string | null {
+  if (!value || !value.trim()) return null;
+  const raw = value.trim();
+  const { national, ext } = splitPhone(raw);
+  const suffix = ext ? `;ext=${ext}` : '';
+  if (national) return `tel:+1${national}${suffix}`;
+  const main = raw.replace(/(?:ext\.?|x|#)\s*\d+\s*$/i, '');
+  const digits = main.replace(/\D/g, '');
+  if (!digits) return null;
+  return `tel:${main.trim().startsWith('+') ? '+' : ''}${digits}${suffix}`;
+}
+
+function splitPhone(raw: string): { national: string | null; ext: string | null } {
+  const extMatch = /(?:ext\.?|x|#)\s*(\d+)\s*$/i.exec(raw);
+  const main = extMatch ? raw.slice(0, extMatch.index) : raw;
+  const digits = main.replace(/\D/g, '');
+  const plus = main.trim().startsWith('+');
+  let national: string | null = null;
+  if (digits.length === 10 && !plus) national = digits;
+  else if (digits.length === 11 && digits.startsWith('1')) national = digits.slice(1);
+  return { national, ext: extMatch ? extMatch[1]! : null };
+}
+
+/**
+ * A client statement's number, one way everywhere: "No. 0004" — what the
+ * statement PDF prints ("Invoice no. 0004"), so the number on screen is the
+ * one on the paper the client holds. Pay and bill said "#4", the portal
+ * "Statement #4", the scorecard "statement #4". A draft has no number yet:
+ * the fallback ("Draft") says so.
+ */
+export function fmtStatementNo(n: number | null | undefined, fallback = 'Draft'): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return fallback;
+  return `No. ${String(n).padStart(4, '0')}`;
+}
+
+/**
+ * A count with its noun, singular when it is one: "1 card", "3 cards",
+ * "1,204 entries" (pass the plural when it isn't noun + "s"). For English
+ * copy that isn't translated (admin desks); translated copy uses
+ * `t(key, { count })` with a `<key>_one` variant (lib/i18n). "1 cards",
+ * "1 People" and "2 item(s)" all came from skipping this.
+ */
+export function fmtCount(n: number, singular: string, plural = `${singular}s`): string {
+  const shown = Number.isFinite(n) ? n.toLocaleString(displayLocale()) : DASH;
+  return `${shown} ${n === 1 ? singular : plural}`;
 }

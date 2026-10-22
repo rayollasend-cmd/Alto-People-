@@ -190,6 +190,8 @@ describe('payroll desks', () => {
   it('readiness: ask everyone at once, and the grid says when', async () => {
     const p = await createAssociate({ firstName: 'Ray', lastName: 'Shaw' });
     await prisma.associate.update({ where: { id: p.id }, data: { employmentType: 'W2_EMPLOYEE' } });
+    // Hired: readiness lists the people a run is for (F500 SH-4).
+    await prisma.application.create({ data: { associateId: p.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() } });
     const { user: personUser } = await createUser({ role: 'ASSOCIATE', associateId: p.id });
     const noLogin = await createAssociate({ firstName: 'No', lastName: 'Login' });
     const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });

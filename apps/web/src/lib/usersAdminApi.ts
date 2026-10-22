@@ -19,6 +19,8 @@ export interface AdminUser {
   createdAt: string;
   associateId: string | null;
   associateName: string | null;
+  /** The account's face (associate headshot, else the login's own photo); null when none is on file. */
+  photoUrl?: string | null;
   clientId: string | null;
   clientName: string | null;
   /** CLIENT_PORTAL store scope — one Location under the client, or null

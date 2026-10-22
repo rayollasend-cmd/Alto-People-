@@ -377,10 +377,10 @@ function MonthlyChart({
       empty={<p className="text-sm text-silver">Nobody was invited in the last {points.length} months.</p>}
     >
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+        <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={PALETTE.grid} vertical={false} />
           <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
-          <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width={40} />
+          <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width="auto" />
           <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Bar dataKey="invited" name="Invited" fill={PALETTE.other} radius={[3, 3, 0, 0]} maxBarSize={22} />

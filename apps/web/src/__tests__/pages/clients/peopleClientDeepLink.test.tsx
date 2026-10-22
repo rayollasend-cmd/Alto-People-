@@ -39,7 +39,8 @@ describe('People directory — ?client= deep link', () => {
     await waitFor(() => {
       const call = paths.find((p) => p.startsWith('/people/directory') && p.includes(`clientId=${CLIENT}`));
       expect(call).toBeDefined();
-      expect(call).toContain('status=ACTIVE');
+      // ?status=ACTIVE lands on the one status's Working (F500 SH-4).
+      expect(call).toContain('workStatus=ACTIVE');
     });
   });
 });

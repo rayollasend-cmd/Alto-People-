@@ -140,7 +140,7 @@ function plural(n: number, one: string, many: string): string {
 function WatchNeedsYou() {
   const { t } = useI18n();
   const inbox = useInbox();
-  const waiting = (inbox.data?.sources ?? []).filter((s) => s.count > 0);
+  const waiting = (inbox.data?.sources ?? []).filter((s) => s.count > 0 && !s.watching);
   if (inbox.isPending) return <Skeleton className="h-14" />;
   if (waiting.length === 0) {
     return (
@@ -730,6 +730,7 @@ export function SupervisorDashboard() {
                           open: t('portal.chartOpen'),
                           contracted: t('portal.chartContracted'),
                           now: t('portal.chartNow'),
+                          empty: t('portal.chartNothing'),
                           at: (h) => t('portal.chartAt', { hour: h }),
                         }}
                       />
@@ -755,13 +756,18 @@ export function SupervisorDashboard() {
         }
         decisions={{
           title: t('home.needsYou'),
+          // Counted as shown: the queue's rows and the coverage-gap cards — a
+          // gap that is also a queue row (same key) once, not twice.
+          queue: !watchOnly,
+          cardKeys: watchOnly ? undefined : gaps.map((g) => `coverage:${g.window.locationId}:${g.window.label}`),
           content: watchOnly ? (
             <WatchNeedsYou />
           ) : (
             <>
               <CoverageGapNotice gaps={gaps} today={todayKey} />
               {/* With a gap above it, an empty queue says nothing — not "all clear". */}
-              <RoleDecisionQueue title={null} hideWhenEmpty={gaps.length > 0} />
+              {/* The gap cards above ARE the queue's coverage items: shown once (F500 SH-4). */}
+              <RoleDecisionQueue title={null} hideWhenEmpty={gaps.length > 0} excludeKeyPrefix={gaps.length > 0 ? 'coverage:' : undefined} />
             </>
           ),
         }}

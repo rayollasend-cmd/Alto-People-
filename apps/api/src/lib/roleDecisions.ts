@@ -19,13 +19,42 @@ import { tenantIdForWrite } from './tenant.js';
 import { addDaysInZone, localDateKey } from './timezone.js';
 import { addBusinessDays } from './everifyReadiness.js';
 import { overdueContractDuties } from './contractDuties.js';
-import { idleDraftsWhere } from './applicationFilters.js';
+import { stuckWhere } from './applicationFilters.js';
 import type { SessionUser } from '../types/express.js';
 
 const DAY_MS = 24 * 3600_000;
 /** Company-local "YYYY-MM-DD" (the company's own zone, the same one its
  *  workweek starts in) — the date a deep link opens the schedule or a queue on. */
 const ymd = (d: Date) => localDateKey(d, companyWorkweek().timezone);
+
+const DAY_WORDS = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+const DAY_WORDS_YEAR = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+/**
+ * A due day in words — "Sat, Oct 24" (with the year when it isn't this
+ * one) — never an ISO string in a title (F500 SH-4). Takes a calendar day:
+ * a YYYY-MM-DD, a date-only column (read at UTC midnight, so its own day),
+ * or an instant converted to the company's day by the caller (`ymd`).
+ */
+export function dayWords(day: string | Date, now: Date = new Date()): string {
+  const key = typeof day === 'string' ? day.slice(0, 10) : day.toISOString().slice(0, 10);
+  const at = new Date(`${key}T12:00:00.000Z`);
+  if (Number.isNaN(at.getTime())) return key;
+  return (key.slice(0, 4) === String(now.getUTCFullYear()) ? DAY_WORDS : DAY_WORDS_YEAR).format(at);
+}
+
+/**
+ * Contract duties (insurance certificates, the OSHA 300A posting, the
+ * monthly report) belong to the compliance desk: a role that may manage
+ * compliance AND whose craft leads with it — never the recruiter's, the
+ * ops manager's or the workforce manager's home just because their
+ * capability set is wide (F500 SH-4). Roles with no affinity profile keep
+ * what their capabilities allow.
+ */
+export function ownsContractDuties(user: { role: Role }): boolean {
+  if (!userCan(user as Parameters<typeof userCan>[0], 'manage:compliance')) return false;
+  const profile = ROLE_PROFILES[user.role];
+  return !profile || profile.lead.includes('compliance');
+}
 
 export type DecisionDomain =
   | 'site-ops'
@@ -72,7 +101,8 @@ const ROLE_PROFILES: Partial<
   HR_ADMINISTRATOR: { lead: ['compliance', 'hiring', 'people'], exclude: ['money'] },
   OPERATIONS_MANAGER: { lead: ['site-ops', 'people', 'money'], exclude: [] },
   MANAGER: { lead: ['people', 'site-ops'], exclude: ['money', 'compliance', 'hiring'] },
-  INTERNAL_RECRUITER: { lead: ['hiring', 'compliance'], exclude: ['money', 'site-ops', 'people'] },
+  // F500 SH-4: the recruiter's craft is hiring; compliance duties are the HR desk's.
+  INTERNAL_RECRUITER: { lead: ['hiring'], exclude: ['money', 'site-ops', 'people'] },
   WORKFORCE_MANAGER: { lead: ['site-ops', 'people', 'hiring'], exclude: ['money'] },
   // Marketing runs communications, not operations — their queue is
   // honestly quiet rather than a copy of HR's worries.
@@ -583,7 +613,7 @@ export async function computeRoleDecisions(
   // One item a record, so the home lands on the case itself; more than
   // PER_RECORD_CAP of a kind fold into one summary that opens the list.
   await pushLegalDeadlines(prisma, can, out, now);
-  await pushContractDuties(prisma, user, out, now);
+  if (ownsContractDuties(user)) await pushContractDuties(prisma, user, out, now);
 
   /* ----- Money (payroll / finance) ---------------------------------------- */
   if (can('settle:reimbursement')) {
@@ -625,6 +655,7 @@ export async function computeRoleDecisions(
           number: true,
           snapshot: true,
           finalizedAt: true,
+          dueAt: true,
           client: { select: { name: true } },
         },
         take: 20,
@@ -647,16 +678,23 @@ export async function computeRoleDecisions(
     // Per-statement, with keys IDENTICAL to the executive engine's, so a
     // Finance claim shows on the chairman's queue and vice versa.
     for (const s of unpaid) {
-      const days = s.finalizedAt
-        ? Math.floor((now.getTime() - s.finalizedAt.getTime()) / DAY_MS)
-        : 0;
+      // The age Finance's receivables show: days past the due date (the
+      // client's terms), not days since it was finalized — one receivable,
+      // one age (F500 SH-4). Days since finalized only when no due date is set.
+      const sinceFinal = s.finalizedAt ? Math.floor((now.getTime() - s.finalizedAt.getTime()) / DAY_MS) : 0;
+      const pastDue = s.dueAt ? Math.max(0, Math.floor((now.getTime() - s.dueAt.getTime()) / DAY_MS)) : null;
+      const days = pastDue ?? sinceFinal;
       const amount = statementTotal(s.snapshot);
+      const money = amount ? `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ` : '';
       out.push({
         key: `receivable:${s.id}`,
         domain: 'money',
         severity: days >= 60 || amount >= 5_000 ? 'critical' : 'high',
         label: `Chase ${s.client.name} statement #${s.number ?? '—'}`,
-        detail: `${days} days unpaid — chase the cash or flag it upward.`,
+        detail:
+          pastDue !== null
+            ? `${money}${pastDue} day${pastDue === 1 ? '' : 's'} past due (due ${dayWords(s.dueAt!, now)}) — chase the cash or flag it upward.`
+            : `${money}${sinceFinal} days since it was sent, no due date set — chase the cash or flag it upward.`,
         stakes: amount || null,
         ageDays: days,
         linkUrl: `/clients/statements?statement=${s.id}`, // the statement itself
@@ -775,9 +813,14 @@ export async function computeRoleDecisions(
   // Role affinity: exclude domains that aren't this role's job (never
   // personal items), then rank severity → own-craft-first → stakes.
   const profile = ROLE_PROFILES[user.role];
-  const filtered = profile
-    ? out.filter((d) => d.domain === 'personal' || !profile.exclude.includes(d.domain))
-    : out;
+  // Each decision once: the "Needs you" count is the queue's rows, so a key
+  // pushed twice (two engines naming the same item) must count once.
+  const seen = new Set<string>();
+  const filtered = (profile ? out.filter((d) => d.domain === 'personal' || !profile.exclude.includes(d.domain)) : out).filter((d) => {
+    if (seen.has(d.key)) return false;
+    seen.add(d.key);
+    return true;
+  });
   const leadRank = (d: RoleDecision): number => {
     if (!profile) return 99;
     const i = profile.lead.indexOf(d.domain);
@@ -807,7 +850,7 @@ async function pushContractDuties(prisma: PrismaClient, user: QueueUser, out: Ro
       key: 'compliance:contract-duties',
       domain: 'compliance',
       severity: 'critical',
-      label: `${duties.count} contract duties overdue, the oldest since ${duties.oldestDue}`,
+      label: `${duties.count} contract duties overdue, the oldest due ${duties.oldestDue ? dayWords(duties.oldestDue, now) : '—'}`,
       detail: 'Do each one in the client’s portal, then confirm it on the scorecard.',
       stakes: null,
       ageDays: duties.items[0]?.daysOverdue ?? null,
@@ -820,8 +863,9 @@ async function pushContractDuties(prisma: PrismaClient, user: QueueUser, out: Ro
       key: `compliance:contract-duty:${d.key}:${d.periodStart}`,
       domain: 'compliance',
       severity: d.daysOverdue > 7 ? 'critical' : 'high',
-      label: `Overdue ${d.daysOverdue} day${d.daysOverdue === 1 ? '' : 's'}: ${d.label}`,
-      detail: `Due ${d.dueDate} under the client contract. Do it, then confirm it on the scorecard.`,
+      // The age chip says how overdue; the title names the duty and its day.
+      label: `${d.label} — due ${dayWords(d.dueDate, now)}`,
+      detail: 'Overdue under the client contract. Do it in the client’s portal, then confirm it on the scorecard.',
       stakes: null,
       ageDays: d.daysOverdue,
       linkUrl: '/compliance?tab=scorecard',
@@ -846,7 +890,9 @@ async function pushLegalDeadlines(
   now: Date,
 ): Promise<void> {
   const tenantId = tenantIdForWrite();
-  const day = (d: Date) => d.toISOString().slice(0, 10);
+  // A claim's response date is a calendar day (date-only); a leave notice's
+  // is counted from an instant, so it is read on the company's clock first.
+  const day = (d: Date, dateOnly = true) => dayWords(dateOnly ? d : ymd(d), now);
   const ageOf = (d: Date) => Math.max(0, Math.floor((now.getTime() - d.getTime()) / DAY_MS));
 
   if (can('manage:compliance')) {
@@ -913,7 +959,8 @@ async function pushLegalDeadlines(
           key: `claims:ui:${c.id}`,
           domain: 'compliance',
           severity: late || c.responseDueAt.getTime() <= now.getTime() + 2 * DAY_MS ? 'critical' : 'high',
-          label: `${late ? 'Overdue' : 'Respond by'} ${day(c.responseDueAt)}: ${c.associate.firstName} ${c.associate.lastName}'s ${c.state} unemployment claim`,
+          // Action + record; the day in words (F500 SH-4).
+          label: `Answer ${c.associate.firstName} ${c.associate.lastName}’s ${c.state} unemployment claim — ${late ? 'was due' : 'due'} ${day(c.responseDueAt)}`,
           detail: 'A late response loses the right to contest and can charge the claim to your account.',
           stakes: null,
           ageDays: null,
@@ -966,8 +1013,8 @@ async function pushLegalDeadlines(
           severity: due.getTime() < now.getTime() ? 'critical' : 'high',
           label:
             c.status === 'REQUESTED'
-              ? `Send ${who} the leave notice by ${day(due)}`
-              : `${who}'s medical certification is due ${day(due)}`,
+              ? `Send ${who} the leave notice by ${day(due, c.status !== 'REQUESTED')}`
+              : `${who}’s medical certification is due ${day(due)}`,
           detail:
             c.status === 'REQUESTED'
               ? 'The eligibility and rights notice is owed within 5 business days of the request.'
@@ -981,19 +1028,20 @@ async function pushLegalDeadlines(
   }
 
   if (can('manage:onboarding')) {
+    // Stuck by the one rule (lib/applicationFilters) — the list's "Stuck" chip.
     const idle = await prisma.application.count({
-      where: { tenantId, deletedAt: null, ...idleDraftsWhere(now) },
+      where: { AND: [{ tenantId, deletedAt: null }, stuckWhere(now)] },
     });
     if (idle > 0) {
       out.push({
         key: 'onboarding:idle-drafts',
         domain: 'hiring',
         severity: idle >= 5 ? 'high' : 'normal',
-        label: `${idle} onboarding draft${idle === 1 ? '' : 's'} idle more than 7 days`,
-        detail: 'Invited and not moving — a nudge now keeps the start date.',
+        label: `${idle} onboarding application${idle === 1 ? '' : 's'} stuck more than 7 days`,
+        detail: 'No task done and no invite in a week — a nudge now keeps the start date.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/onboarding?status=IDLE_DRAFTS',
+        linkUrl: '/onboarding?status=STUCK',
       });
     }
   }

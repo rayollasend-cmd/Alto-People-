@@ -4,6 +4,7 @@ import { Building2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { SITE_TYPES, SUPPORTED_TIMEZONES, type SiteType } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { fmtTimeZone } from '@/lib/format';
 import { Link } from 'react-router-dom';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { ORG_UNIT_TYPE_LABEL, SITE_TYPE_LABEL, createSite, listSites, updateSite, type SiteRow, type SiteUpdateInput } from '@/lib/orgApi';
@@ -82,7 +83,7 @@ export function SitesAdmin() {
       ),
     },
     { key: 'type', header: 'Type', accessor: (r) => SITE_TYPE_LABEL[r.type] ?? r.type, sortable: true, cardMeta: true, className: 'text-xs' },
-    { key: 'timezone', header: 'Time zone', accessor: (r) => r.timezone, className: 'text-xs text-silver' },
+    { key: 'timezone', header: 'Time zone', accessor: (r) => r.timezone, cell: (r) => fmtTimeZone(r.timezone), className: 'text-xs text-silver' },
     { key: 'state', header: 'State', accessor: (r) => r.state ?? '—', sortable: true, className: 'text-xs' },
     { key: 'region', header: 'Region', accessor: (r) => r.regionName ?? '—', sortable: true, cardMeta: true, className: 'text-xs' },
     ...(moduleOn('clientPortal') ? [{ key: 'client', header: clientNoun, accessor: (r: SiteRow) => r.clientName ?? '—', sortable: true, cardMeta: true, className: 'text-xs' } satisfies GridColumn<SiteRow>] : []),
@@ -234,7 +235,7 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
                 <Select {...p} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
                   {SUPPORTED_TIMEZONES.map((tz) => (
                     <option key={tz} value={tz}>
-                      {tz}
+                      {fmtTimeZone(tz)}
                     </option>
                   ))}
                 </Select>
@@ -314,7 +315,7 @@ function SiteReadOnly({ site, onClose }: { site: SiteRow; onClose: () => void })
           <dt className="text-ink-muted">Type</dt>
           <dd className="text-ink">{SITE_TYPE_LABEL[site.type] ?? site.type}</dd>
           <dt className="text-ink-muted">Time zone</dt>
-          <dd className="text-ink">{site.timezone}</dd>
+          <dd className="text-ink">{fmtTimeZone(site.timezone)}</dd>
           <dt className="text-ink-muted">Region</dt>
           <dd className="text-ink">{site.regionName ?? 'None'}</dd>
           <dt className="text-ink-muted">Cost center</dt>

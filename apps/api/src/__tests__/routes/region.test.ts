@@ -117,6 +117,14 @@ describe('the region command center', () => {
     expect(a.name).toBe('Walmart 218');
     expect(a.now).toMatchObject({ onFloor: 1, target: 3 });
     expect(a.now.short).toBeGreaterThan(0);
+    // F500 SH-4: "short" has two meanings, returned apart and named. The
+    // headline is the contract's (3 contracted − 1 on the floor = 2); the
+    // schedule's is 1 (the open slot: one scheduled and in, one unfilled).
+    expect(a.now).toMatchObject({ short: 2, shortBasis: 'contract', shortOfContract: 2, missingFromSchedule: 1 });
+    const b = res.body.stores.find((x: { name: string }) => x.name === 'Walmart 4411');
+    expect(b.now).toMatchObject({ short: 0, shortBasis: 'schedule', shortOfContract: null, missingFromSchedule: 0 });
+    // The totals count stores the same way the hero reads them.
+    expect(res.body.totals).toMatchObject({ shortNow: 1, belowContract: 1, missingFromSchedule: 1, target: 3 });
     expect(a.today).toMatchObject({ expected: 1, present: 1, open: 1 });
     expect(a.leads).toEqual({ onFloor: 0, total: 1 });
     expect(res.body.totals.onFloor).toBe(1);

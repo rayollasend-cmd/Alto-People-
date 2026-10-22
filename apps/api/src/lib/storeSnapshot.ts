@@ -34,7 +34,26 @@ export interface StoreSnapshot {
   clientId: string;
   clientName: string;
   timezone: string;
-  now: { onFloor: number; target: number | null; targetLabel: string | null; short: number };
+  /**
+   * TWO MEANINGS OF "SHORT", kept apart and named (F500 SH-4):
+   *   shortOfContract      the contract's people for this window minus who is
+   *                        on the floor (null when no contract target is set)
+   *   missingFromSchedule  people scheduled into a wave under way (or its open
+   *                        slots) who are not on the floor
+   * `short` is the one a headline shows — the contract when a target exists,
+   * else the schedule — and `shortBasis` says which, so a label can name it.
+   * The region page once said "0 / 8 · 8 short" (contract) and "Every store
+   * at or above its contract" (schedule) at once.
+   */
+  now: {
+    onFloor: number;
+    target: number | null;
+    targetLabel: string | null;
+    short: number;
+    shortBasis: 'contract' | 'schedule';
+    shortOfContract: number | null;
+    missingFromSchedule: number;
+  };
   today: { expected: number; present: number; open: number; missedSoFar: number };
   tomorrow: { expected: number; open: number; unconfirmed: number };
   reliability: {
@@ -133,10 +152,11 @@ export async function storeSnapshot(
   const expectedNow = liveWaves.filter((s) => s.status !== 'OPEN').length;
   const presentNow = liveWaves.filter((s) => s.assignedAssociateId && onFloorIds.has(s.assignedAssociateId)).length;
   const openNow = liveWaves.filter((s) => s.status === 'OPEN').length;
-  const shortNow = Math.max(0, expectedNow + openNow - presentNow);
+  // Short of the SCHEDULE: scheduled into a wave under way (or its open slots) and not on the floor.
+  const missingFromSchedule = Math.max(0, expectedNow + openNow - presentNow);
   const graceMs = 15 * 60_000;
   const shortPastGrace =
-    liveWaves.some((s) => s.startsAt.getTime() <= nowMs - graceMs) && shortNow > 0;
+    liveWaves.some((s) => s.startsAt.getTime() <= nowMs - graceMs) && missingFromSchedule > 0;
 
   // The 4-week grade on the same instruments as the store's own page.
   const ncns = new Set(
@@ -208,7 +228,21 @@ export async function storeSnapshot(
     clientId: location.clientId,
     clientName: location.clientName,
     timezone: location.timezone,
-    now: { onFloor: onFloor.length, target: target.target, targetLabel: target.label, short: shortNow },
+    now: {
+      onFloor: onFloor.length,
+      target: target.target,
+      targetLabel: target.label,
+      // Short of the CONTRACT: its people for this window minus who is on the floor.
+      ...(() => {
+        const shortOfContract = target.target !== null ? Math.max(0, target.target - onFloor.length) : null;
+        return {
+          short: shortOfContract ?? missingFromSchedule,
+          shortBasis: shortOfContract !== null ? ('contract' as const) : ('schedule' as const),
+          shortOfContract,
+          missingFromSchedule,
+        };
+      })(),
+    },
     today: {
       expected: todayShifts.filter((s) => s.status !== 'OPEN').length,
       present: presentNow,
@@ -229,7 +263,7 @@ export async function storeSnapshot(
       onFloor: leads.filter((l) => l.associateId && onFloorIds.has(l.associateId)).length,
       total: leads.length,
     },
-    alert: shortPastGrace ? `${shortNow} short on the floor right now` : null,
+    alert: shortPastGrace ? `${missingFromSchedule} scheduled ${missingFromSchedule === 1 ? 'person is' : 'people are'} not on the floor` : null,
     hours: hourRows,
     weeks,
   };

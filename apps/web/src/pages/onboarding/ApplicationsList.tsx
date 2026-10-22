@@ -106,6 +106,7 @@ function whereLine(a: { clientName: string | null; position: string | null }): s
 type StatusFilter =
   | 'ACTIVE'
   | 'TO_REVIEW'
+  | 'STUCK'
   | 'IDLE_DRAFTS'
   | 'ARCHIVED'
   | 'ALL'
@@ -116,8 +117,9 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   // Submitted + in review: everything waiting on HR (the Inbox's count).
   { value: 'TO_REVIEW', label: 'To review' },
   { value: 'DRAFT', label: 'Draft' },
-  // Drafts nobody has moved in 7 days — the Inbox's "drafts gone quiet" opens it.
-  { value: 'IDLE_DRAFTS', label: 'Idle drafts' },
+  // Nothing moved in 7 days — the one rule (apps/api/src/lib/applicationFilters.ts)
+  // the banner, the tile, the rows' "idle" and the Inbox's "Onboarding stuck" share.
+  { value: 'STUCK', label: 'Stuck' },
   { value: 'SUBMITTED', label: 'Submitted' },
   { value: 'IN_REVIEW', label: 'In review' },
   { value: 'ARCHIVED', label: 'Archived' },
@@ -186,6 +188,8 @@ function invitedLabel(iso: string, now: number): string {
 const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
   'ACTIVE',
   'TO_REVIEW',
+  'STUCK',
+  // The chip's older name: saved filters and old links still open it.
   'IDLE_DRAFTS',
   'ARCHIVED',
   'ALL',
@@ -219,11 +223,17 @@ const EMPTY_STATS: ApplicationStatsResponse = {
   bouncedSamples: [],
 };
 
+/**
+ * Stuck: the API's verdict by the one rule (in flight, unfinished, nothing
+ * moved — no task done, no invite — in 7 days). The fallback for an older
+ * API reads the same rule from the row's last activity, never the invite
+ * alone (that said "stuck 33d" beside "0d idle").
+ */
 function isStale(a: ApplicationSummary, now: number): boolean {
+  if (typeof a.stuck === 'boolean') return a.stuck;
   if (isTerminal(a)) return false;
   if (a.percentComplete === 100) return false;
-  const invitedMs = new Date(a.invitedAt).getTime();
-  return now - invitedMs > STALE_DAYS * ONE_DAY_MS;
+  return now - new Date(lastActivityIso(a)).getTime() > STALE_DAYS * ONE_DAY_MS;
 }
 
 function daysSince(iso: string, now: number): number {
@@ -312,9 +322,11 @@ export function ApplicationsList() {
     isStatusFilter,
   );
   const urlStatus = searchParams.get('status');
-  const status: StatusFilter = isStatusFilter(urlStatus)
+  const rawStatus: StatusFilter = isStatusFilter(urlStatus)
     ? urlStatus
     : storedStatus;
+  // "Idle drafts" became "Stuck" (one rule): an old link or saved choice lands on the chip.
+  const status: StatusFilter = rawStatus === 'IDLE_DRAFTS' ? 'STUCK' : rawStatus;
   const clientId = searchParams.get('clientId') ?? '';
   const urlQ = searchParams.get('q') ?? '';
   const [qInput, setQInput] = useState(urlQ);
@@ -996,8 +1008,8 @@ export function ApplicationsList() {
                   ? stats.total
                   : f.value === 'TO_REVIEW'
                     ? (stats.byStatus.SUBMITTED ?? 0) + (stats.byStatus.IN_REVIEW ?? 0)
-                  : f.value === 'IDLE_DRAFTS'
-                    ? (stats.idleDrafts ?? 0)
+                  : f.value === 'STUCK' || f.value === 'IDLE_DRAFTS'
+                    ? (stats.idleDrafts ?? stats.stale)
                   : f.value === 'ACTIVE'
                     ? (stats.byStatus.DRAFT ?? 0) +
                       (stats.byStatus.SUBMITTED ?? 0) +

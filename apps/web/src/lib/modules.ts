@@ -99,6 +99,7 @@ export type ModuleKey =
   | 'performance'
   | 'recruiting'
   | 'audit'
+  | 'approval-record'
   | 'benefits'
   | 'people'
   | 'org'
@@ -590,6 +591,8 @@ export const NAV_TERM: Partial<Record<ModuleKey, TermKey>> = {
   people: 'nav.people',
   scheduling: 'nav.scheduling',
   'time-attendance': 'nav.time',
+  // Finance's alias opens the same page, under the same name.
+  timesheets: 'nav.time',
   kiosk: 'nav.kiosk',
   'hr-cases': 'nav.hrCases',
   compliance: 'nav.compliance',
@@ -606,6 +609,7 @@ const NAV_LABEL: Partial<Record<ModuleKey, (term: (key: TermKey) => string) => s
   ops: (term) => `${term('site')} operations`,
   'portal-ops': (term) => `${term('site')} operations`,
   sites: (term) => term('sites'),
+  'supervisor-corps': (term) => `${term('site')} leads`,
 };
 
 /** The staffing nouns in a description, replaced by the tenant's words with the original casing. */
@@ -1345,7 +1349,9 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'supervisor-corps',
     path: '/scheduling/supervisors',
-    label: 'Supervisor corps',
+    // Plain words for "who leads each store" (was the jargon "Supervisor
+    // corps"); the tenant's word for a site is applied (NAV_LABEL).
+    label: 'Store leads',
     description:
       'Who leads which store and shift: place a shift or floor supervisor at a store and shift without opening Users & access.',
     requires: 'manage:org',
@@ -1771,7 +1777,9 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'timesheets',
     path: '/timesheets',
-    label: 'Timesheets',
+    // The page it opens is Time & attendance, so that is its name in
+    // Finance's nav too ("Timesheets" meant three things — F500 G2).
+    label: 'Time & attendance',
     // Finance's name for the same full T&A surface (approve hours, work
     // the corrections window, pull the Fieldglass hours sheet). Rendered
     // only in the FINANCE_ACCOUNTANT nav — see visibleModules.
@@ -1783,7 +1791,9 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'fieldglass',
     path: '/time-attendance/timesheets',
-    label: 'Fieldglass hours',
+    // The client's weekly hours, named for what they are; the vendor is
+    // in the page's subtitle, not its name.
+    label: 'Client hours',
     // The weekly sheet that gets Alto paid — its own entry, not a button
     // inside Time & attendance. Store-bound roles see the statuses; the
     // money is finance's (the API nulls it for them).
@@ -1907,6 +1917,19 @@ export const MODULES: ModuleNav[] = [
     group: 'compliance',
   },
   {
+    // A page of the Settings & trust rail with a path under /audit: its own
+    // entry so the sidebar lights Settings & trust here, not "Audit log"
+    // (two items looked active on /audit/approvals — F500 G4).
+    key: 'approval-record',
+    path: '/audit/approvals',
+    label: 'Approval record',
+    description:
+      'Every change that went to a second person: who asked, who decided, the before and after, and the reason.',
+    requires: 'view:audit',
+    requiresAny: ['manage:org', 'process:payroll'],
+    group: 'platform',
+  },
+  {
     key: 'users',
     path: '/admin/users',
     label: 'Users & access',
@@ -2005,7 +2028,10 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'communications',
     path: '/communications',
-    label: 'Broadcasts',
+    // "Notifications", not "Broadcasts": an associate's own notification
+    // inbox sat under My records as "Broadcasts" (F500 G4). "Inbox" stays
+    // the decisions row.
+    label: 'Notifications',
     description:
       'SMS, push notifications, broadcast messaging, and templates.',
     requires: 'view:communications',
@@ -2229,7 +2255,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
     label: 'Settings & trust',
     hub: 'settings',
     flat: true,
-    children: ['tenant-profile', 'employers', 'document-retention', 'org-units', 'sites', 'branding', 'users', 'sign-in', 'access-certifications', 'workflows', 'integrations', 'billing', 'trust-center', 'compliance-evidence', 'reliability', 'product-analytics', 'design-system'],
+    children: ['tenant-profile', 'employers', 'document-retention', 'org-units', 'sites', 'branding', 'users', 'sign-in', 'access-certifications', 'approval-record', 'workflows', 'integrations', 'billing', 'trust-center', 'compliance-evidence', 'reliability', 'product-analytics', 'design-system'],
   },
   // The associate's doors — the same modules, in the first person.
   'my-schedule': { key: 'my-schedule', label: 'My schedule', children: ['scheduling', 'marketplace', 'time-off', 'time-attendance'] },
@@ -2291,14 +2317,20 @@ export interface NavShape {
 
 /**
  * Arrange the visible modules into the role's rail. The client portal keeps
- * its flat store menu — a partner surface with its own grammar.
+ * its flat store menu — a partner surface with its own grammar. Its home
+ * page IS "My store" (or the region's "Command center"), so those are not
+ * listed a second time under Home (F500 G5: Home and My store, one page).
  */
+export const PORTAL_HOME_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(['portal', 'region']);
+
 export function navShapeFor(
   visible: ModuleNav[],
   role: string | undefined,
   term: (key: TermKey) => string,
 ): NavShape {
-  if (role === 'CLIENT_PORTAL') return { rows: visible, doors: [], dropped: [] };
+  if (role === 'CLIENT_PORTAL') {
+    return { rows: visible.filter((m) => !PORTAL_HOME_KEYS.has(m.key)), doors: [], dropped: visible.filter((m) => PORTAL_HOME_KEYS.has(m.key)) };
+  }
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const used = new Set<ModuleKey>();
   const rows: ModuleNav[] = [];

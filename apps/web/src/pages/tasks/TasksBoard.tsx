@@ -5,8 +5,8 @@ import { AlertTriangle, Bot, Cpu, ListTodo, Plus, User } from 'lucide-react';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type WorkTaskStatus, type WorkTaskView } from '@alto-people/shared';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useOrgSites } from '@/lib/useOrgSites';
-import { listTasks, getTaskSummary } from '@/lib/tasksApi';
-import { fmtDateTz, fmtShiftRangeTz } from '@/lib/format';
+import { listTasks, getTaskDay, getTaskSummary } from '@/lib/tasksApi';
+import { fmtDateTz, fmtShiftRangeTz, ymdLocal } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Badge, Button, MetricCard, SegmentedControl, Select } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -54,7 +54,6 @@ export function HolderIcon({ type, className }: { type: 'PERSON' | 'AGENT' | 'RO
   return <Icon className={cn('h-3.5 w-3.5 shrink-0', className)} aria-hidden="true" />;
 }
 
-const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 
 export function TasksBoard() {
   const { can } = useAuth();
@@ -65,15 +64,20 @@ export function TasksBoard() {
   const openId = params.get('task');
   const [locationId, setLocationId] = useState('');
   const [status, setStatus] = useState<StatusFilter>('live');
-  const [day, setDay] = useState(() => dayKey(new Date()));
+  // The site's day (F500 SH-4): "today" on the floor's own clock, from the
+  // API (apps/api/src/lib/siteDay.ts) — never the browser's UTC date, which
+  // after 5 PM Pacific was already tomorrow. A day the person picks wins.
+  const [pickedDay, setDay] = useState<string | null>(null);
+  const todayQuery = useQuery({ queryKey: ['tasks', 'day', locationId], queryFn: () => getTaskDay(locationId || null), staleTime: 60_000 });
+  const day = pickedDay ?? todayQuery.data?.day ?? (todayQuery.isError ? ymdLocal() : null);
+  const dayZone = todayQuery.data?.timezone ?? null;
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
 
-  const from = `${day}T00:00:00.000Z`;
-  const to = `${day}T23:59:59.999Z`;
   const tasksQuery = useQuery({
-    queryKey: ['tasks', 'list', { locationId, from, to }],
-    queryFn: () => listTasks({ locationId: locationId || null, from, to }),
+    queryKey: ['tasks', 'list', { locationId, day }],
+    queryFn: () => listTasks({ locationId: locationId || null, day }),
+    enabled: day !== null,
     refetchInterval: 30_000,
   });
   const summaryQuery = useQuery({
@@ -147,7 +151,8 @@ export function TasksBoard() {
           <input
             type="date"
             aria-label="Day"
-            value={day}
+            title={dayZone ? `The day on the ${dayZone.replace(/^.*\//, '').replace(/_/g, ' ')} clock` : undefined}
+            value={day ?? ''}
             onChange={(e) => e.target.value && setDay(e.target.value)}
             className="h-8 coarse:h-11 rounded-md border border-line bg-surface px-2 text-xs coarse:text-base text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
@@ -259,7 +264,7 @@ export function TasksBoard() {
         <NewTaskDialog
           sites={sites ?? []}
           defaultLocationId={locationId}
-          day={day}
+          day={day ?? ymdLocal()}
           onClose={() => setCreating(false)}
           onCreated={(id) => {
             setCreating(false);

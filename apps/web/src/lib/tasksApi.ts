@@ -5,6 +5,8 @@ import { apiFetch } from './api';
 
 export interface TaskListFilter {
   locationId?: string | null;
+  /** A calendar day (YYYY-MM-DD) on the site's clock, else the company's — the API reads its bounds (apps/api/src/lib/siteDay.ts). */
+  day?: string | null;
   from?: string | null;
   to?: string | null;
   status?: string | null;
@@ -17,7 +19,10 @@ const qs = (params: Record<string, string | null | undefined>) => {
   return s ? `?${s}` : '';
 };
 
-export const listTasks = (f: TaskListFilter) => apiFetch<{ tasks: WorkTaskView[] }>(`/tasks${qs({ locationId: f.locationId, from: f.from, to: f.to, status: f.status })}`);
+export const listTasks = (f: TaskListFilter) =>
+  apiFetch<{ tasks: WorkTaskView[]; day?: string; timezone?: string }>(`/tasks${qs({ locationId: f.locationId, day: f.day, from: f.from, to: f.to, status: f.status })}`);
+/** Today on the site's clock (else the company's), and the zone it is read in. */
+export const getTaskDay = (locationId?: string | null) => apiFetch<{ day: string; timezone: string }>(`/tasks/day${qs({ locationId })}`);
 export const getTaskSummary = (locationId?: string | null) => apiFetch<WorkTaskSummary>(`/tasks/summary${qs({ locationId })}`);
 export const getTask = (id: string) => apiFetch<WorkTaskDetailView>(`/tasks/${id}`);
 export const createTask = (body: WorkTaskCreate) => apiFetch<WorkTaskDetailView & { warnings?: string[] }>('/tasks', { method: 'POST', body });

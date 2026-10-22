@@ -113,7 +113,7 @@ describe('Fieldglass setup', () => {
     expect(screen.getByRole('radio', { name: 'To do (2)' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('button', { name: /Jay Patel/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Cy Vega/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Fieldglass timesheets/ })).toHaveAttribute('href', '/time-attendance/timesheets');
+    expect(screen.getByRole('link', { name: /Client hours/ })).toHaveAttribute('href', '/time-attendance/timesheets');
   });
 
   it('everyone in Fieldglass: their latest timesheet, their history — and a missing Worker ID added in place', async () => {

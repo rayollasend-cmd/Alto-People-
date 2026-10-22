@@ -9,13 +9,12 @@ import type {
 } from '@alto-people/shared';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { AuthCardTitle, AuthHero } from '@/components/ui/AuthHeading';
+import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Logo } from '@/components/Logo';
 import { fmtDateTime } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 
@@ -156,162 +155,156 @@ export function AcceptInvite() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt={t('common.logoAlt')} />
-          <AuthHero title="Alto People" eyebrow={t('ai.tagline')} size="lg" />
-        </div>
+    <AuthShell>
 
-        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3">
-          {loading && (
-            <div>
-              <Skeleton className="h-7 w-2/3 mb-3" />
-              <Skeleton className="h-4 w-full mb-2" />
-              <Skeleton className="h-4 w-1/2 mb-6" />
-              <Skeleton className="h-10 w-full mb-3" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-          )}
+      <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3">
+        {loading && (
+          <div>
+            <Skeleton className="h-7 w-2/3 mb-3" />
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-4 w-1/2 mb-6" />
+            <Skeleton className="h-10 w-full mb-3" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        )}
 
-          {!loading && error && !invite && (
-            <>
-              <AuthCardTitle className="mb-3">{t('ai.problemTitle')}</AuthCardTitle>
-              <ErrorBanner className="mb-4">{error}</ErrorBanner>
+        {!loading && error && !invite && (
+          <>
+            <AuthCardTitle className="mb-3">{t('ai.problemTitle')}</AuthCardTitle>
+            <ErrorBanner className="mb-4">{error}</ErrorBanner>
 
-              {renewSent ? (
-                <p className="text-silver text-sm mb-4">
-                  {t('ai.renewSent')}
+            {renewSent ? (
+              <p className="text-silver text-sm mb-4">
+                {t('ai.renewSent')}
+              </p>
+            ) : (
+              <form onSubmit={handleRenew} noValidate className="mb-4">
+                <p className="text-silver text-sm mb-3">
+                  {t('ai.renewIntro')}
                 </p>
-              ) : (
-                <form onSubmit={handleRenew} noValidate className="mb-4">
-                  <p className="text-silver text-sm mb-3">
-                    {t('ai.renewIntro')}
-                  </p>
-                  <Field label={t('ai.emailLabel')} required className="mb-3">
-                    {(p) => (
-                      <Input
-                        type="email"
-                        autoComplete="email"
-                        inputMode="email"
-                        value={renewEmail}
-                        onChange={(e) => setRenewEmail(e.target.value)}
-                        {...p}
-                      />
-                    )}
-                  </Field>
-                  <Button
-                    type="submit"
-                    loading={renewSubmitting}
-                    disabled={renewSubmitting || !renewEmail.trim()}
-                    className="w-full"
-                  >
-                    {renewSubmitting ? t('ai.sending') : t('ai.sendNewLink')}
-                  </Button>
-                </form>
-              )}
+                <Field label={t('ai.emailLabel')} required className="mb-3">
+                  {(p) => (
+                    <Input
+                      type="email"
+                      autoComplete="email"
+                      inputMode="email"
+                      value={renewEmail}
+                      onChange={(e) => setRenewEmail(e.target.value)}
+                      {...p}
+                    />
+                  )}
+                </Field>
+                <Button
+                  type="submit"
+                  loading={renewSubmitting}
+                  disabled={renewSubmitting || !renewEmail.trim()}
+                  className="w-full"
+                >
+                  {renewSubmitting ? t('ai.sending') : t('ai.sendNewLink')}
+                </Button>
+              </form>
+            )}
 
-              {/* Equal-weight escape hatch, not a toolbar ghost: everyone who
-                  already accepted the invite and clicks the email link again
-                  lands in this state, and for them SIGN IN is the right
-                  action — renewal would demote their account back to
-                  INVITED. Reported 2026-08-14: the old bottom-left ghost
-                  button was "almost hidden". */}
-              <div className="flex items-center gap-3 mb-4" aria-hidden="true">
-                <div className="h-px flex-1 bg-navy-secondary" />
-                <span className="text-2xs uppercase tracking-widest text-silver/60">
-                  {t('ai.or')}
-                </span>
-                <div className="h-px flex-1 bg-navy-secondary" />
-              </div>
+            {/* Equal-weight escape hatch, not a toolbar ghost: everyone who
+                already accepted the invite and clicks the email link again
+                lands in this state, and for them SIGN IN is the right
+                action — renewal would demote their account back to
+                INVITED. Reported 2026-08-14: the old bottom-left ghost
+                button was "almost hidden". */}
+            <div className="flex items-center gap-3 mb-4" aria-hidden="true">
+              <div className="h-px flex-1 bg-navy-secondary" />
+              <span className="text-2xs uppercase tracking-widest text-silver/60">
+                {t('ai.or')}
+              </span>
+              <div className="h-px flex-1 bg-navy-secondary" />
+            </div>
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => navigate('/login')}
+            >
+              {t('ai.goToSignIn')}
+            </Button>
+          </>
+        )}
+
+        {!loading && invite && (
+          <form onSubmit={handleSubmit} noValidate>
+            <AuthCardTitle>
+              {invite.firstName
+                ? t('ai.welcomeName', { name: invite.firstName })
+                : t('ai.welcome')}
+            </AuthCardTitle>
+            <p className="text-silver text-sm mb-1">
+              {t('ai.setPasswordIntro')}
+            </p>
+            <p className="text-silver/70 text-xs mb-6">{invite.email}</p>
+
+            <Field
+              label={t('ai.passwordLabel')}
+              required
+              hint={
+                strength === 'strong'
+                  ? t('ai.strengthStrong')
+                  : strength === 'ok'
+                    ? t('ai.strengthOk')
+                    : t('ai.minChars')
+              }
+              className="mb-2"
+            >
+              {(p) => (
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    minLength={12}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-9 pr-10"
+                    {...p}
+                  />
+                  <ShowPasswordToggle
+                    shown={showPassword}
+                    onToggle={() => setShowPassword((v) => !v)}
+                  />
+                </div>
+              )}
+            </Field>
+
+            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+            {alreadyActive && (
+              // The banner above tells them to sign in — give them the
+              // button to actually do it, at the same weight as the
+              // primary action it replaces.
               <Button
+                type="button"
                 variant="secondary"
-                className="w-full"
+                className="w-full mt-3"
                 onClick={() => navigate('/login')}
               >
                 {t('ai.goToSignIn')}
               </Button>
-            </>
-          )}
+            )}
 
-          {!loading && invite && (
-            <form onSubmit={handleSubmit} noValidate>
-              <AuthCardTitle>
-                {invite.firstName
-                  ? t('ai.welcomeName', { name: invite.firstName })
-                  : t('ai.welcome')}
-              </AuthCardTitle>
-              <p className="text-silver text-sm mb-1">
-                {t('ai.setPasswordIntro')}
-              </p>
-              <p className="text-silver/70 text-xs mb-6">{invite.email}</p>
-
-              <Field
-                label={t('ai.passwordLabel')}
-                required
-                hint={
-                  strength === 'strong'
-                    ? t('ai.strengthStrong')
-                    : strength === 'ok'
-                      ? t('ai.strengthOk')
-                      : t('ai.minChars')
-                }
-                className="mb-2"
-              >
-                {(p) => (
-                  <div className="relative">
-                    <Lock
-                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      minLength={12}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-9 pr-10"
-                      {...p}
-                    />
-                    <ShowPasswordToggle
-                      shown={showPassword}
-                      onToggle={() => setShowPassword((v) => !v)}
-                    />
-                  </div>
-                )}
-              </Field>
-
-              {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
-              {alreadyActive && (
-                // The banner above tells them to sign in — give them the
-                // button to actually do it, at the same weight as the
-                // primary action it replaces.
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="w-full mt-3"
-                  onClick={() => navigate('/login')}
-                >
-                  {t('ai.goToSignIn')}
-                </Button>
-              )}
-
-              <Button
-                type="submit"
-                size="lg"
-                loading={submitting}
-                disabled={!passwordOk}
-                className="w-full mt-4"
-              >
-                {submitting ? t('ai.settingUp') : t('ai.setPasswordCta')}
-              </Button>
-              <p className="text-2xs text-silver/70 text-center mt-4">
-                {t('ai.linkExpires', { when: fmtDateTime(invite.expiresAt) })}
-              </p>
-            </form>
-          )}
-        </div>
+            <Button
+              type="submit"
+              size="lg"
+              loading={submitting}
+              disabled={!passwordOk}
+              className="w-full mt-4"
+            >
+              {submitting ? t('ai.settingUp') : t('ai.setPasswordCta')}
+            </Button>
+            <p className="text-2xs text-silver/70 text-center mt-4">
+              {t('ai.linkExpires', { when: fmtDateTime(invite.expiresAt) })}
+            </p>
+          </form>
+        )}
       </div>
-    </div>
+    </AuthShell>
   );
 }

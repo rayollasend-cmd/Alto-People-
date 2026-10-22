@@ -249,17 +249,59 @@ export type EvidenceRow = z.infer<typeof EvidenceRowSchema>;
 
 export type ControlState = 'current' | 'stale' | 'failing' | 'missing' | 'awaiting-signoff';
 
+/**
+ * ONE STATUS VOCABULARY FOR A CONTROL (F500 SH-4). The Trust Center, its
+ * SOC 2 block, the public trust page and Compliance evidence all say a
+ * control is one of four things, from this one rule:
+ *
+ *   NO_EVIDENCE    nothing collected, or the latest is past its window
+ *   FAILING        the latest evidence failed, or warned on a control no
+ *                  person signs off (the requirement isn't met)
+ *   NEEDS_SIGNOFF  the evidence is in, and a named person must sign it off
+ *   PASSING        current, passed (or attested by its sign-off), signed
+ *                  off where that is required
+ *
+ * Before, the Trust Center counted "3 / 16 passing" (the latest row's PASS)
+ * while Compliance evidence counted "8 of 16 current" (a WARN read as
+ * current), and the same row was "Attention" on one and "Current" on the other.
+ */
+export const CONTROL_STATUSES = ['PASSING', 'NEEDS_SIGNOFF', 'FAILING', 'NO_EVIDENCE'] as const;
+export type ControlStatus = (typeof CONTROL_STATUSES)[number];
+
+export const CONTROL_STATUS_LABELS: Record<ControlStatus, string> = {
+  PASSING: 'Passing',
+  NEEDS_SIGNOFF: 'Needs sign-off',
+  FAILING: 'Failing',
+  NO_EVIDENCE: 'No evidence',
+};
+
+export function controlStatusOf(c: {
+  state: ControlState;
+  needsSignoff: boolean;
+  latest: { status: EvidenceStatus; signoffs: readonly unknown[] } | null;
+}): ControlStatus {
+  if (!c.latest || c.state === 'missing' || c.state === 'stale') return 'NO_EVIDENCE';
+  if (c.latest.status === 'FAIL') return 'FAILING';
+  const signed = c.latest.signoffs.length > 0;
+  if (c.needsSignoff) return signed ? 'PASSING' : 'NEEDS_SIGNOFF';
+  return c.latest.status === 'PASS' ? 'PASSING' : 'FAILING';
+}
+
 export interface ComplianceControlView extends ComplianceControl {
   latest: EvidenceRow | null;
   /** Days since the latest evidence was collected, or null when there is none. */
   ageDays: number | null;
   state: ControlState;
+  /** The one status every page shows (controlStatusOf). */
+  status: ControlStatus;
 }
 
 export interface ComplianceEvidenceResponse {
   generatedAt: string;
   controls: ComplianceControlView[];
   counts: Record<ControlState, number>;
+  /** Controls by the one status — the numbers the Trust Center shows too. */
+  statusCounts: Record<ControlStatus, number>;
 }
 
 export const EvidenceSignoffInputSchema = /* @__PURE__ */ (() => z.object({

@@ -14,6 +14,7 @@ import { fmtDateTime } from '@/lib/format';
 import { Field, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -42,11 +43,9 @@ export function EsignTask() {
     enabled: !!applicationId,
   });
   const agreements: EsignAgreement[] | null = agreementsQuery.data?.agreements ?? null;
-  const topError = agreementsQuery.error
-    ? agreementsQuery.error instanceof ApiError
-      ? agreementsQuery.error.message
-      : t('ob.esign.loadFailed')
-    : null;
+  // A failed load says so in plain words with a way to try again — never
+  // the server's "Request failed (500)" above skeletons that keep pulsing.
+  const loadFailed = agreementsQuery.isError;
   const { refetch } = agreementsQuery;
   const refresh = useCallback(async (): Promise<EsignAgreement[] | null> => {
     const r = await refetch();
@@ -72,13 +71,20 @@ export function EsignTask() {
     <TaskShell title={t('ob.esign.title')} backTo={backTo}>
       <p className="text-silver text-sm mb-5">{t('ob.esign.intro')}</p>
 
-      {topError && (
-        <p role="alert" className="text-sm text-alert mb-4">
-          {topError}
-        </p>
+      {loadFailed && (
+        <ErrorBanner
+          className="mb-4"
+          action={
+            <Button size="xs" variant="secondary" loading={agreementsQuery.isFetching} onClick={() => void agreementsQuery.refetch()}>
+              {t('common.retry')}
+            </Button>
+          }
+        >
+          {t('ob.esign.loadFailed')}
+        </ErrorBanner>
       )}
 
-      {!agreements && (
+      {!agreements && !loadFailed && (
         <div className="space-y-4">
           <Skeleton className="h-8 w-1/2" />
           <SkeletonRows count={2} rowHeight="h-40" />

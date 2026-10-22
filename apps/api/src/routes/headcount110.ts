@@ -4,7 +4,8 @@ import type { HeadcountOverview, HeadcountRow } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
-import { activeBreakdown, EMPLOYED_WHERE, placements } from '../lib/activeDefinition.js';
+import { activeBreakdown } from '../lib/activeDefinition.js';
+import { countStandings, peopleStandings, turnoverBetween } from '../lib/peopleStatus.js';
 import { endOfWeekUTC, startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { associatesWithoutRate } from '../lib/rateCards.js';
 import { internalSites, scopeAssociates } from '../lib/scope.js';
@@ -39,9 +40,10 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
   // — and, for a site/region-bound caller, only the people in reach.
   const T = { tenantId };
   const ids = reach?.ids;
-  const P: Prisma.AssociateWhereInput = ids ? { id: { in: ids } } : {};
   const active = await activeBreakdown(now, prisma, undefined, { tenantId, ...(ids ? { associateIds: ids } : {}) });
-  const placed = await placements({ tenantId, ...(ids ? { associateIds: ids } : {}) }, prisma);
+  // Where everyone stands, by the one rule (lib/peopleStatus): the same
+  // counts the People directory's tiles and Analytics show.
+  const standing = countStandings(await peopleStandings({ tenantId, ...(ids ? { associateIds: ids } : {}) }, now, prisma));
   const withoutRate = await associatesWithoutRate(prisma, now, { tenantId, ...(ids ? { associateIds: ids } : {}) });
   const noRateByClient = new Map<string, number>();
   const noRateByLocation = new Map<string, number>();
@@ -52,7 +54,7 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
   const weekStart = startOfWeekUTC(now);
   const weekEnd = endOfWeekUTC(now);
 
-  const [scheduledRows, clients, locations, departments, assocRows, lastRun, snapshot, counts] = await Promise.all([
+  const [scheduledRows, clients, locations, departments, assocRows, lastRun, snapshot] = await Promise.all([
     prisma.shift.findMany({
       where: { ...T, status: 'ASSIGNED', assignedAssociateId: ids ? { in: ids } : { not: null }, startsAt: { gte: weekStart, lt: weekEnd } },
       select: { assignedAssociateId: true, clientId: true, locationId: true },
@@ -72,14 +74,7 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
       select: { periodStart: true, periodEnd: true, _count: { select: { items: true } } },
     }),
     reach ? Promise.resolve(null) : prisma.reconciliationSnapshot.findFirst({ where: T, orderBy: [{ periodEnd: 'desc' }, { ranAt: 'desc' }] }),
-    Promise.all([
-      prisma.associate.count({ where: { ...T, ...P, ...EMPLOYED_WHERE, applications: { some: { status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] }, deletedAt: null } }, assignments: { none: { endedAt: null } } } }),
-      prisma.associate.count({ where: { ...T, ...P, deletedAt: null, separatedAt: { not: null } } }),
-      prisma.associate.count({ where: { ...T, ...P, deletedAt: null, separatedAt: null, deactivatedAt: { not: null } } }),
-      prisma.associate.count({ where: { ...T, ...P, ...EMPLOYED_WHERE } }),
-    ]),
   ]);
-  const [onboarding, separated, deactivated, employed] = counts;
 
   const scheduledIds = new Set<string>();
   const scheduledByClient = new Map<string, Set<string>>();
@@ -115,17 +110,22 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
     byType.set(a.employmentType, (byType.get(a.employmentType) ?? 0) + 1);
   }
 
-  const placedNoRecentWork = [...placed.keys()].filter((id) => !active.ids.has(id)).length;
-  const employedNotPlaced = Math.max(0, employed - placed.size - onboarding);
-
   return {
     asOf: now.toISOString(),
     windowDays: active.windowDays,
-    active: active.total,
+    active: standing.ACTIVE,
+    onTheBooks: standing.onTheBooks,
+    statusCounts: standing,
     scheduledThisWeek: scheduledIds.size,
     onPayrollLastPeriod: lastRun ? { count: lastRun._count.items, periodStart: lastRun.periodStart.toISOString().slice(0, 10), periodEnd: lastRun.periodEnd.toISOString().slice(0, 10) } : null,
     inHousing: null,
-    notActive: { employedNotPlaced, placedNoRecentWork, separated, deactivated, onboarding },
+    notActive: {
+      employedNotPlaced: standing.NOT_PLACED,
+      placedNoRecentWork: standing.PLACED_NOT_ACTIVE,
+      separated: standing.SEPARATED,
+      deactivated: standing.DEACTIVATED,
+      onboarding: standing.ONBOARDING,
+    },
     byClient,
     byStore,
     byDepartment: [...byDept.entries()].map(([id, n]) => ({ id, name: id ? (deptName.get(id) ?? '(unknown)') : 'Unassigned', active: n })).sort((a, b) => b.active - a.active),
@@ -181,36 +181,26 @@ const TurnoverWindowSchema = z.object({
 
 headcount110Router.get('/headcount/turnover', VIEW, async (req, res) => {
   const { days } = TurnoverWindowSchema.parse(req.query);
-  const since = new Date(Date.now() - days * 86_400_000);
-  // Brief 2-1: hires, separations and the active base are this tenant's own.
+  const now = new Date();
+  const since = new Date(now.getTime() - days * 86_400_000);
+  // Brief 2-1: hires, separations and the base are this tenant's own — and
+  // the caller's reach. One reading and one formula (lib/peopleStatus), the
+  // same People analytics uses: hires by hire date, separations over the
+  // average on the books, annualized.
   const tenantId = tenantIdForWrite();
   const reach = await reachOf(req.user!, tenantId);
   const ids = reach?.ids;
-  const [hires, separations, active] = await Promise.all([
-    prisma.application.findMany({
-      take: 500,
-      where: { tenantId, deletedAt: null, startDate: { gte: since }, ...(ids ? { associateId: { in: ids } } : {}) },
-      select: { associateId: true, startDate: true },
-      orderBy: { startDate: 'asc' },
-    }),
-    // Brief 1A-2: a termination is a separation, not a deleted record.
-    prisma.associate.count({ where: { tenantId, separatedAt: { gte: since }, ...(ids ? { id: { in: ids } } : {}) } }),
-    activeBreakdown(new Date(), prisma, undefined, { tenantId, ...(ids ? { associateIds: ids } : {}) }),
-  ]);
-  const hiresDeduped = new Map<string, Date>();
-  for (const h of hires) {
-    if (!h.startDate) continue;
-    const existing = hiresDeduped.get(h.associateId);
-    if (!existing || h.startDate < existing) hiresDeduped.set(h.associateId, h.startDate);
-  }
-  const avgActive = active.total + separations / 2;
-  const annualizedTurnover = avgActive > 0 ? (separations / avgActive) * (365 / days) : 0;
+  const standings = await peopleStandings({ tenantId, ...(ids ? { associateIds: ids } : {}) }, now, prisma);
+  const counts = countStandings(standings);
+  const t = turnoverBetween(standings, since, now);
   res.json({
     days,
-    hires: hiresDeduped.size,
-    terminations: separations,
-    netChange: hiresDeduped.size - separations,
-    annualizedTurnoverRate: Math.round(annualizedTurnover * 1000) / 10, // % with 1 decimal
-    currentActive: active.total,
+    hires: t.hires,
+    terminations: t.separations,
+    netChange: t.hires - t.separations,
+    annualizedTurnoverRate: t.annualizedPct ?? 0, // % with 1 decimal
+    averageOnTheBooks: t.averageOnTheBooks,
+    currentActive: counts.ACTIVE,
+    onTheBooks: counts.onTheBooks,
   });
 });

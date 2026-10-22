@@ -51,7 +51,18 @@ describe('overdue contract duties', () => {
     const duties = home.filter((d) => d.key.startsWith('compliance:contract-duty:'));
     expect(duties).toHaveLength(3);
     expect(duties.every((d) => d.linkUrl === '/compliance?tab=scorecard')).toBe(true);
-    expect(duties.find((d) => d.key.includes('WORKERS_COMP'))!.label).toBe('Overdue 264 days: Workers Comp insurance current');
+    // The title names the duty and its day in words; the age rides in the chip (F500 SH-4).
+    const wc = duties.find((d) => d.key.includes('WORKERS_COMP'))!;
+    expect(wc.label).toBe('Workers Comp insurance current — due Sat, Jan 31');
+    expect(wc.ageDays).toBe(264);
+
+    // The compliance desk's, not every wide-capability home: the recruiter,
+    // ops manager and workforce manager queues carry none (F500 SH-4).
+    for (const role of ['INTERNAL_RECRUITER', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'MANAGER'] as const) {
+      const { user: other } = await createUser({ role });
+      const q = await job(() => computeRoleDecisions(prisma, { id: other.id, role, clientId: null, associateId: null }, NOW));
+      expect(q.filter((d) => d.key.startsWith('compliance:contract-dut')), role).toHaveLength(0);
+    }
   });
 
   it('company-wide duties are not a store-bound or client-bound account’s', async () => {
@@ -73,25 +84,40 @@ describe('overdue contract duties', () => {
   });
 });
 
-describe('drafts gone quiet open the "Idle drafts" filter', () => {
-  it('the Inbox row links the filter, and the filter lists exactly what it counts', async () => {
+describe('stuck onboarding opens the "Stuck" filter (one rule, F500 SH-4)', () => {
+  it('the Inbox row, the chip, the tile, the banner and the rows are one count', async () => {
     const client = await createClient();
     const quiet = await createAssociate({ firstName: 'Quiet', lastName: 'Draft' });
     const fresh = await createAssociate({ firstName: 'Fresh', lastName: 'Draft' });
+    const moving = await createAssociate({ firstName: 'Moving', lastName: 'Draft' });
     const q = await createApplicationWithChecklist({ associateId: quiet.id, clientId: client.id });
     await createApplicationWithChecklist({ associateId: fresh.id, clientId: client.id });
-    await prisma.$executeRaw`UPDATE "Application" SET "updatedAt" = now() - interval '9 days' WHERE id = ${q.id}::uuid`;
+    const m = await createApplicationWithChecklist({ associateId: moving.id, clientId: client.id });
+    // Quiet: invited 33 days ago, nothing done. Moving: invited 33 days ago,
+    // but a task done yesterday — not stuck ("1d idle"), whatever its invite.
+    await prisma.$executeRaw`UPDATE "Application" SET "invitedAt" = now() - interval '33 days' WHERE id IN (${q.id}::uuid, ${m.id}::uuid)`;
+    const task = await prisma.onboardingTask.findFirstOrThrow({ where: { checklist: { applicationId: m.id } } });
+    await prisma.onboardingTask.update({ where: { id: task.id }, data: { status: 'DONE', completedAt: new Date(Date.now() - 86_400_000) } });
 
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(agent(), user.email);
     const inbox = await a.get('/me/inbox');
     const src = (inbox.body.sources as Array<{ key: string; count: number; path: string }>).find((s) => s.key === 'onboarding-stuck')!;
-    expect(src).toMatchObject({ count: 1, path: '/onboarding?status=IDLE_DRAFTS' });
+    expect(src).toMatchObject({ count: 1, path: '/onboarding?status=STUCK' });
 
-    const list = await a.get('/onboarding/applications?status=IDLE_DRAFTS');
+    const list = await a.get('/onboarding/applications?status=STUCK');
     expect(list.status).toBe(200);
     expect(list.body.applications.map((x: { id: string }) => x.id)).toEqual([q.id]);
-    expect((await a.get('/onboarding/applications/stats')).body.idleDrafts).toBe(1);
+    // The older name still opens the same list.
+    expect((await a.get('/onboarding/applications?status=IDLE_DRAFTS')).body.applications.map((x: { id: string }) => x.id)).toEqual([q.id]);
+    const stats = (await a.get('/onboarding/applications/stats')).body;
+    expect(stats.idleDrafts).toBe(1);
+    expect(stats.stale).toBe(1);
+    expect(stats.staleSamples.map((x: { id: string }) => x.id)).toEqual([q.id]);
+    // Each row carries the verdict; the moving one is not stuck though invited long ago.
+    const all = (await a.get('/onboarding/applications?status=ACTIVE')).body.applications as Array<{ id: string; stuck: boolean }>;
+    expect(all.find((x) => x.id === q.id)!.stuck).toBe(true);
+    expect(all.find((x) => x.id === m.id)!.stuck).toBe(false);
   });
 });
 

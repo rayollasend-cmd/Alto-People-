@@ -1,10 +1,13 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   COMPLIANCE_CONTROLS,
+  CONTROL_STATUSES,
   complianceControl,
+  controlStatusOf,
   type ComplianceControlView,
   type ComplianceEvidenceResponse,
   type ControlState,
+  type ControlStatus,
   type EvidenceRow,
   type EvidenceStatus,
 } from '@alto-people/shared';
@@ -97,7 +100,12 @@ async function toRows(db: Db, rows: EvidenceWithSignoffs[]): Promise<EvidenceRow
   }));
 }
 
-/** Every control in the catalog with its latest evidence and its state. */
+/**
+ * Every control in the catalog with its latest evidence, its state and its
+ * ONE status (controlStatusOf: Passing / Needs sign-off / Failing / No
+ * evidence). The Trust Center (lib/trustCenter) and Compliance evidence both
+ * read this function, so their numbers are one count.
+ */
 export async function complianceEvidence(db: Db = defaultPrisma, now: Date = new Date()): Promise<ComplianceEvidenceResponse> {
   const latest = await db.complianceEvidence.findMany({
     where: { control: { in: COMPLIANCE_CONTROLS.map((c) => c.id) } },
@@ -110,11 +118,14 @@ export async function complianceEvidence(db: Db = defaultPrisma, now: Date = new
   const controls: ComplianceControlView[] = COMPLIANCE_CONTROLS.map((c) => {
     const l = byControl.get(c.id) ?? null;
     const ageDays = l ? Math.floor((now.getTime() - new Date(l.collectedAt).getTime()) / DAY) : null;
-    return { ...c, latest: l, ageDays, state: stateOf({ latest: l, ageDays, freshnessDays: c.freshnessDays, needsSignoff: c.needsSignoff }) };
+    const state = stateOf({ latest: l, ageDays, freshnessDays: c.freshnessDays, needsSignoff: c.needsSignoff });
+    return { ...c, latest: l, ageDays, state, status: controlStatusOf({ state, needsSignoff: c.needsSignoff, latest: l }) };
   });
   const counts: Record<ControlState, number> = { current: 0, stale: 0, failing: 0, missing: 0, 'awaiting-signoff': 0 };
   for (const c of controls) counts[c.state] += 1;
-  return { generatedAt: now.toISOString(), controls, counts };
+  const statusCounts = Object.fromEntries(CONTROL_STATUSES.map((s) => [s, 0])) as Record<ControlStatus, number>;
+  for (const c of controls) statusCounts[c.status] += 1;
+  return { generatedAt: now.toISOString(), controls, counts, statusCounts };
 }
 
 /** One control's history, newest first. */

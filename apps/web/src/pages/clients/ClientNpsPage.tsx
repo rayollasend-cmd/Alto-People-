@@ -151,10 +151,10 @@ export function ClientNpsPage() {
                 ) : (
                   <div className="mt-2 h-40">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+                      <AreaChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <CartesianGrid stroke={PALETTE.grid} vertical={false} />
                         <XAxis dataKey="quarter" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
-                        <YAxis domain={[-100, 100]} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
+                        <YAxis domain={[-100, 100]} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} width="auto" />
                         <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
                         <Area type="monotone" dataKey="nps" name="NPS" stroke={LINE} strokeWidth={2} fill={LINE} fillOpacity={0.15} />
                       </AreaChart>

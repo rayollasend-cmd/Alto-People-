@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { useInRouterContext, useSearchParams } from 'react-router-dom';
-import { ChevronRight, Columns3, Download, Inbox, type LucideIcon } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { useInRouterContext, useLocation } from 'react-router-dom';
+import { ChevronRight, Columns3, Download, Inbox, MoreHorizontal, type LucideIcon } from 'lucide-react';
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
-import { useDesktopTable } from '@/lib/useViewport';
+import { useDesktopTable, useMinWidth } from '@/lib/useViewport';
+import { countSetParams, useUrlWriter } from '@/lib/useUrlState';
 import { AuthContext } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { Button } from './Button';
@@ -12,6 +14,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -55,17 +58,25 @@ import {
  *   keyboard     with the table focused (a click on a row does it), j/k
  *                or ↑/↓ move a cursor, Enter opens the row, x selects it
  *   url          ?sort= ?dir= ?q= so a filtered view is a link you can send
+ *                (namespaced by `urlKey` when a page has several grids)
  *   phones       a card per row, built from the same column list, instead
  *                of a table that hides itself — and only the layout the
  *                viewport can show is mounted, never both
  *   virtualize   only the visible rows are in the DOM once a list is long
- *   states       skeleton, error, empty and "N of M" are not optional
+ *   states       skeleton, error, empty and "N of M" are not optional;
+ *                an empty list is the empty state alone — no toolbar
+ *                chrome over nothing
+ *   toolbar      a box when there is a search or filters, a quiet line
+ *                when there is only the count; on a phone Columns and
+ *                Export fold into one ⋯ and filters into a sheet
  *   groups       one table with heading rows, collapsible when asked
  *   details      a panel under a row, and child rows that travel with
  *                their parent
  *
- * Server-paged lists (audit, statements) keep their own loaders and hand
- * the loaded page to the grid; the grid never fetches. When the server
+ * Server-paged lists (audit, statements, the journal) keep their own
+ * loaders and hand the loaded page to the grid; the grid never fetches.
+ * `server` tells it the real total (the count reads "1,060 entries", not
+ * the page size) and lets the page export every match. When the server
  * also sorts, the page owns the sort state and the grid only reports
  * header clicks.
  */
@@ -129,6 +140,13 @@ export interface DataGridProps<T> {
   sort?: { state: TableSortState<string>; onToggle: (key: string) => void };
   /** Keep sort/search in the URL so the view is shareable. Default true. */
   urlState?: boolean;
+  /**
+   * Keep this grid's search and sort in the URL under its own names —
+   * ?<urlKey>.q= ?<urlKey>.sort= ?<urlKey>.dir= — so a page with several
+   * grids (or one that owns ?q= itself) can still link each view. Turns
+   * URL state on even where `urlState` was false.
+   */
+  urlKey?: string;
   /** CSV export of what is on screen. Default on; pass false to disable. */
   exportCsv?: boolean | { filename: string };
   columnChooser?: boolean;
@@ -186,15 +204,63 @@ export interface DataGridProps<T> {
   /** Rows beyond this count are virtualized. Default 150. */
   virtualizeAfter?: number;
   rowHeight?: number;
+  /**
+   * What an empty list says. Give every grid one: a title that names what
+   * is missing, a description with the next step, and the action that
+   * takes it ("No statements yet" · "Finalize a week to send the first
+   * one." · [Open this week]). Without it the grid says "No <noun> yet"
+   * (from `noun`, else the caption) and nothing more.
+   */
   empty?: { icon?: LucideIcon; title: string; description?: React.ReactNode; action?: React.ReactNode };
-  /** Under the search: chips, pickers, anything that narrows the rows. */
+  /** Under the search: chips, pickers, anything that narrows the rows. On a phone they fold into a "Filters (n)" sheet. */
   filters?: React.ReactNode;
-  /** A note beside the row count ("capped at 500, narrow the dates"). */
+  /**
+   * How many of the page's filters are off their default. With 0 (and no
+   * rows, no search) the grid shows its empty state alone; above 0 an
+   * empty result says "Nothing matches these filters" and offers
+   * `onClearFilters`. Unknown (omitted) with `filters` passed counts as in
+   * use, so a control that emptied the list is never hidden.
+   */
+  activeFilters?: number;
+  /**
+   * The URL params the page's filters keep (useUrlParam keys). The grid
+   * counts the set ones as `activeFilters` and clears them all as
+   * `onClearFilters`, unless those are passed.
+   */
+  filterKeys?: readonly string[];
+  /** Puts the page's filters back to their defaults (the empty result's "Clear filters"). */
+  onClearFilters?: () => void;
+  /**
+   * Where the count, Columns and Export sit.
+   *   'auto' (default) — in the boxed bar when there is a search or
+   *                      filters; otherwise on one quiet right-aligned line
+   *   'bar'            — always the box
+   *   'inline'         — never a box: a grid right under the page's own
+   *                      filter row, so there is one tray, not two
+   *   { into }         — inside the page's own row: pass the element (from
+   *                      a ref callback) the controls render into
+   * A page with its own Export passes `exportCsv={false}` so there is one.
+   */
+  toolbar?: 'auto' | 'bar' | 'inline' | { into: HTMLElement | null };
+  /** A note about the list ("capped at 500, narrow the dates"). Drawn under the table. */
   footnote?: React.ReactNode;
   /** The card layout on phones. Default on when the grid has a primary column. */
   cards?: boolean;
-  /** Total the rows were drawn from, when the caller only has a page. */
+  /** Total the rows were drawn from, when the caller only has a page ("500 of 612"). */
   total?: number;
+  /**
+   * A server-paged list: the rows are one page of `total`. The count reads
+   * the real total ("1,060 entries · 1–200 shown"), `onExport` replaces
+   * the on-screen CSV with the page's export of every match, and the sort
+   * should be the controlled `sort` so header clicks reach the server.
+   */
+  server?: {
+    total: number;
+    /** Where this page starts in the total (0-based). Default 0. */
+    offset?: number;
+    /** Export every match, not just this page. */
+    onExport?: () => void;
+  };
   /**
    * Row grouping — one table, with a heading row where the group changes
    * (the audit log by day, a roster by store). Groups keep the sorted
@@ -241,25 +307,33 @@ const tokensOf = (q: string) => q.toLowerCase().split(/\s+/).filter(Boolean);
 /**
  * The grid, with its search and sort kept wherever the caller wants them.
  *
- * Inside a router with `urlState` on, they live in ?q= ?sort= ?dir= so a
- * narrowed view is a link you can send. Anywhere else — a page that owns
- * those params itself, a preview, a test with no router — they live in
- * component state. The split is two thin shells around one body, because
- * a hook cannot be called conditionally and a list primitive must render
- * in every context the app has.
+ * Inside a router with `urlState` on (or a `urlKey`), they live in ?q=
+ * ?sort= ?dir= (or ?<urlKey>.q= …) so a narrowed view is a link you can
+ * send. Anywhere else — a page that owns those params itself, a preview, a
+ * test with no router — they live in component state. The split is two
+ * thin shells around one body, because a hook cannot be called
+ * conditionally and a list primitive must render in every context the app
+ * has.
  */
 export function DataGrid<T>(props: DataGridProps<T>) {
   const inRouter = useInRouterContext();
-  if (props.urlState !== false && inRouter) return <UrlStateGrid {...props} />;
+  if (inRouter) return <RoutedGrid {...props} />;
   return <LocalStateGrid {...props} />;
 }
 
 /** How long the search box waits before the URL follows it. */
 const URL_WRITE_DELAY_MS = 300;
 
-function UrlStateGrid<T>(props: DataGridProps<T>) {
-  const [params, setParams] = useSearchParams();
-  const urlQ = params.get('q') ?? '';
+function RoutedGrid<T>(props: DataGridProps<T>) {
+  const location = useLocation();
+  const write = useUrlWriter();
+  const urlOn = Boolean(props.urlKey) || props.urlState !== false;
+  const prefix = props.urlKey ? `${props.urlKey}.` : '';
+  const qKey = `${prefix}q`;
+  const sortParam = `${prefix}sort`;
+  const dirParam = `${prefix}dir`;
+  const params = React.useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const urlQ = urlOn ? (params.get(qKey) ?? '') : '';
   // The box answers at once; the URL follows a beat later, and only when
   // it has actually changed. Writing on every keystroke was one
   // history.replaceState per character — Safari allows a hundred in ten
@@ -268,28 +342,24 @@ function UrlStateGrid<T>(props: DataGridProps<T>) {
   const [q, setLocalQ] = React.useState(urlQ);
   const mirrored = React.useRef(urlQ);
   React.useEffect(() => {
-    if (urlQ === mirrored.current) return;
+    if (!urlOn || urlQ === mirrored.current) return;
     mirrored.current = urlQ;
     setLocalQ(urlQ);
-  }, [urlQ]);
+  }, [urlQ, urlOn]);
   React.useEffect(() => {
-    if (q === mirrored.current) return;
+    if (!urlOn || q === mirrored.current) return;
     const timer = window.setTimeout(() => {
       mirrored.current = q;
-      setParams(
-        (p) => {
-          if (q) p.set('q', q);
-          else p.delete('q');
-          return p;
-        },
-        { replace: true },
-      );
+      write((p) => {
+        if (q) p.set(qKey, q);
+        else p.delete(qKey);
+      });
     }, URL_WRITE_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [q, setParams]);
+  }, [q, urlOn, qKey, write]);
   const setQ = React.useCallback((next: string) => setLocalQ(next), []);
-  const sortKey = params.get('sort');
-  const sortDir = params.get('dir');
+  const sortKey = urlOn ? params.get(sortParam) : null;
+  const sortDir = urlOn ? params.get(dirParam) : null;
   const initialSort = React.useMemo<TableSortState<string> | undefined>(() => {
     if (!sortKey || !props.columns.some((c) => c.key === sortKey)) return undefined;
     return { key: sortKey, direction: sortDir === 'desc' ? 'desc' : 'asc' };
@@ -297,28 +367,55 @@ function UrlStateGrid<T>(props: DataGridProps<T>) {
   }, [sortKey, sortDir]);
   const onSortChange = React.useCallback(
     (s: TableSortState<string>) => {
-      setParams(
-        (p) => {
-          if (s.key) {
-            p.set('sort', s.key);
-            p.set('dir', s.direction);
-          } else {
-            p.delete('sort');
-            p.delete('dir');
-          }
-          return p;
-        },
-        { replace: true },
-      );
+      write((p) => {
+        if (s.key) {
+          p.set(sortParam, s.key);
+          p.set(dirParam, s.direction);
+        } else {
+          p.delete(sortParam);
+          p.delete(dirParam);
+        }
+      });
     },
-    [setParams],
+    [write, sortParam, dirParam],
   );
-  return <GridCore {...props} q={q} setQ={setQ} initialSort={initialSort} onSortChange={onSortChange} />;
+  // Filters the page keeps in the URL: a set param is a filter in use
+  // (useUrlParam never writes a default), and clearing is one write.
+  const filterKeys = props.filterKeys;
+  const keyedActive = filterKeys ? countSetParams(location.search, filterKeys) : undefined;
+  const clearKeyed = React.useCallback(() => {
+    if (!filterKeys) return;
+    write((p) => {
+      for (const k of filterKeys) p.delete(k);
+    });
+  }, [filterKeys, write]);
+  return (
+    <GridCore
+      {...props}
+      activeFilters={props.activeFilters ?? keyedActive}
+      onClearFilters={props.onClearFilters ?? (filterKeys ? clearKeyed : undefined)}
+      q={q}
+      setQ={setQ}
+      initialSort={urlOn ? initialSort : undefined}
+      onSortChange={urlOn ? onSortChange : undefined}
+    />
+  );
 }
 
 function LocalStateGrid<T>(props: DataGridProps<T>) {
   const [q, setQ] = React.useState('');
   return <GridCore {...props} q={q} setQ={setQ} />;
+}
+
+/**
+ * "No staff yet" from a noun or a caption. The first letter drops to lower
+ * case unless the first word is an acronym or a brand (COBRA, J-1,
+ * WhatsApp), which keep their capitals.
+ */
+function emptyPhrase(caption: string): string {
+  const first = caption.split(/\s+/)[0] ?? '';
+  const keepCase = /\d/.test(first) || (first.length > 1 && first.slice(1) !== first.slice(1).toLowerCase());
+  return keepCase || !caption ? caption : caption[0]!.toLowerCase() + caption.slice(1);
 }
 
 /** One line of the table body, in the order it is drawn. */
@@ -354,9 +451,13 @@ function GridCore<T>({
   rowHeight = 48,
   empty,
   filters,
+  activeFilters,
+  onClearFilters,
+  toolbar = 'auto',
   footnote,
   cards,
   total,
+  server,
   groupBy,
   className,
   keyboard = true,
@@ -612,17 +713,34 @@ function GridCore<T>({
   const showCards = useCards && !desktop;
 
   // "12 people", or "12 rows" when the grid was given no noun; "12 of 40"
-  // while a search or a server page narrows the set. Numbers format in the
-  // person's language, never a hard-coded en-US.
+  // while a search or a capped list narrows the set. A server-paged list
+  // reads its real total ("1,060 entries · 1–200 shown"), not the page
+  // size. Numbers format in the person's language, never a hard-coded en-US.
   const countLine = (() => {
     const n = sorted.length;
-    const of = total ?? rows?.length ?? n;
+    const loaded = rows?.length ?? n;
+    const amount = (k: number, nounWord: string | null) =>
+      nounWord
+        ? t('grid.count', { count: k.toLocaleString(lang), noun: nounWord })
+        : k === 1
+          ? t('grid.rowsOne', { count: k.toLocaleString(lang) })
+          : t('grid.rowsMany', { count: k.toLocaleString(lang) });
+    if (server) {
+      const all = Math.max(server.total, loaded);
+      const word = noun ? (all === 1 ? noun.one : noun.many) : null;
+      if (n !== loaded) {
+        // A search inside the loaded page: say it only searched what's loaded.
+        return t('grid.countLoaded', { count: n.toLocaleString(lang), loaded: loaded.toLocaleString(lang) });
+      }
+      if (loaded >= all) return amount(all, word);
+      const from = (server.offset ?? 0) + (loaded > 0 ? 1 : 0);
+      const to = (server.offset ?? 0) + loaded;
+      return t('grid.countPage', { total: amount(all, word), from: from.toLocaleString(lang), to: to.toLocaleString(lang) });
+    }
+    const of = total ?? loaded;
     const count = n.toLocaleString(lang);
     const nounWord = noun ? (of === 1 && n === of ? noun.one : noun.many) : null;
-    if (n === of) {
-      if (nounWord) return t('grid.count', { count, noun: nounWord });
-      return n === 1 ? t('grid.rowsOne', { count }) : t('grid.rowsMany', { count });
-    }
+    if (n === of) return amount(n, nounWord);
     const totalText = of.toLocaleString(lang);
     return nounWord
       ? t('grid.countOfNoun', { count, total: totalText, noun: nounWord })
@@ -897,65 +1015,134 @@ function GridCore<T>({
     );
   };
 
+  /* ---- toolbar ---------------------------------------------------------- */
+  // Below sm, Columns and Export fold into one ⋯ so neither wraps onto a
+  // row of its own; below md the filters fold behind "Filters (n)".
+  const wide = useMinWidth(640);
+  const hasRows = (rows?.length ?? 0) > 0;
+  const searching = q.trim() !== '';
+  // Unknown (filters passed, count not) counts as in use: never hide the
+  // control that may be what emptied the list.
+  const filtersOn = activeFilters != null ? activeFilters > 0 : Boolean(filters);
+  const firstLoad = loading && !rows;
+  // An empty list is the empty state alone: no search box, no "0 rows", no
+  // disabled Export over nothing.
+  const showToolbar = hasRows || searching || filtersOn || (firstLoad && !error);
+  const exportAction = server?.onExport ?? (exportCsv ? exportRows : null);
+  const canChooseColumns = columnChooser && columns.some((c) => !c.primary) && !showCards;
+  const anyShown = sorted.length > 0;
+  const columnItems = columns.map((c) => (
+    <DropdownMenuCheckboxItem
+      key={c.key}
+      checked={c.primary || !hidden.has(c.key)}
+      disabled={c.primary}
+      onCheckedChange={() => toggleColumn(c.key)}
+      onSelect={(e) => e.preventDefault()}
+    >
+      {c.header}
+    </DropdownMenuCheckboxItem>
+  ));
+  const controls = !anyShown ? null : wide ? (
+    <>
+      {canChooseColumns && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="xs" aria-label={t('grid.chooseColumns')}>
+              <Columns3 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="ml-1">{t('common.columns')}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[12rem]">
+            <DropdownMenuLabel>{t('common.columns')}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {columnItems}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {exportAction && (
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={exportAction}
+          aria-label={t('grid.exportAria', { caption })}
+          title={t('grid.exportTitle')}
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          <span className="ml-1">{t('common.export')}</span>
+        </Button>
+      )}
+    </>
+  ) : exportAction || canChooseColumns ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="icon-sm" aria-label={t('grid.moreAria', { caption })}>
+          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[12rem]">
+        {exportAction && (
+          <DropdownMenuItem onSelect={() => exportAction()} aria-label={t('grid.exportAria', { caption })}>
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('grid.exportCsv')}
+          </DropdownMenuItem>
+        )}
+        {canChooseColumns && (
+          <>
+            {exportAction && <DropdownMenuSeparator />}
+            <DropdownMenuLabel>{t('common.columns')}</DropdownMenuLabel>
+            {columnItems}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
+  const searchBox =
+    search !== false ? (
+      <SearchInput
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={search?.placeholder ?? t('common.search')}
+        aria-label={t('grid.searchAria', { caption })}
+      />
+    ) : undefined;
+  const countText = firstLoad ? t('common.loading') : countLine;
+  const into = typeof toolbar === 'object' ? toolbar.into : undefined;
+  const boxed = toolbar === 'bar' || (toolbar === 'auto' && (search !== false || Boolean(filters)));
+  const toolbarNode = !showToolbar ? null : into !== undefined ? (
+    // Inside the page's own row: no tray of ours. Nothing until the row exists.
+    into ? (
+      createPortal(
+        <>
+          {searchBox}
+          {filters}
+          <span className="ml-auto text-xs tabular-nums text-ink-muted" aria-live="polite">
+            {countText}
+          </span>
+          {controls}
+        </>,
+        into,
+      )
+    ) : null
+  ) : (
+    <FilterBar
+      bare={!boxed}
+      data-grid-toolbar={boxed ? 'bar' : 'line'}
+      className={!boxed ? 'justify-end' : undefined}
+      search={searchBox}
+      count={<span aria-live="polite">{countText}</span>}
+      actions={controls}
+      collapse={Boolean(filters)}
+      activeFilters={activeFilters}
+      onClearFilters={onClearFilters}
+    >
+      {filters}
+    </FilterBar>
+  );
+
   /* ---- render ---------------------------------------------------------- */
   return (
     <div className={cn('space-y-3', className)}>
-      {(search !== false || filters || columnChooser || exportCsv) && (
-        <FilterBar>
-          {search !== false && (
-            <SearchInput
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={search?.placeholder ?? t('common.search')}
-              aria-label={t('grid.searchAria', { caption })}
-              wrapperClassName="min-w-[12rem] flex-1"
-            />
-          )}
-          {filters}
-          <span className="ml-auto text-xs tabular-nums text-silver/70" aria-live="polite">
-            {loading && !rows ? t('common.loading') : countLine}
-            {footnote && <span className="text-silver/50"> · {footnote}</span>}
-          </span>
-          {columnChooser && columns.some((c) => !c.primary) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="xs" aria-label={t('grid.chooseColumns')}>
-                  <Columns3 className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span className="ml-1 hidden sm:inline">{t('common.columns')}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[12rem]">
-                <DropdownMenuLabel>{t('common.columns')}</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {columns.map((c) => (
-                  <DropdownMenuCheckboxItem
-                    key={c.key}
-                    checked={c.primary || !hidden.has(c.key)}
-                    disabled={c.primary}
-                    onCheckedChange={() => toggleColumn(c.key)}
-                    onSelect={(e) => e.preventDefault()}
-                  >
-                    {c.header}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {exportCsv && (
-            <Button
-              variant="outline"
-              size="xs"
-              onClick={exportRows}
-              disabled={sorted.length === 0}
-              aria-label={t('grid.exportAria', { caption })}
-              title={t('grid.exportTitle')}
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              <span className="ml-1 hidden sm:inline">{t('common.export')}</span>
-            </Button>
-          )}
-        </FilterBar>
-      )}
+      {toolbarNode}
 
       {selectable?.actions && selected.size > 0 && (
         <div
@@ -989,21 +1176,40 @@ function GridCore<T>({
           ))}
         </div>
       ) : sorted.length === 0 ? (
-        <EmptyState
-          icon={empty?.icon ?? Inbox}
-          title={empty?.title ?? (q ? t('grid.noMatchTitle') : t('grid.emptyTitle'))}
-          description={
-            empty?.description ?? (q ? t('grid.noMatchDesc') : undefined)
-          }
-          action={
-            empty?.action ??
-            (q ? (
+        searching ? (
+          // The search emptied it: say so, and offer the way back.
+          <EmptyState
+            icon={empty?.icon ?? Inbox}
+            title={t('grid.noMatchTitle')}
+            description={t('grid.noMatchDesc')}
+            action={
               <Button variant="outline" size="sm" onClick={() => setQ('')}>
                 {t('grid.clearSearch')}
               </Button>
-            ) : undefined)
-          }
-        />
+            }
+          />
+        ) : !hasRows && filtersOn && activeFilters != null ? (
+          // The page's filters emptied it.
+          <EmptyState
+            icon={empty?.icon ?? Inbox}
+            title={t('grid.noFilterMatchTitle')}
+            description={t('grid.noFilterMatchDesc')}
+            action={
+              onClearFilters ? (
+                <Button variant="outline" size="sm" onClick={onClearFilters}>
+                  {t('grid.clearFilters')}
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={empty?.icon ?? Inbox}
+            title={empty?.title ?? t('grid.emptyNoun', { noun: emptyPhrase(noun?.many ?? caption) })}
+            description={empty?.description}
+            action={empty?.action}
+          />
+        )
       ) : (
         <>
           {/* Phones: a card per row, from the same column list. */}
@@ -1211,6 +1417,9 @@ function GridCore<T>({
           )}
         </>
       )}
+      {/* Under the list, not glued to the count: a long note no longer
+          wraps the toolbar (Receivables, Collections). */}
+      {footnote && !error && !firstLoad && <p className="text-xs text-ink-muted">{footnote}</p>}
     </div>
   );
 }

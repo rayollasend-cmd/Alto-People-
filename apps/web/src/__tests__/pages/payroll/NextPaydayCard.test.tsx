@@ -52,4 +52,19 @@ describe('<NextPaydayCard> — Alto pays biweekly, the Friday after the period',
     expect(await screen.findByText(/Fri, Oct 2/)).toBeInTheDocument();
     expect(screen.queryByText(/Today is payday/)).not.toBeInTheDocument();
   });
+
+  it('on no pay schedule: says so plainly instead of promising a date (F500 SH-4)', async () => {
+    vi.mocked(getMyNextPayday).mockResolvedValue({ nextPayday: null, notOnSchedule: true });
+    renderCard();
+    expect(await screen.findByText('Not on a pay schedule yet')).toBeInTheDocument();
+    expect(screen.getByText(/Payroll has been told/)).toBeInTheDocument();
+    expect(screen.queryByText(/Fri,/)).not.toBeInTheDocument();
+  });
+
+  it('a company with no schedules at all: nothing to say, no card', async () => {
+    vi.mocked(getMyNextPayday).mockResolvedValue({ nextPayday: null, notOnSchedule: false });
+    const { container } = renderCard();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container).toBeEmptyDOMElement();
+  });
 });

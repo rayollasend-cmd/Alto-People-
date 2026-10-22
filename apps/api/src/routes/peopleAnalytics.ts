@@ -3,7 +3,8 @@ import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
-import { activeAssociateIds } from '../lib/activeDefinition.js';
+import { countStandings, hiresBetween, onTheBooksAt, peopleStandings, turnoverBetween } from '../lib/peopleStatus.js';
+import { isOnTheBooks } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { internalSites, isClientBoundedRole, scopeAssociates, scopeShifts, scopeWhere } from '../lib/scope.js';
@@ -19,8 +20,11 @@ import { internalSites, isClientBoundedRole, scopeAssociates, scopeShifts, scope
  *     timeToFill: days from a position opening to its fill, by department
  *     absence: approved time-off days against scheduled days, by category
  *
- *   "Active" is the one definition (lib/activeDefinition); a separation is
- *   Associate.separatedAt, never a deleted row.
+ *   Where people stand, who counts as hired and when, and the turnover
+ *   formula are the one reading in lib/peopleStatus — the same the
+ *   Headcount screen and the People directory show: "On the books" is
+ *   hired and not separated; a separation is Associate.separatedAt, never
+ *   a deleted row.
  */
 
 export const peopleAnalyticsRouter = Router();
@@ -51,7 +55,6 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
   // A site/region-bound office account reads its own sites' people only.
   const people = scopeAssociates(req.user!);
   const sites = internalSites(req.user!);
-  const activeIds = await activeAssociateIds({}, now);
 
   const [associates, separations, positions, timeOff, shifts] = await Promise.all([
     prisma.associate.findMany({
@@ -90,46 +93,51 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     }),
   );
   const reasonBy = new Map(separations.map((s) => [s.associateId, s.reason]));
-  // Only people actually hired: a hire date, or (older records without one)
-  // someone working today. An onboarding invite creates an Associate with
-  // neither — counting it would add a "hire" and an employee who never started.
-  const hiredOnly = associates.flatMap((a) => {
-    const hired = a.hireDate ?? (activeIds.has(a.id) ? a.createdAt : null);
-    return hired ? [{ a, hired }] : [];
+  // Where everyone in reach stands, and when they were hired and left: the
+  // one reading (lib/peopleStatus). Only people actually hired count — an
+  // onboarding invite creates an Associate who never started.
+  const scoped = Object.keys(people).length > 0;
+  const standings = await peopleStandings({ tenantId, ...(scoped ? { associateIds: associates.map((a) => a.id) } : {}) }, now);
+  const counts = countStandings(standings);
+  const rows = associates.flatMap((a) => {
+    const s = standings.people.get(a.id);
+    if (!s?.hiredOn) return [];
+    return [{
+      id: a.id,
+      hired: s.hiredOn,
+      separatedAt: s.leftAt,
+      reason: reasonBy.get(a.id) ?? null,
+      managerId: a.managerId,
+      managerName: a.manager ? `${a.manager.firstName} ${a.manager.lastName}`.trim() : null,
+      site: a.assignments[0]?.location ? { id: a.assignments[0].location.id, name: a.assignments[0].location.name } : null,
+      client: a.assignments[0]?.location?.client ?? null,
+      /** On the books today (hired, not separated): the base every headcount here counts. */
+      onBooks: isOnTheBooks(s.status),
+    }];
   });
-  const rows = hiredOnly.map(({ a, hired }) => ({
-    id: a.id,
-    hired,
-    separatedAt: a.separatedAt,
-    reason: reasonBy.get(a.id) ?? null,
-    managerId: a.managerId,
-    managerName: a.manager ? `${a.manager.firstName} ${a.manager.lastName}`.trim() : null,
-    site: a.assignments[0]?.location ? { id: a.assignments[0].location.id, name: a.assignments[0].location.name } : null,
-    client: a.assignments[0]?.location?.client ?? null,
-    active: activeIds.has(a.id),
-  }));
 
-  // Headcount month by month.
+  // Headcount month by month: on the books at each month's end (today for
+  // this month), with hires by hire date — the same counts the Headcount
+  // screen's turnover tile reads.
   const headcount: Array<{ month: string; headcount: number; hires: number; separations: number; voluntary: number; involuntary: number }> = [];
   for (let i = months - 1; i >= 0; i--) {
     const start = monthStart(now, i);
     const end = monthStart(now, i - 1);
-    const atEnd = rows.filter((r) => r.hired < end && (r.separatedAt === null || r.separatedAt >= end)).length;
+    const at = end.getTime() > now.getTime() ? now : new Date(end.getTime() - 1);
     const seps = rows.filter((r) => r.separatedAt !== null && r.separatedAt >= start && r.separatedAt < end);
     headcount.push({
       month: monthKey(start),
-      headcount: atEnd,
-      hires: rows.filter((r) => r.hired >= start && r.hired < end).length,
+      headcount: onTheBooksAt(standings, at),
+      hires: hiresBetween(standings, start, end),
       separations: seps.length,
       voluntary: seps.filter((r) => r.reason?.startsWith('VOLUNTARY')).length,
       involuntary: seps.filter((r) => r.reason?.startsWith('INVOLUNTARY')).length,
     });
   }
 
-  // Turnover over the window: separations against the average headcount, annualized.
+  // Turnover over the window: THE formula (lib/peopleStatus turnoverBetween).
   const windowDays = Math.max(1, Math.round((now.getTime() - since.getTime()) / DAY));
-  const sepsInWindow = rows.filter((r) => r.separatedAt !== null && r.separatedAt >= since);
-  const avgHead = headcount.length ? headcount.reduce((s, m) => s + m.headcount, 0) / headcount.length : 0;
+  const overall = turnoverBetween(standings, since, now);
   const annualize = (seps: number, base: number) => (base > 0 ? Math.round((seps / base) * (365 / windowDays) * 1000) / 10 : null);
   const group = <K extends string>(key: (r: (typeof rows)[number]) => K | null, label: (k: K, r: (typeof rows)[number]) => string) => {
     const m = new Map<K, { key: K; label: string; separations: number; headcount: number }>();
@@ -137,7 +145,7 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
       const k = key(r);
       if (k === null) continue;
       const g = m.get(k) ?? { key: k, label: label(k, r), separations: 0, headcount: 0 };
-      if (r.active) g.headcount += 1;
+      if (r.onBooks) g.headcount += 1;
       if (r.separatedAt !== null && r.separatedAt >= since) g.separations += 1;
       m.set(k, g);
     }
@@ -150,7 +158,7 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
       return d >= b.minDays && (b.maxDays === null || d < b.maxDays);
     });
     const seps = inBand.filter((r) => r.separatedAt !== null && r.separatedAt >= since).length;
-    const head = inBand.filter((r) => r.active).length;
+    const head = inBand.filter((r) => r.onBooks).length;
     return { label: b.label, headcount: head, separations: seps, annualizedTurnoverPct: annualize(seps, head + seps / 2) };
   });
 
@@ -224,7 +232,7 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
   for (const r of rows) {
     if (!r.site) continue;
     const g = storeRows.get(r.site.id) ?? { storeId: r.site.id, storeName: r.site.name, clientName: r.client?.name ?? null, current: 0 };
-    if (r.active) g.current += 1;
+    if (r.onBooks) g.current += 1;
     storeRows.set(r.site.id, g);
   }
   const topStores = [...storeRows.values()].sort((a, b) => b.current - a.current).slice(0, 8);
@@ -289,10 +297,16 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     survival,
     absenceTrend,
     headcount,
+    /** Hired and not separated, today — the number Headcount and Analytics show. */
+    onTheBooks: counts.onTheBooks,
+    /** Working today by the one definition, over activeWindowDays. */
+    working: counts.ACTIVE,
+    activeWindowDays: counts.windowDays,
     turnover: {
-      annualizedPct: annualize(sepsInWindow.length, avgHead),
-      separations: sepsInWindow.length,
-      averageHeadcount: Math.round(avgHead),
+      annualizedPct: overall.annualizedPct,
+      separations: overall.separations,
+      hires: overall.hires,
+      averageHeadcount: Math.round(overall.averageOnTheBooks),
       byTenure,
       bySite: group((r) => r.site?.id ?? null, (_k, r) => r.site?.name ?? '—'),
       byManager: group((r) => r.managerId, (_k, r) => r.managerName ?? '—'),

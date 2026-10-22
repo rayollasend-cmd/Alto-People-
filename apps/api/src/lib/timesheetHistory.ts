@@ -92,7 +92,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
       orderBy: { clockInAt: 'asc' },
       select: { clockInAt: true, location: { select: { timezone: true } } },
     }),
-    payScheduleFor(a.id),
+    payScheduleFor(a.id, { orLikely: true }),
   ]);
   if (input.bounded && raw.length === 0 && !firstEntry) return null;
 

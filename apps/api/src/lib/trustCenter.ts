@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { PRODUCT_NAME, SUB_PROCESSORS, TRUST_COMMITMENTS, type Soc2Progress, type TrustControlPublic, type TrustStatus, type TrustSummary, type TrustSummaryPublic } from '@alto-people/shared';
+import { CONTROL_STATUSES, PRODUCT_NAME, SUB_PROCESSORS, TRUST_COMMITMENTS, type ControlStatus, type Soc2Progress, type TrustControlPublic, type TrustStatus, type TrustSummary, type TrustSummaryPublic } from '@alto-people/shared';
 import { complianceEvidence } from './evidence.js';
 import { MIN_RETENTION_YEARS, retentionYearsFor } from './auditChain.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
@@ -13,19 +13,22 @@ import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
 
 type Db = PrismaClient;
 
-const statusOf = (s: string | null | undefined, state: string): TrustStatus => {
-  if (state === 'missing') return 'PENDING';
-  if (s === 'PASS' || s === 'WARN' || s === 'FAIL') return s;
-  return 'PENDING';
-};
+/** The older four words, derived from the one status so they never disagree with it. */
+const TRUST_WORD: Record<ControlStatus, TrustStatus> = { PASSING: 'PASS', NEEDS_SIGNOFF: 'WARN', FAILING: 'FAIL', NO_EVIDENCE: 'PENDING' };
 
+/**
+ * The controls as the Trust Center shows them: the same reading and the same
+ * status as Compliance evidence (lib/evidence complianceEvidence →
+ * controlStatusOf), so "N passing" here is "N passing" there (F500 SH-4).
+ */
 async function platformControls(db: Db, now: Date): Promise<TrustControlPublic[]> {
   const ev = await complianceEvidence(db, now);
   return ev.controls.map((c) => ({
     id: c.id,
     title: c.title,
     criteria: [...c.criteria],
-    status: statusOf(c.latest?.status, c.state),
+    status: TRUST_WORD[c.status],
+    controlStatus: c.status,
     checkedAt: c.latest?.collectedAt ?? null,
     how: c.how,
   }));
@@ -39,6 +42,7 @@ async function platformControls(db: Db, now: Date): Promise<TrustControlPublic[]
  * not back.
  */
 export function soc2StageFrom(controls: ReadonlyArray<{ state: string; latest: { status: string; collectedAt: string } | null }>, reportIssuedOn: Date | null): Soc2Progress['stage'] {
+  // Observation: every control has evidence inside its window (none is "No evidence").
   if (reportIssuedOn) return 'audited';
   const allCurrent = controls.length > 0 && controls.every((c) => c.state !== 'missing' && c.state !== 'stale');
   return allCurrent ? 'observation' : 'preparing';
@@ -59,8 +63,9 @@ export async function soc2Progress(db: Db, now: Date = new Date()): Promise<Soc2
   const observationSince = stage === 'preparing' || starts.some((d) => !d) ? null : new Date(Math.max(...starts.map((d) => d!.getTime()))).toISOString().slice(0, 10);
   return {
     stage,
-    controlsPassing: controls.filter((c) => c.latest?.status === 'PASS' && c.state !== 'stale').length,
-    controlsCurrent: controls.filter((c) => c.state !== 'missing' && c.state !== 'stale').length,
+    // The one status (controlStatusOf): the same "passing" the hero and Compliance evidence count.
+    controlsPassing: ev.statusCounts.PASSING,
+    controlsCurrent: controls.length - ev.statusCounts.NO_EVIDENCE,
     controlsTotal: controls.length,
     lastEvidenceAt: latest.length ? latest[latest.length - 1]! : null,
     observationSince,
@@ -106,7 +111,12 @@ export async function trustSummaryPublic(db: Db, now: Date = new Date()): Promis
   const value: TrustSummaryPublic = {
     generatedAt: now.toISOString(),
     product: PRODUCT_NAME,
-    controls: { passing: controls.filter((c) => c.status === 'PASS').length, total: controls.length, items: controls },
+    controls: {
+      passing: controls.filter((c) => c.controlStatus === 'PASSING').length,
+      total: controls.length,
+      items: controls,
+      statusCounts: Object.fromEntries(CONTROL_STATUSES.map((s) => [s, controls.filter((c) => c.controlStatus === s).length])) as Record<ControlStatus, number>,
+    },
     auditChain,
     retention: { auditYearsMinimum: MIN_RETENTION_YEARS },
     agents,

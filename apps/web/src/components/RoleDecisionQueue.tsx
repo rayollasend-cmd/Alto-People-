@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
+import { ME_DECISIONS_KEY, decisionsOf, meDecisionsQuery } from '@/lib/meDecisions';
+import { QueryError } from '@/components/ui/QueryError';
 import { noteDecision } from '@/lib/productEvents';
 import { useAuth, useTerm } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
-import { fmtMoney, ymdLocal } from '@/lib/format';
+import { fmtDayShort, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { DecisionRoom } from '@/components/DecisionRoom';
 import { PLAN_CHANGED_EVENT } from '@/components/MyPlanCard';
@@ -34,7 +37,13 @@ import { Textarea } from '@/components/ui/Input';
  *   · every other verb (assign / tag / postpone / plan / escalate /
  *     release) lives in the item's ROOM, where the context is
  * The engine, rooms, and actions are unchanged — this is the console
- * skin. Empty queue = "Nothing needs you.". Fails silent (supplement).
+ * skin. Empty queue = "Nothing needs you.".
+ *
+ * F500 SH-4: the rows come from the ONE decisions query the home's "Needs
+ * you" count reads (lib/meDecisions, ['me','decisions']), so the number and
+ * the rows are one answer; a failed load says so with Retry instead of the
+ * whole section quietly vanishing; the two links read "Discuss" (the
+ * item's room) and "Go to it" (the thing itself).
  */
 
 interface RoleDecision {
@@ -84,7 +93,14 @@ export function RoleDecisionQueue({
   title: titleProp,
   hideWhenEmpty = false,
   scopeLabel,
+  excludeKeyPrefix,
 }: {
+  /**
+   * Leave out items whose key starts with this — the page already shows
+   * them as its own card (the supervisor's coverage-gap notice and the
+   * queue's `coverage:` item are the same thing). Count them once.
+   */
+  excludeKeyPrefix?: string;
   /** Says whose decisions these are when the page around them is narrower
    *  (a manager's team home): "Company-wide". Shown only with rows. */
   scopeLabel?: string;
@@ -102,8 +118,12 @@ export function RoleDecisionQueue({
   const { t } = useI18n();
   // The default heading, in the reader's language; `null` still means "the page titles it".
   const title = titleProp === undefined ? t('rdq.title') : titleProp;
-  const [rows, setRows] = useState<RoleDecision[] | null>(null);
-  const [error, setError] = useState(false);
+  const qc = useQueryClient();
+  // Client-portal viewers have no queue at all: don't even ask.
+  const decisionsQuery = useQuery({ ...meDecisionsQuery<RoleDecision>(), enabled: user?.role !== 'CLIENT_PORTAL' });
+  const rows: RoleDecision[] | null = decisionsQuery.data
+    ? decisionsOf<RoleDecision>(decisionsQuery.data).filter((d) => !excludeKeyPrefix || !d.key.startsWith(excludeKeyPrefix))
+    : null;
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [colleagues, setColleagues] = useState<Colleague[] | null>(null);
   const [picker, setPicker] = useState<{ mode: 'assign' | 'tag'; item: RoleDecision } | null>(
@@ -115,16 +135,13 @@ export function RoleDecisionQueue({
   const [focusIdx, setFocusIdx] = useState(0);
   const [showAll, setShowAll] = useState(false);
 
+  // Re-read the one shared query (the home's count follows).
   const load = useCallback(() => {
-    setError(false);
-    apiFetch<{ decisions: RoleDecision[] }>('/me/decisions')
-      .then((r) => {
-        setRows(r.decisions);
-        setFocusIdx(0);
-      })
-      .catch(() => setError(true));
-  }, []);
-  useEffect(load, [load]);
+    void qc.invalidateQueries({ queryKey: ME_DECISIONS_KEY });
+  }, [qc]);
+  // A fresh answer starts the console at its top item again.
+  const dataStamp = decisionsQuery.dataUpdatedAt;
+  useEffect(() => setFocusIdx(0), [dataStamp]);
 
   const ensureColleagues = useCallback(() => {
     if (colleagues !== null) return;
@@ -246,10 +263,12 @@ export function RoleDecisionQueue({
     return { label: t('rdq.gotThis'), run: () => void act(d.key, 'claim') };
   };
 
-  // Supplement card: vanish quietly on failure. Client-portal viewers
-  // have no queue at all — even a "nominal" chip would be noise.
-  if (error) return null;
+  // Client-portal viewers have no queue at all — even a "nominal" chip would be noise.
   if (user?.role === 'CLIENT_PORTAL') return null;
+  // A failed load says so, with Retry — never a "Needs you" that silently isn't there.
+  if (decisionsQuery.isError && rows === null) {
+    return <QueryError what={t('rdq.what')} query={decisionsQuery} />;
+  }
   if (rows !== null && rows.length === 0) {
     if (hideWhenEmpty) return null;
     return (
@@ -344,7 +363,7 @@ export function RoleDecisionQueue({
               <div className="mt-1.5 text-xs text-gold">
                 → {focus.nextStep.text}
                 {focus.nextStep.ownerName ? ` — ${focus.nextStep.ownerName}` : ''}
-                {focus.nextStep.dueDay ? `, ${focus.nextStep.dueDay.slice(5)}` : ''}
+                {focus.nextStep.dueDay ? `, ${fmtDayShort(parseYmd(focus.nextStep.dueDay) ?? focus.nextStep.dueDay, { anchored: true })}` : ''}
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -399,7 +418,8 @@ export function RoleDecisionQueue({
                     onClick={() => setRoomKey(d.key)}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <span className="block truncate text-sm text-white hover:text-gold">
+                    {/* Two lines on a phone so the title keeps its words; one from sm. */}
+                    <span className="block line-clamp-2 text-sm text-white hover:text-gold sm:line-clamp-1" title={d.label}>
                       {d.label}
                     </span>
                     {d.nextStep && (

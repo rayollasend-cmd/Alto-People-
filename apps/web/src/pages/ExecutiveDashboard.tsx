@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtDateTz, fmtMoney, fmtMoneyCompact, fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtMoney, fmtMoneyCompact, fmtRelativeDate, fmtStatementNo } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
 import { getOpsBoard, getOpsScorecard } from '@/lib/opsApi';
@@ -1508,7 +1508,7 @@ export function ExecutiveDashboard() {
                             className="flex items-center justify-between gap-2 hover:text-gold"
                           >
                             <span className="min-w-0 truncate text-white">
-                              {s.clientName} #{s.number ?? '—'}
+                              {s.clientName} · {fmtStatementNo(s.number)}
                             </span>
                             <span
                               className={`tabular-nums ${s.ageDays > 30 ? 'text-alert' : 'text-silver'}`}

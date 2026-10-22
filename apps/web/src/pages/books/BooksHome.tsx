@@ -159,7 +159,6 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
   const rows = o.profit.trend.map((t) => ({ month: t.label, income: t.income, netIncome: t.netIncome }));
   const best = [...o.profit.trend].sort((x, y) => y.netIncome - x.netIncome)[0];
   const losing = o.profit.trend.filter((t) => t.netIncome < 0).length;
-  const nothingPosted = o.profit.trend.every((t) => !t.income && !t.netIncome);
   const summary = o.profit.trend.length
     ? `Income and net income, the last ${o.profit.trend.length === 1 ? 'month' : `${o.profit.trend.length} months`}. Best: ${best!.label}, ${fmtMoney(best!.netIncome)} kept${losing ? `; ${losing} ${losing === 1 ? 'month' : 'months'} at a loss` : ''}.`
     : 'No months to show yet.';
@@ -183,11 +182,10 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
       rows={rows}
       csvName="profit-by-month"
       height={220}
+      // No income or expense in six months: a $0–$4 axis says nothing — say so in words
+      // (the frame collapses an all-zero chart on its own; this is what it says).
+      empty={<EmptyState size="sm" icon={FileSpreadsheet} title="Nothing to chart yet" description="Nothing has posted to income or expenses in the last six months." />}
     >
-      {nothingPosted ? (
-        // No income or expense in six months: a $0–$4 axis says nothing — say so in words.
-        <EmptyState size="sm" icon={FileSpreadsheet} title="Nothing to chart yet" description="Nothing has posted to income or expenses in the last six months." />
-      ) : (
       <div className="flex h-full w-full flex-col">
         <div className="min-h-0 flex-1">
           <ResponsiveContainer width="100%" height="100%">
@@ -215,7 +213,6 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
           <LegendKey items={[{ name: 'Income', color: PALETTE.primary }, { name: 'Net income', color: PALETTE.tertiary }, ...(losing ? [{ name: 'Net loss', color: PALETTE.bad }] : [])]} />
         </div>
       </div>
-      )}
     </ChartFrame>
   );
 }

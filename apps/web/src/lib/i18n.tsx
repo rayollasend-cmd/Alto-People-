@@ -117,14 +117,48 @@ const en = {
   'grid.bulkActions': 'Bulk actions',
   'grid.selected': '{count} selected',
   'grid.loadingAria': 'Loading {caption}',
-  'grid.emptyTitle': 'Nothing here yet',
+  'grid.emptyNoun': 'No {noun} yet',
   'grid.noMatchTitle': 'Nothing matches',
   'grid.noMatchDesc': 'Try fewer words, or clear the search.',
   'grid.clearSearch': 'Clear search',
+  'grid.noFilterMatchTitle': 'Nothing matches these filters',
+  'grid.noFilterMatchDesc': 'Clear the filters to see everything.',
+  'grid.clearFilters': 'Clear filters',
+  'grid.countPage': '{total} · {from}–{to} shown',
+  'grid.countLoaded': '{count} of {loaded} loaded',
+  'grid.moreAria': 'More options for {caption}',
+  'grid.exportCsv': 'Export CSV',
+
+  // FilterBar / FilterSheet — a list's filters behind one chip on a phone
+  'filters.title': 'Filters',
+  'filters.summary': 'Filters',
+  'filters.summaryCount': 'Filters ({count})',
+  'filters.description': 'Narrow the list, then close to see it.',
+  'filters.clear': 'Clear filters',
+  'filters.done': 'Done',
 
   // QueryError — a failed fetch with a way back
   'queryError.title': 'Couldn’t load {what}.',
   'queryError.detail': 'The request didn’t get through.',
+  'queryError.noAccess': 'You don’t have access to {what}.',
+  'queryError.notFound': 'Couldn’t find {what}. It may have been removed, or the link is out of date.',
+  'queryError.server': 'Something went wrong on our side. Try again in a moment.',
+  'queryError.offline': 'We couldn’t reach the server. Check the connection, then try again.',
+  'queryError.details': 'Details for support',
+  'queryError.reference': 'Reference: {id}',
+
+  // The access page (RequireCapability) and a refused fetch — who to ask
+  'access.title': 'You don’t have access to this page',
+  'access.askStaff': 'Your role doesn’t include it. If you need it for your work, ask an administrator in your organization for access.',
+  'access.askAssociate': 'It isn’t part of your account. If you think you should see it, ask your supervisor or HR.',
+  'access.askClient': 'It isn’t part of your account. If you think you should see it, ask your staffing contact.',
+  'access.home': 'Go home',
+
+  // PageHeader — the action row and the related links
+  'header.more': 'More',
+  'header.moreActions': 'More actions',
+  'header.moreActionsHint': 'The rest of this page’s actions.',
+  'header.related': 'Related',
 
   // ConfirmDialog — the shared confirm/prompt
   'confirm.reason': 'Reason',
@@ -537,7 +571,7 @@ const en = {
   'reviews.ackFailed': 'Could not record your acknowledgment.',
   'reviews.reviewedBy': 'Reviewed by {email}',
   // Associate inbox
-  'inbox.title': 'Inbox',
+  'inbox.title': 'Notifications',
   'inbox.unreadSuffix': '({count} unread)',
   'inbox.subtitle': 'Messages from HR, system notifications, and company broadcasts.',
   'inbox.searchAria': 'Search messages',
@@ -746,13 +780,16 @@ const en = {
   'wf.wire': 'Live wire',
   'wf.wireQuiet': 'Quiet — nothing on the wire today.',
   'wf.needsYou': '{count} need you',
+  'wf.needsYou_one': '{count} needs you',
   'wf.allGreenBoard': 'All {sitesLc} green',
   'wf.unschedPunch': 'Unscheduled punch',
   'wf.incidentWord': 'Incident',
   'wf.tileUnconf': '{count} unconfirmed tomorrow',
   'wf.tileNoShows': '{count} no-shows',
+  'wf.tileNoShows_one': '{count} no-show',
   'wf.tileUnsched': '{count} unscheduled',
   'wf.tileIncidents': '{count} incidents',
+  'wf.tileIncidents_one': '{count} incident',
   'wf.tileQuiet': 'Quiet',
   'wf.instrFloor': 'on the floor',
   'wf.instrNeeds': '{sitesLc} need you',
@@ -766,6 +803,7 @@ const en = {
   'wf.readyApproved': 'Approved {date}',
   'wf.closeTitle': 'Payroll close',
   'wf.closePending': '{count} timesheets awaiting approval',
+  'wf.closePending_one': '{count} timesheet awaiting approval',
   'wf.closeClear': 'All timesheets approved',
   'wf.closePayday': 'Payday {date}',
   'wf.sups': 'The {managerLc} corps',
@@ -782,9 +820,10 @@ const en = {
   'wf.goMarketplace': 'Open shifts',
   'wf.goIncidents': 'Incidents & safety',
   'wf.tileProposals': '{count} agent proposals',
+  'wf.tileProposals_one': '{count} agent proposal',
   'wf.tileLabor': 'scheduled labor today',
   'wf.tileUnpriced': '{count} unpriced',
-  'wf.goCorps': 'Supervisor corps',
+  'wf.goCorps': 'Store leads',
   // Finance cockpit
   'fin.morning': 'Good morning',
   'fin.afternoon': 'Good afternoon',
@@ -985,7 +1024,7 @@ const en = {
   'payrollHome.checkReadiness': 'Check readiness',
   'payrollHome.statusDraft': 'Draft',
   'payrollHome.statusFinalized': 'Finalized',
-  'payrollHome.statusDisbursed': 'Disbursed',
+  'payrollHome.statusDisbursed': 'Paid',
   'payrollHome.statusCancelled': 'Cancelled',
   'payrollHome.statusAll': 'All',
   'payrollHome.statusOpen': 'Open',
@@ -1124,9 +1163,11 @@ const en = {
   'fin.receivables': 'Receivables',
   'fin.arClean': 'Nothing outstanding.',
   'fin.arLine': '{count} statements outstanding',
+  'fin.arLine_one': '{count} statement outstanding',
   'fin.arOldest': 'oldest {days}d past due',
   'fin.arDso': 'avg {days}d to pay',
   'fin.arDrafts': '{count} drafts to finalize',
+  'fin.arDrafts_one': '{count} draft to finalize',
   'fin.bvp': 'Billed vs paid — last closed week',
   'fin.bvpLine': 'Billed {billed} · payroll gross {paid} · variance {v}',
   'fin.bvpNote':
@@ -1157,6 +1198,7 @@ const en = {
   'fin.task.registerSubNone': 'register before their first shift',
   'fin.task.chase': 'Hours awaiting approval: {hours}',
   'fin.task.chaseSub': '{count} entries · oldest {date}',
+  'fin.task.chaseSub_one': '{count} entry · {date}',
   'fin.task.runStart': 'Start the payroll run',
   'fin.task.runFinalize': 'Finalize the payroll run',
   'fin.task.runDisburse': 'Disburse payroll',
@@ -1261,7 +1303,7 @@ const en = {
   'portal.covReplaced': '{count} open shifts covered by replacements',
   'portal.covReplacedOne': '1 open shift covered by a replacement',
   'portal.statements': 'Statements',
-  'portal.stNumber': 'Statement #{n}',
+  'portal.stNumber': 'Statement {n}',
   'portal.paidOn': 'Paid {date}',
   'portal.due': 'Due',
   'portal.stNone': 'No statements yet.',
@@ -1272,12 +1314,16 @@ const en = {
   'region.title': 'Command center',
   'region.pick': 'Open a region from the Regions page to preview its command center.',
   'region.subtitle': '{count} {sitesLc} · the same numbers each {siteLc} manager sees',
+  'region.subtitle_one': '{count} {siteLc} · the same numbers its manager sees',
   'region.kpiFloor': 'On the floor now · region',
   'region.kpiFloorShort': '{count} {sitesLc} short right now',
+  'region.kpiFloorShort_one': '{count} {siteLc} short right now',
   'region.kpiFloorOk': 'Every {siteLc} at or above its contract',
   'region.kpiGrade': 'Reliability · 4 weeks',
   'region.kpiGradeF': '{count} {sitesLc} at F',
+  'region.kpiGradeF_one': '{count} {siteLc} at F',
   'region.kpiGradeA': '{count} {sitesLc} at A',
+  'region.kpiGradeA_one': '{count} {siteLc} at A',
   'region.kpiGradeSub': 'A {a} · B {b} · F {f}',
   'region.kpiOpen': 'Unfilled today',
   'region.kpiOpenUnit': 'slots',
@@ -1298,12 +1344,16 @@ const en = {
   'region.heroMet': 'Every {siteLc} staffed to its contract right now.',
   'region.curveTitle': 'Coverage across today · region',
   'region.curveMeta': '{open} unfilled slots today',
-  'region.kpiShort': '{sites} short right now',
+  'region.kpiShort': '{sites} below contract now',
+  'region.kpiBelowContractSub': 'Short of the contract on the floor right now',
   'region.kpiShortUnit': 'of {total}',
   'region.kpiShortAlerts': '{count} past the grace period',
   'region.attnOverdue': '{count} requests past their reply-by',
+  'region.attnOverdue_one': '{count} request past its reply-by',
   'region.attnOpenToday': '{count} unfilled slots today',
+  'region.attnOpenToday_one': '{count} unfilled slot today',
   'region.attnOpenTomorrow': '{count} open slots tomorrow',
+  'region.attnOpenTomorrow_one': '{count} open slot tomorrow',
   'region.attnUnconfirmed': '{count} unconfirmed for tomorrow',
   'region.storesChart': '{sites} side by side · delivered vs contracted',
   'region.storesChartSub': 'Last 4 weeks',
@@ -1321,7 +1371,8 @@ const en = {
   'region.kpiAlerts': 'Past grace',
   'region.storesRail': 'Your {sitesLc}',
   'region.storesRailHint': 'Tap a {siteLc} to open its site',
-  'region.tileShort': '{count} short on the floor now',
+  'region.tileBelowContract': '{count} below contract on the floor now',
+  'region.tileMissingScheduled': '{count} scheduled, not on the floor',
   'region.tileNoTarget': 'No floor target set yet',
   'region.tileNothingToday': 'Nothing scheduled today',
   'region.tileCovered': 'Covered',
@@ -1356,6 +1407,7 @@ const en = {
   'msg.pickHint': 'Your {siteLc} channel and direct threads are on the left.',
   'msg.back': 'Back to messages',
   'msg.channelMembers': '{count} people in this {siteLc} channel',
+  'msg.channelMembers_one': '{count} person in this {siteLc} channel',
   'msg.transcript': 'Download transcript',
   'msg.threadEmpty': 'Say hello — the thread starts here.',
   'msg.seen': 'Seen',
@@ -1421,6 +1473,7 @@ const en = {
   'portal.chartWorkedHours': 'Delivered',
   'portal.histOpsTitle': 'Checklist evidence',
   'portal.safetyInRange': 'incidents in the period',
+  'portal.safetyInRange_one': 'incident in the period',
   'portal.safetyCleanRange': 'No incidents in this period.',
   'portal.safetyAllResolved': 'All resolved.',
   'portal.histDocs': 'Statements & reports',
@@ -1463,6 +1516,7 @@ const en = {
   'portal.chartOpen': 'Unfilled',
   'portal.chartContracted': 'Contracted',
   'portal.chartNow': 'Now',
+  'portal.chartNothing': 'Nothing scheduled today',
   'portal.chartAt': 'At {hour}',
   'portal.chartHour': 'Hour',
   'portal.chartFilled': 'Filled',
@@ -1504,6 +1558,7 @@ const en = {
   'portal.svcARange': 'A range',
   'portal.svcDownload': 'Download PDF',
   'portal.svcPages': '{count} days, one page each',
+  'portal.svcPages_one': '{count} day, one page',
   'portal.svcRangeTooLong': 'Pick 31 days or fewer, with the start before the end.',
   'portal.wave.morning': 'Morning',
   'portal.wave.midday': 'Midday',
@@ -1558,6 +1613,7 @@ const en = {
   'portal.opsSopWord': 'of the checklist done',
   'portal.opsLine': '{shifts} shifts · {tasks} of {total} tasks · {photos} photos on file',
   'portal.opsTemp': '{count} temperature alerts',
+  'portal.opsTemp_one': '{count} temperature alert',
   'portal.opsIncomplete': '{count} closed incomplete',
   'portal.opsStillOpen': '{count} still running',
   'portal.opsNone': 'Checklist evidence appears here once Alto runs its SOP shifts at your store.',
@@ -1569,6 +1625,7 @@ const en = {
   'portal.opsLastNightLine': '{shifts} shifts · {pct}% of the checklist',
   'portal.opsSeeLastNight': 'See last night →',
   'portal.opsPhotos': '{count} photos',
+  'portal.opsPhotos_one': '{count} photo',
   'portal.opsSince': 'since {time}',
   'portal.reliability': 'Reliability · delivered vs contracted, last 4 weeks',
   'portal.relScore': '{score}% delivered',
@@ -1938,6 +1995,7 @@ const en = {
   'hrc.emptyDesc': 'Have a question or concern? File a new case — HR will reply here.',
   'hrc.fileACase': 'File a case',
   'hrc.replyCount': '{count} replies',
+  'hrc.replyCount_one': '{count} reply',
   'hrc.newCaseTitle': 'New HR case',
   'hrc.categoryLabel': 'Category',
   'hrc.subjectLabel': 'Subject',
@@ -2807,6 +2865,34 @@ const en = {
   'mk.cat.save': 'Save',
   'learning.colAssigned': 'Assigned',
   // The decision queue, who isn't in yet, text the crew (floor screens: English and Spanish).
+  // The Inbox's "Also watching": company-wide queues another desk owns (F500 SH-4; packages/shared queues.ts).
+  'decisions.watchingFold': 'Also watching · {n}',
+  'decisions.watchingBody': 'Another desk owns these. They don’t count toward your badge.',
+  // A run's stored totals vs its paychecks (F500 SH-4; apps/api/src/lib/payrollRunTotals.ts).
+  'runTotals.title': 'The totals and the paychecks disagree.',
+  'runTotals.noPaychecks': 'This run records {gross} gross but has no paychecks.',
+  'runTotals.disagree': 'This run records {gross} gross and {net} net, but its {count} paychecks add up to {itemsGross} gross and {itemsNet} net.',
+  'runTotals.next': 'Don’t sign off or pay from these numbers: reopen the run or ask payroll support.',
+  // One status per person (F500 SH-4; apps/api/src/lib/peopleStatus.ts).
+  'people.ws.ACTIVE': 'Working',
+  'people.ws.PLACED_NOT_ACTIVE': 'No recent shifts',
+  'people.ws.NOT_PLACED': 'Not placed',
+  'people.ws.ONBOARDING': 'Onboarding',
+  'people.ws.DEACTIVATED': 'Paused',
+  'people.ws.SEPARATED': 'Separated',
+  'people.wsDef.ACTIVE': 'Placed at a site, and worked in the last {days} days or has a shift ahead.',
+  'people.wsDef.PLACED_NOT_ACTIVE': 'Placed at a site, but no shift worked in the last {days} days and nothing scheduled.',
+  'people.wsDef.NOT_PLACED': 'Hired, but not placed at any site.',
+  'people.wsDef.ONBOARDING': 'Onboarding is still in progress. Not hired yet.',
+  'people.wsDef.DEACTIVATED': 'Paused by hand. Still employed, but can’t clock in until reactivated.',
+  'people.wsDef.SEPARATED': 'No longer with the company.',
+  'people.onTheBooks': 'On the books',
+  'people.onTheBooksDef': 'Hired and not separated: working, no recent shifts, not placed and paused.',
+  'people.workingWindow': 'Working ({days} days)',
+  'people.workingDef': 'Placed at a site, and worked in the last {days} days or has a shift ahead.',
+  'people.tileFilter': 'Show only these people',
+  'people.tileClear': 'Show everyone',
+  'people.account': 'Account',
   'rdq.allClear': 'Nothing needs you.',
   'rdq.title': 'Needs your decision',
   'rdq.claimed': "It's yours — your teammates can see you've got it.",
@@ -2826,7 +2912,8 @@ const en = {
   'rdq.escalate': 'Escalate',
   'rdq.addedToPlan': 'Added to your plan for today.',
   'rdq.planFailed': 'Could not add to your plan.',
-  'rdq.openRoom': 'Open room',
+  'rdq.openRoom': 'Discuss',
+  'rdq.what': 'your decisions',
   'rdq.gotThis': "I've got this",
   'rdq.nCritical': '{n} critical',
   'rdq.nHigh': '{n} high',
@@ -2836,7 +2923,7 @@ const en = {
   'rdq.escalatedTag': 'escalated',
   'rdq.withYou': 'with you',
   'rdq.withName': 'with {name}',
-  'rdq.open': 'Open →',
+  'rdq.open': 'Go to it',
   'rdq.next': 'Next ↓',
   'rdq.ageDays': '{n}d',
   'rdq.showLess': 'Show less',
@@ -3170,6 +3257,8 @@ const en = {
 
   // Pay — associate paystub list
   'pay.nextPayday': 'Next payday',
+  'pay.notOnSchedule': 'Not on a pay schedule yet',
+  'pay.notOnScheduleBody': 'No payday is set for you until you’re on one. Payroll has been told.',
   'ewa.title': 'Pay before payday',
   'ewa.available': 'Available now',
   'ewa.earned': "You've earned about {net} on {hours} this period",
@@ -4318,13 +4407,14 @@ const en = {
   'appr.q.swapsBusy': 'Peer already said yes',
   'appr.q.pickups': 'Pickups',
   'appr.q.pickupsBusy': 'Approve to fill the shift',
-  'appr.q.proposals': 'Agent proposals',
+  // The queue names are the one registry's (packages/shared queues.ts) — the Inbox says the same.
+  'appr.q.proposals': 'Suggested by an agent',
   'appr.q.proposalsBusy': 'An agent proposes; you decide',
-  'appr.q.requests': 'Second person',
-  'appr.q.requestsBusy': 'Pay, access and offboarding changes',
+  'appr.q.requests': 'Pay & access changes',
+  'appr.q.requestsBusy': 'A second person approves pay, access and offboarding changes',
   'appr.q.timesheets': 'Timesheets',
   'appr.q.timesheetsBusy': 'Approve the clean ones in one tap',
-  'appr.q.unconfirmed': 'Not confirmed yet',
+  'appr.q.unconfirmed': 'Unconfirmed shifts (48h)',
   'appr.q.unconfirmedBusy': 'Next 48 hours — chase by phone',
   'appr.q.unconfirmedIdle': 'Everyone confirmed',
   'appr.q.idle': 'Nothing pending',
@@ -4403,6 +4493,7 @@ const en = {
   'top.offlineSaved': 'Lost connection. Showing what was saved {when} — still trying.',
   'top.offline': 'Lost connection. Trying again.',
   'top.help': 'Help for this page',
+  'top.askAssistant': 'Ask {name}',
   'top.account': 'Account menu',
   'top.profile': 'My profile',
   'top.settings': 'Account settings',
@@ -5129,6 +5220,50 @@ function format(template: string, vars: Record<string, string | number> | undefi
   );
 }
 
+/**
+ * Plurals, without an ICU engine. `t('portal.storesCount', { count })`:
+ *   - count 0 reads `<key>_zero` when it exists ("No stores yet" — a zero
+ *     said in words, not "0 stores");
+ *   - otherwise the language's plural rule picks the category, and a
+ *     `<key>_one` / `_few` / `_many` variant is used when it exists;
+ *   - else the base key, which is the "other" form ("{count} stores").
+ * So a key with no variants behaves exactly as before, and adding
+ * `<key>_one` next to it is all "1 stores" ever needed. A language is
+ * resolved on its own first: a pack that has the base but no variant keeps
+ * its own words rather than borrowing English's variant.
+ */
+const PLURAL_RULES = new Map<string, Intl.PluralRules>();
+function pluralCategory(lang: Lang, n: number): string {
+  let rules = PLURAL_RULES.get(lang);
+  if (!rules) {
+    try {
+      rules = new Intl.PluralRules(lang);
+    } catch {
+      rules = new Intl.PluralRules('en');
+    }
+    PLURAL_RULES.set(lang, rules);
+  }
+  return rules.select(n);
+}
+
+type Lookup = (key: string) => string | undefined;
+
+function resolveMessage(lang: Lang, own: Lookup, key: MessageKey, vars: Record<string, string | number> | undefined): string {
+  const english: Lookup = (k) => (en as Record<string, string>)[k];
+  const count = vars?.count;
+  if (typeof count === 'number' && Number.isFinite(count)) {
+    const variant = (dict: Lookup, rulesLang: Lang): string | undefined =>
+      (count === 0 ? dict(`${key}_zero`) : undefined) ?? dict(`${key}_${pluralCategory(rulesLang, count)}`);
+    const mine = variant(own, lang);
+    if (mine !== undefined) return mine;
+    if (own(key) === undefined) {
+      const fallback = variant(english, 'en');
+      if (fallback !== undefined) return fallback;
+    }
+  }
+  return own(key) ?? english(key) ?? key;
+}
+
 export type Translate = (
   key: MessageKey,
   vars?: Record<string, string | number>,
@@ -5180,7 +5315,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const t = useCallback<Translate>(
-    (key, vars) => format(packCache.get(lang)?.[key] ?? MESSAGES[lang]?.[key] ?? en[key] ?? key, vars, termVars),
+    (key, vars) =>
+      format(
+        resolveMessage(lang, (k) => packCache.get(lang)?.[k as MessageKey] ?? MESSAGES[lang]?.[k as MessageKey], key, vars),
+        vars,
+        termVars,
+      ),
     // packVersion is the signal that a lazy pack arrived.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [lang, termVars, packVersion],
@@ -5198,7 +5338,7 @@ function shallowEqual(a: TermVars, b: TermVars): boolean {
 const FALLBACK: I18nContextValue = {
   lang: 'en',
   setLang: () => {},
-  t: (key, vars) => format(en[key] ?? key, vars, DEFAULT_TERM_VARS),
+  t: (key, vars) => format(resolveMessage('en', (k) => (en as Record<string, string>)[k], key, vars), vars, DEFAULT_TERM_VARS),
   setTermVars: () => {},
 };
 

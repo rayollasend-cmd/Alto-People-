@@ -20,8 +20,10 @@ import {
 import { Logo } from '@/components/Logo';
 import { useI18n } from '@/lib/i18n';
 import {
+  allDoors,
   applyTerms,
   DASHBOARD_NAV,
+  PORTAL_HOME_KEYS,
   doorKeyForPath,
   navShapeFor,
   roleNavLabels,
@@ -135,6 +137,7 @@ export function Sidebar() {
     tr,
   );
   const shape = useMemo(() => navShapeFor(visible, user?.role, term), [visible, user?.role, term]);
+  const portalHomePaths = useMemo(() => new Set(visible.filter((m) => PORTAL_HOME_KEYS.has(m.key)).map((m) => m.path)), [visible]);
   const activePath = useActiveNavPath();
   const location = useLocation();
 
@@ -145,6 +148,8 @@ export function Sidebar() {
   const countByPath = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of inbox.data?.sources ?? []) {
+      // Another desk's queue (packages/shared queues.ts) badges nothing here — as on the Inbox.
+      if (s.watching) continue;
       const path = s.path.split('?')[0] ?? s.path;
       m.set(path, (m.get(path) ?? 0) + s.count);
     }
@@ -155,18 +160,6 @@ export function Sidebar() {
 
   const { pinned, isPinned, togglePin } = usePinnedModules();
   const recents = useRecentModules();
-
-  // Personalized shortcuts above the doors: explicit pins first, then the
-  // three most-recent modules that aren't already pinned. Both restricted
-  // to what this user can actually see. The page a person is on is
-  // highlighted in its own place already; Recent shows where they were.
-  const byKey = new Map(visible.map((m) => [m.key, m]));
-  const pinnedModules = pinned.map((k) => byKey.get(k)).filter((m): m is ModuleNav => !!m);
-  const recentModules = recents
-    .filter((k) => !pinned.includes(k))
-    .map((k) => byKey.get(k))
-    .filter((m): m is ModuleNav => !!m && m.path !== location.pathname)
-    .slice(0, 3);
 
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => readStringSet(SECTIONS_KEY) ?? new Set());
   const toggleSection = useCallback((section: string) => {
@@ -190,6 +183,25 @@ export function Sidebar() {
     if (!activeDoor) return;
     setOpenDoors((prev) => (prev.has(activeDoor) ? prev : new Set([...prev, activeDoor])));
   }, [activeDoor]);
+  // Personalized shortcuts above the doors: explicit pins first, then the
+  // three most-recent modules a person can't already see on screen — not
+  // pinned, not an always-on row, not inside a door that is open, and not
+  // the page they are on (it is highlighted in its own place). "Recent"
+  // repeated Inbox and Messages and the open Me door's rows (F500 G5).
+  const byKey = new Map(visible.map((m) => [m.key, m]));
+  const pinnedModules = pinned.map((k) => byKey.get(k)).filter((m): m is ModuleNav => !!m);
+  const onScreen = new Set<string>(shape.rows.map((m) => m.key));
+  for (const d of allDoors(shape)) {
+    if (!openDoors.has(d.key) && d.key !== activeDoor) continue;
+    onScreen.add(d.target.key);
+    for (const c of d.children) onScreen.add(c.key);
+  }
+  const recentModules = recents
+    .filter((k) => !pinned.includes(k) && !onScreen.has(k))
+    .map((k) => byKey.get(k))
+    .filter((m): m is ModuleNav => !!m && m.path !== location.pathname && m.path !== activePath)
+    .slice(0, 3);
+
   const toggleDoor = useCallback((key: string) => {
     setOpenDoors((prev) => {
       const next = new Set(prev);
@@ -257,7 +269,9 @@ export function Sidebar() {
       <nav className="flex-1 overflow-y-auto overscroll-contain py-2" aria-label={tr('nav.primaryAria')} data-tour="nav">
         <SidebarLink
           to={DASHBOARD_NAV.path}
-          active={activePath === DASHBOARD_NAV.path}
+          // A store or region account's home IS "My store" / "Command
+          // center" (one page, listed once): Home lights there too.
+          active={activePath === DASHBOARD_NAV.path || (user?.role === 'CLIENT_PORTAL' && portalHomePaths.has(activePath ?? ''))}
           label={DASHBOARD_NAV.label}
           icon={DASHBOARD_ICON}
           railCollapsed={railCollapsed}
@@ -569,7 +583,7 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
           )}
         >
           <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className="truncate">{door.label}</span>
+          <span className="min-w-0 line-clamp-2 break-words" title={door.label}>{door.label}</span>
           {!open && waiting > 0 && (
             <span
               className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-2xs font-semibold tabular-nums"
@@ -728,7 +742,9 @@ function SidebarLink({ to, label, icon: Icon, active, railCollapsed, indent, bad
       )}
     >
       {!indent && <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />}
-      {!railCollapsed && <span className="truncate">{label}</span>}
+      {/* Two lines before an ellipsis, and the whole name on hover: at 1440
+          "Departments & job profi…" and "Unemployment cla…" were cut. */}
+      {!railCollapsed && <span className="min-w-0 line-clamp-2 break-words leading-snug" title={label}>{label}</span>}
       {!!badge && !railCollapsed && (
         <span
           className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-2xs font-semibold tabular-nums"

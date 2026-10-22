@@ -9,6 +9,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { assignByPerson, autoAssign, handOffToPerson, listTasks, policyFor, recordEvent, taskDetail, taskSummary } from '../lib/tasks/engine.js';
 import { spanWarningsFor } from '../lib/tasks/spanWarnings.js';
+import { siteDay } from '../lib/siteDay.js';
 
 /**
  * Brief 3-2: tasks and their assignment.
@@ -37,9 +38,33 @@ const admin = requireCapability('manage:org');
 const dateParam = (v: unknown) => (typeof v === 'string' && v ? new Date(v) : null);
 
 tasksRouter.get('/', read, async (req, res) => {
-  const q = z.object({ locationId: z.string().uuid().optional(), from: z.string().optional(), to: z.string().optional(), status: z.string().optional() }).parse(req.query);
-  const tasks = await listTasks(prisma, { locationId: q.locationId ?? null, from: dateParam(q.from), to: dateParam(q.to), status: q.status ?? null });
-  res.json({ tasks });
+  const q = z
+    .object({
+      locationId: z.string().uuid().optional(),
+      /** A calendar day (YYYY-MM-DD) on the site's clock — else the company's (lib/siteDay). Beats from/to. */
+      day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+      status: z.string().optional(),
+    })
+    .parse(req.query);
+  // "The site's day" (F500 SH-4): midnight to midnight on the floor's own
+  // clock, never a UTC day (after 5 PM Pacific that was tomorrow's tasks).
+  const day = q.day ? await siteDay(q.locationId ?? null, q.day, prisma) : null;
+  const tasks = await listTasks(prisma, {
+    locationId: q.locationId ?? null,
+    from: day ? day.start : dateParam(q.from),
+    to: day ? day.end : dateParam(q.to),
+    status: q.status ?? null,
+  });
+  res.json({ tasks, ...(day ? { day: day.day, timezone: day.timezone } : {}) });
+});
+
+/** Today on a site's clock (else the company's): the board opens on it and names the zone. */
+tasksRouter.get('/day', read, async (req, res) => {
+  const q = z.object({ locationId: z.string().uuid().optional() }).parse(req.query);
+  const d = await siteDay(q.locationId ?? null, null, prisma);
+  res.json({ day: d.day, timezone: d.timezone });
 });
 
 tasksRouter.get('/summary', read, async (req, res) => {

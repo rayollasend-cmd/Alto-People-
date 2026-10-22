@@ -55,10 +55,15 @@ const request = (id: string): TeamTimeOffRequest => ({
   reviewerEmail: null,
 });
 
+/** The company decision queue's rows (the shared ['me','decisions'] query the count reads). */
+let queueRows: Array<{ key: string }> = [];
+
 function renderPage(user: { firstName?: string; email: string } = { firstName: 'Dana', email: 'dana.reyes@example.com' }) {
   const caps = ROLE_CAPABILITIES.MANAGER;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['me', 'decisions'], { decisions: queueRows });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={client}>
       <AuthContext.Provider
         value={{
           isInitializing: false,
@@ -88,6 +93,7 @@ const emptyHome: TeamHome = {
 };
 
 beforeEach(() => {
+  queueRows = [];
   hours.getTeamHours.mockResolvedValue({ weekStart: '2026-10-17', weekEnd: '2026-10-24', thresholdHours: 40, people: [] });
   vi.mocked(getTeamHome).mockResolvedValue(emptyHome);
   vi.mocked(getTeamDashboard).mockResolvedValue({
@@ -132,13 +138,21 @@ describe('<ManagerDashboard>', () => {
     renderPage();
     await screen.findByText('Timesheets to review');
     const heading = screen.getByRole('heading', { name: /Needs you/ });
-    expect(heading).toHaveTextContent('Needs you3');
+    // The count is what is listed: two cards (timesheets, time off), no queue rows.
+    expect(heading).toHaveTextContent('Needs you2');
     const section = heading.closest('section')!;
     expect(within(section).getByText('Time-off request waiting')).toBeInTheDocument();
     expect(within(section).getByRole('button', { name: 'Approve all 2' })).toBeInTheDocument();
     expect(screen.queryByText(/Nothing needs you/)).not.toBeInTheDocument();
     expect(screen.queryByText('Manager view')).not.toBeInTheDocument();
     expect(screen.queryByText(/Needs your approval/)).not.toBeInTheDocument();
+  });
+
+  it('counts the company queue’s rows with the cards — the number is what the section lists', async () => {
+    queueRows = [{ key: 'claims:pending:x' }, { key: 'compliance:expired:y' }];
+    renderPage();
+    await screen.findByText('Timesheets to review');
+    expect(screen.getByTestId('needs-you-count')).toHaveTextContent('4');
   });
 
   it('the snapshot follows: on the clock first, then what the queues cannot say, direct reports last', async () => {

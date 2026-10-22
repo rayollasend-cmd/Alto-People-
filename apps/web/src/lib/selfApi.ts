@@ -1,4 +1,5 @@
 import { ApiError, apiFetch, NetworkError } from './api';
+import { forgetMissingPhotos } from './photoUrl';
 
 export interface SelfProfile {
   id: string;
@@ -187,6 +188,8 @@ export async function uploadProfilePhoto(file: File): Promise<void> {
       parsed?.error?.message ?? 'Failed to upload photo.',
     );
   }
+  // The face that was missing is there now: let every Avatar ask again.
+  forgetMissingPhotos();
 }
 
 export const deleteProfilePhoto = () =>

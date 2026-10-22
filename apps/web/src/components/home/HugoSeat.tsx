@@ -13,11 +13,15 @@ import { useAuth } from '@/lib/auth';
 
 /**
  * Hugo's seat on a home (design system §4.1): the same place on every
- * role's first screen. He offers only what is switched on for this
- * organization and this person (the server's registry), takes a question,
- * and answers in place. Switched off, or nothing to offer: renders
- * nothing, so the home never shows an empty assistant.
+ * role's first screen — a full-width bar after "Needs you" (it used to own
+ * the right third of the page, which stayed empty below him). He offers
+ * only what is switched on for this organization and this person (the
+ * server's registry), takes a question, and answers in place. Switched
+ * off, or nothing to offer: renders nothing, so the home never shows an
+ * empty assistant.
  */
+/** Roles the assistant has nothing for (the API answers 403): don't ask on every page. */
+const NO_ASSISTANT_ROLES: ReadonlySet<string> = new Set(['CLIENT_PORTAL']);
 /**
  * Starters for a staff role, offered only when a model answers (it knows
  * the page and has the records as tools). The rules-only registry can't
@@ -50,7 +54,15 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
   // asked there, where the thread lives. Outside the provider (a test
   // rendering a home alone) it answers in place, as it first did.
   const assistant = useAssistant();
-  const me = useQuery({ queryKey: ['hugo', 'me'], queryFn: getHugo, staleTime: 60_000, retry: false });
+  const me = useQuery({
+    queryKey: ['hugo', 'me'],
+    queryFn: getHugo,
+    staleTime: 60_000,
+    retry: false,
+    // A refusal is an answer: don't ask again on every home visit.
+    retryOnMount: false,
+    enabled: !role || !NO_ASSISTANT_ROLES.has(role),
+  });
   const [text, setText] = useState('');
   const [turn, setTurn] = useState<{ question: string; answer: HugoAnswer } | null>(null);
   const ask = useMutation({
@@ -84,37 +96,44 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
   return (
     <Card className={className} data-testid="hugo-seat">
       <CardContent className="space-y-3 p-[var(--d-card)]">
-        <div className="flex items-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <div className="text-base font-medium text-ink">{me.data.name}</div>
-            <div className="truncate text-xs2 text-ink-muted">{me.data.intro}</div>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-6">
+          <div className="flex min-w-0 items-center gap-2 lg:w-80 lg:shrink-0">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-base font-medium text-ink">{me.data.name}</div>
+              {/* Two lines, then the rest on hover — it was cut mid-word ("I'm not a p…"). */}
+              <div className="line-clamp-2 text-xs2 text-ink-muted" title={me.data.intro}>
+                {me.data.intro}
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {chips.map((c) => (
-            <Button key={c.key} size="sm" variant="secondary" onClick={() => send(c.example)} disabled={ask.isPending}>
-              {c.example}
+          <form
+            className="flex min-w-0 flex-1 gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(text);
+            }}
+          >
+            <label htmlFor="hugo-seat-ask" className="sr-only">
+              {t('hugoSeat.askName', { name: me.data.name })}
+            </label>
+            <Input id="hugo-seat-ask" className="min-w-0 flex-1" value={text} maxLength={500} onChange={(e) => setText(e.target.value)} placeholder={t('hugoSeat.askName', { name: me.data.name })} />
+            <Button type="submit" size="sm" className="h-10 shrink-0" loading={ask.isPending} disabled={!text.trim() || ask.isPending}>
+              {t('hugoSeat.ask')}
             </Button>
-          ))}
+          </form>
         </div>
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            send(text);
-          }}
-        >
-          <label htmlFor="hugo-seat-ask" className="sr-only">
-            {t('hugoSeat.askName', { name: me.data.name })}
-          </label>
-          <Input id="hugo-seat-ask" className="min-w-0 flex-1" value={text} maxLength={500} onChange={(e) => setText(e.target.value)} placeholder={t('hugoSeat.askName', { name: me.data.name })} />
-          <Button type="submit" size="sm" loading={ask.isPending} disabled={!text.trim() || ask.isPending}>
-            {t('hugoSeat.ask')}
-          </Button>
-        </form>
+        {chips.length > 0 && (
+          <div className="flex flex-wrap gap-2 lg:pl-[21.5rem]">
+            {chips.map((c) => (
+              <Button key={c.key} size="sm" variant="secondary" className="h-auto min-h-8 whitespace-normal py-1.5 text-left" onClick={() => send(c.example)} disabled={ask.isPending}>
+                {c.example}
+              </Button>
+            ))}
+          </div>
+        )}
         {ask.error && <p className="text-sm text-negative">{ask.error instanceof ApiError ? ask.error.message : t('hugoSeat.failed')}</p>}
         {turn && (
           <div className="rounded-md border border-line bg-surface-raised/40 p-3 text-sm" aria-live="polite">

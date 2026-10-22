@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Check, UserCheck, X } from 'lucide-react';
+import { Check, UserCheck, X } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -210,15 +210,9 @@ export function PortalCandidates() {
         className="mx-auto max-w-3xl"
         title={t('portal.candTitle')}
         subtitle={t('portal.candHint')}
-        breadcrumbs={[{ label: t('portal.title'), to: '/portal' }]}
-        secondaryActions={
-          <Button size="sm" variant="ghost" asChild>
-            <Link to={`/portal${qs}`}>
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.backHome')}
-            </Link>
-          </Button>
-        }
+        // The trail is the way back to the store (the phone's Back too); the
+        // "← My store" button beside it was a third control for the same trip.
+        breadcrumbs={[{ label: t('portal.title'), to: `/portal${qs}` }, { label: t('portal.candTitle') }]}
     >
 
       {!isPortal && <p className="text-xs text-silver/70">{t('portal.candPreview')}</p>}

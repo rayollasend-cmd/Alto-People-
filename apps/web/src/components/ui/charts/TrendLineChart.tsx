@@ -1,6 +1,6 @@
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartTooltipContent, LegendKey } from './ChartTooltip';
-import { AXIS, xAxisLabel, yAxisLabel } from './axes';
+import { AXIS, Y_AXIS_WIDTH, dateHeading, dateTicks, xAxisLabel, yAxisLabel, type DateGrain } from './axes';
 import { useChartHeight } from './frame';
 import { PALETTE, seriesColor, TICK } from './palette';
 
@@ -37,23 +37,27 @@ export interface TrendLineChartProps {
   target?: { value: number; label: string };
   /** Force a zero baseline (counts, money). Default true. */
   zeroBased?: boolean;
+  /** The x values are dates of this grain: ticks read "Oct 3" / "Oct" / "Q3 2026", never ISO. */
+  xDates?: DateGrain;
   height?: number;
 }
 
-export function TrendLineChart({ data, x, series, format = (v) => v.toLocaleString(), yLabel, xLabel, heading, target, zeroBased = true, height }: TrendLineChartProps) {
+export function TrendLineChart({ data, x, series, format = (v) => v.toLocaleString(), yLabel, xLabel, heading, target, zeroBased = true, xDates, height }: TrendLineChartProps) {
   const h = useChartHeight(height, 220);
   const colored = series.map((s, i) => ({ ...s, color: s.color ?? seriesColor(i) }));
   const lookup = Object.fromEntries(colored.map((s) => [s.key, { name: s.name, color: s.color }]));
   const lastIdx = data.length - 1;
+  const xTick = xDates ? dateTicks(xDates, data.map((r) => r[x])) : undefined;
+  const head = heading ?? (xDates ? (v: string) => dateHeading(v, xDates) : undefined);
   return (
     <div className="flex w-full flex-col" style={{ height: h }}>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart accessibilityLayer={false} data={data} margin={{ top: 12, right: 12, bottom: xLabel ? 14 : 0, left: yLabel ? 8 : 0 }}>
             <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-            <XAxis dataKey={x} {...AXIS} minTickGap={16} label={xAxisLabel(xLabel)} />
-            <YAxis tick={TICK} tickLine={false} axisLine={false} width={yLabel ? 64 : 48} tickFormatter={(v: number) => format(v)} domain={zeroBased ? [0, 'auto'] : ['auto', 'auto']} label={yAxisLabel(yLabel)} />
-            <Tooltip cursor={{ stroke: PALETTE.ref, strokeWidth: 1 }} content={<ChartTooltipContent series={lookup} heading={heading} format={(v) => format(v)} />} />
+            <XAxis dataKey={x} {...AXIS} minTickGap={16} label={xAxisLabel(xLabel)} tickFormatter={xTick} />
+            <YAxis tick={TICK} tickLine={false} axisLine={false} width={Y_AXIS_WIDTH} tickFormatter={(v: number) => format(v)} domain={zeroBased ? [0, 'auto'] : ['auto', 'auto']} label={yAxisLabel(yLabel)} />
+            <Tooltip cursor={{ stroke: PALETTE.ref, strokeWidth: 1 }} content={<ChartTooltipContent series={lookup} heading={head} format={(v) => format(v)} />} />
             {target && (
               <ReferenceLine y={target.value} ifOverflow="extendDomain" stroke={PALETTE.ref} strokeDasharray="4 3" label={{ value: target.label, position: 'insideTopRight', fill: TICK.fill, fontSize: 10 }} />
             )}

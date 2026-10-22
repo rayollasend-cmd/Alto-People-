@@ -2,13 +2,17 @@ import type {
   DirectoryEntry,
   DirectoryListResponse,
   DirectoryStatus,
+  WorkStatus,
+  WorkStatusCounts,
 } from '@alto-people/shared';
-import { infiniteQueryOptions } from '@tanstack/react-query';
+import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
 import { apiFetch } from './api';
 
 export interface DirectoryFilters {
   q?: string;
   status?: DirectoryStatus;
+  /** The one status (Working, No recent shifts, …): the tiles' and chips' filter. */
+  workStatus?: WorkStatus;
   clientId?: string;
   departmentId?: string;
   locationId?: string;
@@ -29,6 +33,7 @@ export function listDirectory(
   const p = new URLSearchParams();
   if (filters.q) p.set('q', filters.q);
   if (filters.status) p.set('status', filters.status);
+  if (filters.workStatus) p.set('workStatus', filters.workStatus);
   if (filters.clientId) p.set('clientId', filters.clientId);
   if (filters.departmentId) p.set('departmentId', filters.departmentId);
   if (filters.locationId) p.set('locationId', filters.locationId);
@@ -36,6 +41,32 @@ export function listDirectory(
   if (filters.limit) p.set('limit', String(filters.limit));
   const qs = p.toString();
   return apiFetch<DirectoryListResponse>(`/people/directory${qs ? `?${qs}` : ''}`);
+}
+
+/**
+ * How many people stand where, for the list's filters (status filters
+ * aside: the tiles count every status so each can be picked). The same
+ * counts the Headcount screen shows (apps/api/src/lib/peopleStatus.ts).
+ */
+export function getDirectorySummary(filters: DirectoryFilters = {}): Promise<WorkStatusCounts> {
+  const p = new URLSearchParams();
+  if (filters.q) p.set('q', filters.q);
+  if (filters.clientId) p.set('clientId', filters.clientId);
+  if (filters.departmentId) p.set('departmentId', filters.departmentId);
+  if (filters.locationId) p.set('locationId', filters.locationId);
+  if (filters.employmentType) p.set('employmentType', filters.employmentType);
+  const qs = p.toString();
+  return apiFetch<WorkStatusCounts>(`/people/directory/summary${qs ? `?${qs}` : ''}`);
+}
+
+export function directorySummaryQuery(filters: DirectoryFilters) {
+  const { q, clientId, departmentId, locationId, employmentType } = filters;
+  const key = { q, clientId, departmentId, locationId, employmentType };
+  return queryOptions({
+    queryKey: ['directorySummary', key] as const,
+    queryFn: () => getDirectorySummary(key),
+    staleTime: 60_000,
+  });
 }
 
 /**

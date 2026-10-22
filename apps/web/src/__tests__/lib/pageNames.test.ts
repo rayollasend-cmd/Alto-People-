@@ -33,8 +33,6 @@ const termText = (k: string) => TERMS[k as TermKey]?.en ?? null;
 const EXCEPTIONS: Record<string, string> = {
   // The hub of Settings & trust: its title is the door's own name.
   settings: 'hub page',
-  // The client (store manager) portal is frozen by the owner — "leave it as it is for now".
-  'portal-ops': 'client portal frozen',
   // Pages being rebuilt by another builder this round; remove each once its
   // header agrees (the stale-exception test below fails when it does).
 };

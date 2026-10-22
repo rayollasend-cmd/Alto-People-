@@ -195,6 +195,40 @@ describe('InboxHome', () => {
     expect(screen.getByRole('link', { name: /Approvals/ })).toHaveAttribute('href', '/approvals?from=inbox&inbox=approvals');
   });
 
+  it('another desk’s company-wide queue sits under "Also watching", outside the count (F500 SH-4)', async () => {
+    vi.mocked(apiFetch).mockResolvedValue({
+      total: 3,
+      sources: [
+        { key: 'approvals', label: 'Shift & time-off approvals', description: 'Swaps, pickups and time off.', count: 3, path: '/approvals' },
+        { key: 'pay-schedule-unassigned', label: 'People on no pay schedule', description: 'Hired people no pay schedule covers.', count: 10, path: '/payroll/schedules?view=unassigned', watching: true },
+      ],
+    } satisfies InboxResponse);
+    renderPage();
+    const mine = await screen.findByRole('list', { name: 'Decisions waiting on you' });
+    expect(within(mine).getByText('Shift & time-off approvals')).toBeInTheDocument();
+    expect(within(mine).queryByText('People on no pay schedule')).not.toBeInTheDocument();
+    const watching = screen.getByTestId('inbox-watching');
+    expect(within(watching).getByText('Also watching · 1')).toBeInTheDocument();
+    expect(within(watching).getByText('People on no pay schedule')).toBeInTheDocument();
+  });
+
+  it('a date-only deadline sent as UTC midnight reads as its own day, west of UTC too (it read "Jan 30" for a Jan 31 due date)', async () => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+      vi.mocked(apiFetch).mockResolvedValue({
+        total: 2,
+        sources: [
+          { key: 'contract-duties', label: 'Contract duties overdue', description: 'Certificates the contract asks for.', count: 2, path: '/compliance', urgency: 'legal', dueAt: '2026-01-31T00:00:00.000Z' },
+        ],
+      } satisfies InboxResponse);
+      renderPage();
+      expect(await screen.findByTestId('inbox-due')).toHaveTextContent('Jan 31, 2026');
+    } finally {
+      process.env.TZ = tz;
+    }
+  });
+
   it('offers a retry when the inbox fails to load', async () => {
     vi.mocked(apiFetch).mockRejectedValue(new Error('boom'));
     renderPage();

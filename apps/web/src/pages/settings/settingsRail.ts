@@ -25,13 +25,43 @@ import {
   Workflow,
 } from 'lucide-react';
 import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
-import { useAuth, useTenant } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { applyTerms, MODULES, type ModuleKey } from '@/lib/modules';
+import { MODULE_ICONS } from '@/lib/moduleIcons';
 import type { SettingsRailItem } from '@/components/templates';
 
 /** A rail row with the one line the overview shows beneath its name. */
 export interface SettingsRailEntry extends SettingsRailItem {
   description: string;
 }
+
+/**
+ * The rail rows that ARE a module take the module's name — the one the
+ * sidebar, the palette, the page's own title and its breadcrumb use, in the
+ * tenant's words ("Stores", not a hard-coded "Sites" over a page that says
+ * Stores). The rest are pages only this rail lists.
+ */
+const RAIL_MODULE: Partial<Record<string, ModuleKey>> = {
+  organization: 'tenant-profile',
+  sites: 'sites',
+  'org-units': 'org-units',
+  employers: 'employers',
+  'document-retention': 'document-retention',
+  workflows: 'workflows',
+  branding: 'branding',
+  users: 'users',
+  'sign-in': 'sign-in',
+  audit: 'audit',
+  'approval-record': 'approval-record',
+  'access-certifications': 'access-certifications',
+  'compliance-evidence': 'compliance-evidence',
+  trust: 'trust-center',
+  billing: 'billing',
+  integrations: 'integrations',
+  reliability: 'reliability',
+  'product-analytics': 'product-analytics',
+  'design-system': 'design-system',
+};
 
 /**
  * Settings & Trust, as one list: the area shell draws it as the rail and the
@@ -41,7 +71,10 @@ export interface SettingsRailEntry extends SettingsRailItem {
 export function useSettingsRail(): SettingsRailEntry[] {
   const { can } = useAuth();
   const tenant = useTenant();
+  const term = useTerm();
   return useMemo<SettingsRailEntry[]>(() => {
+    // (`Map` here is the lucide icon; the lookup is a plain record.)
+    const named: Partial<Record<ModuleKey, string>> = Object.fromEntries(applyTerms(MODULES, term, tenant.modules).map((m) => [m.key, m.label]));
     const items: Array<SettingsRailEntry & { show: boolean }> = [
       // Organization
       { key: 'organization', label: 'Organization', to: '/admin/organization', icon: Building2, section: 'Organization', description: 'Business model, the modules this organization runs, and what it calls things.', show: can('view:hr-admin') },
@@ -74,6 +107,14 @@ export function useSettingsRail(): SettingsRailEntry[] {
       { key: 'design-system', label: 'Design system', to: '/design-system', icon: Shapes, section: 'Platform', description: 'The written standard the product follows.', show: can('view:product-analytics') },
       { key: 'platform-support', label: 'Support inbox', to: '/platform/support', icon: Inbox, section: 'Platform', description: 'Requests from every organization on the platform.', show: can('manage:org') && tenant.id === PLATFORM_OPERATOR_TENANT_ID },
     ];
-    return items.filter((i) => i.show).map(({ show: _show, ...rest }) => rest);
-  }, [can, tenant.modules.clientPortal, tenant.id]);
+    return items
+      .filter((i) => i.show)
+      .map(({ show: _show, ...rest }) => {
+        // A module's own name and glyph — the sidebar's and the palette's —
+        // so "Approval record" and "Access certifications" stop sharing one icon.
+        const key = RAIL_MODULE[rest.key];
+        const label = key ? named[key] : undefined;
+        return key ? { ...rest, label: label ?? rest.label, icon: MODULE_ICONS[key] ?? rest.icon } : rest;
+      });
+  }, [can, tenant.modules, tenant.id, term]);
 }

@@ -15,7 +15,9 @@ import { DEFAULT_TIMEZONE } from '../../lib/timezone.js';
 
 /**
  * GET /payroll/me/next-payday — the associate's next check and the days it
- * covers: their own pay schedule, else their client's, else the org default.
+ * covers, on the pay schedule they are ON (lib/payScheduleMembership — the
+ * rule a run pays by). F500 SH-4: a schedule they are not on (their
+ * client's, the org's) no longer promises a payday no run would pay.
  */
 
 beforeEach(async () => {
@@ -53,12 +55,20 @@ describe('GET /payroll/me/next-payday', () => {
     const { agent } = await associateAgent();
     const res = await agent.get('/payroll/me/next-payday');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ nextPayday: null });
+    expect(res.body).toEqual({ nextPayday: null, notOnSchedule: false });
   });
 
-  it('the org default: a Friday after today, paying the Mon–Sun week before it', async () => {
+  it('a schedule they are not on promises nothing — and says they are on none', async () => {
     const { agent } = await associateAgent();
     await schedule({ name: 'Weekly (org)' });
+    const res = await agent.get('/payroll/me/next-payday');
+    expect(res.body).toEqual({ nextPayday: null, notOnSchedule: true });
+  });
+
+  it('on a schedule: a Friday after today, paying the Mon–Sun week before it', async () => {
+    const { agent, associate } = await associateAgent();
+    const org = await schedule({ name: 'Weekly (org)' });
+    await prisma.payrollScheduleAssignment.create({ data: { associateId: associate.id, scheduleId: org.id, effectiveFrom: new Date('2026-01-05'), source: 'DEFAULT' } });
     const { nextPayday } = (await agent.get('/payroll/me/next-payday')).body;
     expect(nextPayday.schedule).toBe('Weekly (org)');
     const pay = new Date(`${nextPayday.payDate}T12:00:00Z`);
@@ -71,21 +81,25 @@ describe('GET /payroll/me/next-payday', () => {
     expect((pay.getTime() - end.getTime()) / 86_400_000).toBe(5);
   });
 
-  it("their client's schedule beats the org default; their own beats both", async () => {
+  it('membership decides, not the client: the schedule they are on, never their client’s by default', async () => {
     const { agent, client, associate } = await associateAgent();
     await schedule({ name: 'Weekly (org)' });
     await schedule({ name: 'Walmart biweekly', clientId: client.id, frequency: 'BIWEEKLY' });
-    expect((await agent.get('/payroll/me/next-payday')).body.nextPayday.schedule).toBe('Walmart biweekly');
+    expect((await agent.get('/payroll/me/next-payday')).body.nextPayday).toBeNull();
+    // The legacy per-person picker (no assignment history) still makes a member.
     const own = await schedule({ name: 'Maria special' });
     await prisma.associate.update({ where: { id: associate.id }, data: { payrollScheduleId: own.id } });
     expect((await agent.get('/payroll/me/next-payday')).body.nextPayday.schedule).toBe('Maria special');
+    // A retired schedule pays nobody.
+    await prisma.payrollSchedule.update({ where: { id: own.id }, data: { isActive: false } });
+    expect((await agent.get('/payroll/me/next-payday')).body.nextPayday).toBeNull();
   });
 });
 
 describe("Alto's pay rule — biweekly Sat→Fri, paid the Friday after", () => {
   async function altoAssociate() {
     const a = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
-    await prisma.payrollSchedule.create({
+    const s = await prisma.payrollSchedule.create({
       data: {
         name: 'Biweekly · Sat–Fri · paid the Friday after',
         frequency: 'BIWEEKLY',
@@ -93,8 +107,19 @@ describe("Alto's pay rule — biweekly Sat→Fri, paid the Friday after", () => 
         payDateOffsetDays: 7,
       },
     });
+    // On it since the spring (the company default put her there).
+    await prisma.payrollScheduleAssignment.create({ data: { associateId: a.id, scheduleId: s.id, effectiveFrom: new Date('2026-05-02'), source: 'DEFAULT' } });
     return a.id;
   }
+
+  it('a move booked to start later: the first payday is the new schedule’s first period that pays her days', async () => {
+    const a = await createAssociate({ firstName: 'Ana', lastName: 'Mover' });
+    const s = await prisma.payrollSchedule.create({ data: { name: 'Biweekly', frequency: 'BIWEEKLY', anchorDate: new Date('2026-09-12'), payDateOffsetDays: 7 } });
+    // Booked from Sat Oct 10 (the period Oct 10–23, paid Fri Oct 30).
+    await prisma.payrollScheduleAssignment.create({ data: { associateId: a.id, scheduleId: s.id, effectiveFrom: new Date('2026-10-10'), source: 'RULE' } });
+    // On Mon Sep 21 the schedule's next payday is Oct 2 (Sep 12–25), but she isn't on it until Oct 10.
+    expect(await nextPaydayFor(a.id, new Date('2026-09-21T15:00:00.000Z'))).toMatchObject({ payDate: '2026-10-30', periodStart: '2026-10-10', periodEnd: '2026-10-23' });
+  });
 
   it('on payday (Fri Sep 18, paying Aug 29–Sep 11) the next payday is Fri Oct 2, for Sep 12–25', async () => {
     const id = await altoAssociate();

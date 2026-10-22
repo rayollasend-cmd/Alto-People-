@@ -7,6 +7,7 @@ import {
   type YearEndCloseResponse,
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
+import { fmtCount } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -89,7 +90,7 @@ export function PayrollYearEndClose() {
                 <div className="flex items-center gap-2 text-warning">
                   <Circle className="h-5 w-5" />
                   <span className="font-medium">
-                    {data.checks.filter((c) => !c.done).length} item(s) still open before {year} can
+                    {fmtCount(data.checks.filter((c) => !c.done).length, 'item')} still open before {year} can
                     close.
                   </span>
                 </div>

@@ -90,7 +90,9 @@ describe('the top bar title on a page that names itself', () => {
     // At rest: the page's heading is on screen.
     act(() => observed[0]!.fire(true));
     expect(screen.getAllByRole('navigation', { name: 'Breadcrumb' })).toHaveLength(1);
-    expect(screen.getAllByText('Coastal Resort Holdings')).toHaveLength(3); // crumb + h1 visible; the bar's copy hidden
+    // The h1 and the bar's (hidden) copy — the page's trail stops at its parent ("Clients"),
+    // since the record's own name is the heading right under it.
+    expect(screen.getAllByText('Coastal Resort Holdings')).toHaveLength(2);
     expect(barTitle()).toHaveAttribute('aria-hidden', 'true');
     expect(barTitle()).toHaveAttribute('inert');
     expect(barTitle().className).toContain('opacity-0');

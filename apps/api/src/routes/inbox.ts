@@ -33,6 +33,7 @@ import { countDecidableApprovals } from '../lib/proposalDecisions.js';
 import { countDecidable } from '../lib/approvalRequests.js';
 import { deciderFrom } from './approvalRequests.js';
 import { countUnreadMessages } from './messages.js';
+import { QUEUE_DESK_ROLES, QUEUE_REGISTRY, staffsQueueDesk, type QueueDesk } from '@alto-people/shared';
 import { deskOf } from './relay.js';
 import { transportNeedsYou } from './transportOps.js';
 import { countToCertify } from '../lib/accessCertification.js';
@@ -48,7 +49,7 @@ import { i9ReverificationWhere, i9RetentionWhere } from '../lib/hiringCompliance
 import { certificationRequired } from '../lib/leaveOfAbsence.js';
 import { coverageGapPath, coverageGapsForUser } from '../lib/coverageGaps.js';
 import { overdueContractDuties, seesContractDuties } from '../lib/contractDuties.js';
-import { idleDraftsWhere } from '../lib/applicationFilters.js';
+import { stuckWhere } from '../lib/applicationFilters.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -297,17 +298,19 @@ const SOURCES: SourceDef[] = [
       }),
   },
   {
-    // Role walk HR 2: invites nobody has touched in a week. The link opens
-    // the applications list's "Idle drafts" filter — the same predicate
-    // (lib/applicationFilters.IDLE_DRAFT_DAYS), so the count is the list.
+    // Role walk HR 2: applications nothing has moved in a week. The link opens
+    // the applications list's "Stuck" filter — the one rule
+    // (lib/applicationFilters stuckWhere), so the count is the list, the
+    // banner and the rows' "idle" (F500 SH-4). AND, never spread: both
+    // halves may carry their own AND.
     key: 'onboarding-stuck',
-    label: 'Onboarding drafts gone quiet',
-    description: 'Invited new hires who have not moved their paperwork in more than 7 days — a nudge now saves the start date.',
-    path: '/onboarding?status=IDLE_DRAFTS',
+    label: 'Onboarding stuck',
+    description: 'New hires whose onboarding has not moved in more than 7 days: no task done and no invite. A nudge now saves the start date.',
+    path: '/onboarding?status=STUCK',
     visible: (u) => can(u, 'view:onboarding') && can(u, 'manage:onboarding'),
     count: (u) =>
       prisma.application.count({
-        where: { ...scopeApplications(u), ...idleDraftsWhere() },
+        where: { AND: [scopeApplications(u), stuckWhere()] },
       }),
   },
   {
@@ -652,7 +655,8 @@ const SOURCES: SourceDef[] = [
       return {
         count: d.count,
         dueAt: d.oldestDue ? `${d.oldestDue}T00:00:00.000Z` : null,
-        description: d.count ? `${d.items.map((i) => i.label).slice(0, 2).join('; ')}${d.count > 2 ? `; and ${d.count - 2} more` : ''}. The oldest was due ${d.oldestDue}.` : 'Every contract duty is confirmed for its period.',
+        // The due chip carries the oldest day (in words, on the page); the line names the duties (F500 SH-4).
+        description: d.count ? `${d.items.map((i) => i.label).slice(0, 2).join('; ')}${d.count > 2 ? `; and ${d.count - 2} more` : ''}.` : 'Every contract duty is confirmed for its period.',
       };
     },
   },
@@ -1118,6 +1122,26 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
     const user = req.user!;
     const profile = await loadTenantProfile();
     const mine = SOURCES.filter((s) => (!s.module || profile.modules[s.module]) && s.visible(user));
+    // Owner desks (queues.ts QUEUE_REGISTRY, F500 SH-4): a company-wide queue
+    // counts toward the badge of the desk whose job it is. Anyone else who may
+    // see it watches it. A desk nobody in the company staffs leaves its queues
+    // to everyone who sees them — never an orphan.
+    const deskStaffed = new Map<QueueDesk, boolean>();
+    const desksNeeded = new Set(mine.map((s) => QUEUE_REGISTRY[s.key]?.ownerDesk).filter((d): d is QueueDesk => !!d));
+    if (desksNeeded.size > 0) {
+      const roles = [...new Set([...desksNeeded].flatMap((d) => [...QUEUE_DESK_ROLES[d]]))];
+      const staffed = await prisma.user.groupBy({
+        by: ['role'],
+        where: { tenantId: tenantIdForWrite(), status: 'ACTIVE', deletedAt: null, role: { in: roles } },
+        _count: { _all: true },
+      });
+      const has = new Set(staffed.map((r) => r.role));
+      for (const d of desksNeeded) deskStaffed.set(d, QUEUE_DESK_ROLES[d].some((r) => has.has(r)));
+    }
+    const watches = (key: string): boolean => {
+      const desk = QUEUE_REGISTRY[key]?.ownerDesk;
+      return !!desk && deskStaffed.get(desk) === true && !staffsQueueDesk(key, user.role);
+    };
     const timings: string[] = [];
     const sources: InboxSource[] = await Promise.all(
       mine.map(async (s) => {
@@ -1141,12 +1165,24 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
         }
         timings.push(`${s.key.replace(/[^a-zA-Z0-9_-]/g, '_')};dur=${(performance.now() - t0).toFixed(1)}`);
         // A deadline only means something while the queue has items.
-        return { key: s.key, label: s.label, description, count, path, urgency: s.urgency ?? 'routine', dueAt: count > 0 ? dueAt : null, ...(count > 0 && progress ? { progress } : {}) };
+        // The one name for the queue both pages use (queues.ts).
+        return {
+          key: s.key,
+          label: QUEUE_REGISTRY[s.key]?.label ?? s.label,
+          description,
+          count,
+          path,
+          urgency: s.urgency ?? 'routine',
+          dueAt: count > 0 ? dueAt : null,
+          ...(count > 0 && progress ? { progress } : {}),
+          ...(watches(s.key) ? { watching: true } : {}),
+        };
       }),
     );
     // Which source is slow, visible in any browser's network panel.
     res.setHeader('Server-Timing', timings.join(', '));
-    const total = sources.reduce((sum, s) => sum + s.count, 0);
+    // The badge: only the queues this person owns.
+    const total = sources.reduce((sum, s) => sum + (s.watching ? 0 : s.count), 0);
     res.json(InboxResponseSchema.parse({ total, sources }));
   } catch (err) {
     next(err);

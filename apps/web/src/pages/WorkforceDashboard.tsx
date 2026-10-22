@@ -29,7 +29,8 @@ import { fmtDate, fmtDateTz, fmtMoneyCompact, fmtShiftTz, fmtTime } from '@/lib/
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
-import { ClockStrip } from '@/components/ClockStrip';
+import { useClockParts } from '@/components/ClockStrip';
+import { HomeMeta } from '@/components/home/HomeMeta';
 import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -173,6 +174,7 @@ const STATUS_DOT: Record<StoreTile['status'], string> = {
 export function WorkforceDashboard() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const clockParts = useClockParts();
   const query = useQuery({
     queryKey: ['workforce', 'overview'],
     queryFn: () => apiFetch<WorkforceOverview>('/workforce/overview'),
@@ -316,16 +318,18 @@ export function WorkforceDashboard() {
       topbarTitle={t('wf.title')}
       subtitle={t('wf.subtitle')}
       meta={
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="flex items-center gap-1.5 text-xs text-ink-muted">
-            <span className="relative flex h-2 w-2" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-            {t('portal.live')}
-          </span>
-          <ClockStrip />
-        </div>
+        <HomeMeta
+          items={[
+            <span key="live" className="inline-flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+              </span>
+              {t('portal.live')}
+            </span>,
+            ...clockParts,
+          ]}
+        />
       }
       hero={
         <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
@@ -373,7 +377,7 @@ export function WorkforceDashboard() {
           </CardContent>
         </Card>
       }
-      decisions={{ title: t('home.needsYou'), content: <RoleDecisionQueue title={null} /> }}
+      decisions={{ title: t('home.needsYou'), queue: true, content: <RoleDecisionQueue title={null} /> }}
       assistant={<HugoSeat />}
       waysIn={doors}
     >

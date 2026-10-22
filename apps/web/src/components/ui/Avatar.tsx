@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
+import { isPhotoKnownMissing, markPhotoMissing } from '@/lib/photoUrl';
 
 /**
  * Phase 72 — Avatar primitive.
@@ -39,6 +40,11 @@ const PALETTE = [
 
 interface AvatarProps {
   src?: string | null;
+  /**
+   * What the list said about the photo. false: there is none, so no
+   * request is made at all (initials). Omitted: try `src`.
+   */
+  hasPhoto?: boolean;
   name?: string | null;
   email?: string | null;
   size?: AvatarSize;
@@ -48,13 +54,15 @@ interface AvatarProps {
 }
 
 export function Avatar({
-  src,
+  src: rawSrc,
+  hasPhoto,
   name,
   email,
   size = 'md',
   className,
   ringed,
 }: AvatarProps) {
+  const src = hasPhoto === false || (rawSrc && isPhotoKnownMissing(rawSrc)) ? null : rawSrc;
   const [broken, setBroken] = React.useState(false);
   // When the image src changes (e.g. user uploads a new photo, cache-buster
   // bumps the ?v= param), retry — clear the prior broken flag so we don't
@@ -93,7 +101,10 @@ export function Avatar({
           loading="lazy"
           decoding="async"
           className="h-full w-full object-cover"
-          onError={() => setBroken(true)}
+          onError={() => {
+            markPhotoMissing(src);
+            setBroken(true);
+          }}
           draggable={false}
         />
       ) : (

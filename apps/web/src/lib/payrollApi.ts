@@ -194,7 +194,12 @@ export interface NextPayday {
   paidToday?: { periodStart: string; periodEnd: string } | null;
 }
 
-export function getMyNextPayday(): Promise<{ nextPayday: NextPayday | null }> {
+/**
+ * `nextPayday` is null when they are on no pay schedule (no run would pay
+ * them — apps/api/src/lib/payScheduleMembership); `notOnSchedule` is true
+ * then when the company does pay by schedules, so the page says so.
+ */
+export function getMyNextPayday(): Promise<{ nextPayday: NextPayday | null; notOnSchedule?: boolean }> {
   return apiFetch('/payroll/me/next-payday');
 }
 

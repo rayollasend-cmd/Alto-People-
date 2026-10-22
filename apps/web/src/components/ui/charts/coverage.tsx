@@ -6,6 +6,7 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
+  LabelList,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -15,7 +16,7 @@ import {
 } from 'recharts';
 import { cn } from '@/lib/cn';
 import { ChartTooltipContent as PortalTooltip, LegendKey } from './ChartTooltip';
-import { PALETTE, TICK as BASE_TICK } from './palette';
+import { CONCEPT, PALETTE, TICK as BASE_TICK } from './palette';
 
 /**
  * Staffing figures shared by the store portal, the supervisor and region
@@ -30,6 +31,28 @@ const SURFACE = PALETTE.surface;
 const GRID = PALETTE.grid;
 const TICK = { ...BASE_TICK, fontSize: 10 } as const;
 const REF = PALETTE.ref;
+
+/*
+ * Axes. These charts used a -18px left margin with a 36px y-axis, which cut
+ * every tick wider than two characters ("100%" read "%", "24h" read "4h").
+ * The plot now starts at the card's edge and the y-axis sizes itself to its
+ * widest tick.
+ */
+const MARGIN = { top: 12, right: 12, bottom: 0, left: 0 } as const;
+const Y_WIDTH = 'auto' as const;
+
+/**
+ * A y-domain that always has a scale: zero to a rounded-up 15% above the
+ * highest of the peak, the target and 1. With every value zero, recharts
+ * gave a stacked chart no scale at all (no ticks, no contract line, no
+ * "Now"); an explicit domain with allowDataOverflow keeps the axis, and
+ * the domain is built to cover the data, so nothing is ever clipped.
+ */
+export function coverageDomain(peak: number, target: number | null = null): [number, number] {
+  const top = Math.max(target ?? 0, peak, 1) * 1.15;
+  // A multiple of 4, so recharts' five whole-number ticks are evenly spaced (0 3 6 9 12, not 0 3 6 10).
+  return [0, Math.ceil(top / 4) * 4];
+}
 
 /* ---- Coverage curve: headcount by hour today vs the contracted line ---- */
 
@@ -51,7 +74,15 @@ export function CoverageCurve({
   target: number | null;
   /** Current hour in the store's zone, 0–23; null when today is over. */
   nowHour: number | null;
-  labels: { scheduled: string; open: string; contracted: string; now: string; at: (h: string) => string };
+  labels: {
+    scheduled: string;
+    open: string;
+    contracted: string;
+    now: string;
+    at: (h: string) => string;
+    /** Said over the plot when every hour is zero ("Nothing scheduled today"). */
+    empty?: string;
+  };
   /** Hours to shade — a supervisor's own shift inside the store's day.
    *  Site-local minutes; end <= start wraps past midnight. */
   bands?: Array<{ startMinute: number; endMinute: number; label: string }>;
@@ -70,16 +101,21 @@ export function CoverageCurve({
   });
   const at = (h: number) => points[Math.min(Math.max(h, 0), points.length - 1)]?.label;
   const series = {
-    scheduled: { name: labels.scheduled, color: SERIES.primary },
-    open: { name: labels.open, color: STATUS.bad },
+    scheduled: { name: labels.scheduled, color: CONCEPT.scheduled },
+    open: { name: labels.open, color: CONCEPT.unfilled },
   };
-  const max = Math.max(target ?? 0, ...points.map((p) => p.scheduled + p.open), 1);
+  const peak = Math.max(0, ...points.map((p) => p.scheduled + p.open));
   const nowLabel = nowHour !== null ? points[nowHour]?.label : undefined;
   return (
     <div>
-      <div className="h-40 w-full sm:h-48">
+      <div className="relative h-40 w-full sm:h-48">
+        {peak === 0 && labels.empty && (
+          <div className="pointer-events-none absolute inset-x-0 top-1/2 z-10 -translate-y-1/2 text-center" data-chart-empty="">
+            <span className="rounded-md bg-navy/90 px-2 py-0.5 text-sm text-silver">{labels.empty}</span>
+          </div>
+        )}
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart accessibilityLayer={false} data={points} margin={{ top: 12, right: 12, bottom: 0, left: -18 }}>
+          <ComposedChart accessibilityLayer={false} data={points} margin={MARGIN}>
             <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
             <XAxis
               dataKey="label"
@@ -93,8 +129,9 @@ export function CoverageCurve({
               axisLine={false}
               tickLine={false}
               allowDecimals={false}
-              domain={[0, Math.ceil(max * 1.15)]}
-              width={36}
+              domain={coverageDomain(peak, target)}
+              allowDataOverflow
+              width={Y_WIDTH}
             />
             <ChartTooltip
               cursor={{ stroke: REF, strokeWidth: 1 }}
@@ -104,9 +141,9 @@ export function CoverageCurve({
               type="stepAfter"
               dataKey="scheduled"
               stackId="a"
-              stroke={SERIES.primary}
+              stroke={CONCEPT.scheduled}
               strokeWidth={2}
-              fill={SERIES.primary}
+              fill={CONCEPT.scheduled}
               fillOpacity={0.12}
               isAnimationActive={false}
               dot={false}
@@ -119,9 +156,9 @@ export function CoverageCurve({
               type="stepAfter"
               dataKey="open"
               stackId="a"
-              stroke={STATUS.bad}
+              stroke={CONCEPT.unfilled}
               strokeWidth={0}
-              fill={STATUS.bad}
+              fill={CONCEPT.unfilled}
               fillOpacity={0.35}
               isAnimationActive={false}
               dot={false}
@@ -148,8 +185,9 @@ export function CoverageCurve({
             {target !== null && (
               <ReferenceLine
                 y={target}
-                stroke={REF}
+                stroke={CONCEPT.target}
                 strokeDasharray="4 3"
+                ifOverflow="extendDomain"
                 label={{
                   value: `${labels.contracted} ${target}`,
                   position: 'insideTopRight',
@@ -163,6 +201,7 @@ export function CoverageCurve({
                 x={nowLabel}
                 stroke="rgb(var(--color-fg) / 0.6)"
                 strokeWidth={1}
+                ifOverflow="extendDomain"
                 label={{
                   value: labels.now,
                   position: 'top',
@@ -177,9 +216,9 @@ export function CoverageCurve({
       <div className="mt-1 flex items-center justify-between gap-3">
         <LegendKey
           items={[
-            { name: labels.scheduled, color: SERIES.primary },
-            { name: labels.open, color: STATUS.bad },
-            ...(target !== null ? [{ name: labels.contracted, color: REF, line: true }] : []),
+            { name: labels.scheduled, color: CONCEPT.scheduled },
+            { name: labels.open, color: CONCEPT.unfilled },
+            ...(target !== null ? [{ name: labels.contracted, color: CONCEPT.target, line: true }] : []),
           ]}
         />
       </div>
@@ -199,14 +238,15 @@ export function WeekFillChart({
   labels: { filled: string; open: string; heading: (d: string) => string };
 }) {
   const series = {
-    filled: { name: labels.filled, color: SERIES.primary },
-    open: { name: labels.open, color: STATUS.bad },
+    filled: { name: labels.filled, color: CONCEPT.scheduled },
+    open: { name: labels.open, color: CONCEPT.unfilled },
   };
+  const peak = Math.max(0, ...days.map((d) => d.filled + d.open));
   return (
     <div>
       <div className="h-40 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart accessibilityLayer={false} data={days} margin={{ top: 8, right: 4, bottom: 0, left: -18 }} barCategoryGap="30%">
+          <BarChart accessibilityLayer={false} data={days} margin={{ ...MARGIN, top: 8, right: 4 }} barCategoryGap="30%">
             <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
             <XAxis
               dataKey="day"
@@ -214,7 +254,7 @@ export function WeekFillChart({
               axisLine={{ stroke: GRID }}
               tickLine={false}
             />
-            <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} width={36} />
+            <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} domain={coverageDomain(peak)} allowDataOverflow width={Y_WIDTH} />
             <ChartTooltip
               cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.35)' }}
               content={<PortalTooltip series={series} heading={(l) => labels.heading(l)} />}
@@ -222,7 +262,7 @@ export function WeekFillChart({
             <Bar
               dataKey="filled"
               stackId="a"
-              fill={SERIES.primary}
+              fill={CONCEPT.scheduled}
               stroke={SURFACE}
               strokeWidth={2}
               maxBarSize={24}
@@ -235,7 +275,7 @@ export function WeekFillChart({
             <Bar
               dataKey="open"
               stackId="a"
-              fill={STATUS.bad}
+              fill={CONCEPT.unfilled}
               stroke={SURFACE}
               strokeWidth={0}
               maxBarSize={24}
@@ -248,8 +288,8 @@ export function WeekFillChart({
       <div className="mt-1">
         <LegendKey
           items={[
-            { name: labels.filled, color: SERIES.primary },
-            { name: labels.open, color: STATUS.bad },
+            { name: labels.filled, color: CONCEPT.scheduled },
+            { name: labels.open, color: CONCEPT.unfilled },
           ]}
         />
       </div>
@@ -267,11 +307,12 @@ export function ReliabilityChart({
   labels: { fill: string; target: string; heading: (w: string) => string };
 }) {
   const series = { pct: { name: labels.fill, color: SERIES.primary } };
-  const data = weeks.map((w) => ({ ...w, pct: w.reliabilityPct ?? 0 }));
+  // A 0% week drew nothing at all; the value label makes four zero weeks visibly zero.
+  const data = weeks.map((w) => ({ ...w, pct: w.reliabilityPct, text: w.reliabilityPct === null ? '' : `${w.reliabilityPct}%` }));
   return (
     <div className="h-36 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart accessibilityLayer={false} data={data} margin={{ top: 12, right: 4, bottom: 0, left: -18 }} barCategoryGap="35%">
+        <BarChart accessibilityLayer={false} data={data} margin={{ ...MARGIN, top: 16, right: 4 }} barCategoryGap="35%">
           <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
           <XAxis dataKey="label" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} />
           <YAxis
@@ -280,7 +321,7 @@ export function ReliabilityChart({
             tickLine={false}
             domain={[0, 100]}
             ticks={[0, 50, 100]}
-            width={36}
+            width={Y_WIDTH}
             tickFormatter={(v: number) => `${v}%`}
           />
           <ChartTooltip
@@ -307,6 +348,8 @@ export function ReliabilityChart({
           <Bar
             dataKey="pct"
             fill={SERIES.primary}
+            // A 0% week draws a hairline (and its label) instead of nothing; a week with no data stays empty.
+            minPointSize={(v) => (v == null ? 0 : 2)}
             maxBarSize={24}
             radius={[4, 4, 0, 0]}
             isAnimationActive={false}
@@ -314,6 +357,7 @@ export function ReliabilityChart({
             {data.map((w) => (
               <Cell key={w.start} fillOpacity={w.current ? 0.45 : 1} />
             ))}
+            <LabelList dataKey="text" position="top" style={{ fill: TICK.fill, fontSize: 10 }} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -491,18 +535,20 @@ export function HoursChart({
   days: Array<{ date: string; day: string; scheduledHours: number; workedHours: number }>;
   labels: { scheduled: string; worked: string; heading: (d: string) => string };
 }) {
+  // Scheduled is the primary series in every staffing chart; delivered the second.
   const series = {
-    scheduledHours: { name: labels.scheduled, color: SERIES.secondary },
-    workedHours: { name: labels.worked, color: SERIES.primary },
+    scheduledHours: { name: labels.scheduled, color: CONCEPT.scheduled },
+    workedHours: { name: labels.worked, color: CONCEPT.delivered },
   };
+  const peak = Math.max(0, ...days.map((d) => Math.max(d.scheduledHours, d.workedHours)));
   return (
     <div>
       <div className="h-40 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart accessibilityLayer={false} data={days} margin={{ top: 8, right: 4, bottom: 0, left: -18 }} barCategoryGap="25%" barGap={2}>
+          <BarChart accessibilityLayer={false} data={days} margin={{ ...MARGIN, top: 8, right: 4 }} barCategoryGap="25%" barGap={2}>
             <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
             <XAxis dataKey="day" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} />
-            <YAxis tick={TICK} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => `${v}h`} />
+            <YAxis tick={TICK} axisLine={false} tickLine={false} width={Y_WIDTH} domain={coverageDomain(peak)} allowDataOverflow tickFormatter={(v: number) => `${v}h`} />
             <ChartTooltip
               cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.35)' }}
               content={
@@ -513,16 +559,16 @@ export function HoursChart({
                 />
               }
             />
-            <Bar dataKey="scheduledHours" fill={SERIES.secondary} maxBarSize={16} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-            <Bar dataKey="workedHours" fill={SERIES.primary} maxBarSize={16} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="scheduledHours" fill={CONCEPT.scheduled} maxBarSize={16} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="workedHours" fill={CONCEPT.delivered} maxBarSize={16} radius={[4, 4, 0, 0]} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </div>
       <div className="mt-1">
         <LegendKey
           items={[
-            { name: labels.scheduled, color: SERIES.secondary },
-            { name: labels.worked, color: SERIES.primary },
+            { name: labels.scheduled, color: CONCEPT.scheduled },
+            { name: labels.worked, color: CONCEPT.delivered },
           ]}
         />
       </div>
@@ -540,12 +586,13 @@ export function StoreBarChart({
   labels: { value: string; target: string; heading: (n: string) => string };
 }) {
   const series = { value: { name: labels.value, color: SERIES.primary } };
-  const data = rows.map((r) => ({ ...r, value: r.value ?? 0 }));
+  // At 0% a store drew no bar at all; the printed value says "0%" (and "—" for no data).
+  const data = rows.map((r) => ({ ...r, value: r.value ?? 0, text: r.value === null ? '—' : `${r.value}%` }));
   const height = Math.max(120, rows.length * 30 + 24);
   return (
     <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart accessibilityLayer={false} data={data} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 4 }} barCategoryGap="30%">
+        <BarChart accessibilityLayer={false} data={data} layout="vertical" margin={{ top: 4, right: 36, bottom: 0, left: 4 }} barCategoryGap="30%">
           <CartesianGrid stroke={GRID} strokeWidth={1} horizontal={false} />
           <XAxis
             type="number"
@@ -567,7 +614,7 @@ export function StoreBarChart({
             strokeDasharray="4 3"
             label={{ value: labels.target, position: 'insideTopRight', fill: 'rgb(var(--color-silver) / 0.8)', fontSize: 10 }}
           />
-          <Bar dataKey="value" fill={SERIES.primary} maxBarSize={18} radius={[0, 4, 4, 0]} isAnimationActive={false}>
+          <Bar dataKey="value" fill={SERIES.primary} maxBarSize={18} radius={[0, 4, 4, 0]} minPointSize={2} isAnimationActive={false}>
             {data.map((r) => (
               <Cell
                 key={r.id}
@@ -575,6 +622,7 @@ export function StoreBarChart({
                 fillOpacity={rows.find((x) => x.id === r.id)?.value === null ? 0.25 : 1}
               />
             ))}
+            <LabelList dataKey="text" position="right" style={{ fill: TICK.fill, fontSize: 10 }} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>

@@ -70,6 +70,9 @@ export interface PayrollReviewReport {
     finalizedAt: string | null;
     /** The gross stored on the run (absent from older responses). */
     storedGross?: number;
+    /** The net stored on the run; with totalsAgree, the check against its paychecks (apps/api/src/lib/payrollRunTotals.ts). */
+    storedNet?: number;
+    totalsAgree?: boolean;
   };
   totals: {
     people: number;

@@ -98,7 +98,8 @@ describe('Fieldglass timesheets — its own sidebar entry', () => {
       expect(keysFor(role), role).not.toContain('fieldglass');
     }
     const entry = MODULES.find((m) => m.key === 'fieldglass')!;
-    expect(entry).toMatchObject({ path: '/time-attendance/timesheets', label: 'Fieldglass hours', group: 'workforce-management' });
+    // Named for what it is — the client's weekly hours (F500 G2: "Timesheets" meant three things).
+    expect(entry).toMatchObject({ path: '/time-attendance/timesheets', label: 'Client hours', group: 'workforce-management' });
   });
 
   it('Fieldglass setup is its own entry too — finance’s (the packet carries PII), never a supervisor’s', () => {

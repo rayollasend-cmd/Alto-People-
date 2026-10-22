@@ -134,10 +134,15 @@ export function RegionHome() {
 
   /** The one line each tile says — its alarm, or that it is covered. */
   const storeStatus = (s: StoreSnapshot): { tone: Tone; text: string } => {
-    if (s.alert) return { tone: 'bad', text: t('region.tileShort', { count: s.now.short }) };
+    // Each line names its "short": below the contract, or scheduled and not in.
+    const shortText = (n: number, basis: 'contract' | 'schedule' | undefined) =>
+      basis === 'schedule' ? t('region.tileMissingScheduled', { count: n }) : t('region.tileBelowContract', { count: n });
+    if (s.alert) return { tone: 'bad', text: t('region.tileMissingScheduled', { count: s.now.missingFromSchedule ?? s.now.short }) };
+    // Below contract outranks a late request: it is the store's service right now.
+    if (s.now.short > 0 && s.now.shortBasis === 'contract') return { tone: 'bad', text: shortText(s.now.short, s.now.shortBasis) };
     if (s.today.open > 0) return { tone: 'bad', text: t('region.attnOpenToday', { count: s.today.open }) };
     if (s.requests.overdue > 0) return { tone: 'bad', text: t('region.attnOverdue', { count: s.requests.overdue }) };
-    if (s.now.short > 0) return { tone: 'warn', text: t('region.tileShort', { count: s.now.short }) };
+    if (s.now.short > 0) return { tone: 'warn', text: shortText(s.now.short, s.now.shortBasis) };
     if (s.tomorrow.open > 0) return { tone: 'warn', text: t('region.attnOpenTomorrow', { count: s.tomorrow.open }) };
     if (s.tomorrow.unconfirmed > 0) return { tone: 'warn', text: t('region.attnUnconfirmed', { count: s.tomorrow.unconfirmed }) };
     if (s.leads.total === 0) return { tone: 'warn', text: t('region.cardNoLead') };
@@ -242,6 +247,7 @@ export function RegionHome() {
                     open: t('portal.chartOpen'),
                     contracted: t('portal.chartContracted'),
                     now: t('portal.chartNow'),
+                    empty: t('portal.chartNothing'),
                     at: (h) => t('portal.chartAt', { hour: h }),
                   }}
                 />
@@ -348,7 +354,7 @@ export function RegionHome() {
           value={tot.shortNow}
           unit={t('region.kpiShortUnit', { total: tot.stores })}
           deltaTone={tot.shortNow > 0 ? 'bad' : 'good'}
-          sub={tot.alerts > 0 ? t('region.kpiShortAlerts', { count: tot.alerts }) : t('region.kpiFloorOk')}
+          sub={tot.alerts > 0 ? t('region.kpiShortAlerts', { count: tot.alerts }) : tot.shortNow > 0 ? t('region.kpiBelowContractSub', { count: tot.shortNow }) : t('region.kpiFloorOk')}
         />
         <StatTile
           label={t('region.kpiOpen')}

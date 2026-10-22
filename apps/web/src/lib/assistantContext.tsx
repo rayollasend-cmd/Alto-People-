@@ -75,6 +75,10 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     enabled: Boolean(user),
     staleTime: 5 * 60_000,
     retry: (count, err) => !(err instanceof ApiError && (err.status === 403 || err.status === 409)) && count < 1,
+    // A 403/409 is the answer for this account; a page that mounts the pane
+    // or the home seat must not ask again (the client portal sent a refused
+    // GET /hugo on every page).
+    retryOnMount: false,
   });
   const available = Boolean(user) && !me.isError && Boolean(me.data);
 

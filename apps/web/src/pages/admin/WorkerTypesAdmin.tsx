@@ -244,7 +244,10 @@ export function WorkerTypesAdmin() {
       },
       {
         key: 'status',
-        header: 'Status',
+        // The worker's account (Active / Suspended), not where a person stands
+        // at work — that is the People directory's status (Working, No recent
+        // shifts, …; apps/api/src/lib/peopleStatus.ts). One word, one meaning.
+        header: 'Account',
         accessor: (w) => WORKER_STATUS_LABELS[w.status],
         sortable: true,
         cardMeta: true,

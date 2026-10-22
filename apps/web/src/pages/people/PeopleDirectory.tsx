@@ -49,15 +49,18 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { WORK_STATUSES } from '@alto-people/shared';
 import type {
   DirectoryEntry,
-  DirectoryStatus,
+  WorkStatus,
   DocumentKind,
   DocumentRecord,
   DocumentVaultResponse,
   DocumentVaultSummary,
 } from '@alto-people/shared';
-import { directoryQuery, getDirectoryEntry, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
+import { directoryQuery, directorySummaryQuery, getDirectoryEntry, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
+import { PeopleStatusBadge, workStatusEnglish, workStatusKeys, workStatusOf } from '@/components/ui/PeopleStatusBadge';
+import { useI18n } from '@/lib/i18n';
 import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
@@ -198,19 +201,19 @@ export function fmtPay(amount: string | null, type: string | null, currency: str
  * full profile drawer with contact info, onboarding %, and links into the
  * detail pages (org structure, agreements, documents, comp history).
  */
-// Status values a ?status= deep-link is allowed to seed. Guards against junk
-// in the URL turning into a filter the picker can't represent.
-const SEEDABLE_STATUSES = new Set<DirectoryStatus>([
-  'ACTIVE',
-  'PENDING',
-  'INACTIVE',
-]);
+// Status values a ?workStatus= deep-link (or a saved view) is allowed to
+// seed: the one status (apps/api/src/lib/peopleStatus.ts). Guards against
+// junk in the URL turning into a filter the picker can't represent.
+const SEEDABLE_STATUSES = new Set<WorkStatus>(WORK_STATUSES);
+// The older three-word links (/people?status=ACTIVE from dashboards and the
+// clients pages) still land: ACTIVE is Working, PENDING is Onboarding.
+const LEGACY_STATUS: Readonly<Record<string, WorkStatus>> = { ACTIVE: 'ACTIVE', PENDING: 'ONBOARDING' };
 
 // Validators for the persisted filters — a stored value from a removed
 // option falls back to the default instead of silently hiding rows.
-const isStatusFilter = (v: unknown): v is DirectoryStatus | '' =>
+const isStatusFilter = (v: unknown): v is WorkStatus | '' =>
   v === '' ||
-  (typeof v === 'string' && SEEDABLE_STATUSES.has(v as DirectoryStatus));
+  (typeof v === 'string' && SEEDABLE_STATUSES.has(v as WorkStatus));
 
 type EmploymentTypeFilter = NonNullable<DirectoryFilters['employmentType']>;
 
@@ -235,8 +238,10 @@ export function PeopleDirectory() {
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
   // department facets deliberately stay per-session.
-  const [status, setStatus] = usePersistentState<DirectoryStatus | ''>(
-    'alto:list.people.status.v1',
+  const { t } = useI18n();
+  // The one status (Working, No recent shifts, …) the tiles and chips filter by.
+  const [status, setStatus] = usePersistentState<WorkStatus | ''>(
+    'alto:list.people.workStatus.v1',
     '',
     isStatusFilter,
   );
@@ -264,8 +269,9 @@ export function PeopleDirectory() {
   if (!urlSeedApplied.current) {
     urlSeedApplied.current = true;
     const params = new URLSearchParams(window.location.search);
-    const raw = params.get('status') as DirectoryStatus | null;
-    if (raw && SEEDABLE_STATUSES.has(raw) && raw !== status) setStatus(raw);
+    const rawWork = params.get('workStatus') as WorkStatus | null;
+    const raw = rawWork && SEEDABLE_STATUSES.has(rawWork) ? rawWork : LEGACY_STATUS[params.get('status') ?? ''] ?? null;
+    if (raw && raw !== status) setStatus(raw);
     // ?employmentType= deep-link — the headcount dashboard's
     // by-employment-type rows land here pre-filtered.
     const rawType = params.get('employmentType');
@@ -283,7 +289,7 @@ export function PeopleDirectory() {
   const filters = useMemo<DirectoryFilters>(
     () => ({
       ...(q ? { q } : {}),
-      ...(status ? { status } : {}),
+      ...(status ? { workStatus: status } : {}),
       ...(clientId ? { clientId } : {}),
       ...(locationId ? { locationId } : {}),
       ...(departmentId ? { departmentId } : {}),
@@ -467,16 +473,9 @@ export function PeopleDirectory() {
       : 'Failed to load.'
     : null;
 
-  const stats = useMemo(() => {
-    if (!rows) return null;
-    const byStatus: Record<DirectoryStatus, number> = {
-      ACTIVE: 0,
-      PENDING: 0,
-      INACTIVE: 0,
-    };
-    for (const r of rows) byStatus[r.status] += 1;
-    return { total: rows.length, ...byStatus };
-  }, [rows]);
+  // The tiles: exact counts for the whole filtered population (not the pages
+  // loaded), from the same reading the Headcount screen shows.
+  const { data: stats } = useQuery(directorySummaryQuery(filters));
 
   const hasActiveFilters = Boolean(
     q || status || clientId || locationId || departmentId || employmentType,
@@ -495,7 +494,7 @@ export function PeopleDirectory() {
   const viewQuery = useMemo(() => {
     const v: Record<string, string> = {};
     if (q) v.q = q;
-    if (status) v.status = status;
+    if (status) v.workStatus = status;
     if (clientId) v.clientId = clientId;
     if (locationId) v.locationId = locationId;
     if (departmentId) v.departmentId = departmentId;
@@ -506,7 +505,8 @@ export function PeopleDirectory() {
     setSavedViewId(id);
     setSearch(v.q ?? '');
     setQ(v.q ?? '');
-    setStatus(isStatusFilter(v.status) ? v.status : '');
+    // Views saved before the one status hold ?status=ACTIVE|PENDING; they map.
+    setStatus(isStatusFilter(v.workStatus) ? v.workStatus : (LEGACY_STATUS[v.status ?? ''] ?? ''));
     setClientId(v.clientId ?? '');
     setLocationId(v.locationId ?? '');
     setDepartmentId(v.departmentId ?? '');
@@ -564,7 +564,7 @@ export function PeopleDirectory() {
         ['Name', 'Status', 'Email', ...(hasClients ? ['Client'] : []), 'Type', 'Start date'],
         ...all.map((r) => [
           `${r.firstName} ${r.lastName}`,
-          statusLabel(r.status),
+          workStatusEnglish(workStatusOf(r)),
           r.email,
           ...(hasClients ? [r.workplaceClientName ?? ''] : []),
           EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
@@ -582,7 +582,7 @@ export function PeopleDirectory() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title={term('nav.people')}
-        subtitle={`Every ${term('worker').toLowerCase()} on record — active, pending onboarding, and inactive — with where they work, pay, and contact in one row.`}
+        subtitle={`Every ${term('worker').toLowerCase()} on record — where they stand, where they work, their pay and contact — in one row.`}
         breadcrumbs={[{ label: term('nav.people') }]}
         primaryAction={
           <Button asChild>
@@ -618,44 +618,35 @@ export function PeopleDirectory() {
         summary={
               <>
           {canManagePhotos && <PhotoStorageBanner />}
-          {/* KPI strip. Counts cover the pages loaded so far; the "+" is the
-              honest signal that more exist beyond the fetch horizon (status
-              is derived server-side per page, so exact totals would need a
-              full walk on every filter change). */}
+          {/* KPI strip: exact counts for the filtered population, in the one
+              status vocabulary (apps/api/src/lib/peopleStatus.ts) — the same
+              numbers Headcount shows. Each status tile is the filter. */}
           {stats && (
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <MetricCard
-                label={hasNextPage ? 'Total (loaded)' : 'Total'}
-                value={hasNextPage ? `${stats.total}+` : stats.total}
+                label={t('people.onTheBooks')}
+                value={stats.onTheBooks}
+                hint={t('people.onTheBooksDef')}
+                valueTitle={t('people.onTheBooksDef')}
+                onClick={() => setStatus('')}
+                selected={status === ''}
+                compact
+                cta={false}
               />
-              <MetricCard label="Active" value={hasNextPage ? `${stats.ACTIVE}+` : stats.ACTIVE} />
-              {/* Interactive tile: toggles the Pending status filter. Wrapped
-                  outside MetricCard so the canonical tile stays presentational. */}
-              <button
-                type="button"
-                onClick={() => setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))}
-                aria-pressed={status === 'PENDING'}
-                title={
-                  status === 'PENDING'
-                    ? 'Clear filter'
-                    : 'Filter to pending onboarding'
-                }
-                className={cn(
-                  'text-left rounded-lg transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                  status === 'PENDING' && 'ring-1 ring-gold/40',
-                )}
-              >
+              {(['ACTIVE', 'PLACED_NOT_ACTIVE', 'ONBOARDING'] as const).map((s) => (
                 <MetricCard
-                  label="Pending onboarding"
-                  value={hasNextPage ? `${stats.PENDING}+` : stats.PENDING}
-                  accent={stats.PENDING > 0}
-                  className="h-full"
+                  key={s}
+                  label={s === 'ACTIVE' ? t('people.workingWindow', { days: stats.windowDays }) : t(workStatusKeys(s).label)}
+                  value={stats[s]}
+                  hint={t(workStatusKeys(s).definition, { days: stats.windowDays })}
+                  valueTitle={t(workStatusKeys(s).definition, { days: stats.windowDays })}
+                  accent={s === 'ONBOARDING' && stats[s] > 0}
+                  onClick={() => setStatus((cur) => (cur === s ? '' : s))}
+                  selected={status === s}
+                  compact
+                  cta={false}
                 />
-              </button>
-              <MetricCard
-                label="Inactive"
-                value={hasNextPage ? `${stats.INACTIVE}+` : stats.INACTIVE}
-              />
+              ))}
             </div>
           )}
           {/* Reserve the strip's height on first load — the row used to be
@@ -687,13 +678,15 @@ export function PeopleDirectory() {
               onApply={applySavedView}
               allLabel={`All ${term('nav.people').toLowerCase()}`}
             />
-            {(['ACTIVE', 'PENDING', 'INACTIVE'] as const).map((s) => (
+            {WORK_STATUSES.map((s) => (
               <FilterChip
                 key={s}
                 active={status === s}
                 onClick={() => setStatus(status === s ? '' : s)}
+                title={t(workStatusKeys(s).definition, { days: stats?.windowDays ?? 14 })}
+                count={stats?.[s]}
               >
-                {statusLabel(s)}
+                {t(workStatusKeys(s).label)}
               </FilterChip>
             ))}
             <Select
@@ -936,13 +929,13 @@ const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
   {
     key: 'status',
     header: 'Status',
-    accessor: (r) => statusLabel(r.status),
+    accessor: (r) => workStatusEnglish(workStatusOf(r)),
     sortable: true,
     cardMeta: true,
-    width: '7rem',
+    width: '9rem',
     cell: (r) => (
       <div className="flex items-center gap-2">
-        <StatusBadge status={r.status} />
+        <PeopleStatusBadge status={workStatusOf(r)} />
         {r.status === 'PENDING' && r.onboardingPercent !== null && (
           <span className="text-2xs tabular-nums text-silver">{r.onboardingPercent}%</span>
         )}
@@ -1327,7 +1320,7 @@ function DirectoryDrawer({
               {a.firstName} {a.lastName}
             </DrawerTitle>
             <DrawerDescription className="truncate flex items-center gap-2">
-              <StatusBadge status={a.status} className="text-2xs" />
+              <PeopleStatusBadge status={workStatusOf(a)} className="text-2xs" />
               <span>{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</span>
               {a.j1Status && <Badge variant="default">J-1</Badge>}
             </DrawerDescription>
@@ -1714,10 +1707,12 @@ function DeactivationSection({
       setOpen(false);
       onAssociateChange({
         status: 'INACTIVE',
+        workStatus: 'DEACTIVATED',
         deactivatedAt: r.deactivatedAt,
         deactivationReason: reason.trim(),
       });
       void qc.invalidateQueries({ queryKey: ['directory'] });
+      void qc.invalidateQueries({ queryKey: ['directorySummary'] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not deactivate.');
     } finally {
@@ -1733,10 +1728,13 @@ function DeactivationSection({
       toast.success('Reactivated — login restored, back in the scheduling pool.');
       onAssociateChange({
         status: 'ACTIVE',
+        // Re-read from the server (the invalidation below); until then, no stale "Paused".
+        workStatus: undefined,
         deactivatedAt: null,
         deactivationReason: null,
       });
       void qc.invalidateQueries({ queryKey: ['directory'] });
+      void qc.invalidateQueries({ queryKey: ['directorySummary'] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not reactivate.');
     } finally {

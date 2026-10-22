@@ -110,25 +110,19 @@ export function TemplatesList() {
 
   return (
     <div className="mx-auto">
-      <div className="mb-4">
-        <Link
-          to="/onboarding"
-          className="text-sm text-silver hover:text-gold inline-block"
-        >
-          ← Applications
-        </Link>
-      </div>
-
+      {/* The trail is the way back (the same one /new and /:id use); the
+          "← Applications" link above it was a second. */}
       <PageHeader
         title="Onboarding templates"
         subtitle="The checklists HR picks from when inviting an associate."
+        breadcrumbs={[{ label: 'Onboarding', to: '/onboarding' }, { label: 'Templates' }]}
         primaryAction={
-          <Link to="/onboarding/templates/new">
-            <Button>
+          <Button asChild>
+            <Link to="/onboarding/templates/new">
               <Plus className="h-4 w-4" />
               New template
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         }
       />
 

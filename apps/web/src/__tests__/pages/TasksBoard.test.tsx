@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -19,9 +19,10 @@ vi.mock('@/lib/tasksApi', () => ({
   autoAssignTask: vi.fn(),
   recordTaskEvent: vi.fn(),
   createTask: vi.fn(),
+  getTaskDay: vi.fn(),
 }));
 
-import { listTasks, getTaskSummary, getTask } from '@/lib/tasksApi';
+import { listTasks, getTaskSummary, getTask, getTaskDay } from '@/lib/tasksApi';
 import { TasksBoard } from '@/pages/tasks/TasksBoard';
 
 /**
@@ -98,11 +99,19 @@ function renderBoard(initial = '/tasks') {
 
 beforeEach(() => {
   vi.mocked(listTasks).mockResolvedValue({ tasks: [assigned, queued] });
+  vi.mocked(getTaskDay).mockResolvedValue({ day: '2026-10-16', timezone: 'America/Chicago' });
   vi.mocked(getTaskSummary).mockResolvedValue(summary);
   vi.mocked(getTask).mockResolvedValue({ ...assigned, events: [{ id: 'e-1', kind: 'ASSIGNED', at: '2026-10-16T12:00:01.000Z', note: 'Certified for unloading', byUserId: null, workerId: 'w-cal' }], history: [] } as WorkTaskDetailView);
 });
 
 describe('<TasksBoard>', () => {
+  it('opens on the site’s day from the API, never the browser’s UTC date (F500 SH-4)', async () => {
+    renderBoard();
+    await waitFor(() => expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ day: '2026-10-16' })));
+    expect(vi.mocked(listTasks).mock.calls.every(([f]) => !('from' in f) || !String(f.from ?? '').endsWith('Z'))).toBe(true);
+    expect(screen.getByLabelText('Day')).toHaveValue('2026-10-16');
+  });
+
   it('lists live tasks with who holds them, and the counts above', async () => {
     renderBoard();
     expect(await screen.findByText('Unload the morning truck')).toBeInTheDocument();

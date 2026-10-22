@@ -14,7 +14,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
-import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtStatementNo, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   RECEIVABLES_KEY,
@@ -256,7 +256,7 @@ function StatementList({ statements, reminders, manage }: { statements: Receivab
         return (
         <li key={s.statementId} className="flex flex-wrap items-center justify-between gap-2 py-2">
           <span className="min-w-0">
-            <span className="text-ink">Statement {s.number !== null ? `No. ${String(s.number).padStart(4, '0')}` : ''}</span>
+            <span className="text-ink">Statement {fmtStatementNo(s.number, '')}</span>
             <span className="text-silver"> · {fmtDate(s.periodStart)} – {fmtDate(s.periodEnd)}</span>
             {rem && (
               <span className="block">
@@ -316,7 +316,7 @@ function PaymentsGrid({ rows, loading, error, onRetry, manage }: { rows: ClientP
       searchable: true,
       cell: (p) =>
         p.applications.length ? (
-          <span className="text-sm text-silver">{p.applications.map((a) => `No. ${a.number !== null ? String(a.number).padStart(4, '0') : '—'}`).join(', ')}</span>
+          <span className="text-sm text-silver">{p.applications.map((a) => fmtStatementNo(a.number)).join(', ')}</span>
         ) : (
           <span className="text-sm text-silver">Credit on account</span>
         ),

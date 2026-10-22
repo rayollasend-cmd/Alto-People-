@@ -565,7 +565,7 @@ export function UsersAdmin() {
         return (
           <div className="flex items-center gap-2">
             <Avatar
-              src={personPhotoUrl({ associateId: u.associateId, userId: u.id })}
+              src={personPhotoUrl({ photoUrl: u.photoUrl, associateId: u.associateId, userId: u.id })}
               name={u.associateName}
               email={u.email}
               size="sm"

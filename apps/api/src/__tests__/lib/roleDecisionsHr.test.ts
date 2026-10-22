@@ -43,7 +43,8 @@ describe('the HR administrator’s Needs-you', () => {
     // An invite nobody has touched in nine days.
     const idle = await createAssociate();
     const app = await createApplicationWithChecklist({ associateId: idle.id, clientId: client.id });
-    await prisma.$executeRaw`UPDATE "Application" SET "updatedAt" = now() - interval '9 days' WHERE id = ${app.id}::uuid`;
+    // Stuck (F500 SH-4's one rule): invited 9 days ago, nothing done since.
+    await prisma.$executeRaw`UPDATE "Application" SET "invitedAt" = now() - interval '9 days' WHERE id = ${app.id}::uuid`;
 
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const items = await computeRoleDecisions(prisma, { id: user.id, role: 'HR_ADMINISTRATOR', clientId: null, associateId: null });
@@ -51,12 +52,13 @@ describe('the HR administrator’s Needs-you', () => {
     expect(items.filter((i) => i.domain === 'money')).toEqual([]);
     expect(items[0]).toMatchObject({ key: `everify:tnc:${maria.id}`, severity: 'critical', linkUrl: `/compliance?tab=everify&associateId=${maria.id}` });
     const claimItem = items.find((i) => i.key === `claims:ui:${claim.id}`);
-    expect(claimItem?.label).toMatch(/^Respond by \d{4}-\d{2}-\d{2}: Tom Claim's FL unemployment claim$/);
+    // Action + record, and the day in words — never an ISO date (F500 SH-4).
+    expect(claimItem?.label).toMatch(/^Answer Tom Claim’s FL unemployment claim — due (Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
     expect(claimItem?.linkUrl).toBe(`/claims/unemployment?claim=${claim.id}`);
     const leaveItem = items.find((i) => i.key === `leave:notice:${leave.id}`);
-    expect(leaveItem?.label).toMatch(/^Send Lia Leave the leave notice by \d{4}-\d{2}-\d{2}$/);
+    expect(leaveItem?.label).toMatch(/^Send Lia Leave the leave notice by (Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
     expect(leaveItem?.linkUrl).toBe(`/leave?case=${leave.id}`);
-    expect(items.find((i) => i.key === 'onboarding:idle-drafts')).toMatchObject({ label: '1 onboarding draft idle more than 7 days', linkUrl: '/onboarding?status=IDLE_DRAFTS' });
+    expect(items.find((i) => i.key === 'onboarding:idle-drafts')).toMatchObject({ label: '1 onboarding application stuck more than 7 days', linkUrl: '/onboarding?status=STUCK' });
 
     // Finance still sees the money.
     const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });

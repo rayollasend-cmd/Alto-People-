@@ -72,8 +72,10 @@ beforeEach(() => {
   vi.mocked(listApplications).mockResolvedValue({ applications: [quiet], total: 1, page: 1, pageSize: 50 });
 });
 
-describe('ApplicationsList — idle drafts', () => {
-  it('the Inbox link opens the filter, and the chip carries its count', async () => {
+// F500 SH-4: "Idle drafts" is now "Stuck" — the one rule the banner, the tile and the rows share.
+// An old ?status=IDLE_DRAFTS link still lands on it.
+describe('ApplicationsList — stuck', () => {
+  it('the Inbox link (old or new) opens the filter, and the chip carries its count', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <MemoryRouter initialEntries={['/onboarding?status=IDLE_DRAFTS']}>
@@ -85,12 +87,12 @@ describe('ApplicationsList — idle drafts', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText('Quinn Quiet')).toBeInTheDocument();
-    expect(listApplications).toHaveBeenCalledWith(expect.objectContaining({ status: 'IDLE_DRAFTS', page: 1 }));
-    const chip = await screen.findByRole('button', { name: /^Idle drafts/ });
+    expect(listApplications).toHaveBeenCalledWith(expect.objectContaining({ status: 'STUCK', page: 1 }));
+    const chip = await screen.findByRole('button', { name: /^Stuck\s*\d*$/ });
     await waitFor(() => expect(chip).toHaveTextContent('1'));
   });
 
-  it('the chip asks for the idle drafts', async () => {
+  it('the chip asks for the stuck applications', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <MemoryRouter initialEntries={['/onboarding']}>
@@ -101,7 +103,7 @@ describe('ApplicationsList — idle drafts', () => {
         </QueryClientProvider>
       </MemoryRouter>,
     );
-    await userEvent.click(await screen.findByRole('button', { name: /^Idle drafts/ }));
-    await waitFor(() => expect(listApplications).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'IDLE_DRAFTS' })));
+    await userEvent.click(await screen.findByRole('button', { name: /^Stuck\s*\d*$/ }));
+    await waitFor(() => expect(listApplications).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'STUCK' })));
   });
 });

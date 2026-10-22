@@ -22,7 +22,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtDateTz, fmtHours, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDateTz, fmtHours, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
@@ -569,7 +569,7 @@ export function BillingWeekCard({ billing }: { billing: BillingWeek | null | und
     <Card className={cn('h-full animate-enter', late && 'border-alert/40')} style={enterStagger(3)}>
       <CardContent className="flex h-full flex-col">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-sm font-medium text-white">{t('fin.billTitle', { date: billing.weekEnding })}</h2>
+          <h2 className="text-sm font-medium text-white">{t('fin.billTitle', { date: fmtDateOnly(billing.weekEnding, { weekday: true, year: false }) })}</h2>
           <Link to={`/time-attendance/timesheets?week=${billing.weekStart}`} className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright">
             {t('fin.billOpen')}
             <ArrowRight className="h-3 w-3" aria-hidden="true" />

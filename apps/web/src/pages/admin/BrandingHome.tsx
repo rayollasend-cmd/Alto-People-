@@ -21,7 +21,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { Select } from '@/components/ui/Select';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDateTime } from '@/lib/format';
+import { fmtDateTime, fmtTimeZone } from '@/lib/format';
 import { DEFAULT_BRAND_PRIMARY } from '@/lib/brandDefaults';
 import {
   deleteOrgLogo,
@@ -386,7 +386,7 @@ export function BrandingHome() {
                   <Select value={timezone} onChange={(e) => setTimezone(e.target.value)} {...p}>
                     {SUPPORTED_TIMEZONES.map((tz) => (
                       <option key={tz} value={tz}>
-                        {tz}
+                        {fmtTimeZone(tz)}
                       </option>
                     ))}
                   </Select>

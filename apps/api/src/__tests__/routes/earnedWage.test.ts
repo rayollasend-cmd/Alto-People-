@@ -45,6 +45,9 @@ async function seed(opts: { verified?: boolean } = {}) {
   const schedule = await prisma.payrollSchedule.create({
     data: { name: 'Biweekly', frequency: 'BIWEEKLY', anchorDate: new Date('2026-01-03T00:00:00Z'), payDateOffsetDays: 7 },
   });
+  // On it (F500 SH-4: an advance comes off the check of the schedule she is ON;
+  // the company's first schedule is no longer assumed).
+  await prisma.associate.update({ where: { id: associate.id }, data: { payrollScheduleId: schedule.id } });
   await prisma.compensationRecord.create({
     data: { associateId: associate.id, effectiveFrom: new Date('2026-01-01T00:00:00Z'), payType: 'HOURLY', amount: 20, reason: 'HIRE' },
   });
@@ -86,6 +89,18 @@ describe('earned-wage access', () => {
     expect(r.body.cap).toBe(78);
     expect(r.body.available).toBe(78);
     expect(r.body.blocker).toBeNull();
+  });
+
+  it('someone on no pay schedule has no advance: no run would write the check it comes off (F500 SH-4)', async () => {
+    const { user, associate } = await seed();
+    await prisma.associate.update({ where: { id: associate.id }, data: { payrollScheduleId: null } });
+    const agent = await loginAs(user.email);
+    const avail = await agent.get('/me/earned-wage');
+    expect(avail.status).toBe(200);
+    expect(avail.body.blocker).toBe('NO_SCHEDULE');
+    expect(avail.body.available).toBe(0);
+    const r = await agent.post('/me/earned-wage').send({ amount: 20 });
+    expect(r.status).toBeGreaterThanOrEqual(400);
   });
 
   it('refuses an account Finance has not verified', async () => {

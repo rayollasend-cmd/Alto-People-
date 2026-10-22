@@ -36,7 +36,7 @@ import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { Link } from 'react-router-dom';
 import { getPushStatus, subscribeToPush, unsubscribeFromPush } from '@/lib/push';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtTimeZone } from '@/lib/format';
 import {
   listPasskeys,
   passkeysSupported,
@@ -1239,7 +1239,7 @@ function TimezoneCard() {
           {t('settingsPage.tz.title')}
         </CardTitle>
         <CardDescription>
-          {t('settingsPage.tz.desc', { tz: browserTz })}
+          {t('settingsPage.tz.desc', { tz: fmtTimeZone(browserTz) })}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1251,7 +1251,7 @@ function TimezoneCard() {
                 onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
                 {...p}
               >
-                <option value="">{t('settingsPage.tz.followDevice', { tz: browserTz })}</option>
+                <option value="">{t('settingsPage.tz.followDevice', { tz: fmtTimeZone(browserTz) })}</option>
                 {SUPPORTED_TIMEZONES.map((z) => (
                   <option key={z} value={z}>
                     {TIMEZONE_LABELS[z]}

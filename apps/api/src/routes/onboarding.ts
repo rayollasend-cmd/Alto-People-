@@ -144,7 +144,7 @@ import { scopeAssociates } from '../lib/scope.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 import { queueScheduleRecompute } from '../lib/payScheduleTriggers.js';
-import { idleDraftsWhere } from '../lib/applicationFilters.js';
+import { isStuck, lastActivityOf, stuckWhere } from '../lib/applicationFilters.js';
 
 export const onboardingRouter = Router();
 
@@ -620,9 +620,11 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       statusWhere = { status: { in: ['SUBMITTED', 'IN_REVIEW'] } };
     } else if (status === 'ARCHIVED') {
       statusWhere = { status: { in: ['APPROVED', 'REJECTED', 'CANCELLED'] } };
-    } else if (status === 'IDLE_DRAFTS') {
-      // Drafts nobody has moved in a week — the Inbox's "drafts gone quiet".
-      statusWhere = idleDraftsWhere();
+    } else if (status === 'STUCK' || status === 'IDLE_DRAFTS') {
+      // Stuck: in flight and nothing has moved in a week (lib/applicationFilters)
+      // — the chip, the banner, the rows' "idle" and the Inbox's count are one
+      // rule. IDLE_DRAFTS is its older name (links and saved filters keep working).
+      statusWhere = stuckWhere();
     } else if (status && status !== 'ALL') {
       statusWhere = {
         status: status as Prisma.ApplicationWhereInput['status'],
@@ -711,6 +713,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       rows.map((r) => r.associateId)
     );
 
+    const listedAt = new Date();
     const applications: ApplicationSummary[] = rows.map((row) => {
       const tasks = row.checklist?.tasks ?? [];
       // What the hire is actually stuck on, and when anything last moved —
@@ -742,6 +745,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
         blockedOnTitle: blocked?.title ?? null,
         lastActivityAt: new Date(lastActivityMs).toISOString(),
+        stuck: isStuck({ status: row.status, invitedAt: row.invitedAt, tasks }, listedAt),
         photoUrl: profilePhotoUrlFor({
           id: row.associateId,
           photoS3Key: row.associate.photoS3Key,
@@ -770,9 +774,8 @@ onboardingRouter.get('/applications', async (req, res, next) => {
 // We use a `groupBy` for byStatus + total, and a single targeted findMany
 // for the in-flight subset to compute progress / staleness / bounced
 // samples. APPROVED / REJECTED rows are skipped from the heavy fetch since
-// they don't contribute to any tile but `total` and `byStatus`.
-const STATS_STALE_DAYS = 7;
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+// they don't contribute to any tile but `total` and `byStatus`. "Stuck" is
+// the one rule in lib/applicationFilters (STUCK_DAYS).
 
 /**
  * Scoped fetch of the caller's in-flight (undecided) applications — the
@@ -796,7 +799,7 @@ export function fetchInFlightApplications(
       client: { select: { name: true } },
       checklist: {
         include: {
-          tasks: { select: { id: true, status: true, title: true, order: true, remindedAt: true } },
+          tasks: { select: { id: true, status: true, title: true, order: true, remindedAt: true, completedAt: true } },
         },
       },
     },
@@ -804,19 +807,17 @@ export function fetchInFlightApplications(
 }
 
 /**
- * THE staleness rule ("stuck"): checklist unfinished and invited more than
- * STATS_STALE_DAYS ago. Single definition shared by the stats tile and the
- * bulk nudge so the count HR confirms is the count that gets nudged.
+ * THE staleness rule ("stuck"), on a row of fetchInFlightApplications: the
+ * one rule in lib/applicationFilters (in flight, checklist unfinished, and
+ * nothing — no task completed, no invite — for STUCK_DAYS). Shared by the
+ * stats tile, the banner, the bulk nudge and the automatic sweep, so the
+ * count HR confirms is the count that gets nudged.
  */
 export function isStaleApplication(
-  invitedAt: Date,
-  percentComplete: number,
+  row: { status: string; invitedAt: Date; checklist?: { tasks: Array<{ status: string; completedAt: Date | null }> } | null },
   now: number,
 ): boolean {
-  return (
-    percentComplete < 100 &&
-    now - invitedAt.getTime() > STATS_STALE_DAYS * ONE_DAY_MS
-  );
+  return isStuck({ status: row.status, invitedAt: row.invitedAt, tasks: row.checklist?.tasks ?? [] }, new Date(now));
 }
 
 onboardingRouter.get('/applications/stats', async (req, res, next) => {
@@ -830,8 +831,8 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
         _count: { _all: true },
       }),
       fetchInFlightApplications(req.user!),
-      // The "Idle drafts" chip: the Inbox's "drafts gone quiet".
-      prisma.application.count({ where: { AND: [where, idleDraftsWhere()] } }),
+      // The "Stuck" chip: the same rule as the tile, the banner and the Inbox.
+      prisma.application.count({ where: { AND: [where, stuckWhere()] } }),
     ]);
 
     // Seeded with EVERY status at 0. The contract types this as a total
@@ -871,12 +872,14 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
         : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
       lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
+      lastActivityAt: lastActivityOf({ invitedAt: row.invitedAt, tasks: row.checklist?.tasks ?? [] }).toISOString(),
+      stuck: isStaleApplication(row, Date.now()),
     }));
 
-    const now = Date.now();
-    const stale = inFlightSummaries.filter((a) =>
-      isStaleApplication(new Date(a.invitedAt), a.percentComplete, now)
-    );
+    // Stuck by the one rule (lib/applicationFilters): the samples from the
+    // rows in hand; the count exact (the chip's own count, not capped at the
+    // 500-row fetch), so the tile, the banner and the chip read one number.
+    const stale = inFlightSummaries.filter((a) => a.stuck);
     const bounced = inFlightSummaries.filter(
       (a) => a.lastInviteDelivery?.status === 'FAILED'
     );
@@ -893,7 +896,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       total,
       byStatus,
       inFlight,
-      stale: stale.length,
+      stale: idleDrafts,
       bounced: bounced.length,
       avgPercent,
       staleSamples: stale.slice(0, 3),

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ControlStatus } from './complianceEvidence.js';
 /**
  * The Trust Center (UX upgrade step 4; docs/ux-upgrade-investigation.md
  * §5.5): what a buyer, an auditor or an IT admin can see about how the
@@ -15,7 +16,10 @@ export interface TrustControlPublic {
   title: string;
   /** SOC 2 criteria the control serves (CC6.1, A1.2…). */
   criteria: string[];
+  /** The older four words, derived from controlStatus (PASSING→PASS, NEEDS_SIGNOFF→WARN, FAILING→FAIL, NO_EVIDENCE→PENDING). */
   status: TrustStatus;
+  /** The one status vocabulary every page shows (complianceEvidence.ts controlStatusOf). Always sent by the API; optional for older payloads. */
+  controlStatus?: ControlStatus;
   /** When the last evidence was collected; null when none yet. */
   checkedAt: string | null;
   /** One sentence about what the control checks; never a value from it. */
@@ -39,7 +43,8 @@ export interface TrustSummaryPublic {
   generatedAt: string;
   product: string;
   /** Controls passing / total, the number the badge shows. */
-  controls: { passing: number; total: number; items: TrustControlPublic[] };
+  /** `passing` is CONTROL status PASSING — the number Compliance evidence shows. */
+  controls: { passing: number; total: number; items: TrustControlPublic[]; statusCounts?: Record<ControlStatus, number> };
   /** The audit trail's tamper evidence, platform-wide. */
   auditChain: { verifiedAt: string | null; ok: boolean | null };
   retention: { auditYearsMinimum: number };

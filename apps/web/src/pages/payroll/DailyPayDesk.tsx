@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { paycheckStatusLabel, paycheckStatusTone } from '@/lib/payrollRunStatus';
 
 /**
  * Daily pay, Finance's desk: whether it's on (and the second person's
@@ -30,20 +31,12 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
  * every nightly settlement with where it went.
  */
 
-const STATUS_TONE: Record<DailySettlement['status'], 'pending' | 'info' | 'success' | 'destructive' | 'default'> = {
-  PENDING: 'pending',
-  DISBURSED: 'success',
-  FAILED: 'destructive',
-  HELD: 'destructive',
-  VOIDED: 'default',
-};
-const STATUS_LABEL: Record<DailySettlement['status'], string> = {
-  PENDING: 'Sending',
-  DISBURSED: 'Paid',
-  FAILED: 'Failed',
-  HELD: 'Held',
-  VOIDED: 'Paid on the regular check',
-};
+// The paycheck words every payroll page uses (lib/payrollRunStatus), with
+// Daily pay's own two: a daily check in flight is "Sending", and a voided one
+// was "Paid on the regular check" instead.
+const DAILY_WORDS = { PENDING: 'Sending', VOIDED: 'Paid on the regular check' } as const;
+const STATUS_LABEL = (s: DailySettlement['status']) => paycheckStatusLabel(s, DAILY_WORDS);
+const STATUS_TONE = (s: DailySettlement['status']) => (s === 'VOIDED' ? 'default' : paycheckStatusTone(s));
 
 export function DailyPayDesk() {
   const term = useTerm();
@@ -68,10 +61,10 @@ export function DailyPayDesk() {
     {
       key: 'status',
       header: 'Status',
-      accessor: (r) => STATUS_LABEL[r.status],
+      accessor: (r) => STATUS_LABEL(r.status),
       cell: (r) => (
         <span className="flex flex-col items-start gap-0.5">
-          <Badge variant={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+          <Badge variant={STATUS_TONE(r.status)}>{STATUS_LABEL(r.status)}</Badge>
           {r.reason && r.status !== 'DISBURSED' && <span className="text-xs text-ink-muted">{r.reason}</span>}
         </span>
       ),

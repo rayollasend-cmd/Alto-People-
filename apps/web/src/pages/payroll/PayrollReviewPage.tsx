@@ -6,7 +6,6 @@ import { AlertTriangle, ArrowRight, Download, FileSearch, FileSpreadsheet, Shiel
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtHours, fmtMoney, fmtMoneyCompact, fmtPercent } from '@/lib/format';
-import { statusTone } from '@/lib/status';
 import {
   FLAG_LABEL,
   SERIOUS_FLAGS,
@@ -30,6 +29,8 @@ import { Waterfall } from '@/components/ui/charts';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Textarea } from '@/components/ui/Input';
+import { RunTotalsMismatch } from '@/components/payroll/RunTotalsMismatch';
+import { RunStatusBadge } from '@/lib/payrollRunStatus';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 
 /**
@@ -42,12 +43,6 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
  * until someone reviews it again.
  */
 
-const RUN_STATUS_LABEL: Record<PayrollReviewReport['run']['status'], string> = {
-  DRAFT: 'Draft',
-  FINALIZED: 'Finalized',
-  DISBURSED: 'Paid',
-  CANCELLED: 'Voided',
-};
 
 export function PayrollReviewPage() {
   const { id = '' } = useParams<{ id: string }>();
@@ -117,7 +112,7 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
           </span>
           <span aria-hidden="true">·</span>
           {r.clientName ?? 'All clients'}
-          <Badge variant={statusTone(r.status)}>{RUN_STATUS_LABEL[r.status]}</Badge>
+          <RunStatusBadge status={r.status} />
         </span>
       }
       breadcrumbs={crumbs}
@@ -152,6 +147,17 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
       }
       summary={
         <div className="space-y-3">
+          {/* First: it changes how every number below should be read (apps/api/src/lib/payrollRunTotals.ts). */}
+          <RunTotalsMismatch
+            check={{
+              totalGross: report.run.storedGross,
+              totalNet: report.run.storedNet,
+              itemsGross: report.totals.gross,
+              itemsNet: report.totals.net,
+              paychecks: report.totals.people,
+              totalsAgree: report.run.totalsAgree ?? !(report.totals.people === 0 && (report.run.storedGross ?? 0) > 0),
+            }}
+          />
           <SignoffBanner signoff={signoff} status={r.status} />
           {signoff.current && open && <PayNext runId={r.id} status={r.status} net={report.totals.net} />}
           <Totals report={report} />
@@ -171,11 +177,7 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
       </div>
 
       {(report.payByCheck?.length ?? 0) > 0 && <PaperChecks rows={report.payByCheck!} runId={r.id} />}
-      {report.totals.people === 0 && (report.run.storedGross ?? 0) > 0 && (
-        <div role="alert" className="rounded-md border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
-          This run records {fmtMoney(report.run.storedGross ?? 0)} gross but has no paychecks — the totals and the paychecks disagree. Don’t sign off; reopen the run or ask payroll support.
-        </div>
-      )}
+
       <LookAt rows={flagged} previous={report.previous} checked={report.rows.length} />
       <Breakdown report={report} />
       <Register rows={report.rows} totals={report.totals} />

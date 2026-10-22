@@ -11,7 +11,8 @@ import {
 } from '@alto-people/shared';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
-import { activeAssociateIds, activeHeadcount } from '../lib/activeDefinition.js';
+import { activeAssociateIds, activeHeadcount, activeWindowDays } from '../lib/activeDefinition.js';
+import { peopleStandings, workStatusCounts } from '../lib/peopleStatus.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
@@ -172,6 +173,17 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       if (ids.length === 0) return 0;
       return prisma.associate.count({ where: { AND: [{ id: { in: ids } }, scopeAssociates(req.user!)] } });
     };
+    // "On the books" (hired, not separated) by the one status rule
+    // (lib/peopleStatus), over the same people the caller reaches: the
+    // number Headcount and the People directory show beside "Working".
+    const onTheBooksInReach = async (): Promise<number> => {
+      if (!isBounded && !reach) return (await workStatusCounts({ tenantId: T }, now)).onTheBooks;
+      const ids = (
+        await prisma.associate.findMany({ where: { AND: [{ tenantId: T, deletedAt: null }, associateClamp, scopeAssociates(req.user!)] }, select: { id: true } })
+      ).map((r) => r.id);
+      if (ids.length === 0) return 0;
+      return (await workStatusCounts({ tenantId: T, associateIds: ids }, now)).onTheBooks;
+    };
 
     const [
       activeAssociates,
@@ -310,8 +322,11 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       hires: { series: hiresSeries, delta: trendDelta(hiresSeries) },
     };
 
+    const [onTheBooks, activeWindow] = await Promise.all([onTheBooksInReach(), activeWindowDays()]);
     const payload: DashboardKPIs = DashboardKPIsSchema.parse({
       activeAssociates,
+      onTheBooks,
+      activeWindowDays: activeWindow,
       openShiftsNext30d,
       associatesClockedIn,
       pendingOnboardingApplications,
@@ -351,8 +366,10 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const now = new Date();
-    // Brief 1A-2: "active" on the retention table is the one definition.
-    const activeIds = await activeAssociateIds({ tenantId: tenantIdForWrite() }, now);
+    // One reading of where people stand (lib/peopleStatus): "active" is the
+    // one definition, and hire and separation dates are the ones Headcount
+    // and People analytics count — someone never hired is not a hire.
+    const standings = await peopleStandings({ tenantId: tenantIdForWrite() }, now);
     // A site-narrowed caller (office account bound to sites, or a client
     // account pinned to a store) reads only people who worked those sites,
     // judged at the first of those sites they worked.
@@ -392,9 +409,13 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
     // Scope: bounded callers (and an explicit clientId filter) only count
     // associates who ever worked a site of that client.
     const rows = associates
-      .map((a) => ({
-        hired: a.hireDate ?? a.createdAt,
-        separatedAt: a.separatedAt,
+      .flatMap((a) => {
+        const s = standings.people.get(a.id);
+        return s?.hiredOn ? [{ a, s, hired: s.hiredOn }] : [];
+      })
+      .map(({ a, s, hired }) => ({
+        hired,
+        separatedAt: s.leftAt,
         reason: reasonByAssociate.get(a.id) ?? null,
         // Their first store — within the caller's client when clamped, so
         // someone who started elsewhere never carries another client's
@@ -406,7 +427,7 @@ analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
               ? a.assignments.find((asg) => asg.location.clientId === clamped)
               : a.assignments[0]
           )?.location ?? null,
-        activeNow: activeIds.has(a.id),
+        activeNow: s.status === 'ACTIVE',
         clientIds: new Set(a.assignments.map((asg) => asg.location.clientId)),
       }))
       .filter((r) =>

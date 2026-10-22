@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { useNeedsYouCount } from '@/lib/meDecisions';
+import { PageHeader, isPageActions, type PageAction } from '@/components/ui/PageHeader';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 
 /**
@@ -9,33 +10,53 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
  * Reading order is the principle "the system does the work; the person
  * sees decisions": banners that interrupt (emergency, onboarding), the
  * greeting, ONE hero (the number or state that defines this person's day),
- * then what needs them, then what changed, then the ways into the product.
- * Hugo has the same seat on every home.
+ * then what needs them, then what changed and the rest of the day, then
+ * the assistant's seat, then the ways into the product.
  *
  *   <HomeTemplate
  *     title={`Good morning, ${firstName}`} topbarTitle="Home"
+ *     meta={<HomeMeta items={[today, ...clock]} />}
  *     hero={<MyShiftHero />}
- *     decisions={{ title: 'Needs you', count: 3, content: <DecisionQueue /> }}
+ *     decisions={{ title: 'Needs you', queue: true, count: cards.length, content: <><Cards /><RoleDecisionQueue title={null} /></> }}
  *     changes={<WhatChanged />}
  *     waysIn={<QuickActions />}
- *     assistant={<HugoCard />}
+ *     assistant={<HugoSeat />}
  *   />
+ *
+ * The "Needs you" count is the number of things listed under it. With
+ * `queue: true` the section holds the role's decision queue, and the count
+ * is its rows plus `count` (the page's own cards); a card that is also a
+ * queue row is named in `cardKeys` and counted once.
+ *
+ * Hugo's seat is a full-width bar after the day's content, the same place
+ * on every home — not a third of the page that stayed empty below him; the
+ * main column takes the full width.
  */
 export interface HomeTemplateProps {
   title: React.ReactNode;
   /** What the top bar shows once the greeting scrolls away ("Home"). */
   topbarTitle?: string;
   subtitle?: React.ReactNode;
-  /** A quiet line under the greeting: the date, the role, the clock. */
+  /** A quiet line under the greeting: the date, the clock (see HomeMeta). */
   meta?: React.ReactNode;
-  /** At most one primary action in the header (the executive's board pack). */
-  actions?: React.ReactNode;
+  /** At most one primary action in the header (the executive's board pack): the PageHeader list, or a node. */
+  actions?: PageAction[] | React.ReactNode;
   /** Interrupting banners, above everything. */
   banners?: React.ReactNode;
   /** The one hero. */
   hero: React.ReactNode;
   /** What needs this person today. Rendered with its own section title and count. */
-  decisions?: { title: React.ReactNode; count?: number; content: React.ReactNode; trailing?: React.ReactNode };
+  decisions?: {
+    title: React.ReactNode;
+    /** The page's own items in the section (cards), or — without `queue` — the whole count. */
+    count?: number;
+    /** The section holds the role's decision queue: its rows count too. */
+    queue?: boolean;
+    /** The page's cards that are also queue rows (by the queue's key), counted once. */
+    cardKeys?: string[];
+    content: React.ReactNode;
+    trailing?: React.ReactNode;
+  };
   /** What changed since they last looked. */
   changes?: { title?: React.ReactNode; content: React.ReactNode };
   /** Ways into the product: quick actions, shortcuts. */
@@ -48,10 +69,13 @@ export interface HomeTemplateProps {
 }
 
 export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, actions, banners, hero, decisions, changes, waysIn, assistant, children, className }: HomeTemplateProps) {
+  const queued = useNeedsYouCount({ queue: !!decisions?.queue, cards: decisions?.count ?? 0, cardKeys: decisions?.cardKeys });
+  const count = decisions?.queue ? queued : decisions?.count;
+  const structured = isPageActions(actions) ? actions : undefined;
   return (
     <div className={cn('space-y-[var(--d-stack-lg)]', className)} data-template="home">
       {banners}
-      <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} primaryAction={actions}>
+      <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={[]} actions={structured} primaryAction={structured ? undefined : (actions as React.ReactNode)}>
         {meta}
       </PageHeader>
       <section aria-label="Today">{hero}</section>
@@ -62,8 +86,10 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
             title={
               <>
                 {decisions.title}
-                {decisions.count !== undefined && decisions.count > 0 && (
-                  <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">{decisions.count}</span>
+                {count !== undefined && count > 0 && (
+                  <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on" data-testid="needs-you-count">
+                    {count}
+                  </span>
                 )}
               </>
             }
@@ -72,10 +98,7 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
           {decisions.content}
         </section>
       )}
-      {/* The aside takes its column only when the assistant rendered something:
-          Hugo's seat renders nothing when nothing is switched on for this
-          person, and an empty third of the page is not a seat. */}
-      <div className={cn('grid gap-6', assistant ? 'lg:[&:has(aside:not(:empty))]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]' : '')}>
+      {(changes || children) && (
         <div className="min-w-0 space-y-[var(--d-stack-lg)]">
           {changes && (
             <section aria-labelledby="home-changes">
@@ -85,8 +108,15 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
           )}
           {children}
         </div>
-        {assistant && <aside className="min-w-0">{assistant}</aside>}
-      </div>
+      )}
+      {/* Hugo renders nothing when nothing is switched on for this person,
+          so an empty seat never takes room. After the day's own content —
+          a phone reads the next shift before the assistant. */}
+      {assistant && (
+        <section aria-label="Assistant" className="empty:hidden">
+          {assistant}
+        </section>
+      )}
       {waysIn && <section aria-label="Shortcuts">{waysIn}</section>}
     </div>
   );

@@ -24,6 +24,7 @@ export * from './FilterBar';
 export * from './Input';
 export * from './Label';
 export * from './MetricCard';
+export * from './MetricStrip';
 export * from './PageHeader';
 export * from './SectionTitle';
 export * from './SegmentedControl';

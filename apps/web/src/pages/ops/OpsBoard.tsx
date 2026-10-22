@@ -28,8 +28,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
+import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE, dateTicks } from '@/components/ui/charts';
 import { ApiError } from '@/lib/api';
+import { fmtDateOnly } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -63,7 +64,8 @@ import {
   fmtDayKey,
   fmtDuration,
   fmtFull,
-  OPS_TZ,
+  opsTimeZoneCity,
+  setOpsTimeZone,
   opsToday,
   shiftDayKey,
 } from './opsTime';
@@ -399,6 +401,8 @@ export function OpsBoard() {
   });
 
   const board = boardQuery.data ?? null;
+  // Every time on the board is on the company's clock, named by the API (F500 SH-4).
+  setOpsTimeZone(board?.timezone);
   const feed = feedQuery.data ?? null;
   const insights = insightsQuery.data ?? null;
   const scorecard = scorecardQuery.data ?? null;
@@ -486,7 +490,7 @@ export function OpsBoard() {
               ? `Shifts from ${fmtDayKey(from)} to ${fmtDayKey(to)}`
               : 'Pick both dates to read a range'}
             {' · times in '}
-            {OPS_TZ.split('/')[1]?.replace('_', ' ')}
+            {opsTimeZoneCity()}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <OpsReportButton stores={stores?.stores ?? []} storeId={storeId || undefined} />
@@ -556,7 +560,7 @@ export function OpsBoard() {
                 />
               </span>
               <span className="text-2xs uppercase tracking-[0.2em] text-gold">
-                Floor command · {board.dateKey}
+                Floor command · {fmtDateOnly(board.dateKey, { weekday: true, year: false })}
               </span>
               {/* When these numbers were last true, and a way to ask again
                   without waiting for the next poll. */}
@@ -722,7 +726,7 @@ export function OpsBoard() {
                 <>
                   <div className="h-40">
                     <ResponsiveContainer width="100%" height="100%">
-                      <ScatterChart margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                      <ScatterChart margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                         <CartesianGrid stroke={PALETTE.grid} />
                         <XAxis
                           dataKey="ts"
@@ -737,7 +741,7 @@ export function OpsBoard() {
                           tick={{ fill: TICK.fill, fontSize: 10 }}
                           axisLine={false}
                           tickLine={false}
-                          width={40}
+                          width="auto"
                           unit="°"
                         />
                         {/* Freezer + cooler safe bands, painted behind. */}
@@ -810,7 +814,7 @@ export function OpsBoard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={insights.hourly}
-                    margin={{ top: 8, right: 8, bottom: 0, left: -22 }}
+                    margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
                   >
                     <CartesianGrid
                       stroke={PALETTE.grid}
@@ -828,7 +832,7 @@ export function OpsBoard() {
                       axisLine={false}
                       tickLine={false}
                       allowDecimals={false}
-                      width={34}
+                      width="auto"
                     />
                     <Tooltip
                       cursor={{ fill: PALETTE.cursor }}
@@ -885,7 +889,7 @@ export function OpsBoard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
                       data={insights.sopTrend}
-                      margin={{ top: 8, right: 8, bottom: 0, left: -22 }}
+                      margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
                     >
                       <defs>
                         <linearGradient id="sopFill" x1="0" y1="0" x2="0" y2="1">
@@ -907,7 +911,7 @@ export function OpsBoard() {
                       />
                       <XAxis
                         dataKey="dateKey"
-                        tickFormatter={(v: string) => v.slice(5)}
+                        tickFormatter={dateTicks('day')}
                         tick={{ fill: TICK.fill, fontSize: 9 }}
                         axisLine={false}
                         tickLine={false}
@@ -917,7 +921,7 @@ export function OpsBoard() {
                         tick={{ fill: TICK.fill, fontSize: 10 }}
                         axisLine={false}
                         tickLine={false}
-                        width={34}
+                        width="auto"
                         unit="%"
                       />
                       <Tooltip

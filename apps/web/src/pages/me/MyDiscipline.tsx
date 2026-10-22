@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -58,7 +58,9 @@ export function MyDiscipline() {
         className="mx-auto max-w-2xl"
         title={t('record.title')}
         subtitle={t('record.subtitle')}
-        breadcrumbs={[{ label: t('record.title') }]}
+        // Up is My profile (a trail, on the desktop; the top bar's Back on a
+        // phone) — not a lone crumb that repeats the title, nor a link at the bottom.
+        breadcrumbs={[{ label: t('me.title'), to: '/me' }, { label: t('record.title') }]}
     >
       {loadError && (
         <ErrorBanner
@@ -92,11 +94,6 @@ export function MyDiscipline() {
             onChanged={() => void refresh()}
           />
         ))}
-      </div>
-      <div className="mt-6">
-        <Link to="/me" className="text-sm text-silver hover:text-gold">
-          {t('record.back')}
-        </Link>
       </div>
     </ListTemplate>
   );

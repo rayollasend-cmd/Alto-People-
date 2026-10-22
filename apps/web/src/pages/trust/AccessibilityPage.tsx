@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { PublicShell } from '@/components/trust/PublicShell';
+import { fmtDateOnly } from '@/lib/format';
 
 /**
  * The accessibility statement (beside the Trust Center): the standard we
@@ -68,7 +69,7 @@ export function AccessibilityPage() {
         <p className="mt-1 max-w-prose text-sm text-ink-muted">
           Tell us from the Help menu inside the app, or through your account team if you do not have an account yet. We answer within two business days and fix what blocks a task first.
         </p>
-        <p className="mt-3 text-xs2 text-ink-muted">Statement dated {STATEMENT_DATE}. Reviewed with each release.</p>
+        <p className="mt-3 text-xs2 text-ink-muted">Statement dated {fmtDateOnly(STATEMENT_DATE)}. Reviewed with each release.</p>
       </section>
     </PublicShell>
   );

@@ -65,12 +65,20 @@ export function isRelativeDayHeading(heading: string): boolean {
   return ['Today', 'Yesterday', 'Hoy', 'Ayer'].includes(heading);
 }
 
-/** Time-only formatter for use inside a day-grouped table. */
-export function fmtTimeOnly(iso: string): string {
-  return new Date(iso).toLocaleTimeString(appLocale(), {
-    hour: '2-digit',
+/**
+ * Time-only formatter for use inside a day-grouped table: "9:31 AM".
+ * Seconds only where they are the evidence — the audit log passes
+ * `{ seconds: true }` ("9:31:07 AM"); an inbox card or a sent log reading
+ * "10:09:22 AM" was noise. Same clock as dayKey (the device's), so a
+ * row's time always sits under the right day heading.
+ */
+export function fmtTimeOnly(iso: string, opts: { seconds?: boolean } = {}): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString(appLocale(), {
+    hour: 'numeric',
     minute: '2-digit',
-    second: '2-digit',
+    ...(opts.seconds ? { second: '2-digit' as const } : {}),
   });
 }
 

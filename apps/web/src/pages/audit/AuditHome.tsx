@@ -33,12 +33,12 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
-import { fmtDateTime } from '@/lib/format';
+import { fmtDateOnly, fmtDateTime } from '@/lib/format';
 
 // Brief 2-3 step 4: the chain, retention and SIEM panel, in its own chunk.
 const AuditIntegrity = lazy(() => import('./AuditIntegrity').then((m) => ({ default: m.AuditIntegrity })));
 
-import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
+import { dayHeading, dayKey, fmtTimeOnly, isRelativeDayHeading } from '@/lib/dayGroup';
 import { ListTemplate } from '@/components/templates';
 
 const PAGE_SIZE = 100;
@@ -413,7 +413,7 @@ export function AuditHome() {
                   header: (key, rows) => (
                     <span className="flex items-center gap-2">
                       <span>{dayHeading(key)}</span>
-                      <span className="text-xs font-normal text-silver/70">· {key}</span>
+                      {isRelativeDayHeading(dayHeading(key)) && <span className="text-xs font-normal text-silver/70">· {fmtDateOnly(key)}</span>}
                       <span className="ml-auto text-xs font-normal text-silver">
                         {rows.length} event{rows.length === 1 ? '' : 's'}
                       </span>
@@ -429,7 +429,7 @@ export function AuditHome() {
                     sortable: true,
                     searchable: false,
                     className: 'text-silver text-xs whitespace-nowrap tabular-nums w-24',
-                    cell: (e) => <span title={fmtDateTime(e.createdAt)}>{fmtTimeOnly(e.createdAt)}</span>,
+                    cell: (e) => <span title={fmtDateTime(e.createdAt)}>{fmtTimeOnly(e.createdAt, { seconds: true })}</span>,
                   },
                   {
                     key: 'action',

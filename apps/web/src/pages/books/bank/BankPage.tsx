@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowRight, CreditCard, Landmark, Plus, RefreshCw } from
 import type { BankFeedAccountView } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { BANK_KEY, listBankAccounts } from '@/lib/books/bankApi';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtCount, fmtDate, fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
@@ -54,8 +54,8 @@ export function BankPage() {
       summary={
         accounts.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="Cash in the books" value={money(cash)} hint={`${active.filter((a) => a.subtype === 'BANK').length} bank accounts`} />
-            <MetricCard label="Owed on cards" value={money(owed)} hint={`${active.filter((a) => a.subtype === 'CREDIT_CARD').length} cards`} />
+            <MetricCard label="Cash in the books" value={money(cash)} hint={fmtCount(active.filter((a) => a.subtype === 'BANK').length, 'bank account')} />
+            <MetricCard label="Owed on cards" value={money(owed)} hint={fmtCount(active.filter((a) => a.subtype === 'CREDIT_CARD').length, 'card')} />
             <MetricCard label="Waiting for review" value={String(review)} hint={review ? 'Transactions to match or categorize' : 'All caught up'} accent={review > 0} />
             <MetricCard label="Need reconciling" value={String(stale)} hint="Not reconciled in the last month" accent={stale > 0} />
           </div>

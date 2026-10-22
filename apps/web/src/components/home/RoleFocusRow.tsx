@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Briefcase, CalendarCheck, ClipboardList, Clock, ShieldAlert, Timer, Users, type LucideIcon } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
@@ -6,11 +5,12 @@ import { useAuth, useTerm } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
 import { getHeadcount } from '@/lib/positionsApi';
 import { laborCosts } from '@/lib/schedulingApi';
-import { ymdLocal } from '@/lib/format';
+import { fmtCount, ymdLocal } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/Card';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { cn } from '@/lib/cn';
 
 const INT = new Intl.NumberFormat('en-US');
 
@@ -33,28 +33,27 @@ interface Tile {
   label: string;
   value: string | number | null;
   hint?: string;
+  /** Nothing to count (no shifts, no positions): said in words, never a 0. */
+  nothing?: string;
   to: string;
   icon: LucideIcon;
   tone?: 'urgent' | 'attention' | 'calm';
 }
 
+const TONE = { urgent: 'alert', attention: 'warning', calm: 'default' } as const;
+
+/** The home's focus tile is the app's KPI tile (MetricCard), linked to the list behind it. */
 function FocusTile({ tile }: { tile: Tile }) {
-  const Icon = tile.icon;
   return (
-    <Link
-      to={tile.to}
-      className={cn(
-        'group flex flex-col rounded-lg border bg-surface p-4 elev-1 transition-all hover:-translate-y-0.5 hover:elev-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-        tile.tone === 'urgent' ? 'border-alert/40' : tile.tone === 'attention' ? 'border-warning/30' : 'border-line',
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs2 uppercase tracking-wider text-ink-muted">{tile.label}</span>
-        <Icon className={cn('h-4 w-4', tile.tone === 'urgent' ? 'text-alert' : tile.tone === 'attention' ? 'text-warning' : 'text-ink-muted')} aria-hidden="true" />
-      </div>
-      <div className={cn('mt-2 font-display text-2xl tabular-nums', tile.tone === 'urgent' ? 'text-alert' : 'text-ink')}>{tile.value ?? '—'}</div>
-      {tile.hint && <div className="mt-1 text-xs text-ink-muted">{tile.hint}</div>}
-    </Link>
+    <MetricCard
+      label={tile.label}
+      value={tile.value ?? '—'}
+      hint={tile.hint}
+      nothing={tile.nothing}
+      href={tile.to}
+      icon={tile.icon}
+      tone={TONE[tile.tone ?? 'calm']}
+    />
   );
 }
 
@@ -62,18 +61,24 @@ function Row({ title, icon, tiles, loading }: { title: string; icon: LucideIcon;
   return (
     <section aria-label={title} className="space-y-3">
       <SectionTitle icon={icon} title={title} />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {loading
-          ? Array.from({ length: 4 }).map((_, i) => (
-              <Card key={i}>
-                <CardContent className="pt-5">
-                  <Skeleton className="mb-3 h-3 w-20" />
-                  <Skeleton className="h-7 w-1/2" />
-                </CardContent>
-              </Card>
-            ))
-          : tiles.map((t) => <FocusTile key={t.key} tile={t} />)}
-      </div>
+      {loading ? (
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4" aria-busy="true">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="p-3 sm:pt-5">
+                <Skeleton className="mb-3 h-3 w-20" />
+                <Skeleton className="h-7 w-1/2" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <MetricStrip label={title}>
+          {tiles.map((t) => (
+            <FocusTile key={t.key} tile={t} />
+          ))}
+        </MetricStrip>
+      )}
     </section>
   );
 }
@@ -162,12 +167,15 @@ function OpsRow() {
   const worked = labor.data ? Math.round(labor.data.rows.reduce((s, r) => s + r.workedMinutes, 0) / 60) : null;
   const scheduled = labor.data ? Math.round(labor.data.rows.reduce((s, r) => s + r.scheduledMinutes, 0) / 60) : null;
   const openSeats = positions.data ? (positions.data.byStatus.OPEN ?? 0) : null;
+  const shiftsToday = o ? o.today.filled + o.today.open : 0;
   const tiles: Tile[] = [
     {
       key: 'coverage',
       label: 'Coverage today',
-      value: o ? `${o.today.filled} / ${o.today.filled + o.today.open}` : null,
-      hint: o ? (o.today.open > 0 ? `${o.today.open} shifts still open` : 'Every shift filled') : undefined,
+      value: o ? `${o.today.filled} / ${shiftsToday}` : null,
+      // "0 / 0 · Every shift filled" read as good news on a day with nothing scheduled.
+      nothing: o && shiftsToday === 0 ? 'No shifts today' : undefined,
+      hint: o ? (o.today.open > 0 ? `${fmtCount(o.today.open, 'shift')} still open` : 'Every shift filled') : undefined,
       to: '/scheduling',
       icon: CalendarCheck,
       tone: o && o.today.open > 0 ? 'attention' : 'calm',
@@ -176,6 +184,7 @@ function OpsRow() {
       key: 'fill',
       label: 'Fill rate this week',
       value: o ? (o.week.fillRatePct === null ? '—' : `${o.week.fillRatePct}%`) : null,
+      nothing: o && o.week.fillRatePct === null ? 'No shifts this week' : undefined,
       hint: o ? `${o.now.onFloor} on the floor now of ${o.now.scheduledNow} scheduled` : undefined,
       to: '/time-attendance',
       icon: Timer,
@@ -185,6 +194,7 @@ function OpsRow() {
       key: 'labor',
       label: 'Hours worked this week',
       value: worked === null ? null : INT.format(worked),
+      nothing: worked === 0 && scheduled === 0 ? 'No hours scheduled this week' : undefined,
       hint: scheduled === null ? undefined : `against ${INT.format(scheduled)} scheduled across ${term('sites').toLowerCase()}`,
       to: '/labor-costs',
       icon: Clock,
@@ -193,6 +203,8 @@ function OpsRow() {
       key: 'positions',
       label: 'Open positions',
       value: openSeats,
+      // "0 · 0 of 0 FTE filled" when no position has been set up.
+      nothing: positions.data && positions.data.total === 0 ? 'No positions set up' : undefined,
       hint: positions.data ? `${positions.data.fteFilled} of ${positions.data.fteAuthorized} FTE filled` : undefined,
       to: '/org?tab=positions',
       icon: Briefcase,

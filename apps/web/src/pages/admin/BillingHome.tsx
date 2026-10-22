@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, CreditCard, Cpu, ExternalLink, Users as UsersIcon } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtMoney } from '@/lib/format';
+import { fmtMoney, fmtMonth } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -52,10 +52,10 @@ interface BillingOverview {
   }>;
 }
 
-const TYPE: Record<WorkerType, { label: string; icon: typeof UsersIcon }> = {
-  PERSON: { label: 'People', icon: UsersIcon },
-  AGENT: { label: 'AI agents', icon: Bot },
-  ROBOT: { label: 'Robots', icon: Cpu },
+const TYPE: Record<WorkerType, { label: string; one: string; icon: typeof UsersIcon }> = {
+  PERSON: { label: 'People', one: 'Person', icon: UsersIcon },
+  AGENT: { label: 'AI agents', one: 'AI agent', icon: Bot },
+  ROBOT: { label: 'Robots', one: 'Robot', icon: Cpu },
 };
 const STATUS: Record<BillingOverview['invoices'][number]['status'], 'pending' | 'accent' | 'success' | 'default'> = { DRAFT: 'pending', OPEN: 'accent', PAID: 'success', VOID: 'default' };
 const HOLD: Record<string, string> = {
@@ -88,7 +88,7 @@ export function BillingHome() {
 
           <section aria-labelledby="running" className="space-y-2">
             <h2 id="running" className="text-base font-semibold text-white">
-              {d.month}, so far
+              {fmtMonth(d.month, 'long')} so far
             </h2>
             <p className="text-sm text-silver">Each person, agent and robot active on at least one day of the month counts once. {d.daysCounted} day{d.daysCounted === 1 ? '' : 's'} counted so far.</p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -100,7 +100,7 @@ export function BillingHome() {
                       <Icon className="h-5 w-5 text-silver" aria-hidden="true" />
                       <div>
                         <div className="text-2xl font-semibold text-white">{d.running[t] ?? 0}</div>
-                        <div className="text-xs text-silver">{TYPE[t].label}</div>
+                        <div className="text-xs text-silver">{(d.running[t] ?? 0) === 1 ? TYPE[t].one : TYPE[t].label}</div>
                       </div>
                     </CardContent>
                   </Card>
@@ -120,7 +120,7 @@ export function BillingHome() {
                     {d.invoices.map((i) => (
                       <li key={i.id} className="space-y-1 px-4 py-3 text-sm">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-white">{i.month}</span>
+                          <span className="font-medium text-white">{fmtMonth(i.month, 'long')}</span>
                           <Badge variant={STATUS[i.status]} size="sm">
                             {i.status === 'OPEN' ? 'Due' : i.status.charAt(0) + i.status.slice(1).toLowerCase()}
                           </Badge>

@@ -11,12 +11,16 @@ import type { BreadcrumbSegment } from '@/components/ui/Breadcrumb';
  * of pages in sections, each page a stack of sections, every section with
  * the same header and the same place for its status ("checked 2 min ago",
  * "On", "3 of 5 passing"). Danger lives at the bottom of a page, never
- * beside a save button. On phones the rail becomes a horizontal strip.
+ beside a save button. On phones the rail becomes a horizontal strip.
  *
  * Two uses:
  *   - a whole page: `title` + `rail` + sections as children;
- *   - an AREA shell (pages/settings/SettingsArea): no `title`; the rail and
- *     an eyebrow, with the routed page (and its own PageHeader) as children.
+ *   - an AREA shell (pages/settings/SettingsArea): no `title`; the rail,
+ *     with the routed page (and its own PageHeader) as children. The area's
+ *     name is in each page's breadcrumb (lib/navTrail AreaTrailContext), so
+ *     the shell prints no eyebrow of its own; below lg it drops the rail
+ *     (`railBelowLg={false}`) and the top bar's Back returns to the area —
+ *     a strip of 27 links plus an eyebrow cost a phone ~120px per page.
  *
  *   <SettingsTemplate title="Settings & Trust" rail={RAIL} activeKey="sign-in">
  *     <SettingsSection title="Identity providers" status={<Badge …/>}>…</SettingsSection>
@@ -44,18 +48,23 @@ export interface SettingsTemplateProps {
   rail: SettingsRailItem[];
   /** The active rail item; defaults to the item whose `to` the location starts with. */
   activeKey?: string;
+  /** No rail at all — the area's overview, whose cards already list the same pages. */
+  hideRail?: boolean;
+  /** Below lg, show the rail as a horizontal strip (default) or not at all. */
+  railBelowLg?: boolean;
   primaryAction?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }
 
-export function SettingsTemplate({ title, areaLabel, subtitle, topbarTitle, breadcrumbs, rail, activeKey, primaryAction, children, className }: SettingsTemplateProps) {
+export function SettingsTemplate({ title, areaLabel, subtitle, topbarTitle, breadcrumbs, rail, activeKey, hideRail = false, railBelowLg = true, primaryAction, children, className }: SettingsTemplateProps) {
   const { pathname } = useLocation();
+  const pathOf = (to: string) => to.split('?')[0] ?? to;
   const active =
     activeKey ??
     rail
-      .filter((i) => pathname === i.to || pathname.startsWith(`${i.to}/`))
-      .sort((a, b) => b.to.length - a.to.length)[0]?.key;
+      .filter((i) => pathname === pathOf(i.to) || pathname.startsWith(`${pathOf(i.to)}/`))
+      .sort((a, b) => pathOf(b.to).length - pathOf(a.to).length)[0]?.key;
   const sections = React.useMemo(() => {
     const order: string[] = [];
     const by = new Map<string, SettingsRailItem[]>();
@@ -72,13 +81,17 @@ export function SettingsTemplate({ title, areaLabel, subtitle, topbarTitle, brea
 
   return (
     <div className={cn('space-y-5', className)} data-template="settings">
-      {title ? (
-        <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={breadcrumbs} primaryAction={primaryAction} />
-      ) : areaLabel ? (
-        <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">{areaLabel}</div>
-      ) : null}
-      <div className="grid gap-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
-        <nav aria-label={areaLabel ?? 'Settings'} className="-mx-4 flex gap-1 overflow-x-auto px-4 scrollbar-none lg:mx-0 lg:flex-col lg:gap-4 lg:overflow-visible lg:px-0">
+      {title && <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={breadcrumbs} primaryAction={primaryAction} />}
+      <div className={cn('grid gap-6', !hideRail && 'lg:grid-cols-[15.5rem_minmax(0,1fr)]')}>
+        {!hideRail && (
+        <nav
+          aria-label={areaLabel ?? 'Settings'}
+          className={cn(
+            '-mx-4 flex gap-1 overflow-x-auto px-4 scrollbar-none lg:mx-0 lg:flex-col lg:gap-4 lg:overflow-visible lg:px-0',
+            !railBelowLg && 'hidden lg:flex',
+          )}
+          data-testid="settings-rail"
+        >
           {sections.map(([section, items]) => (
             <div key={section || '_'} className="flex gap-1 lg:flex-col">
               {section && <div className="hidden px-3 pb-1 text-2xs uppercase tracking-[0.18em] text-ink-muted lg:block">{section}</div>}
@@ -96,7 +109,10 @@ export function SettingsTemplate({ title, areaLabel, subtitle, topbarTitle, brea
                     )}
                   >
                     {Icon && <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />}
-                    <span className="truncate">{item.label}</span>
+                    {/* Two lines, never "Cost centers & ledger cod…"; the strip keeps one. */}
+                    <span className="min-w-0 whitespace-nowrap leading-snug lg:line-clamp-2 lg:whitespace-normal" title={item.label}>
+                      {item.label}
+                    </span>
                     {item.status && <span className="ml-auto shrink-0">{item.status}</span>}
                   </NavLink>
                 );
@@ -104,6 +120,7 @@ export function SettingsTemplate({ title, areaLabel, subtitle, topbarTitle, brea
             </div>
           ))}
         </nav>
+        )}
         <div className="min-w-0 space-y-5">{children}</div>
       </div>
     </div>

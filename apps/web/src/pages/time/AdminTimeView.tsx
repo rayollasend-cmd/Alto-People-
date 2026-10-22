@@ -2172,7 +2172,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                 onClick={() => navigate('/time-attendance/timesheets')}
               >
                 <FileSpreadsheet className="mr-2 h-4 w-4" />
-                Timesheets
+                Client hours
               </Button>
               <Button
                 variant="outline"

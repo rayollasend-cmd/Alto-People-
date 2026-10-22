@@ -5,8 +5,14 @@ import { cn } from '@/lib/cn';
 // Casing: badges read in sentence case ("Approved", "Out today") per
 // docs/design-system.md — uppercase tracking is for eyebrows. `caps` is the
 // opt-in for the rare chip that is meant as an eyebrow-style tag.
+// A badge is a word or two, never a sentence (G3: a four-problem list in
+// a badge became a six-line round blob on a phone). It holds one line —
+// `!whitespace-nowrap` beats a parent's `[&_*]:whitespace-normal`, as the
+// DataGrid's phone cards have — and never grows past its container; plain
+// text that doesn't fit ends in an ellipsis with the whole text as a
+// tooltip. Put a list or a sentence beside the badge as text instead.
 const badgeVariants = cva(
-  'inline-flex items-center gap-1 rounded-full font-medium whitespace-nowrap',
+  'inline-flex max-w-full min-w-0 items-center gap-1 overflow-hidden rounded-full font-medium !whitespace-nowrap align-middle',
   {
     variants: {
       caps: {
@@ -69,6 +75,21 @@ export interface BadgeProps
    * case. Opt in only for a chip that is deliberately an eyebrow-style tag.
    */
   caps?: boolean;
+  /**
+   * One line with an ellipsis (the default). `false` lets a long label
+   * wrap inside a rounded rectangle instead of a pill — for the rare chip
+   * that must show every word; prefer text beside the badge.
+   */
+  truncate?: boolean;
+}
+
+/** Past this a badge is a sentence: say it as text beside the badge. */
+export const BADGE_MAX_CHARS = 32;
+const warned = new Set<string>();
+function warnLong(text: string) {
+  if (!import.meta.env.DEV || text.length <= BADGE_MAX_CHARS || warned.has(text)) return;
+  warned.add(text);
+  console.warn(`Badge: "${text.slice(0, 60)}…" is ${text.length} characters. A badge holds a word or two (≤ ${BADGE_MAX_CHARS}); put the sentence beside it as text.`);
 }
 
 const DOT_COLOR: Record<NonNullable<BadgeProps['variant']>, string> = {
@@ -103,21 +124,35 @@ export function Badge({
   size,
   withDot,
   caps,
+  truncate = true,
   children,
+  title,
   ...props
 }: BadgeProps) {
   const v = variant ?? 'default';
   const s = size ?? 'default';
   const showDot = withDot ?? DOT_DEFAULT[v];
+  const text = typeof children === 'string' || typeof children === 'number' ? String(children) : null;
+  if (text !== null) warnLong(text);
   return (
-    <span className={cn(badgeVariants({ variant, size, caps }), className)} {...props}>
+    <span
+      className={cn(
+        badgeVariants({ variant, size, caps }),
+        !truncate && '!whitespace-normal rounded-md text-left',
+        className,
+      )}
+      // Plain text gets its whole self as a tooltip, so an ellipsis never hides a word.
+      title={title ?? (text !== null && text.length > 12 ? text : undefined)}
+      {...props}
+    >
       {showDot && (
         <span
           aria-hidden="true"
           className={cn('inline-block rounded-full shrink-0', DOT_SIZE[s], DOT_COLOR[v])}
         />
       )}
-      {children}
+      {/* The text node's own span needs the !important too: a parent's `[&_*]` rule reaches it. */}
+      {text !== null && truncate ? <span className="min-w-0 truncate !whitespace-nowrap">{text}</span> : children}
     </span>
   );
 }

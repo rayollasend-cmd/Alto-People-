@@ -37,7 +37,7 @@ const axis = { fill: CHART.axis, fontSize: 11 };
 function TurnoverTable({ id, caption, rows, header }: { id: string; caption: string; rows: TurnoverGroup[]; header: string }) {
   const columns: GridColumn<TurnoverGroup>[] = [
     { key: 'label', header, accessor: (r) => r.label, sortable: true, primary: true, className: 'text-ink' },
-    { key: 'headcount', header: 'Active', accessor: (r) => r.headcount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+    { key: 'headcount', header: 'On the books', accessor: (r) => r.headcount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
     { key: 'separations', header: 'Left', accessor: (r) => r.separations, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
     { key: 'rate', header: 'Annualized turnover', accessor: (r) => r.annualizedTurnoverPct ?? -1, sortable: true, searchable: false, align: 'right', cell: (r) => <span className={cn('tabular-nums', (r.annualizedTurnoverPct ?? 0) >= 50 ? 'text-alert' : (r.annualizedTurnoverPct ?? 0) >= 25 ? 'text-warning' : 'text-ink')}>{pct(r.annualizedTurnoverPct)}</span> },
   ];
@@ -174,8 +174,9 @@ export function PeopleAnalytics() {
       filters={<SegmentedControl ariaLabel="Window" options={([6, 12, 24] as const).map((m) => ({ value: m, label: `${m} months` }))} value={months} onChange={(m) => setMonths(m)} />}
       summary={
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <MetricCard label="Annualized turnover" value={d ? pct(d.turnover.annualizedPct) : '—'} accent={Boolean(d && (d.turnover.annualizedPct ?? 0) >= 25)} hint={d ? `${d.turnover.separations} left · average headcount ${d.turnover.averageHeadcount}` : undefined} />
-          <MetricCard label="Headcount" value={headcountNow ?? '—'} hint={headcountThen !== null && headcountNow !== null ? `${headcountNow - headcountThen >= 0 ? '+' : ''}${headcountNow - headcountThen} since ${d ? monthLabel(d.headcount[0]!.month) : ''}` : undefined} />
+          <MetricCard label="Annualized turnover" value={d ? pct(d.turnover.annualizedPct) : '—'} accent={Boolean(d && (d.turnover.annualizedPct ?? 0) >= 25)} hint={d ? `${d.turnover.separations} left · average ${d.turnover.averageHeadcount} on the books` : undefined} />
+          {/* "On the books" (hired, not separated): the number Headcount and Analytics show (apps/api/src/lib/peopleStatus.ts). */}
+          <MetricCard label="On the books" value={headcountNow ?? '—'} valueTitle="Hired and not separated" hint={headcountThen !== null && headcountNow !== null ? `${headcountNow - headcountThen >= 0 ? '+' : ''}${headcountNow - headcountThen} since ${d ? monthLabel(d.headcount[0]!.month) : ''}` : undefined} />
           <MetricCard label="Median time to fill" value={d && d.timeToFill.medianDays !== null ? `${d.timeToFill.medianDays} days` : '—'} hint={d ? `${d.timeToFill.filled} seats filled in the window` : undefined} />
           <MetricCard label="Absence rate" value={d ? pct(d.absence.absenceRatePct) : '—'} hint={d ? `${d.absence.absenceDays} days off against ${d.absence.scheduledShiftDays} shift days` : undefined} />
         </div>
@@ -223,10 +224,10 @@ export function PeopleAnalytics() {
           >
             <ResponsiveContainer width="100%" height="100%">
               {trendBy === 'company' ? (
-                <ComposedChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <ComposedChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} width="auto" />
                   <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
                   <Legend {...STOCK_LEGEND} />
                   <Bar dataKey="hires" name="Hires" fill={CHART.good} radius={[3, 3, 0, 0]} />
@@ -234,10 +235,10 @@ export function PeopleAnalytics() {
                   <Line dataKey="headcount" name="Headcount" stroke={CHART.series[0]} strokeWidth={2} dot={false} />
                 </ComposedChart>
               ) : (
-                <LineChart data={storeTrend} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <LineChart data={storeTrend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} width="auto" />
                   <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
                   <Legend {...STOCK_LEGEND} />
                   {/* Five hues, never a sixth: the rest draw thin in "Other" gray, off the legend (the table names them). */}
@@ -262,10 +263,10 @@ export function PeopleAnalytics() {
               empty={<p className="text-sm text-ink-muted">Nobody was hired in this window.</p>}
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={survivalRows} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <LineChart data={survivalRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="day" tick={axis} tickLine={false} axisLine={false} interval={2} />
-                  <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} />
+                  <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} width="auto" />
                   <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
                   <Legend {...STOCK_LEGEND} />
                   {/* The five most recent hiring months in color; older ones thin and gray. */}
@@ -285,7 +286,7 @@ export function PeopleAnalytics() {
               summary={`Annualized turnover by tenure band: ${d.turnover.byTenure.map((b) => `${b.label} ${pct(b.annualizedTurnoverPct)}`).join(', ')}.`}
               columns={[
                 { key: 'label', label: 'Tenure' },
-                { key: 'headcount', label: 'Active', numeric: true },
+                { key: 'headcount', label: 'On the books', numeric: true },
                 { key: 'separations', label: 'Left', numeric: true },
                 { key: 'annualizedTurnoverPct', label: 'Annualized', numeric: true, format: (v) => pct(v as number | null) },
               ]}
@@ -293,10 +294,10 @@ export function PeopleAnalytics() {
               csvName="turnover-by-tenure"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={d.turnover.byTenure} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <BarChart data={d.turnover.byTenure} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} />
+                  <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} width="auto" />
                   <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
                   <Bar dataKey="annualizedTurnoverPct" name="Annualized turnover" fill={CHART.series[0]} radius={[3, 3, 0, 0]} />
                 </BarChart>
@@ -345,10 +346,10 @@ export function PeopleAnalytics() {
               csvName="absence-trend"
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={absence} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <LineChart data={absence} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} />
+                  <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} width="auto" />
                   <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
                   <Line dataKey="rate" name="Absence rate" stroke={CHART.warn} strokeWidth={2} dot={false} />
                 </LineChart>

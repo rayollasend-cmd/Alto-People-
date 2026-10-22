@@ -61,6 +61,42 @@ function quietRecharts(el: HTMLElement) {
 
 const CONTROLS = 'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
+/** The measures a frame's rows carry: its numeric columns, or (none marked) every number in the rows. */
+function measureKeys(columns: ChartColumn[], rows: Array<Record<string, unknown>>): string[] {
+  const marked = columns.filter((c) => c.numeric).map((c) => c.key);
+  if (marked.length > 0) return marked;
+  const keys = new Set<string>();
+  for (const r of rows) for (const [k, v] of Object.entries(r)) if (typeof v === 'number') keys.add(k);
+  return [...keys];
+}
+
+/** Every measure is zero or missing: there is nothing to draw. */
+export function nothingButZeros(columns: ChartColumn[], rows: Array<Record<string, unknown>>): boolean {
+  const keys = measureKeys(columns, rows);
+  if (keys.length === 0) return false;
+  for (const r of rows) {
+    for (const k of keys) {
+      const v = r[k];
+      if (v === null || v === undefined || v === '') continue;
+      const n = typeof v === 'number' ? v : Number(v);
+      if (Number.isFinite(n) && n !== 0) return false;
+    }
+  }
+  return true;
+}
+
+/** A column formatted as a percent: a rate, where zero is a reading, not an absence. */
+function hasRateColumn(columns: ChartColumn[]): boolean {
+  return columns.some((c) => {
+    if (!c.numeric || !c.format) return false;
+    try {
+      return c.format(0).includes('%');
+    } catch {
+      return false;
+    }
+  });
+}
+
 export function ChartFrame({
   title,
   description,
@@ -72,6 +108,7 @@ export function ChartFrame({
   children,
   empty,
   interactive,
+  zerosMeaningful,
 }: {
   title: string;
   description?: ReactNode;
@@ -87,6 +124,15 @@ export function ChartFrame({
   /** The figure holds controls (a heatmap's cells, buttons): it is not
    *  wrapped as one image, so they stay reachable. Detected when omitted. */
   interactive?: boolean;
+  /**
+   * Whether a chart whose every value is zero still draws. By default it
+   * doesn't: six $0 months are "nothing to chart yet", not a 320px card of
+   * flat axis (Books' profit, P&L by month's $0–$4 axis). A RATE at zero is
+   * a real reading (0% delivered is the news), so a chart with a column
+   * formatted as a percent keeps drawing on its own; pass `true` for any
+   * other measure where zero is the answer, `false` to collapse anyway.
+   */
+  zerosMeaningful?: boolean;
 }) {
   const [asTable, setAsTable] = useState(false);
   const plotRef = useRef<HTMLDivElement>(null);
@@ -119,7 +165,7 @@ export function ChartFrame({
       </table>
     </div>
   );
-  const hasData = rows.length > 0;
+  const hasData = rows.length > 0 && !(nothingButZeros(columns, rows) && !(zerosMeaningful ?? hasRateColumn(columns)));
 
   useEffect(() => {
     const el = plotRef.current;
@@ -137,18 +183,22 @@ export function ChartFrame({
   const asImage = !(interactive ?? hasControls);
 
   return (
-    <Card>
+    // min-w-0: a chart card is usually a grid item, and a grid item's
+    // min-content width (an SVG, a long title) pushed the page past 390px.
+    <Card className="min-w-0">
       <CardContent className="space-y-3 p-4 md:p-5">
         <SectionTitle
+          wrap
           title={title}
           description={description}
           trailing={
             hasData ? (
               <div className="flex items-center gap-1">
                 {/* The label names the view it switches to; no aria-pressed on top of a changing label. */}
-                <Button size="sm" variant="ghost" onClick={() => setAsTable((v) => !v)}>
+                {/* Icon-only below sm (the names stay as aria-labels), so a phone's title keeps its width. */}
+                <Button size="sm" variant="ghost" onClick={() => setAsTable((v) => !v)} aria-label={asTable ? 'Chart' : 'Table'}>
                   {asTable ? <LineChart className="h-3.5 w-3.5" aria-hidden="true" /> : <Table2 className="h-3.5 w-3.5" aria-hidden="true" />}
-                  {asTable ? 'Chart' : 'Table'}
+                  <span className="hidden sm:inline">{asTable ? 'Chart' : 'Table'}</span>
                 </Button>
                 <Button
                   size="sm"
@@ -157,7 +207,7 @@ export function ChartFrame({
                   onClick={() => downloadCsv(`${csvName}-${ymdLocal()}.csv`, [columns.map((c) => c.label), ...rows.map((r) => columns.map((c) => cell(c, r[c.key])))])}
                 >
                   <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                  CSV
+                  <span className="hidden sm:inline">CSV</span>
                 </Button>
               </div>
             ) : undefined

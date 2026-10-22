@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtStatementNo } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { decideApprovalRequest } from '@/lib/approvalRequestsApi';
 import {
@@ -136,7 +136,7 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
     { key: 'client', header: 'Client', accessor: (r) => r.clientName, cardMeta: true },
     { key: 'week', header: 'Week of', accessor: (r) => r.weekStart, cell: (r) => fmtDate(r.weekStart), sortable: true },
     { key: 'hours', header: 'Hours billed', accessor: (r) => r.hours, cell: (r) => `${r.hours.toFixed(2)}h`, align: 'right', sortable: true, className: 'tabular-nums text-alert' },
-    { key: 'statement', header: 'Statement', accessor: (r) => r.statementNumber ?? 0, cell: (r) => (r.statementNumber != null ? `#${r.statementNumber}` : 'Final'), cardMeta: true },
+    { key: 'statement', header: 'Statement', accessor: (r) => r.statementNumber ?? 0, cell: (r) => (r.statementNumber != null ? fmtStatementNo(r.statementNumber) : 'Final'), cardMeta: true },
   ];
   const unbilledCols: GridColumn<UnbilledRow>[] = [
     { key: 'worker', header: 'Worker', accessor: (r) => r.associateName, cell: (r) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>, primary: true },

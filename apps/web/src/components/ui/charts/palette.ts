@@ -40,6 +40,20 @@ export const PALETTE = {
   muted: token('silver', 0.35),
 } as const;
 
+/**
+ * One colour per staffing concept, in every chart (the portal's coverage
+ * curve drew Scheduled in gold while its hours chart drew it in blue, with
+ * gold meaning Delivered). Scheduled — and filled, which is scheduled
+ * people — is the primary series; delivered/worked the second; unfilled
+ * the alert state; the contract or target a reference line.
+ */
+export const CONCEPT = {
+  scheduled: PALETTE.primary,
+  delivered: PALETTE.secondary,
+  unfilled: PALETTE.bad,
+  target: PALETTE.ref,
+} as const;
+
 /** Category color by position — the fixed order, folding past the fifth. */
 export function seriesColor(i: number): string {
   return PALETTE.series[i] ?? PALETTE.other;

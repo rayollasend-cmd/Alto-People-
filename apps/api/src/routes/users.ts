@@ -31,6 +31,7 @@ import { assertRoleOffered, tenantOf } from '../lib/tenantRoles.js';
 import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
 import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 import { isElevation } from '../lib/accessChanges.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -108,8 +109,12 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       scopeRegionIds: true,
       breakGlass: true,
       mfaEnabledAt: true,
+      // The face for the row: null when neither the associate nor the
+      // account has a photo, so the list never asks for one that isn't there.
+      photoS3Key: true,
+      photoUpdatedAt: true,
       associate: {
-        select: { firstName: true, lastName: true },
+        select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true },
       },
       client: {
         select: { id: true, name: true },
@@ -158,6 +163,7 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       associateName: u.associate
         ? `${u.associate.firstName} ${u.associate.lastName}`
         : null,
+      photoUrl: accountPhotoUrlFor(u),
       clientId: u.clientId,
       clientName: u.client?.name ?? null,
       locationId: u.locationId,

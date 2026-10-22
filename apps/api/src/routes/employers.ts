@@ -79,7 +79,10 @@ employersRouter.get('/admin/employers', VIEW, async (_req, res) => {
   await defaultEmployerOrg(prisma, tenantId);
   const rows = await prisma.employerOrganization.findMany({
     where: { tenantId },
-    include: { client: { select: { name: true } }, _count: { select: { employments: { where: { endDate: null } } } } },
+    // People on the books (lib/peopleStatus: hired, not separated) with an
+    // open spell here. An open spell left behind on someone separated or
+    // removed made "People employed" read higher than the headcount.
+    include: { client: { select: { name: true } }, _count: { select: { employments: { where: { endDate: null, associate: { deletedAt: null, erasedAt: null, separatedAt: null } } } } } },
     orderBy: [{ isDefault: 'desc' }, { kind: 'asc' }, { legalName: 'asc' }],
   });
   res.json({ employers: rows.map(view) });

@@ -76,6 +76,9 @@ async function seedAssociate(opts: SeedOpts = {}) {
 
   const schedule = o.withSchedule ? await makeSchedule() : null;
   const associate = await createAssociate();
+  // Hired (an approved application): readiness lists the people a run is
+  // for (F500 SH-4 — the same population as the pay schedules page).
+  await prisma.application.create({ data: { associateId: associate.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() } });
   await prisma.associate.update({
     where: { id: associate.id },
     data: {

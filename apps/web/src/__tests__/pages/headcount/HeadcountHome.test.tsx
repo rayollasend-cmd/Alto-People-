@@ -72,13 +72,15 @@ describe('HeadcountHome', () => {
   it('shows the active count as the hero with the window from the overview', async () => {
     renderPage();
     expect(await screen.findByText('1,234')).toBeInTheDocument();
-    expect(screen.getByText('Active associates')).toBeInTheDocument();
+    // "Working": one of the two named numbers every page shows (F500 SH-4).
+    expect(screen.getByText('Working')).toBeInTheDocument();
     expect(screen.getByText('Worked in the last 14 days or scheduled ahead')).toBeInTheDocument();
     expect(screen.getByText(/clocked in within the last 14 days or scheduled ahead/)).toBeInTheDocument();
     // The companions beside the hero.
     expect(screen.getByText('980')).toBeInTheDocument();
     expect(screen.getByText('1,210')).toBeInTheDocument();
-    expect(screen.getByText('No housing link yet')).toBeInTheDocument();
+    // No housing link: no "In housing" tile at all (a dash said nothing; F500 G1).
+    expect(screen.queryByText('In housing')).not.toBeInTheDocument();
     // Turnover rides its own query keyed on the window.
     expect(screen.getByText('6.5%')).toBeInTheDocument();
     expect(getTurnover).toHaveBeenCalledWith(90);
@@ -143,8 +145,9 @@ describe('HeadcountHome', () => {
   it('lists the not-active reasons plainly and cuts the grid by store or client', async () => {
     const user = userEvent.setup();
     renderPage();
-    expect(await screen.findByText('Placed, no recent work')).toBeInTheDocument();
-    expect(screen.getByText('Employed, not placed')).toBeInTheDocument();
+    // The People directory's words, each a link to the people it counts (F500 SH-4).
+    expect(await screen.findByRole('link', { name: 'No recent shifts' })).toHaveAttribute('href', '/people?workStatus=PLACED_NOT_ACTIVE');
+    expect(screen.getByRole('link', { name: 'Not placed' })).toHaveAttribute('href', '/people?workStatus=NOT_PLACED');
     expect(screen.getByText('Destin')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'By client' }));
     expect(await screen.findByRole('link', { name: 'Coastal Resort' })).toHaveAttribute('href', '/clients/c1');

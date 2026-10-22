@@ -4,11 +4,13 @@ import type { Prisma } from '@prisma/client';
 import {
   DirectoryEntrySchema,
   DirectoryListResponseSchema,
+  WORK_STATUSES,
+  WorkStatusCountsSchema,
+  directoryStatusOf,
   type DirectoryEntry,
-  type DirectoryStatus,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { activeAssociateIds } from '../lib/activeDefinition.js';
+import { peopleStandings, workStatusCounts } from '../lib/peopleStatus.js';
 import { atClient, scopeAssociates, scopeWhere } from '../lib/scope.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
@@ -17,6 +19,7 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { canUseMessenger } from '../lib/messaging.js';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * People directory.
@@ -51,6 +54,8 @@ const DEFAULT_PAGE_SIZE = MAX_PAGE_SIZE;
 const QuerySchema = z.object({
   q: z.string().trim().max(120).optional(),
   status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']).optional(),
+  /** The one status (lib/peopleStatus): the tiles' filters. */
+  workStatus: z.enum(WORK_STATUSES).optional(),
   clientId: z.string().uuid().optional(),
   departmentId: z.string().uuid().optional(),
   locationId: z.string().uuid().optional(),
@@ -132,8 +137,8 @@ type DirectoryRow = Prisma.AssociateGetPayload<{ select: typeof DIRECTORY_SELECT
 
 /** Rows → directory entries, with the live pay rate batch-fetched once. */
 async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[]> {
-  // Brief 1A-2: ACTIVE is the one definition of active — asked about this page's rows only.
-  const activeIds = await activeAssociateIds({ associateIds: associates.map((a) => a.id) });
+  // The one status per person (lib/peopleStatus), asked about this page's rows only.
+  const standings = await peopleStandings({ tenantId: tenantIdForWrite(), associateIds: associates.map((a) => a.id) });
   // One open compensation row per associate ⇒ batch-fetch and index.
   const ids = associates.map((a) => a.id);
   const liveComp =
@@ -161,8 +166,6 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
   }
 
   return associates.map((a) => {
-    // Status derivation: APPROVED ⇒ ACTIVE; any in-flight (DRAFT,
-    // SUBMITTED, IN_REVIEW) ⇒ PENDING; otherwise INACTIVE.
     const apps = a.applications;
     const approved = apps.find((x) => x.status === 'APPROVED');
     const inFlight = apps.find(
@@ -171,35 +174,12 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
         x.status === 'SUBMITTED' ||
         x.status === 'IN_REVIEW',
     );
-    // A completed separation makes the associate INACTIVE regardless of
-    // old approvals — UNLESS a newer approval exists (rehire) or a fresh
-    // application is in flight. Without this, "Active" derived purely
-    // from "has ever been approved" and separated people stayed active
-    // forever.
-    const separated =
-      a.separatedAt !== null &&
-      !apps.some(
-        (x) =>
-          x.status === 'APPROVED' &&
-          x.approvedAt !== null &&
-          x.approvedAt > a.separatedAt!,
-      ) &&
-      !inFlight;
-    // A manual deactivation (temporary pause) hard-overrides everything:
-    // INACTIVE until someone clicks Reactivate, no matter what
-    // applications exist.
-    // Brief 1A-2: approved alone is no longer active. ACTIVE = placed and
-    // working (the one definition); PENDING = onboarding in flight; an
-    // approved person with no recent work and nothing scheduled is INACTIVE.
-    const status: DirectoryStatus = a.deactivatedAt
-      ? 'INACTIVE'
-      : separated
-        ? 'INACTIVE'
-        : activeIds.has(a.id)
-          ? 'ACTIVE'
-          : inFlight && !approved
-            ? 'PENDING'
-            : 'INACTIVE';
+    // Where they stand, by the one rule (lib/peopleStatus): Working, No
+    // recent shifts, Not placed, Onboarding, Paused or Separated. The older
+    // ACTIVE / PENDING / INACTIVE is derived from it, never computed apart.
+    const workStatus = standings.people.get(a.id)?.status ?? 'NOT_PLACED';
+    const status = directoryStatusOf(workStatus);
+    const separated = workStatus === 'SEPARATED';
 
     // Workplace = approved client first, then most-recent application.
     const workplaceApp = approved ?? inFlight ?? apps[0] ?? null;
@@ -235,6 +215,7 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
       employmentType: a.employmentType,
       j1Status: a.j1Status,
       status,
+      workStatus,
       workplaceClientId,
       workplaceClientName,
       position: workplaceApp?.position ?? null,
@@ -278,6 +259,58 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
   });
 }
 
+/**
+ * Who the directory lists for this caller and these filters. AND, never
+ * spread: the store filter and the caller's scope both constrain
+ * `assignments`, and a search and the client filter both use `OR` —
+ * spread, the later one silently replaced the earlier (a site-bound lead
+ * could list any store; a search dropped the client). The list and its
+ * status counts read the same where, so a tile is the list it filters.
+ */
+function directoryWhere(user: SessionUser, filters: z.infer<typeof QuerySchema>): Prisma.AssociateWhereInput {
+  return scopeWhere<Prisma.AssociateWhereInput>(
+    { deletedAt: null, tenantId: tenantIdForWrite() },
+    // Access pack: an internal role narrowed to sites/regions lists its people only.
+    scopeAssociates(user),
+    !!filters.employmentType && { employmentType: filters.employmentType },
+    !!filters.departmentId && { departmentId: filters.departmentId },
+    !!filters.locationId && { assignments: { some: { endedAt: null, locationId: filters.locationId } } },
+    // Where they work now (a transfer moves them), else — nobody
+    // placed yet — the client they applied to (lib/scope.atClient).
+    !!filters.clientId && atClient(filters.clientId),
+    !!filters.q && {
+      OR: [
+        { firstName: { contains: filters.q, mode: 'insensitive' } },
+        { lastName: { contains: filters.q, mode: 'insensitive' } },
+        { email: { contains: filters.q, mode: 'insensitive' } },
+      ],
+    },
+  );
+}
+
+/** True when no filter narrows the list (the counts are then the tenant's, in the caller's reach). */
+const unfiltered = (f: z.infer<typeof QuerySchema>) => !f.q && !f.clientId && !f.departmentId && !f.locationId && !f.employmentType;
+
+/**
+ * GET /directory/summary — how many people stand where, for the same
+ * filters as the list: the People page's tiles. The same counts the
+ * Headcount screen shows (lib/peopleStatus), so "No recent shifts 10"
+ * there is the 10 the tile here filters to.
+ */
+directoryRouter.get('/directory/summary', VIEW, async (req, res, next) => {
+  try {
+    const filters = QuerySchema.parse(req.query);
+    const tenantId = tenantIdForWrite();
+    const where = directoryWhere(req.user!, filters);
+    // Unfiltered and unbounded: the whole tenant (no id list to ship).
+    const bounded = !unfiltered(filters) || Object.keys(scopeAssociates(req.user!)).length > 0;
+    const ids = bounded ? (await prisma.associate.findMany({ where, select: { id: true } })).map((r) => r.id) : undefined;
+    res.json(WorkStatusCountsSchema.parse(await workStatusCounts({ tenantId, ...(ids ? { associateIds: ids } : {}) })));
+  } catch (err) {
+    next(err);
+  }
+});
+
 directoryRouter.get('/directory', VIEW, async (req, res, next) => {
   try {
     const filters = QuerySchema.parse(req.query);
@@ -293,38 +326,17 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       ...(filters.cursor
         ? { cursor: { id: filters.cursor }, skip: 1 }
         : {}),
-      // AND, never spread: the store filter and the caller's scope both
-      // constrain `assignments`, and a search and the client filter both use
-      // `OR` — spread, the later one silently replaced the earlier (a
-      // site-bound lead could list any store; a search dropped the client).
-      where: scopeWhere<Prisma.AssociateWhereInput>(
-        { deletedAt: null, tenantId: tenantIdForWrite() },
-        // Access pack: an internal role narrowed to sites/regions lists its people only.
-        scopeAssociates(req.user!),
-        !!filters.employmentType && { employmentType: filters.employmentType },
-        !!filters.departmentId && { departmentId: filters.departmentId },
-        !!filters.locationId && { assignments: { some: { endedAt: null, locationId: filters.locationId } } },
-        // Where they work now (a transfer moves them), else — nobody
-        // placed yet — the client they applied to (lib/scope.atClient).
-        !!filters.clientId && atClient(filters.clientId),
-        !!filters.q && {
-          OR: [
-            { firstName: { contains: filters.q, mode: 'insensitive' } },
-            { lastName: { contains: filters.q, mode: 'insensitive' } },
-            { email: { contains: filters.q, mode: 'insensitive' } },
-          ],
-        },
-      ),
+      where: directoryWhere(req.user!, filters),
       select: DIRECTORY_SELECT,
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     });
 
     const entries = await buildEntries(associates);
 
-    // Apply status filter after derivation since status is computed.
-    const filtered = filters.status
-      ? entries.filter((e) => e.status === filters.status)
-      : entries;
+    // Apply status filters after derivation since status is computed.
+    const filtered = entries.filter(
+      (e) => (!filters.status || e.status === filters.status) && (!filters.workStatus || e.workStatus === filters.workStatus),
+    );
 
     // nextCursor is the id of the last associate FETCHED (not the last
     // filtered). The cursor walks the underlying rows, not the post-

@@ -145,7 +145,7 @@ export async function w4EstimatorContext(db: PrismaClient, associateId: string, 
   const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
   const [w4, schedule, items] = await Promise.all([
     db.w4Submission.findUnique({ where: { associateId }, select: { filingStatus: true, multipleJobs: true, dependentsAmount: true, otherIncome: true, deductions: true, extraWithholding: true } }),
-    payScheduleFor(associateId),
+    payScheduleFor(associateId, { orLikely: true }),
     db.payrollItem.findMany({
       where: { associateId, status: 'DISBURSED', payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: { gte: yearStart } } },
       select: { grossPay: true, preTaxDeductions: true, federalWithholding: true, payrollRun: { select: { kind: true, disbursedAt: true } } },

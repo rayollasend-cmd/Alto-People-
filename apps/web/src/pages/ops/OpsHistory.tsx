@@ -11,7 +11,7 @@ import {
   type OpsHistoryQuery,
   type OpsShiftRow,
 } from '@/lib/opsApi';
-import { fmtClock, fmtDayKey, fmtDuration, fmtFull, OPS_TZ } from './opsTime';
+import { fmtClock, fmtDayKey, fmtDuration, fmtFull, opsTimeZone, setOpsTimeZone } from './opsTime';
 
 /**
  * The record: every ops shift in a range, for a store, a period, a
@@ -70,6 +70,8 @@ export function OpsHistory({
     placeholderData: (prev) => prev,
   });
   const loading = isPending;
+  // Times on the company's clock, named by the API (F500 SH-4).
+  setOpsTimeZone(data?.timezone);
   const error = queryError
     ? queryError instanceof ApiError
       ? queryError.message
@@ -259,7 +261,7 @@ export function OpsHistory({
           id="ops-history"
           caption={
             data
-              ? `Store Ops shifts from ${fmtDayKey(data.range.from)} to ${fmtDayKey(data.range.to)}, times in ${OPS_TZ}`
+              ? `Store Ops shifts from ${fmtDayKey(data.range.from)} to ${fmtDayKey(data.range.to)}, times in ${opsTimeZone()}`
               : 'Store Ops shifts'
           }
           rows={data?.shifts ?? null}

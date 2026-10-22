@@ -21,12 +21,32 @@ import type { BreadcrumbSegment } from '@/components/ui/Breadcrumb';
  * Phase 71 — also carries the breadcrumb trail. PageHeader publishes both
  * together; Topbar prefers breadcrumbs (full "you are here" context) and
  * falls back to the title alone when none are provided.
+ *
+ * A page that publishes nothing is named in the bar by its nav label
+ * (lib/navTrail useNavLabel) — the wordmark only off the nav entirely.
+ *
+ * A page with a header of its own (not PageHeader / RecordTemplate — a
+ * message thread, a kiosk-style screen) adopts the same behaviour with ONE
+ * hook on its heading:
+ *
+ *   const heroRef = usePageHero(thread.name, [{ label: 'Messages', to: '/messages' }, { label: thread.name }]);
+ *   return <h1 ref={heroRef}>{thread.name}</h1>;
+ *
+ * It publishes the name (and trail) to the bar and hands the bar the name
+ * once the heading scrolls under it — the same handoff every template does.
  */
 
 interface PageTitleContextValue {
   title: string | null;
   breadcrumbs: BreadcrumbSegment[] | null;
   setMeta: (meta: { title: string | null; breadcrumbs: BreadcrumbSegment[] | null }) => void;
+  /**
+   * Where "up" is for a page that has no parent in its URL — an area shell
+   * around top-level paths (/audit, /trust inside Settings & trust) sets it,
+   * so the phone still gets a Back to the area. Null almost everywhere.
+   */
+  up: BreadcrumbSegment | null;
+  setUp: (up: BreadcrumbSegment | null) => void;
   /**
    * True once the page's own <h1> has scrolled up out of view. The topbar
    * uses it to hand the title off the way iOS hands a large title to the
@@ -50,6 +70,7 @@ const PageTitleContext = createContext<PageTitleContextValue | null>(null);
 export function PageTitleProvider({ children }: { children: ReactNode }) {
   const [title, setTitle] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbSegment[] | null>(null);
+  const [up, setUp] = useState<BreadcrumbSegment | null>(null);
   // Starts true so a page that never publishes a hero (or renders before the
   // observer fires) still gets its name in the chrome — the handoff only ever
   // *hides* the compact title, it never withholds it.
@@ -97,18 +118,26 @@ export function PageTitleProvider({ children }: { children: ReactNode }) {
     return () => io.disconnect();
   }, [heroEl]);
 
+  // Stable: a page's publish effect depends on it, and a fresh function on
+  // every change re-ran that effect — which re-published, which changed the
+  // state, which made a fresh function… (a trail computed per render, as an
+  // area's is, never settled).
+  const setMeta = useCallback(({ title: t, breadcrumbs: b }: { title: string | null; breadcrumbs: BreadcrumbSegment[] | null }) => {
+    setTitle(t);
+    setBreadcrumbs(b);
+  }, []);
+
   const value = useMemo<PageTitleContextValue>(
     () => ({
       title,
       breadcrumbs,
       heroHidden,
       registerHero,
-      setMeta: ({ title: t, breadcrumbs: b }) => {
-        setTitle(t);
-        setBreadcrumbs(b);
-      },
+      setMeta,
+      up,
+      setUp,
     }),
-    [title, breadcrumbs, heroHidden, registerHero]
+    [title, breadcrumbs, heroHidden, registerHero, setMeta, up]
   );
 
   return <PageTitleContext.Provider value={value}>{children}</PageTitleContext.Provider>;
@@ -117,6 +146,24 @@ export function PageTitleProvider({ children }: { children: ReactNode }) {
 export function usePageTitle(): string | null {
   const ctx = useContext(PageTitleContext);
   return ctx?.title ?? null;
+}
+
+/** The area's "up" (see PageTitleContextValue.up), or null. */
+export function usePageUp(): BreadcrumbSegment | null {
+  const ctx = useContext(PageTitleContext);
+  return ctx?.up ?? null;
+}
+
+/** Set "up" for the pages inside an area shell; cleared when it unmounts. */
+export function usePublishPageUp(up: BreadcrumbSegment | null) {
+  const setUp = useContext(PageTitleContext)?.setUp;
+  const key = up ? JSON.stringify(up) : '';
+  useEffect(() => {
+    if (!setUp) return;
+    setUp(up);
+    return () => setUp(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setUp, key]);
 }
 
 export function usePageBreadcrumbs(): BreadcrumbSegment[] | null {
@@ -175,4 +222,19 @@ export function usePublishPageTitle(
     return () => setMeta({ title: null, breadcrumbs: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setMeta, title, breadcrumbsKey]);
+}
+
+/**
+ * The adoption path for a custom header: publish the page's name (and
+ * trail) to the top bar and mark the returned ref's element as the page's
+ * hero, so the bar stays quiet while it is on screen. See the file header.
+ */
+export function usePageHero<T extends HTMLElement = HTMLHeadingElement>(
+  title: string | null | undefined,
+  breadcrumbs?: BreadcrumbSegment[] | null,
+): RefObject<T> {
+  usePublishPageTitle(title, breadcrumbs);
+  const ref = useRef<T>(null);
+  useHeroObserver(ref);
+  return ref;
 }

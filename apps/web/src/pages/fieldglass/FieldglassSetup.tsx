@@ -213,7 +213,7 @@ export function FieldglassSetup() {
           <Button asChild variant="outline" size="sm">
             <Link to="/time-attendance/timesheets">
               <FileSpreadsheet className="h-3.5 w-3.5" />
-              Fieldglass timesheets
+              Client hours
             </Link>
           </Button>
         }

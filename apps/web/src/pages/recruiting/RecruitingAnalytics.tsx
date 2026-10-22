@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { performWithUndo } from '@/lib/undoToast';
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import type { RecruitingAnalytics as Analytics } from '@alto-people/shared';
 type SourceRow = Analytics['sources'][number];
 type ClientRow = Analytics['clients'][number];
@@ -432,15 +432,9 @@ export function RecruitingAnalytics() {
         className="mx-auto max-w-6xl"
         title="Recruiting analytics"
         subtitle="How the pipeline converts, how fast roles fill, what each source costs, and who stays."
-        breadcrumbs={[{ label: 'Recruiting', to: '/recruiting' }]}
-        secondaryActions={
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/recruiting">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Pipeline
-            </Link>
-          </Button>
-        }
+        // The trail names this page (it published "Recruiting" to the top
+        // bar) and is the way back; the "← Pipeline" button was a second.
+        breadcrumbs={[{ label: 'Recruiting', to: '/recruiting' }, { label: 'Recruiting analytics' }]}
     >
 
       <div className="flex flex-wrap items-center justify-between gap-2">

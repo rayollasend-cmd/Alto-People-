@@ -7,19 +7,19 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { ListTemplate } from '@/components/templates';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { statusTone } from '@/lib/status';
 import { RunFundingCard } from '@/pages/payrollBanking/FundingCard';
 import { centsToMoney, downloadAchFile, markAchFileUploaded } from '@/lib/bankingApi';
 import { useConfirm } from '@/lib/confirm';
 import { createRunTaxDeposit } from '@/lib/payrollDeskApi';
 import { markTaxDepositPaid } from '@/lib/payrollApi';
+import { RunTotalsMismatch } from '@/components/payroll/RunTotalsMismatch';
+import { RunStatusBadge } from '@/lib/payrollRunStatus';
 
 /**
  * The guided close: one payroll run, step by step, each with what blocks it
@@ -57,6 +57,11 @@ export interface PayrollClose {
     approvedAt: string | null;
     approvedByEmail: string | null;
     disbursedAt: string | null;
+    /** The stored totals checked against the paychecks (apps/api/src/lib/payrollRunTotals.ts). */
+    itemsGross?: number;
+    itemsNet?: number;
+    paychecks?: number;
+    totalsAgree?: boolean;
   };
   approvalRequired: boolean;
   review?: {
@@ -107,12 +112,6 @@ function StepIcon({ state }: { state: StepState }) {
   return <span className={cn(base, 'border-line text-ink-muted')}><Circle className="h-2 w-2" aria-hidden="true" /></span>;
 }
 
-const RUN_STATUS_LABEL: Record<PayrollClose['run']['status'], string> = {
-  DRAFT: 'Draft',
-  FINALIZED: 'Finalized',
-  DISBURSED: 'Paid',
-  CANCELLED: 'Voided',
-};
 
 const STATE_LABEL: Record<StepState, string> = {
   done: 'Done',
@@ -164,7 +163,7 @@ export function PayrollClosePage() {
       subtitle={
         <span className="inline-flex items-center gap-2">
           {r.clientName ?? 'All clients'}
-          <Badge variant={statusTone(r.status)}>{RUN_STATUS_LABEL[r.status]}</Badge>
+          <RunStatusBadge status={r.status} />
         </span>
       }
       breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Close' }]}
@@ -179,12 +178,15 @@ export function PayrollClosePage() {
         ) : undefined
       }
       summary={
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-ink-muted">
-          <span>Gross {fmtMoney(r.totalGross)}</span>
-          <span>Net {fmtMoney(r.totalNet)}</span>
-          <span>Employer tax {fmtMoney(r.totalEmployerTax)}</span>
-          <span>{data.items.pending + data.items.disbursed + data.items.held + data.items.failed} paychecks</span>
-          {blockers > 0 && <span className="text-alert">{blockers} blocking</span>}
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-ink-muted">
+            <span>Gross {fmtMoney(r.totalGross)}</span>
+            <span>Net {fmtMoney(r.totalNet)}</span>
+            <span>Employer tax {fmtMoney(r.totalEmployerTax)}</span>
+            <span>{data.items.pending + data.items.disbursed + data.items.held + data.items.failed} paychecks</span>
+            {blockers > 0 && <span className="text-alert">{blockers} blocking</span>}
+          </div>
+          <RunTotalsMismatch check={r} />
         </div>
       }
     >

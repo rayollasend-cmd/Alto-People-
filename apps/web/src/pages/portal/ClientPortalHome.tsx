@@ -25,6 +25,7 @@ import {
   fmtHours,
   fmtMoney,
   fmtShiftRangeTz,
+  fmtStatementNo,
   fmtTime,
   parseYmd,
   zonedDayKey,
@@ -634,6 +635,7 @@ export function ClientPortalHome() {
                     open: t('portal.chartOpen'),
                     contracted: t('portal.chartContracted'),
                     now: t('portal.chartNow'),
+                    empty: t('portal.chartNothing'),
                     at: (h) => t('portal.chartAt', { hour: h }),
                   }}
                 />
@@ -1231,7 +1233,7 @@ export function ClientPortalHome() {
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-white tabular-nums">
-                            {s.number !== null ? t('portal.stNumber', { n: s.number }) : t('portal.statements')}
+                            {s.number !== null ? t('portal.stNumber', { n: fmtStatementNo(s.number) }) : t('portal.statements')}
                             {data.store && s.storeAmount !== null && (
                               <span className="ml-1.5 text-2xs font-normal text-silver/50">
                                 {t('portal.stStoreShare')}
@@ -1283,7 +1285,7 @@ export function ClientPortalHome() {
                               setPrefill({
                                 kind: 'BILLING',
                                 subject: t('portal.stDisputeSubject', {
-                                  n: s.number !== null ? `#${s.number}` : fmtDate(parseYmd(s.periodEnd)),
+                                  n: s.number !== null ? fmtStatementNo(s.number) : fmtDate(parseYmd(s.periodEnd)),
                                 }),
                                 nonce: Date.now(),
                               })

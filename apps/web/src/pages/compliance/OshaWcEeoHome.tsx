@@ -360,10 +360,10 @@ function OshaCharts({ rows }: { rows: OshaIncident[] }) {
           rows={byMonth}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={byMonth} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+            <BarChart data={byMonth} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={PALETTE.grid} vertical={false} />
               <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
-              <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width={40} />
+              <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width="auto" />
               <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               {used.map((sev) => (

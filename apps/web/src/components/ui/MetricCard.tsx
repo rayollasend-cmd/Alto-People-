@@ -1,7 +1,10 @@
 import * as React from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
+import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from './Card';
 import { Sparkline as KitSparkline } from './charts/Sparkline';
+import { PALETTE } from './charts/palette';
 
 export interface MetricTrend {
   /** Weekly values, oldest first. */
@@ -22,27 +25,79 @@ export interface MetricTrend {
 /** Which direction is good news: 'down' for lateness, cost, open issues. */
 export type TrendGood = 'up' | 'down' | 'neutral';
 
+/**
+ * What a tile's colour means. `default` is the data colour (gold);
+ * `warning` / `alert` ask for attention, `good` reports good news, and
+ * `neutral` is for a fact that is neither (and for "nothing to count").
+ * A ZERO never wears warning or alert: "0 overdue" in red reads as a
+ * problem (Hotline's five red/amber zero tiles) — the tile drops to the
+ * default colour on its own.
+ */
+export type MetricTone = 'default' | 'neutral' | 'good' | 'warning' | 'alert';
+
+/** A change with no sparkline: "↑ 3 vs last week". */
+export interface MetricDelta {
+  value: number;
+  label?: string;
+  /** Which direction is good news (default 'up'). */
+  good?: TrendGood;
+  format?: (n: number) => string;
+}
+
 export interface MetricCardProps {
   label: string;
   value: React.ReactNode;
   hint?: React.ReactNode;
-  /** When true, value renders in warning instead of gold — for "needs attention" tiles. */
+  /** Colour by meaning — see MetricTone. */
+  tone?: MetricTone;
+  /** @deprecated Use `tone="warning"`. Kept for existing callers. */
   accent?: boolean;
+  /** A small icon beside the label (home focus tiles). */
+  icon?: LucideIcon;
   /** Micro-sparkline + delta chip rendered under the value. */
   trend?: MetricTrend;
+  /** A delta chip without a sparkline. Ignored when `trend` draws. */
+  delta?: MetricDelta;
+  /** A change already in words ("+4 pts", "Score 72"), toned by meaning. */
+  deltaText?: { text: string; tone?: 'good' | 'bad' | 'neutral' } | null;
+  /** A unit after the value, in small type ("/ 12", "hrs"). */
+  unit?: string;
+  /** A 0–100 meter under the value, in the series colour or a state colour. */
+  meter?: { percent: number; tone?: 'primary' | 'good' | 'warn' | 'bad' } | null;
   /** Direction color is contextual: for metrics where growth is bad
    *  (pending reviews, anomalies), pass false so ↑ renders as alert. */
   deltaPositiveIsGood?: boolean;
   /** Which direction is good — colors the line and the chip. Overrides
    *  deltaPositiveIsGood; 'neutral' keeps both in the quiet tone. */
   trendGood?: TrendGood;
-  /** Wraps the card in a link with hover affordance. Pair with React Router's Link via asChild patterns. */
+  /**
+   * HONEST EMPTY. Set when the tile has nothing to count — its denominator
+   * is zero, nothing is set up yet, no readings have come in: say so in
+   * words ("No shifts today", "No positions set up", "No readings yet").
+   * The sentence replaces the value and the hint, in the neutral tone,
+   * and the tile never shows a 0 dressed as good news ("0 / 0 · Every
+   * shift filled", "0h of 0h · all approved"). Leave it unset when a zero
+   * is a real answer over a real population ("0 late of 40 shifts").
+   */
+  nothing?: React.ReactNode;
+  /** Wraps the card in a link (React Router's Link for an in-app path). */
   href?: string;
-  /** Render-prop wrapper for non-anchor links (Router Link, button, etc.). */
+  /** Makes the tile a button — with `selected`, a tile that IS a filter
+   *  (the list under the strip shows that bucket). */
+  onClick?: () => void;
+  /** The tile's filter is the one applied (aria-pressed). Use with onClick. */
+  selected?: boolean;
+  /** Render-prop wrapper for anything else (a custom button, a tooltip). */
   wrap?: (children: React.ReactElement) => React.ReactElement;
   /** The "View details →" line on a linked tile. Off for a band of tiles
-   *  that are all links, where it repeats on every one. */
+   *  that are all links, where it repeats on every one (and always off
+   *  inside a MetricStrip). */
   cta?: boolean;
+  /** Phone-compact: half height below `sm` (hint and sparkline hidden).
+   *  On by default inside a MetricStrip. */
+  compact?: boolean;
+  /** Full text for the value's tooltip when `value` is not plain text. */
+  valueTitle?: string;
   className?: string;
 }
 
@@ -100,7 +155,9 @@ export function CountUpValue({ value }: { value: React.ReactNode }) {
     ) {
       return null;
     }
-    return parseNumeric(value);
+    const parsed = parseNumeric(value);
+    // Nothing to count up to: a zero renders as itself (it used to animate 0→0).
+    return parsed && parsed.target !== 0 ? parsed : null;
   });
   const [display, setDisplay] = React.useState<string | null>(
     initial ? formatFrame(0, initial) : null
@@ -115,7 +172,9 @@ export function CountUpValue({ value }: { value: React.ReactNode }) {
     let raf = 0;
     const startedAt = performance.now();
     const tick = (t: number) => {
-      const progress = Math.min((t - startedAt) / COUNT_UP_MS, 1);
+      // A frame's timestamp can precede the effect's performance.now(): clamp,
+      // or the first frame's negative progress printed "-0".
+      const progress = Math.max(0, Math.min((t - startedAt) / COUNT_UP_MS, 1));
       const eased = 1 - Math.pow(1 - progress, 3);
       setDisplay(formatFrame(initial.target * eased, initial));
       if (progress < 1) {
@@ -212,53 +271,205 @@ export function trendSummary(trend: MetricTrend, good: TrendGood): string {
 
 /* --------------------------------------------------------- metric card */
 
+/** Set by MetricStrip: tiles inside a strip are compact on phones and drop the per-tile CTA. */
+export const MetricStripContext = React.createContext<{ inStrip: boolean }>({ inStrip: false });
+
+/** "0", "$0", "$0.00", "0%", "0h" — a value that counts nothing. */
+const ZERO_RE = /^\s*[-+]?[$€£]?\s*0+(?:[.,]0+)?\s*(?:%|h|hrs?)?\s*$/;
+export function isZeroValue(value: React.ReactNode): boolean {
+  if (typeof value === 'number') return value === 0;
+  return typeof value === 'string' && ZERO_RE.test(value);
+}
+
+/** The tone a tile actually wears: warning/alert never colour a zero. */
+export function effectiveTone(tone: MetricTone, value: React.ReactNode): MetricTone {
+  return (tone === 'warning' || tone === 'alert') && isZeroValue(value) ? 'default' : tone;
+}
+
+const VALUE_TONE: Record<MetricTone, string> = {
+  default: 'text-gold',
+  neutral: 'text-ink',
+  good: 'text-success',
+  warning: 'text-warning',
+  alert: 'text-alert',
+};
+const ICON_TONE: Record<MetricTone, string> = {
+  default: 'text-ink-muted',
+  neutral: 'text-ink-muted',
+  good: 'text-success',
+  warning: 'text-warning',
+  alert: 'text-alert',
+};
+const BORDER_TONE: Partial<Record<MetricTone, string>> = {
+  warning: 'border-warning/30',
+  alert: 'border-alert/40',
+};
+
 /**
- * KPI tile used across dashboards. Encapsulates the
- *   uppercase label → big-number → optional hint
- * pattern so AnalyticsHome, VtoHome, and the per-module dashboards stop
- * inlining their own copies. Numeric values count up on first mount;
- * pass `trend` for a micro-sparkline + week-over-week delta chip.
+ * Money never clips: the value is sized by clamp() for the viewport, and if
+ * the tile is still too narrow for it (six tiles in a side column, a long
+ * dollar figure) the font steps down to fit before the ellipsis is the
+ * last resort. The full value is always in the tooltip.
+ */
+function useFitValue(ref: React.RefObject<HTMLElement | null>, key: unknown) {
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let lastWidth = -1;
+    const fit = () => {
+      const width = el.clientWidth;
+      if (width === lastWidth || width === 0) return;
+      lastWidth = width;
+      el.style.fontSize = '';
+      if (el.scrollWidth <= width) return;
+      const base = parseFloat(getComputedStyle(el).fontSize);
+      if (!Number.isFinite(base)) return;
+      el.style.fontSize = `${Math.max(14, Math.floor(base * (width / el.scrollWidth) * 0.97))}px`;
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, key]);
+}
+
+/**
+ * THE KPI tile — one for the whole app (audits found six: MetricCard,
+ * StatTile, the home focus tiles, finance's FinKpi, transport's boxes,
+ * the associate's numbers). Label → value → optional delta → hint:
+ *
+ *   - `tone` colours by meaning, and never colours a zero (see MetricTone);
+ *   - `nothing` is the honest empty ("No shifts today") — never a fake 0;
+ *   - `href` links to the list behind the number; `onClick` + `selected`
+ *     make the tile a filter (the strip replaces a row of duplicate chips);
+ *   - the value fits its tile (clamp + step-down + ellipsis + tooltip);
+ *   - lay tiles out with MetricStrip, which is two-up and compact on a
+ *     phone and never strands one tile alone on a row.
+ *
+ * Numeric values count up on first mount; pass `trend` for a
+ * micro-sparkline + week-over-week delta chip, or `delta` for the chip alone.
  */
 export function MetricCard({
   label,
   value,
   hint,
+  tone: toneProp,
   accent,
+  icon: Icon,
   trend,
+  delta,
+  deltaText,
+  unit,
+  meter,
   deltaPositiveIsGood = true,
   trendGood,
+  nothing,
   href,
+  onClick,
+  selected,
   wrap,
   cta = true,
+  compact: compactProp,
+  valueTitle,
   className,
 }: MetricCardProps) {
-  const isInteractive = Boolean(href || wrap);
+  const { inStrip } = React.useContext(MetricStripContext);
+  const inRouter = useInRouterContext();
+  const compact = compactProp ?? inStrip;
+  const isEmpty = nothing !== undefined && nothing !== null && nothing !== false;
+  const tone: MetricTone = isEmpty ? 'neutral' : effectiveTone(toneProp ?? (accent ? 'warning' : 'default'), value);
+  const isInteractive = Boolean(href || wrap || onClick);
   const good: TrendGood = trendGood ?? (deltaPositiveIsGood ? 'up' : 'down');
+  const showTrend = !isEmpty && trend !== undefined && trendDrawable(trend);
+  const showDelta = !isEmpty && !showTrend && delta !== undefined && Number.isFinite(delta.value);
+  const valueRef = React.useRef<HTMLDivElement>(null);
+  useFitValue(valueRef, typeof value === 'string' || typeof value === 'number' ? value : null);
+  const tip = valueTitle ?? (typeof value === 'string' || typeof value === 'number' ? String(value) : undefined);
+
   const card = (
-    <Card interactive={isInteractive} className={cn('group', className)}>
-      <CardContent className="pt-[var(--d-tile)]">
-        {/* The one canonical KPI label spec (audits found three). */}
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-          {label}
-        </div>
+    <Card
+      interactive={isInteractive}
+      className={cn(
+        'group min-w-0',
+        (inStrip || isInteractive) && 'h-full',
+        BORDER_TONE[tone],
+        selected && 'border-gold/70 bg-gold/[0.06] elev-2',
+        className,
+      )}
+    >
+      <CardContent
+        className={cn(
+          'pt-[var(--d-tile)]',
+          compact && 'p-3 first:pt-3 sm:p-[var(--d-card)] sm:pt-[var(--d-tile)] sm:first:pt-[var(--d-tile)]',
+          Icon && 'relative',
+        )}
+      >
+        {/* The one canonical KPI label spec (audits found three); two lines, never cut mid-word. */}
         <div
           className={cn(
-            'font-display text-[length:var(--d-value)] mt-2 leading-none tabular-nums',
-            accent ? 'text-warning' : 'text-gold',
+            // Tighter tracking on a phone, so a two-up tile's label fits its two lines.
+            'min-w-0 font-medium uppercase tracking-[0.08em] text-silver/70 line-clamp-2 sm:tracking-[0.14em]',
+            compact ? 'text-2xs sm:text-xs2' : 'text-xs2',
+            Icon && 'pr-6',
           )}
+          title={label}
         >
-          <CountUpValue value={value} />
+          {label}
         </div>
-        {/* A line of nothing (all zero) or of NaN says nothing: no sparkline then (finance walk 3). */}
-        {trend && trendDrawable(trend) && (
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-silver">
-            <KitSparkline series={trend.series} tone={sparkTone(trend.delta, good)} lastIsPartial={trend.lastIsPartial} />
-            <DeltaChip delta={trend.delta} deltaLabel={trend.deltaLabel} good={good} format={trend.format} />
-            <span className="sr-only">{trendSummary(trend, good)}</span>
+        {Icon && (
+          <Icon
+            className={cn(
+              'absolute h-4 w-4',
+              compact ? 'right-3 top-3 sm:right-[var(--d-card)] sm:top-[var(--d-tile)]' : 'right-[var(--d-card)] top-[var(--d-tile)]',
+              ICON_TONE[tone],
+            )}
+            aria-hidden="true"
+          />
+        )}
+        {isEmpty ? (
+          <div className={cn('text-sm leading-snug text-ink-muted line-clamp-2', compact ? 'mt-1 sm:mt-2 sm:text-base' : 'mt-2 text-base')}>{nothing}</div>
+        ) : (
+          <div
+            ref={valueRef}
+            data-metric-value=""
+            title={tip}
+            className={cn(
+              'overflow-hidden text-ellipsis whitespace-nowrap font-display leading-tight tabular-nums',
+              'text-[length:clamp(1.25rem,0.9rem_+_1.4vw,var(--d-value))]',
+              compact ? 'mt-1 sm:mt-2' : 'mt-2',
+              VALUE_TONE[tone],
+            )}
+          >
+            <CountUpValue value={value} />
+            {unit && <span className="ml-1 font-sans text-sm text-silver">{unit}</span>}
           </div>
         )}
-        {hint && <div className="text-xs text-silver mt-2">{hint}</div>}
-        {isInteractive && cta && (
+        {!isEmpty && deltaText && (
+          <div
+            className={cn(
+              'mt-1 text-2xs font-medium tabular-nums sm:text-xs',
+              deltaText.tone === 'good' ? 'text-success' : deltaText.tone === 'bad' ? 'text-alert' : 'text-silver/70',
+            )}
+          >
+            {deltaText.text}
+          </div>
+        )}
+        {!isEmpty && meter && <Meter percent={meter.percent} tone={meter.tone} />}
+        {/* A line of nothing (all zero) or of NaN says nothing: no sparkline then (finance walk 3). */}
+        {showTrend && (
+          <div className={cn('mt-2 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-silver', compact ? 'hidden sm:flex' : 'flex')}>
+            <KitSparkline series={trend!.series} tone={sparkTone(trend!.delta, good)} lastIsPartial={trend!.lastIsPartial} />
+            <DeltaChip delta={trend!.delta} deltaLabel={trend!.deltaLabel} good={good} format={trend!.format} />
+            <span className="sr-only">{trendSummary(trend!, good)}</span>
+          </div>
+        )}
+        {showDelta && (
+          <div className={cn('min-w-0', compact ? 'mt-1 sm:mt-2' : 'mt-2')}>
+            <DeltaChip delta={delta!.value} deltaLabel={delta!.label} good={delta!.good ?? good} format={delta!.format} />
+          </div>
+        )}
+        {hint && !isEmpty && <div className={cn('mt-2 text-xs text-silver', compact && 'hidden sm:block')}>{hint}</div>}
+        {isInteractive && cta && !inStrip && (
           <div className="text-2xs uppercase tracking-widest mt-3 text-gold/80 group-hover:text-gold-bright transition-colors inline-flex items-center gap-1">
             View details
             <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">
@@ -269,9 +480,55 @@ export function MetricCard({
       </CardContent>
     </Card>
   );
+  const linkClass = 'block h-full min-w-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold';
   if (wrap) return wrap(card);
-  if (href) return <a href={href}>{card}</a>;
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} aria-pressed={selected ?? undefined} className={cn(linkClass, 'w-full text-left')}>
+        {card}
+      </button>
+    );
+  }
+  if (href) {
+    // An in-app path goes through the router: a bare <a> reloaded the whole app.
+    if (inRouter && href.startsWith('/')) {
+      return (
+        <Link to={href} className={linkClass}>
+          {card}
+        </Link>
+      );
+    }
+    return (
+      <a href={href} className={linkClass}>
+        {card}
+      </a>
+    );
+  }
   return card;
+}
+
+const METER_COLOR = {
+  primary: PALETTE.primary,
+  good: PALETTE.good,
+  warn: PALETTE.warn,
+  bad: PALETTE.bad,
+} as const;
+
+/** A same-hue meter: the track is the fill colour at 18%. */
+function Meter({ percent, tone = 'primary' }: { percent: number; tone?: keyof typeof METER_COLOR }) {
+  const color = METER_COLOR[tone];
+  return (
+    <div
+      className="mt-2 h-1.5 w-full overflow-hidden rounded-full"
+      style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
+      aria-hidden="true"
+    >
+      <div
+        className="h-full rounded-full transition-[width] duration-500 ease-out"
+        style={{ width: `${Math.max(0, Math.min(100, percent))}%`, background: color }}
+      />
+    </div>
+  );
 }
 
 /** The line wears the change's meaning; a flat or neutral trend stays quiet gold. */

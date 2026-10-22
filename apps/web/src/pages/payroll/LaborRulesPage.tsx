@@ -9,7 +9,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
-import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtMoney, parseYmd } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui';
 import { LaborOverridesSection } from './LaborOverridesSection';
@@ -207,7 +207,7 @@ function ShadowRunDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   return (
     <Drawer open onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{d ? `Pay period ${d.periodStart} – ${d.periodEnd}` : 'Shadow run'}</DrawerTitle>
+        <DrawerTitle>{d ? `Pay period ${fmtDateOnlyRange(d.periodStart, d.periodEnd)}` : 'Shadow run'}</DrawerTitle>
         <DrawerDescription>What the rules engine would have paid, beside what was paid. Nothing here changes pay.</DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="space-y-3">
@@ -272,7 +272,7 @@ export function LaborShadowSection() {
               search={false}
               onRowClick={(r) => setOpen(r.id)}
               columns={[
-                { key: 'period', header: 'Pay period', accessor: (r) => r.periodStart, sortable: true, primary: true, cell: (r) => `${r.periodStart} – ${r.periodEnd}` },
+                { key: 'period', header: 'Pay period', accessor: (r) => r.periodStart, sortable: true, primary: true, cell: (r) => fmtDateOnlyRange(r.periodStart, r.periodEnd) },
                 { key: 'people', header: 'People paid', accessor: (r) => r.associates, sortable: true },
                 { key: 'diffs', header: 'Differences', accessor: (r) => r.differences, sortable: true, cell: (r) => <Badge variant={r.differences ? 'pending' : 'success'} size="sm">{r.differences}</Badge> },
                 { key: 'amount', header: 'Engine − paid', accessor: (r) => r.amountDifference, sortable: true, cell: (r) => fmtMoney(r.amountDifference) },

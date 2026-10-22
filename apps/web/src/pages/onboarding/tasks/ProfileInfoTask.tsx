@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
+import { usePageHero } from '@/lib/pageTitle';
 import { getApplication, getProfile, submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
@@ -471,15 +472,19 @@ export function TaskShell({
   backTo: string;
 }) {
   const { t } = useI18n();
+  // The task names itself in the top bar (it read "Alto …" on a phone) with
+  // the checklist as its parent — which is also where the phone's Back goes.
+  const heroRef = usePageHero(title, [{ label: t('ob.check.pageTitle'), to: backTo }, { label: title }]);
   return (
     <div className="mx-auto">
+      {/* On a phone the top bar's Back already says "My onboarding". */}
       <Link
         to={backTo}
-        className="text-sm text-silver hover:text-gold inline-flex items-center coarse:min-h-11 mb-3"
+        className="hidden md:inline-flex text-sm text-silver hover:text-gold items-center coarse:min-h-11 mb-3"
       >
         {t('ob.shell.backToChecklist')}
       </Link>
-      <h1 className="font-display text-3xl md:text-4xl text-white mb-6">
+      <h1 ref={heroRef} className="font-display text-3xl md:text-4xl text-white mb-6">
         {title}
       </h1>
       <div className="bg-navy border border-navy-secondary rounded-lg p-5 md:p-6">

@@ -6,7 +6,6 @@ import {
   ArrowRight,
   Camera,
   Check,
-  ChevronLeft,
   Copy,
   FileText,
   LogIn,
@@ -291,18 +290,13 @@ export function InPersonOnboarding() {
             {detail.position && ` · ${detail.position}`}
           </>
         }
+        // The application is a crumb — the way back to it — rather than a
+        // "Back to detail" button beside the trail that already goes there.
         breadcrumbs={[
           { label: 'Onboarding', to: '/onboarding' },
+          { label: detail.associateName, to: `/onboarding/applications/${detail.id}` },
           { label: 'In-person session' },
         ]}
-        primaryAction={
-          <Button asChild variant="ghost">
-            <Link to={`/onboarding/applications/${detail.id}`}>
-              <ChevronLeft className="h-4 w-4" />
-              Back to detail
-            </Link>
-          </Button>
-        }
     >
 
       <div className="space-y-5">

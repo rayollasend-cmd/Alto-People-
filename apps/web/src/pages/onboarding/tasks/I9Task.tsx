@@ -128,7 +128,7 @@ export function I9Task() {
       />
       <Section2Status status={status} />
 
-      <div className="mt-6">
+      <div className="mt-6 hidden md:block">
         <Link to={backTo} className="text-sm text-silver hover:text-white">
           {t('ob.i9.backToChecklist')}
         </Link>

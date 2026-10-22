@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronLeft, Mail, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
-import { AuthCardTitle, AuthHero } from '@/components/ui/AuthHeading';
+import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
@@ -50,91 +50,83 @@ export function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8 animate-fade-in">
-          <AuthHero title="Reset password" eyebrow="Alto People" />
-        </div>
+    <AuthShell>
 
-        {done ? (
-          <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
-            <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-            <AuthCardTitle size="md">Check your email</AuthCardTitle>
-            <p className="text-silver text-sm mb-6">
-              If an Alto People account exists for{' '}
-              <span className="text-white">{email.trim()}</span>, a reset link
-              is on its way. The link works once and expires in 1 hour.
-            </p>
+      {done ? (
+        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
+          <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
+          <AuthCardTitle size="md">Check your email</AuthCardTitle>
+          <p className="text-silver text-sm mb-6">
+            If an Alto People account exists for{' '}
+            <span className="text-white">{email.trim()}</span>, a reset link
+            is on its way. The link works once and expires in 1 hour.
+          </p>
+          <Link
+            to="/login"
+            className="inline-flex items-center gap-1.5 text-gold hover:text-gold-bright text-sm"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Back to sign in
+          </Link>
+        </div>
+      ) : (
+        <form
+          ref={formRef}
+          onSubmit={handleSubmit}
+          className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
+          noValidate
+        >
+          <AuthCardTitle>Forgot password?</AuthCardTitle>
+          <p className="text-silver text-sm mb-6">
+            Enter the email tied to your Alto People account. We'll send a
+            link that lets you choose a new password.
+          </p>
+
+          <Field label="Email" required>
+            {(p) => (
+              <div className="relative">
+                <Mail
+                  className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
+                  aria-hidden="true"
+                />
+                <Input
+                  type="email"
+                  autoComplete="email"
+                  autoFocus
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="pl-9"
+                  {...p}
+                />
+              </div>
+            )}
+          </Field>
+
+          {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+
+          <Button
+            type="submit"
+            size="lg"
+            disabled={!email || submitting}
+            loading={submitting}
+            className="w-full mt-6"
+          >
+            {submitting ? 'Sending…' : 'Send reset link'}
+          </Button>
+
+          <div className="mt-6 text-center">
             <Link
               to="/login"
-              className="inline-flex items-center gap-1.5 text-gold hover:text-gold-bright text-sm"
+              className="inline-flex items-center gap-1.5 text-silver hover:text-white text-sm"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
               Back to sign in
             </Link>
           </div>
-        ) : (
-          <form
-            ref={formRef}
-            onSubmit={handleSubmit}
-            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
-            noValidate
-          >
-            <AuthCardTitle>Forgot password?</AuthCardTitle>
-            <p className="text-silver text-sm mb-6">
-              Enter the email tied to your Alto People account. We'll send a
-              link that lets you choose a new password.
-            </p>
+        </form>
+      )}
 
-            <Field label="Email" required>
-              {(p) => (
-                <div className="relative">
-                  <Mail
-                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    type="email"
-                    autoComplete="email"
-                    autoFocus
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="pl-9"
-                    {...p}
-                  />
-                </div>
-              )}
-            </Field>
-
-            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
-
-            <Button
-              type="submit"
-              size="lg"
-              disabled={!email || submitting}
-              loading={submitting}
-              className="w-full mt-6"
-            >
-              {submitting ? 'Sending…' : 'Send reset link'}
-            </Button>
-
-            <div className="mt-6 text-center">
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-1.5 text-silver hover:text-white text-sm"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Back to sign in
-              </Link>
-            </div>
-          </form>
-        )}
-
-        <p className="text-center text-xs text-silver/70 mt-6">
-          © {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR
-        </p>
-      </div>
-    </div>
+    </AuthShell>
   );
 }
 

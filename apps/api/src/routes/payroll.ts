@@ -41,9 +41,10 @@ import { renderPayrollReviewXlsx } from '../lib/payrollReviewXlsx.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules, scopeTimeEntries, scopeWhere } from '../lib/scope.js';
-import { membershipWindows, nextPaydayOn, periodAfter, scheduleFilterFor, tenantUsesScheduleRules } from '../lib/payScheduleMembership.js';
+import { membershipWindows, nextPaydayOn, PAY_RUN_POPULATION_WHERE, periodAfter, scheduleFilterFor, scheduleMembershipFor, todayYmd } from '../lib/payScheduleMembership.js';
 import { assignPeople } from './paySchedules.js';
-import { nextPaydayFor } from '../lib/associatePayday.js';
+import { anyLiveSchedule, nextPaydayFor } from '../lib/associatePayday.js';
+import { runTotalsCheck } from '../lib/payrollRunTotals.js';
 import { applyRideCharges, planRideCharges, releaseRideCharges } from '../lib/transport.js';
 import { round2 } from '../lib/payroll.js';
 import { isStateTaxSupported, primeStateAcknowledgments } from '../lib/payrollTax.js';
@@ -217,6 +218,8 @@ function toItem(i: RawItem & { deductions?: RawDeduction[]; taxLines?: Array<{ c
 }
 
 function toSummary(r: RawRun): PayrollRunSummary {
+  // The stored totals, checked against the paychecks (lib/payrollRunTotals).
+  const check = runTotalsCheck(r, r.items);
   return {
     id: r.id,
     clientId: r.clientId,
@@ -244,6 +247,10 @@ function toSummary(r: RawRun): PayrollRunSummary {
     payrollScheduleId: r.payrollScheduleId ?? null,
     payrollScheduleName: r.payrollSchedule?.name ?? null,
     includesApprovedTime: r.includesApprovedTime,
+    itemsGross: check.itemsGross,
+    itemsNet: check.itemsNet,
+    paychecks: check.paychecks,
+    totalsAgree: check.totalsAgree,
   };
 }
 
@@ -985,11 +992,11 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
           periodEndExclusive,
           clientId: chosenSchedule.clientId,
           defaultRate: 15,
-          // The schedule's people only, for their days on it.
-          // (Tenants still on the old per-person picker keep the client-wide projection.)
-          ...((await tenantUsesScheduleRules(prisma))
-            ? { scheduleFilter: await scheduleFilterFor(prisma, chosenSchedule.id, periodStart, new Date(`${chosenWindow.periodEnd}T00:00:00.000Z`)) }
-            : {}),
+          // The schedule's people only, for their days on it — exactly who the
+          // run will pay (aggregateAndPersistRun filters the same way, and the
+          // legacy per-person picker's people are members by the mirror), so
+          // the projection never counts someone no run would pay.
+          scheduleFilter: await scheduleFilterFor(prisma, chosenSchedule.id, periodStart, new Date(`${chosenWindow.periodEnd}T00:00:00.000Z`)),
         }),
         computePayrollExceptions(prisma, {
           periodStart,
@@ -1021,23 +1028,30 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       };
     }
 
-    // One source for the last run's figures: its paychecks. The count and
-    // the net both come from the same non-voided items (finance walk 3).
+    // One source for the last run's money: its STORED totals, the numbers
+    // the runs grid and the close page show — checked against its paychecks
+    // (lib/payrollRunTotals), so a run whose paychecks don't add up says so
+    // instead of reading $0.00 here and $3,490.20 in the grid (F500 SH-4).
     const lastRunRow = await prisma.payrollRun.findFirst({
       // The last run that locked its numbers: a draft has paid nothing yet.
       where: { ...scopePayrollRuns(req.user!), kind: { not: 'DAILY' }, status: { in: ['FINALIZED', 'DISBURSED'] } },
       orderBy: { periodEnd: 'desc' },
-      include: { items: { where: { status: { not: 'VOIDED' } }, select: { netPay: true } } },
+      include: { items: { select: { status: true, grossPay: true, netPay: true } } },
     });
+    const lastCheck = lastRunRow ? runTotalsCheck(lastRunRow, lastRunRow.items) : null;
 
-    const lastRun: PayrollUpcomingSummary['lastRun'] = lastRunRow
+    const lastRun: PayrollUpcomingSummary['lastRun'] = lastRunRow && lastCheck
       ? {
           id: lastRunRow.id,
           periodStart: ymd(lastRunRow.periodStart),
           periodEnd: ymd(lastRunRow.periodEnd),
           status: lastRunRow.status,
-          itemCount: lastRunRow.items.length,
-          totalNet: round2(lastRunRow.items.reduce((sum, i) => sum + Number(i.netPay), 0)),
+          itemCount: lastCheck.paychecks,
+          totalNet: lastCheck.totalNet,
+          totalGross: lastCheck.totalGross,
+          itemsNet: lastCheck.itemsNet,
+          itemsGross: lastCheck.itemsGross,
+          totalsAgree: lastCheck.totalsAgree,
           finalizedAt: lastRunRow.finalizedAt
             ? lastRunRow.finalizedAt.toISOString()
             : null,
@@ -2655,7 +2669,7 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
     const [items, exceptions, deposit, remittances, conn] = await Promise.all([
       prisma.payrollItem.findMany({
         where: { payrollRunId: run.id },
-        select: { id: true, associateId: true, status: true, netPay: true, failureReason: true, taxState: true, reroutedAt: true, associate: { select: { firstName: true, lastName: true, employmentType: true, w4Submission: { select: { id: true } }, payoutMethods: { where: { isPrimary: true, retiredAt: null }, select: { id: true, verifiedAt: true } } } } },
+        select: { id: true, associateId: true, status: true, grossPay: true, netPay: true, failureReason: true, taxState: true, reroutedAt: true, associate: { select: { firstName: true, lastName: true, employmentType: true, w4Submission: { select: { id: true } }, payoutMethods: { where: { isPrimary: true, retiredAt: null }, select: { id: true, verifiedAt: true } } } } },
       }),
       run.status === 'DRAFT'
         ? computePayrollExceptions(prisma, { periodStart: run.periodStart, periodEndExclusive, clientId: run.clientId, payrollScheduleId: run.payrollScheduleId })
@@ -2811,6 +2825,11 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         approvedAt: run.approvedAt?.toISOString() ?? null,
         approvedByEmail: run.approvedBy?.email ?? null,
         disbursedAt: run.disbursedAt?.toISOString() ?? null,
+        // The stored totals above, checked against the paychecks (lib/payrollRunTotals).
+        ...(() => {
+          const c = runTotalsCheck(run, items);
+          return { itemsGross: c.itemsGross, itemsNet: c.itemsNet, paychecks: c.paychecks, totalsAgree: c.totalsAgree };
+        })(),
       },
       approvalRequired,
       payByCheck: payByCheck.map((o) => ({ itemId: o.itemId, name: o.name, reason: o.reason, source: o.source })),
@@ -4133,14 +4152,18 @@ payrollRouter.post(
 /* ===== Associate-facing /me ============================================ */
 
 /**
- * GET /payroll/me/next-payday — when they're paid next, and for which days.
- * Their own pay schedule, else their client's, else the org default; null
- * when none is set up.
+ * GET /payroll/me/next-payday — when they're paid next, and for which days,
+ * on the pay schedule they are on (lib/payScheduleMembership: the one rule
+ * a run pays by). Null when they are on none; `notOnSchedule` says so when
+ * the company does pay by schedules (payroll's Inbox counts them as "People
+ * on no pay schedule"), so the page can say it instead of showing nothing.
  */
 payrollRouter.get('/me/next-payday', async (req, res, next) => {
   try {
     const user = req.user!;
-    res.json({ nextPayday: user.associateId ? await nextPaydayFor(user.associateId) : null });
+    const nextPayday = user.associateId ? await nextPaydayFor(user.associateId) : null;
+    const notOnSchedule = !!user.associateId && !nextPayday && (await anyLiveSchedule());
+    res.json({ nextPayday, notOnSchedule });
   } catch (err) {
     next(err);
   }
@@ -4620,8 +4643,16 @@ payrollRouter.get('/config', PROCESS, async (req, res, next) => {
  *                       state in the supported set).
  *   - payoutMethodOnFile  Primary PayoutMethod with at least one rail:
  *                         a Branch card OR encrypted bank account.
- *   - payScheduleAssigned  Associate.payrollScheduleId non-null.
+ *   - payScheduleAssigned  On a live pay schedule today or by a booked move:
+ *                       the one membership rule (lib/payScheduleMembership
+ *                       scheduleMembershipFor), the same the pay schedules
+ *                       page's "on no schedule" counts — never the legacy
+ *                       column alone.
  *   - userLinked        A User row points at this Associate.
+ *
+ * The rows are the people a run is for (PAY_RUN_POPULATION_WHERE: hired,
+ * not separated or paused), so the Schedule column's misses equal the pay
+ * schedules page's count.
  *
  * Read-only. The web UI links each red flag to the associate's profile
  * with a `?focus=` query param so HR lands on the right field.
@@ -4630,7 +4661,7 @@ payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
   try {
     const associates = await prisma.associate.findMany({
       // The caller's reach: a store-bound office account checks its own people.
-      where: { deletedAt: null, tenantId: tenantIdForWrite(), AND: [scopeAssociates(req.user!)] },
+      where: { tenantId: tenantIdForWrite(), AND: [PAY_RUN_POPULATION_WHERE, scopeAssociates(req.user!)] },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       select: {
         id: true,
@@ -4658,6 +4689,7 @@ payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
       : [];
     const requestedBy = new Map<string, { at: string; items: string[] }>();
     for (const r of requests) if (!requestedBy.has(r.associateId)) requestedBy.set(r.associateId, { at: r.requestedAt.toISOString(), items: r.items });
+    const membership = await scheduleMembershipFor(prisma, associates.map((a) => a.id), todayYmd());
     const rows = associates.map((a) => {
       const primary = a.payoutMethods[0] ?? null;
       const w4OnFile =
@@ -4667,7 +4699,7 @@ payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
       const taxStateSet = isStateTaxSupported(a.state);
       const payoutMethodOnFile =
         !!primary && (primary.branchCardId !== null || primary.accountNumberEnc !== null);
-      const payScheduleAssigned = a.payrollScheduleId !== null;
+      const payScheduleAssigned = !!membership.get(a.id);
       const userLinked = a.user !== null;
       const ready =
         w4OnFile && taxStateSet && payoutMethodOnFile && payScheduleAssigned && userLinked;

@@ -13,4 +13,4 @@ export { HomeTemplate, type HomeTemplateProps } from './HomeTemplate';
 export { ListTemplate, type ListTemplateProps } from './ListTemplate';
 export { RecordTemplate, type RecordTemplateProps, type RecordTab } from './RecordTemplate';
 export { SettingsTemplate, type SettingsTemplateProps, type SettingsRailItem, SettingsSection, type SettingsSectionProps } from './SettingsTemplate';
-export { DeskTemplate, type DeskTemplateProps } from './DeskTemplate';
+export { DeskTemplate, type DeskTemplateProps, useDeskItem } from './DeskTemplate';

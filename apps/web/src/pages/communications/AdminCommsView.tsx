@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Inbox, Megaphone, RotateCw, Send, Users } from 'lucide-react';
-import { dayHeading, dayKey, fmtTimeOnly } from '@/lib/dayGroup';
+import { dayHeading, dayKey, fmtTimeOnly, isRelativeDayHeading } from '@/lib/dayGroup';
 import { toast } from 'sonner';
 import { performWithUndo } from '@/lib/undoToast';
 import { pickOne } from '@/lib/validationCopy';
@@ -23,7 +23,7 @@ import { cn } from '@/lib/cn';
 import { BroadcastDrawer } from '@/pages/dirComms/BroadcastDrawer';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDateTime, ymdLocal } from '@/lib/format';
+import { fmtDateOnly, fmtDateTime, ymdLocal } from '@/lib/format';
 import { userPhotoUrl } from '@/lib/photoUrl';
 import {
   AssociatePicker,
@@ -390,7 +390,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                 header: (key, rows) => (
                   <span className="flex items-center gap-2">
                     <span>{dayHeading(key)}</span>
-                    <span className="text-xs font-normal text-ink-muted/70">· {key}</span>
+                    {isRelativeDayHeading(dayHeading(key)) && <span className="text-xs font-normal text-ink-muted/70">· {fmtDateOnly(key)}</span>}
                     <span className="ml-auto text-xs font-normal text-ink-muted">
                       {rows.length} {rows.length === 1 ? 'send' : 'sends'}
                     </span>

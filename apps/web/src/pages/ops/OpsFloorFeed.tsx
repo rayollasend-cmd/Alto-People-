@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { opsPhotoUrl, type OpsFeedEvent, type OpsFeedPhoto } from '@/lib/opsApi';
-import { fmtAgo, fmtClock, fmtFull, OPS_TZ } from './opsTime';
+import { fmtAgo, fmtClock, fmtFull, opsTimeZoneCity } from './opsTime';
 
 /**
  * From the floor, and the floor feed.
@@ -196,7 +196,7 @@ export function OpsFloorFeed({
           ))}
         </div>
         <p className="mb-2 text-2xs text-silver/50">
-          Last {hours}h · times in {OPS_TZ.split('/')[1]?.replace('_', ' ')}
+          Last {hours}h · times in {opsTimeZoneCity()}
         </p>
 
         {loading && !events ? (

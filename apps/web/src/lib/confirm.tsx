@@ -167,3 +167,12 @@ export function usePrompt(): PromptFn {
   }
   return ctx.prompt;
 }
+
+/**
+ * The shared confirm, or null outside a <ConfirmProvider> — for shared
+ * chrome (the page header's action menu) that may render where no provider
+ * is mounted (a component test) and falls back to window.confirm there.
+ */
+export function useConfirmIfMounted(): ConfirmFn | null {
+  return useContext(ConfirmContext)?.confirm ?? null;
+}

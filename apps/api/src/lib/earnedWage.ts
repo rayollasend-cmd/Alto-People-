@@ -7,7 +7,7 @@ import { enqueueAudit } from './audit.js';
 import { resolveAdapter, type DisbursementInput } from './disbursement.js';
 import { notifyFinance, resolvePayoutForPayroll } from './financialChanges.js';
 import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
-import { getCurrentPeriod } from './payrollSchedule.js';
+import { periodContaining, scheduleMembershipFor, ymd } from './payScheduleMembership.js';
 import { notifyUser } from './notify.js';
 import { orgSettingIdFor } from './branding.js';
 import { tenantIdForWrite } from './tenant.js';
@@ -78,25 +78,20 @@ export interface EwaAvailability {
 
 const DEFAULT_NET_FACTOR = 0.78;
 
+/**
+ * The pay period an advance comes off: the current period of the schedule
+ * the person is ON today (lib/payScheduleMembership — the rule a run pays
+ * by). Someone on no schedule gets none, so no advance: it would come off a
+ * check no run will write, and never be recovered (F500 SH-4 — this used to
+ * fall back to the company's first schedule).
+ */
 async function periodFor(db: Db, associateId: string, now: Date) {
-  const assoc = await db.associate.findUnique({
-    where: { id: associateId },
-    select: { payrollSchedule: { select: { frequency: true, anchorDate: true, payDateOffsetDays: true } } },
-  });
-  const schedule =
-    assoc?.payrollSchedule ??
-    (await db.payrollSchedule.findFirst({
-      where: { isActive: true, deletedAt: null, clientId: null },
-      orderBy: { createdAt: 'asc' },
-      select: { frequency: true, anchorDate: true, payDateOffsetDays: true },
-    })) ??
-    (await db.payrollSchedule.findFirst({
-      where: { isActive: true, deletedAt: null },
-      orderBy: { createdAt: 'asc' },
-      select: { frequency: true, anchorDate: true, payDateOffsetDays: true },
-    }));
+  const today = ymd(now);
+  const m = (await scheduleMembershipFor(db, [associateId], today)).get(associateId) ?? null;
+  if (!m || m.from > today) return null;
+  const schedule = await db.payrollSchedule.findUnique({ where: { id: m.scheduleId }, include: { versions: true } });
   if (!schedule) return null;
-  return getCurrentPeriod(schedule, now);
+  return periodContaining(schedule, today);
 }
 
 /** What this person could draw right now, and why not if nothing. */

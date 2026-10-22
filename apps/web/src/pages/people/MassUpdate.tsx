@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Undo2, Users } from 'lucide-react';
+import { Undo2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
@@ -158,14 +158,6 @@ export function MassUpdate() {
       title="Mass update"
       subtitle={`Move a group of ${term('workers').toLowerCase()} between ${term('sites').toLowerCase()}, departments, managers or pay schedules in one step, with one audit entry and a day to undo.`}
       breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Mass update' }]}
-      secondaryActions={
-        <Button asChild variant="outline">
-          <Link to="/people">
-            <ArrowLeft className="h-4 w-4" />
-            {term('nav.people')}
-          </Link>
-        </Button>
-      }
     >
       <Stepper steps={[{ label: 'Who and what' }, { label: 'Preview' }, { label: 'Done' }]} current={step + 1} />
 

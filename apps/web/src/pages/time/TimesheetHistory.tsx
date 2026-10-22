@@ -164,7 +164,7 @@ export function TimesheetHistory() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          title="Timesheet history" breadcrumbs={[{ label: fieldglass ? 'Fieldglass hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: 'History' }]}
+          title="Timesheet history" breadcrumbs={[{ label: fieldglass ? 'Client hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: 'History' }]}
       >
         <EmptyState
           title="Couldn’t load this timesheet"
@@ -181,7 +181,7 @@ export function TimesheetHistory() {
     <ListTemplate
         title={a.name}
         subtitle={fieldglass ? 'Timesheet history — every week worked, by the pay period that paid it, and where it stands in Fieldglass.' : 'Timesheet history — every week worked, by the pay period that paid it.'}
-        breadcrumbs={[{ label: fieldglass ? 'Fieldglass hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: a.name }]}
+        breadcrumbs={[{ label: fieldglass ? 'Client hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: a.name }]}
         primaryAction={
           <Button variant="secondary" size="sm" onClick={() => void exportCsv()} loading={exporting} disabled={allWeeks.length === 0}>
             <Download className="h-3.5 w-3.5" />
@@ -416,9 +416,10 @@ function WeekBars({ weeks, fieldglass, onPick }: { weeks: TimesheetHistoryWeek[]
           })}
         </div>
       </div>
+      {/* First and last week; one week is one date ("Sep 18" beside "Sep 18, 2026" read as two). */}
       <div className="mt-1 flex justify-between text-2xs tabular-nums text-silver/60">
-        <span>{md(byWeek[0]![1][0]!.weekEnd)}</span>
-        <span>{mdy(byWeek[byWeek.length - 1]![1][0]!.weekEnd)}</span>
+        {byWeek.length > 1 && <span>{md(byWeek[0]![1][0]!.weekEnd)}</span>}
+        <span className={byWeek.length > 1 ? undefined : 'ml-auto'}>{mdy(byWeek[byWeek.length - 1]![1][0]!.weekEnd)}</span>
       </div>
     </Card>
   );

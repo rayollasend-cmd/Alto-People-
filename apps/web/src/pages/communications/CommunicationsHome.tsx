@@ -36,7 +36,7 @@ export function CommunicationsHome() {
     <Tabs value={tab} onValueChange={setTab}>
       <TabsList>
         <TabsTrigger value="inbox">
-          <Inbox className="mr-2 h-4 w-4" /> My inbox
+          <Inbox className="mr-2 h-4 w-4" /> Notifications
         </TabsTrigger>
         <TabsTrigger value="sends">
           <Send className="mr-2 h-4 w-4" /> Sends & broadcasts

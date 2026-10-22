@@ -7,7 +7,6 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
-  Calendar,
   CalendarPlus,
   ChevronDown,
   ChevronUp,
@@ -27,7 +26,7 @@ import type {
   KpiTrend,
   TermKey,
 } from '@alto-people/shared';
-import { useAuth, useRoleLabel, useTenant, useTerm } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
   hasCapability,
@@ -39,11 +38,10 @@ import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { OpsActivityFeed } from '@/components/home/OpsActivityFeed';
 import { ApiError, apiFetch } from '@/lib/api';
-import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
+import { fmtDayShort, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { userPhotoUrl } from '@/lib/photoUrl';
-import { Badge } from '@/components/ui/Badge';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -58,7 +56,9 @@ import { HugoSeat } from '@/components/home/HugoSeat';
 import { RoleFocusRow } from '@/components/home/RoleFocusRow';
 import { MyPlanCard } from '@/components/MyPlanCard';
 import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
-import { ClockStrip } from '@/components/ClockStrip';
+import { useClockParts } from '@/components/ClockStrip';
+import { HomeMeta } from '@/components/home/HomeMeta';
+import { useNeedsYouCount } from '@/lib/meDecisions';
 
 /**
  * Role-tailored subtitle on the greeting strip. The same dashboard scaffold
@@ -126,7 +126,7 @@ const humanizeAction = (action: string): string => {
 };
 
 export function AdminDashboard() {
-  const roleLabel = useRoleLabel();
+  const clockParts = useClockParts();
   const pullQueryClient = useQueryClient();
   const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user, role, can } = useAuth();
@@ -218,20 +218,9 @@ export function AdminDashboard() {
         }
         topbarTitle="Home"
         subtitle={t((role && SUBTITLE_BY_ROLE[role]) ?? 'adminHome.subHr')}
-        meta={
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-1.5 text-xs text-ink-muted">
-              <Calendar className="h-3 w-3" aria-hidden="true" />
-              <LiveNow render={(now) => fmtDate(now)} />
-            </span>
-            {role && (
-              <Badge variant="accent" caps className="tracking-[0.18em]">
-                {roleLabel(role)}
-              </Badge>
-            )}
-            <ClockStrip />
-          </div>
-        }
+        // One quiet line, the same on every home (HomeMeta): today, then the
+        // company clock. No role pill — the account menu says who you are.
+        meta={<HomeMeta items={[<LiveNow key="today" render={(now) => fmtDayShort(now)} />, ...clockParts]} />}
         banners={
           <>
             {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -405,6 +394,9 @@ function NeedsYou({
 
   const loading = canAct && !kpis;
   const total = items.length;
+  // The number beside "Needs you" is what is listed under it: the role
+  // queue's rows plus these cards (it said 1 over a list of 8).
+  const shownCount = useNeedsYouCount({ queue: true, cards: total });
   return (
     <section aria-labelledby="home-needs-you" className="space-y-3">
       <SectionTitle
@@ -413,9 +405,9 @@ function NeedsYou({
         title={
           <>
             {title}
-            {total > 0 && (
-              <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on">
-                {total}
+            {!!shownCount && shownCount > 0 && (
+              <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on" data-testid="needs-you-count">
+                {shownCount}
               </span>
             )}
           </>
@@ -591,15 +583,14 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
   const xs: Kpi[] = [
     {
       // Brief 2-1b: the tenant's word for its people (a hotel says team members).
-      label: `Active ${term('workers').toLowerCase()}`,
+      // "Working" — one of the two named numbers every page shows
+      // (apps/api/src/lib/peopleStatus.ts), with "On the books" beside it.
+      label: `Working (${k.activeWindowDays ?? 14} days)`,
       value: fmtInt(k.activeAssociates),
-      // Says what "active" means: placed AND working — not everyone on the
-      // roster. "0 active" beside a 10-person list read as a bug without it.
-      hint: `${k.associatesClockedIn > 0 ? `${fmtInt(k.associatesClockedIn)} clocked in now` : 'No one on the clock'} · placed and working (worked recently or on the schedule)`,
+      hint: `${k.onTheBooks !== undefined ? `${fmtInt(k.onTheBooks)} ${term('workers').toLowerCase()} on the books · ` : ''}${k.associatesClockedIn > 0 ? `${fmtInt(k.associatesClockedIn)} clocked in now` : 'No one on the clock'}`,
       icon: Users,
-      to: linkTo('/people?status=ACTIVE', 'view:org'),
-      // Series is weekly *hires* — the leading edge of headcount.
-      trend: withLabel(k.trends?.hires, 'hires vs last wk'),
+      to: linkTo('/people?workStatus=ACTIVE', 'view:org'),
+      // No sparkline: the weekly series the API has is hires, not this number.
     },
     {
       label: `Open shifts · next ${k.windowDays}d`,

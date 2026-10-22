@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
-import { AuthCardTitle, AuthHero } from '@/components/ui/AuthHeading';
+import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
@@ -104,129 +104,121 @@ export function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8 animate-fade-in">
-          <AuthHero title="Set new password" eyebrow="Alto People" />
+    <AuthShell>
+
+      {done ? (
+        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
+          <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
+          <AuthCardTitle size="md">Password updated</AuthCardTitle>
+          <p className="text-silver text-sm mb-6">
+            Sending you to sign in…
+          </p>
         </div>
+      ) : (
+        <form
+          ref={formRef}
+          onSubmit={handleSubmit}
+          className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
+          noValidate
+        >
+          <AuthCardTitle>New password</AuthCardTitle>
+          <p className="text-silver text-sm mb-6">
+            Pick something you don't use on other sites. Minimum 12
+            characters.
+          </p>
 
-        {done ? (
-          <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
-            <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-            <AuthCardTitle size="md">Password updated</AuthCardTitle>
-            <p className="text-silver text-sm mb-6">
-              Sending you to sign in…
-            </p>
-          </div>
-        ) : (
-          <form
-            ref={formRef}
-            onSubmit={handleSubmit}
-            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
-            noValidate
-          >
-            <AuthCardTitle>New password</AuthCardTitle>
-            <p className="text-silver text-sm mb-6">
-              Pick something you don't use on other sites. Minimum 12
-              characters.
-            </p>
-
-            <div className="space-y-4">
-              <Field
-                label="New password"
-                required
-                hint={
-                  tooShort
-                    ? `Need ${12 - password.length} more character${12 - password.length === 1 ? '' : 's'}.`
-                    : strength === 'strong'
-                      ? 'Strength: strong.'
-                      : strength === 'ok'
-                        ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
-                        : 'Minimum 12 characters.'
-                }
-              >
-                {(p) => (
-                  <div className="relative">
-                    <Lock
-                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      minLength={12}
-                      autoFocus
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-9 pr-10"
-                      {...p}
-                    />
-                    <ShowPasswordToggle
-                      shown={showPassword}
-                      onToggle={() => setShowPassword((v) => !v)}
-                    />
-                  </div>
-                )}
-              </Field>
-
-              <Field
-                label="Confirm new password"
-                required
-                error={mismatch ? "Passwords don't match." : undefined}
-              >
-                {(p) => (
-                  <div className="relative">
-                    <Lock
-                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      type={showConfirm ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      minLength={12}
-                      value={confirm}
-                      onChange={(e) => setConfirm(e.target.value)}
-                      className="pl-9 pr-10"
-                      {...p}
-                    />
-                    <ShowPasswordToggle
-                      shown={showConfirm}
-                      onToggle={() => setShowConfirm((v) => !v)}
-                    />
-                  </div>
-                )}
-              </Field>
-            </div>
-
-            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
-
-            <Button
-              type="submit"
-              size="lg"
-              disabled={!canSubmit}
-              loading={submitting}
-              className="w-full mt-6"
+          <div className="space-y-4">
+            <Field
+              label="New password"
+              required
+              hint={
+                tooShort
+                  ? `Need ${12 - password.length} more character${12 - password.length === 1 ? '' : 's'}.`
+                  : strength === 'strong'
+                    ? 'Strength: strong.'
+                    : strength === 'ok'
+                      ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
+                      : 'Minimum 12 characters.'
+              }
             >
-              {submitting ? 'Updating…' : 'Update password'}
-            </Button>
+              {(p) => (
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    minLength={12}
+                    autoFocus
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-9 pr-10"
+                    {...p}
+                  />
+                  <ShowPasswordToggle
+                    shown={showPassword}
+                    onToggle={() => setShowPassword((v) => !v)}
+                  />
+                </div>
+              )}
+            </Field>
 
-            <div className="mt-6 text-center">
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-1.5 text-silver hover:text-white text-sm"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Back to sign in
-              </Link>
-            </div>
-          </form>
-        )}
+            <Field
+              label="Confirm new password"
+              required
+              error={mismatch ? "Passwords don't match." : undefined}
+            >
+              {(p) => (
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    type={showConfirm ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    minLength={12}
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    className="pl-9 pr-10"
+                    {...p}
+                  />
+                  <ShowPasswordToggle
+                    shown={showConfirm}
+                    onToggle={() => setShowConfirm((v) => !v)}
+                  />
+                </div>
+              )}
+            </Field>
+          </div>
 
-        <p className="text-center text-xs text-silver/70 mt-6">
-          © {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR
-        </p>
-      </div>
-    </div>
+          {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+
+          <Button
+            type="submit"
+            size="lg"
+            disabled={!canSubmit}
+            loading={submitting}
+            className="w-full mt-6"
+          >
+            {submitting ? 'Updating…' : 'Update password'}
+          </Button>
+
+          <div className="mt-6 text-center">
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-1.5 text-silver hover:text-white text-sm"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Back to sign in
+            </Link>
+          </div>
+        </form>
+      )}
+
+    </AuthShell>
   );
 }
 

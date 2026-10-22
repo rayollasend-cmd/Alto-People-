@@ -260,8 +260,11 @@ describe('headcount and hiring cohorts', () => {
     const hired = await createAssociate({ firstName: 'Hired', lastName: 'Person' });
     const hireDate = new Date(Date.now() - 60 * 86_400_000);
     await prisma.associate.update({ where: { id: hired.id }, data: { hireDate } });
-    // An invite: an Associate row with no hire date and no work.
-    await createAssociate({ firstName: 'Invited', lastName: 'Never' });
+    // An invite: an Associate row with a draft application, no hire date and
+    // no work. (F500 SH-4: a record with no application at all is someone on
+    // file — a driver's or an office hire's — and counts as on the books.)
+    const invited = await createAssociate({ firstName: 'Invited', lastName: 'Never' });
+    await prisma.application.create({ data: { associateId: invited.id, onboardingTrack: 'STANDARD', status: 'DRAFT' } });
 
     const a = await loginAs(agent(), user.email);
     const res = await a.get('/people-analytics?months=3');

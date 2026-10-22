@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Apple, Smartphone, Share, MoreVertical, Plus, Download, ChevronRight, ShieldCheck } from 'lucide-react';
-import { Logo } from '@/components/Logo';
-import { AuthHero } from '@/components/ui/AuthHeading';
+import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 
 type Platform = 'ios' | 'android' | 'desktop';
@@ -42,7 +41,7 @@ export function Install() {
       <Page>
         <div className="text-center">
           <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-          <AuthHero title="You're all set" size="sm" tone="ink" className="sm:text-3xl" />
+          <AuthCardTitle size="md">You&rsquo;re all set</AuthCardTitle>
           <p className="text-silver mb-6">Alto People is already installed on this device.</p>
           <Link
             to="/"
@@ -58,8 +57,7 @@ export function Install() {
   return (
     <Page>
       <header className="text-center mb-8">
-        <Logo size="xl" className="mx-auto mb-4 rounded-2xl" alt="Alto People" />
-        <AuthHero title="Install Alto People" size="sm" tone="ink" />
+        <AuthCardTitle>Install Alto People</AuthCardTitle>
         <p className="text-silver text-sm sm:text-base max-w-md mx-auto">
           Add Alto People to your home screen for one-tap access — your schedule,
           pay stubs, time off, and onboarding tasks, always a tap away.
@@ -154,13 +152,12 @@ function DesktopInstructions() {
   );
 }
 
+/** The signed-out lockup every auth page wears, around the install guide's wider card. */
 function Page({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen flex items-start sm:items-center justify-center px-4 py-10 bg-login-aurora">
-      <div className="w-full max-w-xl bg-navy/80 backdrop-blur border border-navy-secondary rounded-2xl elev-2 p-6 sm:p-8">
-        {children}
-      </div>
-    </div>
+    <AuthShell wide>
+      <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-2xl elev-2 p-6 sm:p-8">{children}</div>
+    </AuthShell>
   );
 }
 

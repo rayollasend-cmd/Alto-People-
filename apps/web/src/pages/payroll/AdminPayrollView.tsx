@@ -110,12 +110,14 @@ import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
-import { StatusBadge, statusLabel } from '@/lib/status';
+import { StatusBadge } from '@/lib/status';
 import { useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { performWithUndo } from '@/lib/undoToast';
 import { pickOne } from '@/lib/validationCopy';
 import { FilterChip } from '@/components/ui/FilterBar';
+import { RunTotalsMismatch } from '@/components/payroll/RunTotalsMismatch';
+import { RunStatusBadge, paycheckStatusLabel, paycheckStatusTone, runStatusLabel } from '@/lib/payrollRunStatus';
 
 /** "May 13, 2026 → May 26, 2026" — the run period, parsed as local days. */
 const fmtPeriod = (startYmd: string, endYmd: string) =>
@@ -134,7 +136,7 @@ const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL' | 'OPEN'; label: M
 // FINALIZED is domain-only (not in the shared vocabulary): the run is
 // computed but money hasn't moved, so it reads amber like other wait states.
 // DRAFT / DISBURSED / CANCELLED come from the shared status vocabulary.
-const RUN_STATUS_TONES = { FINALIZED: 'pending' } as const;
+
 
 interface AdminPayrollViewProps {
   canProcess: boolean;
@@ -933,7 +935,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     {fmtPeriod(selected.periodStart, selected.periodEnd)}
                   </DrawerTitle>
                   <DrawerDescription>
-                    <StatusBadge status={selected.status} overrides={RUN_STATUS_TONES} />
+                    <RunStatusBadge status={selected.status} />
                     <span className="ml-2 text-xs">
                       {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
                     </span>
@@ -1117,7 +1119,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   {/* State and local taxes by jurisdiction (lib/taxEngine). */}
                   <RunTaxBreakdown runId={selected.id} />
 
-                  {selected.items.length === 0 && (
+                  {/* Stored totals that the paychecks don't add up to are said plainly —
+                      never explained away as "no approved time" (apps/api/src/lib/payrollRunTotals.ts). */}
+                  <RunTotalsMismatch check={selected} />
+                  {selected.items.length === 0 && selected.totalsAgree !== false && (
                     <EmptyState
                       icon={FileText}
                       title="No paystubs in this run"
@@ -1457,12 +1462,12 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 {
                   key: 'status',
                   header: 'Status',
-                  accessor: (r) => r.status,
+                  accessor: (r) => runStatusLabel(r.status),
                   sortable: true,
                   cardMeta: true,
                   cell: (r) => (
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <StatusBadge status={r.status} overrides={RUN_STATUS_TONES} />
+                      <RunStatusBadge status={r.status} />
                       {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
                     </div>
                   ),
@@ -1910,7 +1915,7 @@ function PayrollHero({
               {fmtPeriod(lr.periodStart, lr.periodEnd)}
             </div>
             <div className="mt-1.5 flex items-center gap-2">
-              <StatusBadge status={lr.status} overrides={RUN_STATUS_TONES} />
+              <RunStatusBadge status={lr.status} />
               <span className="text-xs text-silver/70">
                 {lr.itemCount} paystub{lr.itemCount === 1 ? '' : 's'}
               </span>
@@ -1919,6 +1924,8 @@ function PayrollHero({
               <div className="text-xs2 uppercase tracking-widest text-silver/70">Net paid</div>
               <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
             </div>
+            {/* The stored totals above, checked against the paychecks (apps/api/src/lib/payrollRunTotals.ts). */}
+            <RunTotalsMismatch compact className="mt-3" check={{ ...lr, paychecks: lr.itemCount }} />
           </button>
         ) : (
           <div className="text-sm text-silver/70">
@@ -2100,10 +2107,11 @@ function SchedulesHero({
           <FileText className="h-4 w-4 text-silver/70" aria-hidden="true" />
           <span className="text-silver/80">Last run</span>
           <span className="tabular-nums text-ink">{fmtPeriod(lastRun.periodStart, lastRun.periodEnd)}</span>
-          <StatusBadge status={lastRun.status} overrides={RUN_STATUS_TONES} />
+          <RunStatusBadge status={lastRun.status} />
           <span className="ml-auto tabular-nums text-gold">{fmtMoney(lastRun.totalNet)} net</span>
         </button>
       )}
+      {lastRun && <RunTotalsMismatch compact check={{ ...lastRun, paychecks: lastRun.itemCount }} />}
     </div>
   );
 }
@@ -2156,10 +2164,11 @@ function RunStatusStepper({ status, lifecycle, signedOff }: { status: PayrollRun
   }
   // The same lifecycle the guided close shows (GET /payroll/runs nextStep, finance walk 10).
   const stages: { key: StepperStage; label: string }[] = [
-    { key: 'DRAFT', label: 'Draft' },
-    { key: 'FINALIZED', label: 'Finalized' },
+    // The one word per status (lib/payrollRunStatus): "Paid", as on every payroll page.
+    { key: 'DRAFT', label: runStatusLabel('DRAFT') },
+    { key: 'FINALIZED', label: runStatusLabel('FINALIZED') },
     { key: 'SIGNED', label: 'Signed off' },
-    { key: 'DISBURSED', label: 'Disbursed' },
+    { key: 'DISBURSED', label: runStatusLabel('DISBURSED') },
     { key: 'DEPOSIT', label: 'Tax deposit' },
   ];
   const next = lifecycle?.nextStep ?? null;
@@ -2712,7 +2721,7 @@ function FailedPaymentsSummary({
                       )}
                     </div>
                     <div className="text-2xs uppercase tracking-widest text-alert/80">
-                      {statusLabel(it.status)}
+                      {paycheckStatusLabel(it.status)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -2819,7 +2828,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
               {item.taxState ? ` · ${item.taxState}` : ''}
             </div>
           </div>
-          <StatusBadge status={item.status} className="text-2xs shrink-0" />
+          <StatusBadge status={item.status} label={paycheckStatusLabel(item.status)} overrides={{ [item.status]: paycheckStatusTone(item.status) }} className="text-2xs shrink-0" />
           {(paperCheckReason || /^CHECK-/.test(item.disbursementRef ?? '')) && (
             <Badge variant="info" className="text-2xs shrink-0" title={paperCheckReason ?? undefined}>
               Check

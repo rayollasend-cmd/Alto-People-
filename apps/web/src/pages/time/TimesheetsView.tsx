@@ -408,8 +408,8 @@ export function TimesheetsView() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Fieldglass timesheets"
-        subtitle="Fieldglass-ready weekly hours (Saturday → Friday). Approved time only, net of unpaid breaks."
+        title="Client hours"
+        subtitle="Each client's weekly hours, ready for Fieldglass (Saturday → Friday). Approved time only, net of unpaid breaks."
         filters={
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex items-center rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5">

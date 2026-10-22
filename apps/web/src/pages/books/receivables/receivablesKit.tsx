@@ -12,7 +12,7 @@ import {
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useTenant } from '@/lib/auth';
-import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtStatementNo, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { RECEIVABLES_KEY, autoApply, listDepositAccounts, recordClientPayment } from '@/lib/books/receivablesApi';
 import { Button } from '@/components/ui/Button';
@@ -231,7 +231,7 @@ export function PaymentDialog({
                   <li key={s.statementId} className="flex items-center gap-3 px-3 py-2 text-sm">
                     <input type="checkbox" className="h-4 w-4 accent-gold" checked={on} onChange={(e) => toggle(s, e.target.checked)} aria-label={`Pay statement ${s.number ?? ''}`} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-ink">No. {s.number !== null ? String(s.number).padStart(4, '0') : '—'} · {fmtDate(s.periodStart)} – {fmtDate(s.periodEnd)}</span>
+                      <span className="block text-ink">{fmtStatementNo(s.number, 'Draft')} · {fmtDate(s.periodStart)} – {fmtDate(s.periodEnd)}</span>
                       <span className="block text-xs text-silver">
                         {money(s.open)} open · due {fmtDate(s.dueOn)}
                         {s.daysPastDue > 0 ? ` · ${s.daysPastDue} days late` : ''}

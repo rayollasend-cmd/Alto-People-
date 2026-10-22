@@ -5,7 +5,8 @@ import { useI18n } from '@/lib/i18n';
 import { Link } from 'react-router-dom';
 import { useAuth, useRoleLabel } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
-import { useHeroHidden, usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
+import { useHeroHidden, usePageBreadcrumbs, usePageTitle, usePageUp } from '@/lib/pageTitle';
+import { useNavLabel } from '@/lib/navTrail';
 import { offlineSessionSavedAt } from '@/lib/offlineSession';
 import { displayZoneAbbrev, displayZoneDiffersFromDevice, fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -133,10 +134,20 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
    * bare "Back" because naming the destination is what makes it worth
    * tapping.
    */
-  const showBack = !isSectionRoot(location.pathname) && location.pathname !== '/';
-  const parentCrumb =
-    breadcrumbs && breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2] : null;
+  // An area shell (Settings & trust) holds pages at the top level too
+  // (/audit, /trust): it names their "up", so the phone keeps a way back to
+  // the area once the area's own rail is gone from the small screen.
+  const up = usePageUp();
+  const showBack = (!isSectionRoot(location.pathname) && location.pathname !== '/') || (!!up && up.to !== location.pathname);
+  // The nearest crumb above this page that is a PLACE: a section heading
+  // in a trail ("Settings & trust › Access & trust › Users") has no page
+  // of its own, so Back names — and goes to — the one above it.
+  const parentCrumb = backCrumbOf(breadcrumbs) ?? up;
   const backLabel = parentCrumb?.label ?? t('top.back');
+  // A page that published no name is still somewhere the nav names
+  // ("Assets", "Home") — never the wordmark on a page that has a name.
+  const navLabel = useNavLabel();
+  const assistant = useAssistant();
 
   const goBack = () => {
     // react-router stamps an index on each entry. Zero means this is the
@@ -182,7 +193,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
     // and without a z-index <main> (later in the page) painted over anything
     // that opens out of the bar, such as the store-scope list.
     <header
-      className="relative z-30 bg-navy/95 backdrop-blur elev-1 border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
+      className="relative z-30 bg-navy/95 backdrop-blur elev-1 border-b border-navy-secondary flex items-center gap-2 md:gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
     >
       {/* No ☰ on phones: the tab bar's More opens the same menu, and two
           doors to one room read as a website, not an app.
@@ -199,10 +210,11 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
           type="button"
           onClick={goBack}
           aria-label={backLabel}
-          className="md:hidden -ml-2 flex items-center gap-0.5 rounded-md pl-1 pr-2 py-1 min-h-11 text-gold active:bg-navy-secondary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          className="md:hidden -ml-2 flex min-w-0 shrink items-center gap-0.5 rounded-md pl-1 pr-2 py-1 min-h-11 text-gold active:bg-navy-secondary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <ChevronLeft className="h-5 w-5 shrink-0" aria-hidden="true" />
-          <span className="text-sm max-w-[7rem] truncate">{backLabel}</span>
+          {/* Short: the page's own name, beside it, needs the room more. */}
+          <span className="text-sm max-w-[4.5rem] truncate">{backLabel}</span>
         </button>
       ) : (
         <Logo size="xs" className="md:hidden" alt={t('top.logo')} />
@@ -223,7 +235,9 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
         // inside an aria-hidden block is a focus stop nobody can see.
         {...({ inert: hasHero && !heroHidden ? '' : undefined } as Record<string, unknown>)}
         className={cn(
-          'flex min-w-0 items-center transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none',
+          // On a phone the name gets the room (at least 40% of the bar): Back,
+          // four icons and the avatar had squeezed it to "Peo…".
+          'flex min-w-[40%] flex-1 items-center transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none md:min-w-0 md:flex-none',
           hasHero && !heroHidden
             ? 'pointer-events-none translate-y-1 opacity-0'
             : 'translate-y-0 opacity-100',
@@ -284,12 +298,12 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
         </nav>
       ) : (
         <h2 className="text-base md:text-lg text-white truncate min-w-0">
-          {pageTitle ?? 'Alto People'}
+          {pageTitle ?? navLabel ?? 'Alto People'}
         </h2>
       )}
       </div>
 
-      <div className="flex-1 min-w-0" />
+      <div className="hidden md:block flex-1 min-w-0" />
 
       <StoreScopeBar />
 
@@ -311,7 +325,10 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
       <Button
         variant="ghost"
         size="icon-sm"
-        className="md:hidden"
+        // With Back on a phone the bar holds Back, the page's name, the bell
+        // and the account menu — search moves into that menu, so the name
+        // keeps at least 40% of the bar (it read "Peo…" beside four icons).
+        className={cn('shrink-0 md:hidden', showBack && 'hidden')}
         onClick={onOpenCommandPalette}
         aria-label={t('top.palette')}
       >
@@ -365,11 +382,15 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
             </Tooltip>
           )}
           <InstallAppButton />
-          <AssistantButton />
+          {/* Below md the assistant and help live in the account menu, so
+              the page's name has the bar. */}
+          <span className="hidden md:inline-flex">
+            <AssistantButton />
+          </span>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="shrink-0"
+            className="hidden shrink-0 md:inline-flex"
             onClick={onOpenHelp}
             aria-label={t('top.help')}
             title={t('top.help')}
@@ -388,7 +409,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="md:hidden grid place-items-center h-11 w-11 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                className="md:hidden grid shrink-0 place-items-center h-11 w-11 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 aria-label={t('top.account')}
               >
                 <Avatar
@@ -409,6 +430,38 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                 )}
                 <div className="text-xs text-silver truncate">{user.email}</div>
               </div>
+              <DropdownMenuSeparator />
+              {showBack && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    onOpenCommandPalette();
+                  }}
+                >
+                  <Search className="h-4 w-4" />
+                  {t('top.search')}
+                </DropdownMenuItem>
+              )}
+              {assistant.available && assistant.me && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    assistant.toggle();
+                  }}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {t('top.askAssistant', { name: assistant.me.name })}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  onOpenHelp();
+                }}
+              >
+                <CircleHelp className="h-4 w-4" />
+                {t('top.help')}
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               {/* Profile first — the page with the employee number,
                   emergency contacts, and tax docs was only reachable by
@@ -457,6 +510,16 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
 }
 
 
+
+/**
+ * Back goes to the nearest crumb above the page that has a destination.
+ * Exported for the test that pins it.
+ */
+export function backCrumbOf(crumbs: { label: string; to?: string }[] | null): { label: string; to?: string } | null {
+  if (!crumbs || crumbs.length < 2) return null;
+  for (let i = crumbs.length - 2; i >= 0; i -= 1) if (crumbs[i]!.to) return crumbs[i]!;
+  return crumbs[crumbs.length - 2]!;
+}
 
 /**
  * The way in to the assistant from the chrome — the same pane the home

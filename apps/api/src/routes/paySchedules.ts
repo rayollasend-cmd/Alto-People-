@@ -49,6 +49,8 @@ import {
   loadFacts,
   loadWorld,
   nextPaydayOn,
+  onNoScheduleWhere,
+  PAY_RUN_POPULATION_WHERE,
   patternOn,
   patternSentence,
   periodContaining,
@@ -886,14 +888,18 @@ async function scheduleNameMap(): Promise<Map<string, string>> {
   return new Map(all.map((s) => [s.id, s.name]));
 }
 
-/** People no schedule covers today or later (hired: an approved application or a placement). */
+/**
+ * People a run would be for (hired, employed) whom no live schedule covers
+ * today or later — the one membership rule (lib/payScheduleMembership
+ * scheduleMembershipFor / onNoScheduleWhere), so this count, the readiness
+ * grid's Schedule column and the payroll home's blocker are one number.
+ */
 export function unassignedWhere(user: SessionUser): Prisma.AssociateWhereInput {
-  const today = dateOnly(todayYmd());
   return scopeWhere<Prisma.AssociateWhereInput>(
-    { tenantId: tenantIdForWrite(), deletedAt: null, separatedAt: null, deactivatedAt: null, payrollScheduleId: null },
+    { tenantId: tenantIdForWrite() },
+    PAY_RUN_POPULATION_WHERE,
     scopeAssociates(user),
-    { OR: [{ applications: { some: { status: 'APPROVED', deletedAt: null } } }, { assignments: { some: { endedAt: null } } }] },
-    { payScheduleAssignments: { none: { OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }] } } },
+    onNoScheduleWhere(todayYmd()),
   );
 }
 

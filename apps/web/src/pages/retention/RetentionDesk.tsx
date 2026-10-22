@@ -70,6 +70,12 @@ const PLAY_HINT: Record<PlayKind, string> = {
 const BAND_LABEL: Record<RiskBand, string> = { HIGH: 'High risk', MEDIUM: 'Some risk', LOW: 'Low risk' };
 const BAND_VARIANT: Record<RiskBand, 'destructive' | 'pending' | 'outline'> = { HIGH: 'destructive', MEDIUM: 'pending', LOW: 'outline' };
 
+/** "today" mid-sentence, but a date keeps its capitals: "Scored Sat, Oct 17", never "sat, oct 17". */
+function relativeDay(iso: string): string {
+  const s = fmtRelativeDayTz(iso, null, Date.now());
+  return /^(Today|Tomorrow|Hoy|Mañana)$/.test(s) ? s.toLowerCase() : s;
+}
+
 function ScoreBar({ score, band }: { score: number; band: RiskBand }) {
   return (
     <div className="flex items-center gap-2" aria-label={`Risk ${score} of 100, ${BAND_LABEL[band].toLowerCase()}`} role="img">
@@ -168,7 +174,7 @@ function PersonRow({ item, onPlay }: { item: RetentionItem; onPlay: (k: PlayKind
           {open && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
               <span>
-                {PLAY_LABEL[open.kind]} · logged {fmtRelativeDayTz(open.createdAt, null, Date.now()).toLowerCase()}
+                {PLAY_LABEL[open.kind]} · logged {relativeDay(open.createdAt)}
                 {open.approvalId ? ' · waiting on a pay decision' : ''}
               </span>
               <Button size="sm" variant="link" className="h-auto px-0" onClick={() => done.mutate(open.id)} loading={done.isPending}>
@@ -272,7 +278,7 @@ export function RetentionDesk() {
                 ))}
               </ul>
               {list.data.truncated && <p className="mt-3 text-xs text-ink-muted">Showing the 500 highest scores.</p>}
-              {list.data.computedAt && <p className="mt-3 text-xs text-ink-muted">Scored {fmtRelativeDayTz(list.data.computedAt, null, Date.now()).toLowerCase()}.</p>}
+              {list.data.computedAt && <p className="mt-3 text-xs text-ink-muted">Scored {relativeDay(list.data.computedAt)}.</p>}
             </CardContent>
           </Card>
         )}

@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
 import { toast } from 'sonner';
-import { SOC2_STAGE_LABELS, TRUST_DOCUMENT_KINDS, TRUST_DOCUMENT_LABELS, type Soc2Progress, type Soc2Stage, type TrustControlPublic, type TrustDocumentKind, type TrustDownloadRequestInput, type TrustStatus, type TrustSummaryPublic } from '@alto-people/shared';
+import { CONTROL_STATUS_LABELS, SOC2_STAGE_LABELS, TRUST_DOCUMENT_KINDS, TRUST_DOCUMENT_LABELS, type ControlStatus, type Soc2Progress, type Soc2Stage, type TrustControlPublic, type TrustDocumentKind, type TrustDownloadRequestInput, type TrustStatus, type TrustSummaryPublic } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { fmtDateTime } from '@/lib/format';
 import { requestTrustDocument } from '@/lib/trustApi';
@@ -18,6 +18,20 @@ import { Select } from '@/components/ui/Select';
  * The Trust Center's building blocks, shared by the public page and the
  * signed-in view so the two never say different things.
  */
+
+/**
+ * A control's status in the one vocabulary every trust surface uses
+ * (packages/shared complianceEvidence.ts controlStatusOf): Passing ·
+ * Needs sign-off · Failing · No evidence — the same words Compliance
+ * evidence shows (F500 SH-4).
+ */
+export function controlStatusBadge(status: ControlStatus) {
+  const variant = status === 'PASSING' ? 'success' : status === 'NEEDS_SIGNOFF' ? 'pending' : status === 'FAILING' ? 'destructive' : 'outline';
+  return <Badge variant={variant}>{CONTROL_STATUS_LABELS[status]}</Badge>;
+}
+
+/** The control's one status, from an older response that sent only PASS/WARN/FAIL/PENDING. */
+const CONTROL_FROM_TRUST: Record<TrustStatus, ControlStatus> = { PASS: 'PASSING', WARN: 'NEEDS_SIGNOFF', FAIL: 'FAILING', PENDING: 'NO_EVIDENCE' };
 
 export function statusBadge(status: TrustStatus | 'ON' | 'OFF' | 'FAILING') {
   switch (status) {
@@ -89,7 +103,7 @@ export function ControlsTable({ items }: { items: TrustControlPublic[] }) {
                   <div className="mt-0.5 text-xs2 text-ink-muted">{c.how}</div>
                 </td>
                 <td className="hidden px-4 py-3 text-xs2 text-ink-muted md:table-cell">{c.criteria.join(', ')}</td>
-                <td className="px-4 py-3">{statusBadge(c.status)}</td>
+                <td className="px-4 py-3">{controlStatusBadge(c.controlStatus ?? CONTROL_FROM_TRUST[c.status])}</td>
                 <td className="hidden px-4 py-3 text-xs2 tabular-nums text-ink-muted md:table-cell">{c.checkedAt ? fmtDateTime(c.checkedAt) : '—'}</td>
               </tr>
             ))}
@@ -184,9 +198,10 @@ export function Soc2Block({ soc2 }: { soc2: Soc2Progress }) {
           </ol>
           <dl className="grid gap-3 text-sm sm:grid-cols-3">
             <div>
-              <dt className="text-ink-muted">Controls with current evidence</dt>
+              {/* Leads with the same "passing" as the hero and Compliance evidence. */}
+              <dt className="text-ink-muted">Controls passing</dt>
               <dd className="font-medium tabular-nums text-ink">
-                {soc2.controlsCurrent} / {soc2.controlsTotal} <span className="font-normal text-ink-muted">({soc2.controlsPassing} passing)</span>
+                {soc2.controlsPassing} / {soc2.controlsTotal} <span className="font-normal text-ink-muted">({soc2.controlsCurrent} with current evidence)</span>
               </dd>
             </div>
             <div>

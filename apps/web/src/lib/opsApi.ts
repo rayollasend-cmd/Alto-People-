@@ -493,6 +493,8 @@ export interface OpsHistoryQuery {
  */
 export function getOpsHistory(q: OpsHistoryQuery = {}): Promise<{
   range: { from: string; to: string };
+  /** The company's zone the range and every time are read in (apps/api/src/lib/siteDay.ts). */
+  timezone?: string;
   generatedAt: string;
   sort: OpsSort;
   truncated: boolean;
@@ -517,6 +519,8 @@ export function getOpsBoard(
   filters: { locationId?: string; period?: string; department?: string } = {},
 ): Promise<{
   dateKey: string;
+  /** The company's zone "today" and every time on the board are read in (apps/api/src/lib/siteDay.ts). */
+  timezone?: string;
   /** When the server answered — a frozen board and a quiet floor look
    *  identical without it. */
   generatedAt: string;

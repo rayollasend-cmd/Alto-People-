@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 /**
  * Agent families step 1 — a shift the Workforce agent proposes to fill is
@@ -50,10 +51,14 @@ function setup() {
     if (path === '/me/decisions/quick') return { ok: true, summary: 'Approved and assigned. The person has been told.' } as never;
     throw new Error(`not mocked: ${path}`);
   });
+  // The queue reads the one shared decisions query (lib/meDecisions, F500 SH-4).
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <MemoryRouter>
-      <RoleDecisionQueue />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <RoleDecisionQueue />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -66,7 +71,8 @@ describe('a proposed shift fill on the desk', () => {
     const user = userEvent.setup();
     setup();
     expect(await screen.findByText(/Assign Tess Free to Housekeeper at The Grand Hotel/)).toBeInTheDocument();
-    const open = screen.getAllByRole('link', { name: /Open/ })[0]!;
+    // "Go to it" opens the thing itself ("Discuss" is the room).
+    const open = screen.getAllByRole('link', { name: /Go to it/ })[0]!;
     expect(open).toHaveAttribute('href', `/scheduling?week=2026-10-14&location=${SITE}`);
     await user.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/me/decisions/quick', { method: 'POST', body: { key: item.key } }));

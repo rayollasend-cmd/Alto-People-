@@ -134,10 +134,10 @@ export function StaffingPlanView() {
             height={280}
           >
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartRows} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+              <ComposedChart data={chartRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke={CHART.grid} vertical={false} />
                 <XAxis dataKey="week" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
-                <YAxis allowDecimals={false} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis allowDecimals={false} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} width="auto" />
                 <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
                 <Legend {...STOCK_LEGEND} />
                 <Bar dataKey="inPlace" name="In place" stackId="heads" fill={CHART.series[1]} />

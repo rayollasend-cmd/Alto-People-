@@ -324,7 +324,8 @@ async function fieldChart(
 
   const unplacedWhere: Prisma.AssociateWhereInput = {
     AND: [
-      { tenantId, deletedAt: null, deactivatedAt: null },
+      // Not placed: on the books (not paused, separated or erased) with no open placement.
+      { tenantId, deletedAt: null, deactivatedAt: null, separatedAt: null, erasedAt: null },
       scopeAssociates(user),
       opts.clientId ? atClient(opts.clientId) : {},
       { assignments: { none: { endedAt: null } } },
@@ -333,7 +334,10 @@ async function fieldChart(
   const crewWhere = (ids: string[]): Prisma.AssociateAssignmentWhereInput => ({
     endedAt: null,
     locationId: { in: ids },
-    associate: { AND: [{ tenantId, deletedAt: null }, scopeAssociates(user), opts.includeFormer ? {} : { deactivatedAt: null }] },
+    // Placed here: the placement half of the one status (lib/peopleStatus) —
+    // an open assignment of someone not separated or erased (paused people
+    // only with includeFormer).
+    associate: { AND: [{ tenantId, deletedAt: null }, scopeAssociates(user), opts.includeFormer ? {} : { deactivatedAt: null, separatedAt: null, erasedAt: null }] },
   });
   const [leads, crewGroups, positions, unplaced, coverage] = await Promise.all([
     prisma.user.findMany({
@@ -599,7 +603,10 @@ export async function storeCrew(user: SessionUser, siteId: string, opts: { inclu
     where: {
       endedAt: null,
       locationId: site.id,
-      associate: { AND: [{ tenantId, deletedAt: null }, scopeAssociates(user), opts.includeFormer ? {} : { deactivatedAt: null }] },
+      // Placed here: the placement half of the one status (lib/peopleStatus) —
+      // an open assignment of someone not separated or erased (paused people
+      // only with includeFormer).
+      associate: { AND: [{ tenantId, deletedAt: null }, scopeAssociates(user), opts.includeFormer ? {} : { deactivatedAt: null, separatedAt: null, erasedAt: null }] },
     },
     orderBy: { associate: { lastName: 'asc' } },
     take: LIMIT,

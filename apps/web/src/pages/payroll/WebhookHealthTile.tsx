@@ -7,7 +7,7 @@ import {
   type WebhookHealth,
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtCount, fmtDate, fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -163,9 +163,9 @@ export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'banking' 
         )}
         {data.health !== 'stub' && data.health !== 'unconfigured' && (
           <p className="mt-1 text-xs text-silver">
-            {data.eventsLast24h} event(s) in the last 24h ·{' '}
-            {data.errorsLast7d} error(s) in the last 7 days ·{' '}
-            {data.pendingFinalizedItems} item(s) awaiting disbursement
+            {fmtCount(data.eventsLast24h, 'event')} in the last 24 hours ·{' '}
+            {fmtCount(data.errorsLast7d, 'error')} in the last 7 days ·{' '}
+            {fmtCount(data.pendingFinalizedItems, 'paycheck')} waiting to pay out
           </p>
         )}
       </div>

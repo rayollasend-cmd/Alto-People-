@@ -13,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { RunStatusBadge } from '@/lib/payrollRunStatus';
 
 /**
  * "Check my pay before payday", payroll's side: for one run, how many
@@ -113,7 +114,6 @@ export function PayChecksPage() {
   );
 }
 
-const RUN_STATUS: Record<string, string> = { DRAFT: 'Draft', FINALIZED: 'Finalized', DISBURSED: 'Paid', CANCELLED: 'Cancelled' };
 
 /** Opened without a run: the recent runs to choose from, newest first. */
 function RunPicker() {
@@ -143,7 +143,7 @@ function RunPicker() {
                   </span>
                   <span className="block truncate text-xs text-ink-muted">{r.clientName ?? 'All clients'} · {r.itemCount} paychecks</span>
                 </span>
-                <Badge variant={r.status === 'DRAFT' ? 'default' : r.status === 'FINALIZED' ? 'pending' : 'success'}>{RUN_STATUS[r.status] ?? r.status}</Badge>
+                <RunStatusBadge status={r.status} />
               </Link>
             </li>
           ))}

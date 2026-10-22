@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Bus, Gauge, HeartPulse, RefreshCw, ScanFace } from 'lucide-react';
 import type { ReliabilityIssueRow, ReliabilityRouteRow, ReliabilityWeekRow } from '@alto-people/shared';
 import { getReliability } from '@/lib/reliabilityApi';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDateOnlyRange, fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -42,9 +42,14 @@ const ms = (v: number | null) => (v === null ? '—' : v >= 1000 ? `${(v / 1000)
 const endpoint = (r: ReliabilityRouteRow) => `${r.method} ${r.route}`;
 
 /** "Jul 4 – Jul 10": the org week as people say it. */
+/**
+ * "Oct 17 – 23, 2026". The org week is a Sat→Fri run of calendar days, sent
+ * as UTC-midnight instants: read as calendar days (not instants in the
+ * viewer's zone, which started every week on the Friday before).
+ */
 function weekLabel(w: ReliabilityWeekRow): string {
-  const end = new Date(new Date(w.weekEnd).getTime() - 12 * 60 * 60 * 1000);
-  return `${fmtDate(w.weekStart)} – ${fmtDate(end)}`;
+  const lastDay = new Date(new Date(w.weekEnd).getTime() - 86_400_000).toISOString().slice(0, 10);
+  return fmtDateOnlyRange(w.weekStart, lastDay);
 }
 
 const ROUTE_COLUMNS = [

@@ -32,7 +32,8 @@ import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { Card, CardContent } from '@/components/ui/Card';
-import { ClockStrip } from '@/components/ClockStrip';
+import { useClockParts } from '@/components/ClockStrip';
+import { HomeMeta } from '@/components/home/HomeMeta';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -52,6 +53,7 @@ import { NextFundingCard } from '@/pages/payrollBanking/FundingCard';
 export function FinanceDashboard() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const clockParts = useClockParts();
   // Receivables are a staffing company's concern — a direct employer bills
   // no one, so the AR tile, the aging card and the statements door go away
   // together when either client statements or bill rates are off.
@@ -162,16 +164,18 @@ export function FinanceDashboard() {
       topbarTitle={t('fin.title')}
       subtitle={t('fin.subtitle')}
       meta={
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="flex items-center gap-1.5 text-xs text-ink-muted">
-            <span className="relative flex h-2 w-2" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-            {t('fin.live')}
-          </span>
-          <ClockStrip />
-        </div>
+        <HomeMeta
+          items={[
+            <span key="live" className="inline-flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50 motion-reduce:hidden" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+              </span>
+              {t('fin.live')}
+            </span>,
+            ...clockParts,
+          ]}
+        />
       }
       hero={<PayCycleHero data={data} />}
       decisions={{ title: t('fin.today'), count: tasksToday, content: <TodayList data={data} headless /> }}

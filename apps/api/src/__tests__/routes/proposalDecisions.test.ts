@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agent, loginAs } from '../../../test/http.js';
 import { createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { builtInAgentId, ensureBuiltInAgents, resetAgentRateLimits } from '../../lib/agents.js';
@@ -23,7 +23,24 @@ import { invalidateTenantProfile } from '../../lib/tenantProfile.js';
 
 const HOUR = 3_600_000;
 
+// The world puts Ana's long week 24h after the open shift. Near a week
+// boundary those land in different weeks and the ranking flips, so hold the
+// clock at the coming Tuesday 08:00 (local): both shifts sit mid-week whatever
+// day the week starts on. Only Date is faked; HTTP keeps its real timers.
+function comingTuesdayAt8(): Date {
+  const d = new Date();
+  d.setHours(8, 0, 0, 0);
+  d.setDate(d.getDate() + (((2 - d.getDay()) + 7) % 7 || 7));
+  return d;
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(comingTuesdayAt8());
   await truncateAll();
   resetAgentRateLimits();
   invalidateTenantProfile();

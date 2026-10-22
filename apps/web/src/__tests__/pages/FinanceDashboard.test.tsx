@@ -153,7 +153,8 @@ describe('the finance cockpit', () => {
     expect(screen.getByText('$1,377.00 after wages')).toBeInTheDocument();
     // At risk: last week's $2,328.75 plus the $720 rejected earlier.
     expect(screen.getAllByText('$3,048.75').length).toBeGreaterThan(0);
-    expect(screen.getByText('Billing · week ending 09/18/2026')).toBeInTheDocument();
+    // The app's date, not the API's "09/18/2026" (three date formats sat on this home).
+    expect(screen.getByText('Billing · week ending Fri, Sep 18')).toBeInTheDocument();
     expect(screen.getByText('Plus 1 rejected in earlier weeks — $720.00 waiting')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Enter in Fieldglass \(3\)/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /^Revenue, wages & margin:/ })).toBeInTheDocument();

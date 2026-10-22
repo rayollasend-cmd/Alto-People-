@@ -148,7 +148,12 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
         stores: stores.length,
         onFloor: sum((s) => s.now.onFloor),
         target: stores.some((s) => s.now.target !== null) ? sum((s) => s.now.target ?? 0) : null,
+        // Stores short by each one's headline basis (the contract where it has
+        // one — lib/storeSnapshot), so "N stores short" agrees with the hero's
+        // "short of contract"; both meanings are also counted apart.
         shortNow: stores.filter((s) => s.now.short > 0).length,
+        belowContract: stores.filter((s) => (s.now.shortOfContract ?? 0) > 0).length,
+        missingFromSchedule: sum((s) => s.now.missingFromSchedule),
         alerts: stores.filter((s) => s.alert).length,
         openToday: sum((s) => s.today.open),
         openTomorrow: sum((s) => s.tomorrow.open),

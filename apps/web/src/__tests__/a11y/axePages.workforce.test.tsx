@@ -375,7 +375,7 @@ describe('axe — workforce/HR long-tail pages', () => {
 
   it('<HeadcountHome> has no axe violations', async () => {
     const { container } = renderPage(<HeadcountHome />);
-    await screen.findByText('Active associates');
+    await screen.findByText('Working');
     await screen.findByText('0%'); // turnover KPI settled
     await expectNoViolations(container);
   });

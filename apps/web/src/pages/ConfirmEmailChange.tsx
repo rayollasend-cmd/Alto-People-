@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { AtSign, ChevronLeft, ShieldCheck, ShieldX } from 'lucide-react';
 import { ApiError, NetworkError } from '@/lib/api';
 import { confirmEmailChange } from '@/lib/settingsApi';
-import { AuthCardTitle, AuthHero } from '@/components/ui/AuthHeading';
+import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 
 /**
@@ -57,59 +57,51 @@ export function ConfirmEmailChange() {
   }, [token]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8 animate-fade-in">
-          <AuthHero title="Confirm email change" eyebrow="Alto People" />
-        </div>
+    <AuthShell>
 
-        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
-          {state === 'pending' && (
-            <>
-              <AtSign className="mx-auto h-12 w-12 text-gold mb-4 animate-pulse" />
-              <AuthCardTitle size="md">Confirming your new email…</AuthCardTitle>
-              <p className="text-silver text-sm">
-                One moment.
-              </p>
-            </>
-          )}
-          {state === 'done' && (
-            <>
-              <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-              <AuthCardTitle size="md">Email updated</AuthCardTitle>
-              <p className="text-silver text-sm mb-6">
-                Your sign-in email has been changed. Every existing session
-                has been signed out. Sign in again with your new email to
-                continue.
-              </p>
-              {/* Signing in again IS this page's next step — full-width
-                  button, not an easy-to-miss text link (same complaint as
-                  the invite page's hidden "Go to sign in"). */}
-              <Button asChild variant="secondary" className="w-full">
-                <Link to="/login">Go to sign in</Link>
-              </Button>
-            </>
-          )}
-          {state === 'error' && (
-            <>
-              <ShieldX className="mx-auto h-12 w-12 text-alert mb-4" />
-              <AuthCardTitle size="md">Couldn't confirm</AuthCardTitle>
-              <p className="text-silver text-sm mb-6">{error}</p>
-              <Button asChild variant="secondary" className="w-full">
-                <Link to="/login">
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                  Back to sign in
-                </Link>
-              </Button>
-            </>
-          )}
-        </div>
-
-        <p className="text-center text-xs text-silver/70 mt-6">
-          © {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR
-        </p>
+      <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
+        {state === 'pending' && (
+          <>
+            <AtSign className="mx-auto h-12 w-12 text-gold mb-4 animate-pulse" />
+            <AuthCardTitle size="md">Confirming your new email…</AuthCardTitle>
+            <p className="text-silver text-sm">
+              One moment.
+            </p>
+          </>
+        )}
+        {state === 'done' && (
+          <>
+            <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
+            <AuthCardTitle size="md">Email updated</AuthCardTitle>
+            <p className="text-silver text-sm mb-6">
+              Your sign-in email has been changed. Every existing session
+              has been signed out. Sign in again with your new email to
+              continue.
+            </p>
+            {/* Signing in again IS this page's next step — full-width
+                button, not an easy-to-miss text link (same complaint as
+                the invite page's hidden "Go to sign in"). */}
+            <Button asChild variant="secondary" className="w-full">
+              <Link to="/login">Go to sign in</Link>
+            </Button>
+          </>
+        )}
+        {state === 'error' && (
+          <>
+            <ShieldX className="mx-auto h-12 w-12 text-alert mb-4" />
+            <AuthCardTitle size="md">Couldn't confirm</AuthCardTitle>
+            <p className="text-silver text-sm mb-6">{error}</p>
+            <Button asChild variant="secondary" className="w-full">
+              <Link to="/login">
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Back to sign in
+              </Link>
+            </Button>
+          </>
+        )}
       </div>
-    </div>
+
+    </AuthShell>
   );
 }
 

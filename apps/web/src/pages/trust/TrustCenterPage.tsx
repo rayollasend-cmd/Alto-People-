@@ -23,8 +23,43 @@ import { Commitments, ControlsTable, Soc2Block, SubProcessors, TrustHero, status
 export function TrustCenterPage() {
   const { can } = useAuth();
   const q = useQuery({ queryKey: ['trust', 'summary'], queryFn: getTrust, staleTime: 60_000 });
-  if (q.isLoading) return <SkeletonRows count={6} />;
-  if (q.isError || !q.data) return <QueryError what="the trust center" query={q} />;
+  // The page keeps its name while it loads or fails — an error banner alone
+  // left the top bar saying "Alto People" (F500 G4).
+  const header = (
+    <PageHeader
+      title="Trust Center"
+      subtitle="How the platform is run, with the evidence: the controls, the audit chain, the agents and their governance. The public page says the same with your numbers left out."
+      breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Trust Center' }]}
+      primaryAction={
+        <span className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <a href="/status" target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" /> Status page
+            </a>
+          </Button>
+          <Button asChild variant="secondary" size="sm">
+            <a href="/trust-center" target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" /> Public page
+            </a>
+          </Button>
+        </span>
+      }
+    />
+  );
+  if (q.isLoading)
+    return (
+      <div className="space-y-6" data-template="settings">
+        {header}
+        <SkeletonRows count={6} />
+      </div>
+    );
+  if (q.isError || !q.data)
+    return (
+      <div className="space-y-6" data-template="settings">
+        {header}
+        <QueryError what="the trust center" query={q} />
+      </div>
+    );
   const d = q.data;
   const t = d.tenant;
   const rows: Array<{ label: string; value: React.ReactNode; to: string }> = [
@@ -41,25 +76,7 @@ export function TrustCenterPage() {
   ];
   return (
     <div className="space-y-6" data-template="settings">
-      <PageHeader
-        title="Trust Center"
-        subtitle="How the platform is run, with the evidence: the controls, the audit chain, the agents and their governance. The public page says the same with your numbers left out."
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Trust Center' }]}
-        primaryAction={
-          <span className="flex flex-wrap items-center gap-2">
-            <Button asChild variant="ghost" size="sm">
-              <a href="/status" target="_blank" rel="noreferrer">
-                <ExternalLink className="h-4 w-4" /> Status page
-              </a>
-            </Button>
-            <Button asChild variant="secondary" size="sm">
-              <a href="/trust-center" target="_blank" rel="noreferrer">
-                <ExternalLink className="h-4 w-4" /> Public page
-              </a>
-            </Button>
-          </span>
-        }
-      />
+      {header}
       <TrustHero data={d} />
       <Soc2Block soc2={d.soc2} />
       {can('manage:org') && <TrustRequestsSection reportIssuedOn={d.soc2.reportIssuedOn} />}

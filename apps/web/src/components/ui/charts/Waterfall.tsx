@@ -1,6 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { LegendKey } from './ChartTooltip';
-import { AXIS, yAxisLabel } from './axes';
+import { AXIS, Y_AXIS_WIDTH, yAxisLabel } from './axes';
 import { useChartHeight } from './frame';
 import { PALETTE, TICK, TOOLTIP_ITEM_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './palette';
 
@@ -79,7 +79,7 @@ export function Waterfall({ start, steps, end, format = (v) => v.toLocaleString(
           <BarChart accessibilityLayer={false} data={rows} margin={{ top: 20, right: 12, bottom: 0, left: yLabel ? 8 : 0 }} barCategoryGap="22%">
             <CartesianGrid stroke={PALETTE.grid} vertical={false} />
             <XAxis dataKey="label" {...AXIS} interval={0} tick={{ ...TICK, fontSize: 10 }} />
-            <YAxis tick={TICK} tickLine={false} axisLine={false} width={yLabel ? 64 : 52} tickFormatter={(v: number) => format(v)} label={yAxisLabel(yLabel)} />
+            <YAxis tick={TICK} tickLine={false} axisLine={false} width={Y_AXIS_WIDTH} tickFormatter={(v: number) => format(v)} label={yAxisLabel(yLabel)} />
             <Tooltip
               cursor={{ fill: PALETTE.cursor }}
               contentStyle={TOOLTIP_STYLE}

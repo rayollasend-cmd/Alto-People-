@@ -46,6 +46,8 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const inbox = useInbox();
   const countByPath = new Map<string, number>();
   for (const src of inbox.data?.sources ?? []) {
+    // Another desk's queue (packages/shared queues.ts) badges nothing here — as on the Inbox.
+    if (src.watching) continue;
     const path = src.path.split('?')[0] ?? src.path;
     countByPath.set(path, (countByPath.get(path) ?? 0) + src.count);
   }
@@ -170,7 +172,15 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const notInTabBar = (m: { path: string }) => !inTabBar.has(m.path);
   const rows = coreItems.filter(notInTabBar);
   const pinnedRows = pinnedModules.filter(notInTabBar);
-  const recentRows = recentModules.filter(notInTabBar);
+  // Recent never repeats a row already on this sheet: an always-on row, or
+  // a page inside the section that holds the page in view (it opens itself).
+  const onSheet = new Set<string>(coreItems.map((m) => m.key));
+  for (const d of [...shape.doors, ...(shape.folded?.doors ?? [])]) {
+    const all = [d.target, ...d.children];
+    if (!all.some((m) => m.path === activePath)) continue;
+    for (const m of all) onSheet.add(m.key);
+  }
+  const recentRows = recentModules.filter((m) => notInTabBar(m) && !onSheet.has(m.key) && m.path !== activePath);
   const doors = user?.role !== 'CLIENT_PORTAL' ? shape.doors : [];
   // A manager's company-wide doors (ops 21): kept, under their own heading.
   const folded = user?.role !== 'CLIENT_PORTAL' ? shape.folded : undefined;

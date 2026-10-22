@@ -45,6 +45,8 @@ import { StatusBadge } from '@/lib/status';
 import { downloadCsv } from '@/lib/csv';
 import {
   fmtDateTime,
+  fmtPhone,
+  phoneHref,
   ymdLocal,
 } from '@/lib/format';
 import {
@@ -285,10 +287,10 @@ function DirectoryTab() {
                   cell: (pe) =>
                     pe.phone ? (
                       <span className="inline-flex items-center gap-1.5">
-                        <a href={`tel:${pe.phone}`} className="text-gold hover:text-gold-bright hover:underline">
-                          {pe.phone}
+                        <a href={phoneHref(pe.phone) ?? undefined} className="text-gold hover:text-gold-bright hover:underline">
+                          {fmtPhone(pe.phone)}
                         </a>
-                        <CopyButton text={pe.phone} label={`Copy ${pe.phone}`} />
+                        <CopyButton text={fmtPhone(pe.phone)} label={`Copy ${fmtPhone(pe.phone)}`} />
                       </span>
                     ) : (
                       '—'

@@ -1,14 +1,19 @@
 import type { PayrollFrequency } from '@prisma/client';
 import { prisma } from '../db.js';
-import { getNextPayday, getPeriodAfter } from './payrollSchedule.js';
 import { placedClientIds } from './openShiftEligibility.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
 import { dateKeyInZone } from './timeAnomalies.js';
+import { nextPaydayOn, periodAfter, scheduleMembershipFor } from './payScheduleMembership.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
- * An associate's next payday and the period it pays for — their own pay
- * schedule, else their client's, else the org default; null when none is
- * set up. (Alto: biweekly Sat→Fri periods paid the Friday after.)
+ * An associate's next payday and the period it pays for — on the pay
+ * schedule they are a MEMBER of (lib/payScheduleMembership
+ * scheduleMembershipFor: the one rule, the same a run pays by). Null for
+ * someone on no schedule: no run would pay them, so no date is promised
+ * (F500 SH-4 — My pay used to fall back to the client's or the first org
+ * schedule and show a payday nobody would pay). (Alto: biweekly Sat→Fri
+ * periods paid the Friday after.)
  *
  * "Next" is strictly after today: on a payday the associate is being paid
  * today, and the date they're waiting on is the following one (Fri Sep 18
@@ -23,19 +28,27 @@ export interface ResolvedPaySchedule {
   payDateOffsetDays: number;
 }
 
-/** The pay schedule an associate is paid on — their own, else their
- *  client's, else the org default; null when none is set up. */
-export async function payScheduleFor(associateId: string): Promise<ResolvedPaySchedule | null> {
-  const live = { isActive: true, deletedAt: null } as const;
-  const scheduleSelect = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
-  const own = await prisma.associate.findUnique({
-    where: { id: associateId },
-    select: { payrollSchedule: { select: { ...scheduleSelect, isActive: true, deletedAt: true } } },
-  });
-  if (own?.payrollSchedule && own.payrollSchedule.isActive && !own.payrollSchedule.deletedAt) {
-    const { isActive: _a, deletedAt: _d, ...schedule } = own.payrollSchedule;
-    return schedule;
+const scheduleSelect = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
+
+/**
+ * The pay schedule an associate is paid on: their membership today, else a
+ * booked move. Null when they are on none.
+ *
+ * `orLikely` is for readers that must describe a pay pattern before the
+ * person is on a schedule (the W-4 estimator's withholding frequency, a
+ * pay notice's "paid every other week", a timesheet's period): their
+ * client's schedule, else the org's first, as the likely one. Never for
+ * saying when someone WILL be paid.
+ */
+export async function payScheduleFor(associateId: string, opts: { orLikely?: boolean } = {}): Promise<ResolvedPaySchedule | null> {
+  const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const m = (await scheduleMembershipFor(prisma, [associateId], today)).get(associateId) ?? null;
+  if (m) {
+    const s = await prisma.payrollSchedule.findUnique({ where: { id: m.scheduleId }, select: scheduleSelect });
+    if (s) return s;
   }
+  if (!opts.orLikely) return null;
+  const live = { isActive: true, deletedAt: null } as const;
   const clientIds = await placedClientIds(associateId);
   return (
     (clientIds.length
@@ -64,11 +77,21 @@ export async function nextPaydayFor(
   /** Today is a payday: the days it pays for (until midnight). */
   paidToday: { periodStart: string; periodEnd: string } | null;
 } | null> {
-  const schedule = await payScheduleFor(associateId);
-  if (!schedule) return null;
   const today = dateKeyInZone(now, DEFAULT_TIMEZONE);
-  let w = getNextPayday(schedule, new Date(`${today}T12:00:00.000Z`));
-  const paidToday = w.payDate === today ? { periodStart: w.periodStart, periodEnd: w.periodEnd } : null;
-  if (w.payDate <= today) w = getPeriodAfter(schedule, w);
+  const m = (await scheduleMembershipFor(prisma, [associateId], today)).get(associateId) ?? null;
+  if (!m) return null;
+  const schedule = await prisma.payrollSchedule.findUnique({ where: { id: m.scheduleId }, include: { versions: true } });
+  if (!schedule) return null;
+  // Version-aware (a pattern change and its bridge period are on the calendar it will run).
+  let w = nextPaydayOn(schedule, today);
+  const paidToday = w.payDate === today && w.periodEnd >= m.from ? { periodStart: w.periodStart, periodEnd: w.periodEnd } : null;
+  if (w.payDate <= today) w = periodAfter(schedule, w);
+  // A booked move: the first period of the new schedule that pays any of their days.
+  for (let guard = 0; w.periodEnd < m.from && guard < 60; guard += 1) w = periodAfter(schedule, w);
   return { payDate: w.payDate, periodStart: w.periodStart, periodEnd: w.periodEnd, schedule: schedule.name, paidToday };
+}
+
+/** Whether the tenant pays by schedules at all (any live schedule) — "not on one yet" only means something then. */
+export async function anyLiveSchedule(): Promise<boolean> {
+  return (await prisma.payrollSchedule.count({ where: { tenantId: tenantIdForWrite(), isActive: true, deletedAt: null } })) > 0;
 }

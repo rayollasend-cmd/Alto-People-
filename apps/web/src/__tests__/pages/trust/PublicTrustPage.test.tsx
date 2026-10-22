@@ -49,7 +49,8 @@ describe('the public Trust Center', () => {
     expect(screen.getByText('Observation period: every control is collecting evidence')).toBeInTheDocument();
     const now = screen.getByText('Now').closest('li');
     expect(now).toHaveTextContent('Observation period');
-    expect(screen.getByText('16 / 16')).toBeInTheDocument();
+    // F500 SH-4: the block leads with "passing", the hero's and Compliance evidence's number.
+    expect(screen.getByText('12 / 16')).toBeInTheDocument();
     expect(screen.getByText('2026-09-01')).toBeInTheDocument();
   });
 

@@ -15,7 +15,7 @@ import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE }
 import type { RetentionResponse } from '@alto-people/shared';
 import { getRetention } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
-import { fmtPercent } from '@/lib/format';
+import { fmtMonth, fmtPercent } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -53,7 +53,7 @@ export function RetentionSection() {
   const trend = useMemo(
     () =>
       (data?.monthly ?? []).map((m) => ({
-        month: m.month.slice(5),
+        month: fmtMonth(m.month, 'axis'),
         turnover: m.turnoverPct,
         hires: m.hires,
         separations: m.separations,
@@ -110,7 +110,7 @@ export function RetentionSection() {
               {hasTrend && (
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trend} margin={{ top: 8, right: 12, bottom: 0, left: -18 }}>
+                  <LineChart data={trend} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                     <CartesianGrid stroke={PALETTE.grid} vertical={false} />
                     <XAxis
                       dataKey="month"
@@ -123,7 +123,7 @@ export function RetentionSection() {
                       tick={{ fill: TICK.fill, fontSize: 11 }}
                       axisLine={false}
                       tickLine={false}
-                      width={52}
+                      width="auto"
                     />
                     <Tooltip
                       formatter={(value, name) =>
@@ -187,7 +187,7 @@ export function RetentionSection() {
                           className={small ? 'text-silver/50' : 'text-white'}
                           title={small ? `Only ${c.hires} hire${c.hires === 1 ? '' : 's'} — too small to read as a rate` : undefined}
                         >
-                          <td className="py-1.5 pr-3">{c.month}</td>
+                          <td className="py-1.5 pr-3">{fmtMonth(c.month)}</td>
                           <td className="py-1.5 px-2 text-right">{c.hires}</td>
                           <td className="py-1.5 px-2 text-right">{pct(c.s30)}</td>
                           <td className="py-1.5 px-2 text-right">{pct(c.s60)}</td>

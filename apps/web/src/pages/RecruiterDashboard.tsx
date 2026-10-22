@@ -864,7 +864,24 @@ export function RecruiterDashboard() {
             <Skeleton className="h-56" />
           )
         }
-        decisions={home ? { title: t('recruiterHome.waitingOnYou'), count: waitingOnYouTotal(home), content: <WaitingOnYou home={home} headless /> } : undefined}
+        // Everything waiting on the recruiter in ONE counted section: their
+        // pipeline's waiting list, then the approvals from outside recruiting
+        // (time off and the like) — which used to sit lower down, uncounted.
+        decisions={
+          home
+            ? {
+                title: t('recruiterHome.waitingOnYou'),
+                queue: true,
+                count: waitingOnYouTotal(home),
+                content: (
+                  <>
+                    <WaitingOnYou home={home} headless />
+                    <RoleDecisionQueue title={t('recruiterHome.otherApprovals')} hideWhenEmpty />
+                  </>
+                ),
+              }
+            : undefined
+        }
         assistant={<HugoSeat />}
         waysIn={
           <div className="flex flex-wrap gap-2">
@@ -897,10 +914,6 @@ export function RecruiterDashboard() {
             <Activity home={home} />
           </>
         )}
-        {/* Approvals from outside recruiting (time off and the like) — only
-            when there are any; "nothing needs your decision" would contradict
-            the waiting list above. */}
-        <RoleDecisionQueue title={t('recruiterHome.otherApprovals')} hideWhenEmpty />
         <MyPlanCard />
       </HomeTemplate>
     </>

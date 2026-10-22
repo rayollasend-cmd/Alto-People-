@@ -711,12 +711,22 @@ export async function unscheduledWithTime(db: Db, from: string, to: string, clie
     distinct: ['associateId'],
   });
   if (entries.length === 0) return [];
-  const covered = await db.payrollScheduleAssignment.findMany({
-    where: { associateId: { in: entries.map((e) => e.associateId) }, effectiveFrom: { lte: dateOnly(to) }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: dateOnly(from) } }] },
-    select: { associateId: true },
-  });
+  const ids = entries.map((e) => e.associateId);
+  // Covered by the one membership rule (scheduleMembershipFor below): an
+  // assignment on a live schedule overlapping the days, or — no assignment
+  // history — the legacy mirror on a live schedule.
+  const [covered, history, legacy] = await Promise.all([
+    db.payrollScheduleAssignment.findMany({
+      where: { associateId: { in: ids }, schedule: { isActive: true, deletedAt: null }, effectiveFrom: { lte: dateOnly(to) }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: dateOnly(from) } }] },
+      select: { associateId: true },
+    }),
+    db.payrollScheduleAssignment.groupBy({ by: ['associateId'], where: { associateId: { in: ids } }, _count: { _all: true } }),
+    db.associate.findMany({ where: { id: { in: ids }, payrollSchedule: { is: { isActive: true, deletedAt: null } } }, select: { id: true } }),
+  ]);
   const has = new Set(covered.map((c) => c.associateId));
-  return entries.filter((e) => !has.has(e.associateId) && !e.associate.payrollScheduleId).map((e) => ({ associateId: e.associateId, name: `${e.associate.firstName} ${e.associate.lastName}` }));
+  const withHistory = new Set(history.map((h) => h.associateId));
+  for (const l of legacy) if (!withHistory.has(l.id)) has.add(l.id);
+  return entries.filter((e) => !has.has(e.associateId)).map((e) => ({ associateId: e.associateId, name: `${e.associate.firstName} ${e.associate.lastName}` }));
 }
 
 
@@ -729,3 +739,104 @@ export async function scheduleFilterFor(db: Db, scheduleId: string, periodStart:
   // DAILY's run of record is its weekly true-up, withheld as weekly.
   return { windows, frequency: freq === 'DAILY' ? 'WEEKLY' : freq };
 }
+
+/* ---- Membership: THE answer to "is this person on a pay schedule?" -------- */
+
+/**
+ * ONE DEFINITION OF "ON A PAY SCHEDULE" (Fortune 500 fix-up, SH-4).
+ *
+ *   A person is on schedule S from day D when an assignment row puts them
+ *   on S for D (effectiveFrom ≤ D, and no effectiveTo or effectiveTo ≥ D),
+ *   or — someone with no assignment history at all, from before rules —
+ *   when the legacy mirror Associate.payrollScheduleId names S. S must be
+ *   live (active, not deleted): a run is never made on a retired schedule.
+ *
+ *   That is exactly who a run on S pays (membershipWindows above), so every
+ *   reader that asks "will a run pay them?" reads this and nothing else:
+ *   the readiness grid's Schedule column, the pay schedules page's "on no
+ *   schedule", the payroll home's blocker, the Inbox's count, and the
+ *   associate's next payday. Before, readiness read the legacy column alone
+ *   (22 missing), pay schedules read the assignments (10), and My pay fell
+ *   back to the client's or the first org schedule — promising a payday no
+ *   run would pay.
+ *
+ *   A move booked to start later (the owner's rule: automatic moves start at
+ *   the new schedule's next period) counts: the person is on that schedule
+ *   from its first day, and their first payday is that period's.
+ *
+ * Membership is computed from rules (lib/payScheduleMembership materialize);
+ * nothing here writes it.
+ */
+export interface Membership {
+  scheduleId: string;
+  /** The first day the membership covers (in the past when in force; the booked start when later; 1970-01-01 for the legacy mirror). */
+  from: string;
+  /** True when it comes from the legacy per-person picker (no assignment history). */
+  legacy: boolean;
+}
+
+const LIVE_SCHEDULE = { isActive: true, deletedAt: null } as const;
+
+/** Each person's membership on `on` (or the next booked one); null for someone on no schedule. */
+export async function scheduleMembershipFor(db: Db, associateIds: string[], on: string = todayYmd()): Promise<Map<string, Membership | null>> {
+  const out = new Map<string, Membership | null>();
+  if (associateIds.length === 0) return out;
+  for (const id of associateIds) out.set(id, null);
+  const BATCH = 10_000;
+  for (let i = 0; i < associateIds.length; i += BATCH) {
+    const ids = associateIds.slice(i, i + BATCH);
+    const [rows, history, legacy] = await Promise.all([
+      db.payrollScheduleAssignment.findMany({
+        where: { associateId: { in: ids }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: dateOnly(on) } }], schedule: LIVE_SCHEDULE },
+        orderBy: { effectiveFrom: 'asc' },
+        select: { associateId: true, scheduleId: true, effectiveFrom: true },
+      }),
+      db.payrollScheduleAssignment.groupBy({ by: ['associateId'], where: { associateId: { in: ids } }, _count: { _all: true } }),
+      db.associate.findMany({ where: { id: { in: ids }, payrollScheduleId: { not: null }, payrollSchedule: { is: LIVE_SCHEDULE } }, select: { id: true, payrollScheduleId: true } }),
+    ]);
+    for (const r of rows) {
+      const cur = out.get(r.associateId);
+      const from = ymd(r.effectiveFrom);
+      // In force on `on` beats a booked one; among booked ones, the soonest.
+      if (!cur || (from <= on && cur.from > on)) out.set(r.associateId, { scheduleId: r.scheduleId, from, legacy: false });
+    }
+    const hasHistory = new Set(history.map((h) => h.associateId));
+    for (const l of legacy) {
+      if (!hasHistory.has(l.id) && !out.get(l.id)) out.set(l.id, { scheduleId: l.payrollScheduleId!, from: '1970-01-01', legacy: true });
+    }
+  }
+  return out;
+}
+
+/**
+ * The same rule as a where clause: people NO live schedule covers on `on`
+ * or later — for counts and lists that must match scheduleMembershipFor.
+ */
+export function onNoScheduleWhere(on: string = todayYmd()): Prisma.AssociateWhereInput {
+  return {
+    AND: [
+      { payScheduleAssignments: { none: { schedule: LIVE_SCHEDULE, OR: [{ effectiveTo: null }, { effectiveTo: { gte: dateOnly(on) } }] } } },
+      // …and not a legacy member (no history, the mirror names a live schedule).
+      {
+        OR: [
+          { payScheduleAssignments: { some: {} } },
+          { payrollScheduleId: null },
+          { payrollSchedule: { is: { OR: [{ isActive: false }, { deletedAt: { not: null } }] } } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Who a payroll run is for: hired (an approved application or an open
+ * placement) and employed (not deleted, separated or paused). The readiness
+ * grid and the "on no schedule" counts read the same population, so the
+ * Schedule column's misses are the pay schedules page's number.
+ */
+export const PAY_RUN_POPULATION_WHERE: Prisma.AssociateWhereInput = {
+  AND: [
+    { deletedAt: null, separatedAt: null, deactivatedAt: null },
+    { OR: [{ applications: { some: { status: 'APPROVED', deletedAt: null } } }, { assignments: { some: { endedAt: null } } }] },
+  ],
+};

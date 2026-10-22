@@ -87,15 +87,19 @@ export function HeadcountHome() {
 
       {overview.isError && <QueryError what="the headcount" query={overview} />}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-4 ${typeof o?.inHousing === 'number' ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+        {/* "Working" and "On the books": the two named numbers every page
+            shows (apps/api/src/lib/peopleStatus.ts). */}
         <MetricCard
-          label={`Active ${term('workers').toLowerCase()}`}
+          label="Working"
           value={loading || !o ? '—' : n(o.active)}
-          hint={o ? `Worked in the last ${o.windowDays} days or scheduled ahead` : undefined}
+          hint={o ? `Worked in the last ${o.windowDays} days or scheduled ahead${o.onTheBooks !== undefined ? ` · ${n(o.onTheBooks)} on the books` : ''}` : undefined}
+          href="/people?workStatus=ACTIVE"
         />
         <MetricCard label="Scheduled this week" value={loading || !o ? '—' : n(o.scheduledThisWeek)} hint="On an assigned shift in the current workweek" />
         <MetricCard label="On payroll last period" value={loading || !o ? '—' : o.onPayrollLastPeriod ? n(o.onPayrollLastPeriod.count) : '—'} hint={payrollHint} />
-        <MetricCard label="In housing" value={loading || !o ? '—' : o.inHousing === null ? '—' : n(o.inHousing)} hint={o && o.inHousing === null ? 'No housing link yet' : undefined} />
+        {/* Shown once housing is linked: a dash and "No housing link yet" in prime space said nothing (and a hotel tenant has no housing). */}
+        {typeof o?.inHousing === 'number' && <MetricCard label="In housing" value={loading ? '—' : n(o.inHousing)} />}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -235,11 +239,13 @@ function ReconciliationCard({ summary, loaded }: { summary: ReconciliationSummar
 function NotActiveCard({ notActive, windowDays }: { notActive: HeadcountOverview['notActive'] | undefined; windowDays: number | undefined }) {
   const rows = notActive
     ? [
-        { label: 'Onboarding', hint: 'Application open, not placed yet', value: notActive.onboarding },
-        { label: 'Placed, no recent work', hint: `No clock-in in ${windowDays ?? 'N'} days and nothing scheduled`, value: notActive.placedNoRecentWork },
-        { label: 'Employed, not placed', hint: 'No open assignment or approved application', value: notActive.employedNotPlaced },
-        { label: 'Separated', hint: 'Left the company', value: notActive.separated },
-        { label: 'Deactivated', hint: 'Account switched off', value: notActive.deactivated },
+        // The People directory's words and filters (one status per person,
+        // apps/api/src/lib/peopleStatus.ts): each row opens the people it counts.
+        { label: 'No recent shifts', hint: `Placed, no shift worked in ${windowDays ?? 'N'} days and nothing scheduled`, value: notActive.placedNoRecentWork, status: 'PLACED_NOT_ACTIVE' },
+        { label: 'Not placed', hint: 'Hired, not placed at any site', value: notActive.employedNotPlaced, status: 'NOT_PLACED' },
+        { label: 'Onboarding', hint: 'Onboarding in progress, not hired yet', value: notActive.onboarding, status: 'ONBOARDING' },
+        { label: 'Paused', hint: 'Paused by hand; still employed', value: notActive.deactivated, status: 'DEACTIVATED' },
+        { label: 'Separated', hint: 'No longer with the company', value: notActive.separated, status: 'SEPARATED' },
       ]
     : null;
   const total = rows ? rows.reduce((s, r) => s + r.value, 0) : 0;
@@ -257,7 +263,7 @@ function NotActiveCard({ notActive, windowDays }: { notActive: HeadcountOverview
               {rows.map((r) => (
                 <tr key={r.label} className="border-t border-navy-secondary/60 first:border-t-0">
                   <th scope="row" className="py-1.5 pr-3 text-left font-normal">
-                    <span className="text-white">{r.label}</span>
+                    <Link to={`/people?workStatus=${r.status}`} className="text-white underline-offset-2 hover:text-gold hover:underline">{r.label}</Link>
                     <span className="block text-xs2 text-silver/70">{r.hint}</span>
                   </th>
                   <td className="py-1.5 text-right font-sans font-semibold tabular-nums text-white">{n(r.value)}</td>

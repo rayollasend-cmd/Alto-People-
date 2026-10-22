@@ -84,15 +84,17 @@ describe('Inbox links carry the filter their count uses', () => {
     expect(rows.filter((r) => r.stage === 'DECIDE' || r.stage === 'FINAL_DUE')).toHaveLength(s.count);
   });
 
-  it('onboarding drafts gone quiet: a week idle, linked to the idle-drafts filter', async () => {
+  it('onboarding stuck: nothing moved in a week (no task done, no invite), linked to the Stuck filter', async () => {
     const client = await createClient();
     const a = await createAssociate();
     const app = await createApplicationWithChecklist({ associateId: a.id, clientId: client.id });
-    await prisma.$executeRaw`UPDATE "Application" SET "updatedAt" = now() - interval '9 days' WHERE id = ${app.id}::uuid`;
+    // One definition of stuck (lib/applicationFilters): the last invite or
+    // completed task, not the row's updatedAt.
+    await prisma.$executeRaw`UPDATE "Application" SET "invitedAt" = now() - interval '9 days' WHERE id = ${app.id}::uuid`;
     const b = await createAssociate();
     await createApplicationWithChecklist({ associateId: b.id, clientId: client.id }); // fresh: not counted
     const s = find(await inbox(), 'onboarding-stuck')!;
     expect(s.count).toBe(1);
-    expect(query(s.path).get('status')).toBe('IDLE_DRAFTS');
+    expect(query(s.path).get('status')).toBe('STUCK');
   });
 });
