@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Coffee, FileSignature } from 'lucide-react';
@@ -73,10 +74,15 @@ function TimesRow({ label, before, after, tz }: { label: string; before: string 
 
 function CorrectionCard({ r, onDeny }: { r: CorrectionRequest; onDeny: (r: CorrectionRequest) => void }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const approve = useMutation({
     mutationFn: () => decideCorrection(r.id, 'APPROVE'),
     onSuccess: () => {
-      toast.success(`Approved. ${r.name}’s time now shows the corrected punch.`);
+      // The card leaves the Waiting list: the toast keeps the way to the
+      // entry it changed, so checking the punch is one tap, not a search.
+      toast.success(`Approved. ${r.name}’s time now shows the corrected punch.`, {
+        action: r.timeEntryId ? { label: 'View entry', onClick: () => navigate(`/time-attendance?entry=${r.timeEntryId}`) } : undefined,
+      });
       void qc.invalidateQueries({ queryKey: ['time-corrections'] });
       void qc.invalidateQueries({ queryKey: ['inbox'] });
     },
@@ -150,10 +156,31 @@ export function TimeCorrectionsDesk() {
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not send it back.'),
   });
+  // Monday morning is a stack of signed, clean corrections: approve the
+  // whole waiting list in one go instead of one card at a time.
+  const waiting = status === 'SUBMITTED' ? (q.data?.requests ?? []) : [];
+  const approveAll = useMutation({
+    mutationFn: async () => {
+      const results = await Promise.allSettled(waiting.map((r) => decideCorrection(r.id, 'APPROVE')));
+      return results.filter((x) => x.status === 'rejected').length;
+    },
+    onSuccess: (failed) => {
+      if (failed === 0) toast.success(`Approved all ${waiting.length}.`);
+      else toast.warning(`Approved ${waiting.length - failed}; ${failed} could not be approved.`);
+      void qc.invalidateQueries({ queryKey: ['time-corrections'] });
+      void qc.invalidateQueries({ queryKey: ['inbox'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not approve them.'),
+  });
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-ink-muted">Each request carries the {term('worker').toLowerCase()}’s signed attestation. Approving changes their time record under your name.</p>
+        {waiting.length > 1 && (
+          <Button size="sm" variant="secondary" onClick={() => approveAll.mutate()} loading={approveAll.isPending}>
+            Approve all {waiting.length}
+          </Button>
+        )}
         <SegmentedControl<'SUBMITTED' | 'APPROVED' | 'DENIED'>
           ariaLabel="Which requests"
           value={status}

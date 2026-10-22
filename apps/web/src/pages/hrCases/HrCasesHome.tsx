@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { nextInQueue, prevInQueue } from '@/lib/queueNext';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -601,6 +602,16 @@ export function HrCasesHome() {
         <CaseDetailDrawer
           caseId={openId}
           canManage={canManage}
+          // Work the queue from inside the drawer: previous / next case in
+          // the list as filtered, instead of close → find → open per case.
+          onPrev={() => {
+            const p = prevInQueue(visibleQueue, openId);
+            if (p) setOpenId(p.id);
+          }}
+          onNext={() => {
+            const n = nextInQueue(visibleQueue, openId);
+            if (n) setOpenId(n.id);
+          }}
           onClose={() => {
             setOpenId(null);
             // Soft — keep the list rendered (no skeleton, no scroll loss)
@@ -758,10 +769,14 @@ function CaseDetailDrawer({
   caseId,
   canManage,
   onClose,
+  onPrev,
+  onNext,
 }: {
   caseId: string;
   canManage: boolean;
   onClose: () => void;
+  onPrev?: () => void;
+  onNext?: () => void;
 }) {
   const { t } = useI18n();
   const [reply, setReply] = useState('');
@@ -938,6 +953,16 @@ function CaseDetailDrawer({
         )}
       </DrawerBody>
       <DrawerFooter>
+        {onPrev && (
+          <Button variant="ghost" onClick={onPrev}>
+            ← Previous
+          </Button>
+        )}
+        {onNext && (
+          <Button variant="ghost" onClick={onNext}>
+            Next case →
+          </Button>
+        )}
         <Button onClick={onClose}>{t('hrc.close')}</Button>
       </DrawerFooter>
     </Drawer>

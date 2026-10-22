@@ -43,7 +43,9 @@ import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, ymdLocal } from '@/lib/format';
-import { ExpirationAtRisk, ExpirationTimeline, type RiskFilters } from './ExpirationsRisk';
+import { ExpirationAtRisk, ExpirationTimeline, applyRiskFilters, type RiskFilters } from './ExpirationsRisk';
+import type { ExpirationRisk } from '@/lib/expirations113Api';
+import { nextInQueue } from '@/lib/queueNext';
 
 /**
  * Phase 113 — Expiration dashboard.
@@ -105,10 +107,19 @@ export function ExpirationsHome() {
           key={renewTarget.id}
           item={renewTarget}
           onClose={() => setRenewTarget(null)}
-          onSaved={() => {
+          onSaved={(goNext) => {
             void qc.invalidateQueries({ queryKey: ['expirations', 'risk'] });
             void qc.invalidateQueries({ queryKey: ['ExpirationsHome'] });
-            setRenewTarget(null);
+            if (!goNext) {
+              setRenewTarget(null);
+              return;
+            }
+            // "Renew & next" used to close here in the At-risk and Timeline
+            // views (only the list view chained). Chain through the rows in
+            // view, in their order, skipping the one just renewed.
+            const data = qc.getQueryData<ExpirationRisk>(['expirations', 'risk']);
+            const inView = applyRiskFilters(data?.items ?? [], filters);
+            setRenewTarget(nextInQueue(inView, renewTarget.id));
           }}
         />
       )}

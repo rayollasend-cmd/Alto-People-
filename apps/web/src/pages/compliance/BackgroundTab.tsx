@@ -1,4 +1,5 @@
 import { BackgroundProviderPanel } from './providers/BackgroundProviderPanel';
+import { nextInQueue } from '@/lib/queueNext';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -650,6 +651,9 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
               void refresh();
               void queryClient.invalidateQueries({ queryKey: ['BackgroundTab', 'adverse'] });
             }}
+            // Decide, then the next check in the list as filtered — the I-9
+            // and E-Verify tabs already work this way.
+            onNext={() => setDrawerTarget(nextInQueue(visible, drawerTarget.id))}
           />
         )}
       </Drawer>
@@ -666,6 +670,7 @@ function BackgroundCheckDetailPanel({
   onTransition,
   onReportsChanged,
   onCheckChanged,
+  onNext,
 }: {
   check: BackgroundCheck;
   /** null while the audited detail fetch is in flight. */
@@ -678,6 +683,8 @@ function BackgroundCheckDetailPanel({
   onReportsChanged: () => void;
   /** An adverse-action step moved the check; here is the record as it now stands. */
   onCheckChanged: (updated: BackgroundCheck) => void;
+  /** Move to the next check in the list as filtered. */
+  onNext?: () => void;
 }) {
   const ageDays = ageInDays(check.initiatedAt);
   const finalized = isTerminal(check.status);
@@ -788,6 +795,11 @@ function BackgroundCheckDetailPanel({
               {labelFor(s)}
             </Button>
           ))}
+          {onNext && (
+            <Button size="sm" variant="ghost" onClick={onNext} disabled={pending}>
+              Next in list →
+            </Button>
+          )}
         </DrawerFooter>
       )}
     </>

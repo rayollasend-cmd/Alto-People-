@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { nextInQueue } from '@/lib/queueNext';
 import { useQuery } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
 import { GraduationCap, Plus } from 'lucide-react';
@@ -482,7 +483,8 @@ export function TuitionHome() {
           row={openRow}
           onClose={() => setOpenId(null)}
           onSaved={() => {
-            setOpenId(null);
+            // Next request still waiting, in list order; closes when none.
+            setOpenId(nextInQueue(queue ?? [], openRow.id, (r) => r.status === 'SUBMITTED')?.id ?? null);
             refresh();
             if (canProcessPayroll) refreshSummary();
           }}

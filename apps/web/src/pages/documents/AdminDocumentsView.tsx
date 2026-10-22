@@ -80,6 +80,7 @@ import {
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { nextInQueue } from '@/lib/queueNext';
 import { cn } from '@/lib/cn';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
@@ -1699,6 +1700,22 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   >
                     <ShieldCheck className="h-3.5 w-3.5" />
                     <span className="ml-1 hidden sm:inline">Verify</span>
+                  </Button>
+                  {/* An onboarding wave is dozens of IDs in a sitting: verify
+                      and move to the next upload still waiting, in list order,
+                      without closing and hunting for the row. */}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      const target = previewDoc;
+                      const ok = await onVerify(target, verifyExpiresAt || undefined);
+                      if (!ok) return;
+                      setPreviewDoc(nextInQueue(docs ?? [], target.id, (d) => d.status === 'UPLOADED'));
+                    }}
+                    loading={pendingId === previewDoc.id}
+                  >
+                    Verify &amp; next
                   </Button>
                 </>
               )}

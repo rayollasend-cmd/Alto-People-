@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { nextInQueue } from '@/lib/queueNext';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { ClipboardList, Download, Plus, Star } from 'lucide-react';
 import { toast } from 'sonner';
@@ -151,6 +152,11 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
       await submitReview(submitTarget.id);
       setSubmitTarget(null);
       await refresh();
+      // Review season: open the next draft in the list instead of closing
+      // and finding it; the drawer closes when no draft is left.
+      setDrawerTarget((cur) =>
+        cur ? nextInQueue(filtered ?? [], submitTarget.id, (r) => r.status === 'DRAFT' && r.id !== cur.id) : null,
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not submit the review.');
     } finally {

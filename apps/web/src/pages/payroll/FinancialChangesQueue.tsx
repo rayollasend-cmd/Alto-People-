@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { nextInQueue } from '@/lib/queueNext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Landmark, PhoneCall, ShieldAlert } from 'lucide-react';
@@ -257,7 +258,16 @@ export function FinancialChangesQueue() {
         </CardContent>
       </Card>
 
-      <ChangeDialog change={selected} onClose={close} onChanged={refresh} />
+      <ChangeDialog
+        change={selected}
+        onClose={close}
+        onChanged={refresh}
+        // Verifying bank and pay-method changes is a run of decisions:
+        // after each one, the next change still open, in list order.
+        onDecided={() =>
+          setOpenId(selected ? (nextInQueue(rows, selected.id, (r) => r.status === 'PENDING' || r.status === 'HELD')?.id ?? null) : null)
+        }
+      />
     </ListTemplate>
   );
 }
@@ -266,10 +276,13 @@ function ChangeDialog({
   change,
   onClose,
   onChanged,
+  onDecided,
 }: {
   change: FinancialChangeRow | null;
   onClose: () => void;
   onChanged: () => void;
+  /** After a decision: move to the next open change instead of closing. */
+  onDecided?: () => void;
 }) {
   const roleLabel = useRoleLabel();
   const { user } = useAuth();
@@ -297,7 +310,8 @@ function ChangeDialog({
       await fn();
       toast.success(done);
       onChanged();
-      onClose();
+      if (onDecided) onDecided();
+      else onClose();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'That did not go through.');
     } finally {

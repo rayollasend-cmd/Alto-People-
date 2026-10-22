@@ -39,9 +39,11 @@ import {
   Drawer,
   DrawerBody,
   DrawerDescription,
+  DrawerFooter,
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui/Drawer';
+import { nextInQueue } from '@/lib/queueNext';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Field } from '@/components/ui/Field';
@@ -230,21 +232,27 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
     }
   };
 
-  const quickApprove = async (r: TimeOffRequest) => {
+  /** True when the request was approved outright (the drawer's "& next" advances only then). */
+  const quickApprove = async (r: TimeOffRequest): Promise<boolean> => {
     setQuickApproveId(r.id);
     try {
       await approveAdminRequest(r.id, undefined);
-      toast.success(`Approved ${r.associateName ?? 'request'}.`);
+      toast.success(`Approved ${r.associateName ?? 'request'}.`, {
+        // The approved row leaves the Pending list: keep a way back to it.
+        action: { label: 'View', onClick: () => setDetail({ ...r, status: 'APPROVED' }) },
+      });
       refresh();
+      return true;
     } catch (err) {
       if (err instanceof ApiError && err.code === 'insufficient_balance') {
         const d = err.details as { currentMinutes: number; requestedMinutes: number };
         await offerOverride(r.id, r.associateName ?? 'this request', d, refresh);
-        return;
+        return false;
       }
       toast.error('Could not approve.', {
         description: err instanceof Error ? err.message : 'Something went wrong.',
       });
+      return false;
     } finally {
       setQuickApproveId(null);
     }
@@ -641,6 +649,38 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                 )}
               </div>
             </DrawerBody>
+            {/* Decide right here, after reading the full reason — and move
+                on to the next pending request instead of close → find row. */}
+            {canManage && detail.status === 'PENDING' && (
+              <DrawerFooter>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setDenyTarget(detail);
+                    setDetail(null);
+                  }}
+                >
+                  Deny
+                </Button>
+                <Button
+                  variant="secondary"
+                  loading={quickApproveId === detail.id}
+                  onClick={() => void quickApprove(detail).then((ok) => ok && setDetail(null))}
+                >
+                  Approve
+                </Button>
+                <Button
+                  loading={quickApproveId === detail.id}
+                  onClick={() =>
+                    void quickApprove(detail).then(
+                      (ok) => ok && setDetail(nextInQueue(items ?? [], detail.id, (r) => r.status === 'PENDING')),
+                    )
+                  }
+                >
+                  Approve &amp; next
+                </Button>
+              </DrawerFooter>
+            )}
           </>
         )}
       </Drawer>

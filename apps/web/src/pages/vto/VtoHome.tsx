@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { nextInQueue } from '@/lib/queueNext';
 import { useQuery } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
 import { Heart, Plus } from 'lucide-react';
@@ -561,7 +562,9 @@ export function VtoHome() {
           row={openQueueRow}
           onClose={() => setOpenQueueId(null)}
           onSaved={() => {
-            setOpenQueueId(null);
+            // Move on to the next request still waiting, in list order;
+            // the drawer closes only when the queue is empty.
+            setOpenQueueId(nextInQueue(filteredQueue ?? [], openQueueRow.id, (e) => e.status === 'PENDING')?.id ?? null);
             // Soft — the queue stays rendered (scroll + remaining
             // selection intact) while the decided row reconciles.
             refresh();

@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { nextInQueue } from '@/lib/queueNext';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Plus, Receipt, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -21,6 +23,8 @@ import {
   type ReimbursementStatus,
   type ReimbursementSummary,
 } from '@/lib/reimbursements97Api';
+
+const REIMBURSEMENT_STATUSES: readonly ReimbursementStatus[] = ['DRAFT', 'SUBMITTED', 'MANAGER_APPROVED', 'SETTLED', 'REJECTED', 'PAID'];
 import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -154,7 +158,14 @@ export function ReimbursementsHome() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<ReimbursementSummary | null>(null);
-  const [statusFilter, setStatusFilter] = useState<ReimbursementStatus | 'ALL'>('ALL');
+  // The inbox and the "awaiting your approval" notification name the state
+  // (?status=) and the report (?id=) they counted, so the page opens on it.
+  const [params] = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState<ReimbursementStatus | 'ALL'>(() => {
+    const s = params.get('status');
+    return s && REIMBURSEMENT_STATUSES.includes(s as ReimbursementStatus) ? (s as ReimbursementStatus) : 'ALL';
+  });
+  const openedFromUrl = useRef(false);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -164,6 +175,16 @@ export function ReimbursementsHome() {
     queryFn: () => listReimbursements(),
   });
   const rows: ReimbursementSummary[] | null = refreshQuery.data?.reimbursements ?? null;
+  // ?id= opens that report once the list is here (once: closing it must stick).
+  useEffect(() => {
+    const id = params.get('id');
+    if (!id || !rows || openedFromUrl.current) return;
+    const r = rows.find((x) => x.id === id);
+    if (r) {
+      openedFromUrl.current = true;
+      setActive(r);
+    }
+  }, [params, rows]);
   useEffect(() => {
     const r = refreshQuery.data;
     if (r === undefined) return;
@@ -365,6 +386,9 @@ export function ReimbursementsHome() {
           canSettle={canSettle}
           onClose={() => setActive(null)}
           onChanged={refresh}
+          // The next report in the same state, in list order (an approver's
+          // afternoon is a run of these); closes when none is left.
+          onDecided={() => setActive(nextInQueue(visible, active.id, (r) => r.status === active.status))}
         />
       )}
     </ListTemplate>
@@ -444,12 +468,15 @@ function ReimbursementDrawer({
   canSettle,
   onClose,
   onChanged,
+  onDecided,
 }: {
   summary: ReimbursementSummary;
   canApprove: boolean;
   canSettle: boolean;
   onClose: () => void;
   onChanged: () => void;
+  /** After approve / reject: the parent moves to the next report waiting. */
+  onDecided?: () => void;
 }) {
   const { t } = useI18n();
   const prompt = usePrompt();
@@ -504,6 +531,7 @@ function ReimbursementDrawer({
       toast.success(t('reimbPage.approvedToast'));
       refresh();
       onChanged();
+      onDecided?.();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     }
@@ -522,6 +550,7 @@ function ReimbursementDrawer({
       toast.success(t('reimbPage.rejectedToast'));
       refresh();
       onChanged();
+      onDecided?.();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     }

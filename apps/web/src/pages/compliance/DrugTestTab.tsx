@@ -1,4 +1,5 @@
 import { DrugProviderPanel } from './providers/DrugProviderPanel';
+import { nextInQueue } from '@/lib/queueNext';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -626,6 +627,8 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
               void detailQuery.refetch();
               void refresh(); // result counts in the table + KPI strip
             }}
+            // Decide, then the next test in the list as filtered.
+            onNext={() => setDrawerTarget(nextInQueue(visible, drawerTarget.id))}
           />
         )}
       </Drawer>
@@ -641,6 +644,7 @@ function DrugTestDetailPanel({
   pending,
   onTransition,
   onReportsChanged,
+  onNext,
 }: {
   test: DrugTest;
   /** null while the audited detail fetch is in flight. */
@@ -651,6 +655,8 @@ function DrugTestDetailPanel({
   pending: boolean;
   onTransition: (status: DrugTestStatus) => void;
   onReportsChanged: () => void;
+  /** Move to the next test in the list as filtered. */
+  onNext?: () => void;
 }) {
   const ageDays = ageInDays(test.initiatedAt);
   const finalized = isTerminal(test.status);
@@ -744,6 +750,11 @@ function DrugTestDetailPanel({
               {labelFor(s)}
             </Button>
           ))}
+          {onNext && (
+            <Button size="sm" variant="ghost" onClick={onNext} disabled={pending}>
+              Next in list →
+            </Button>
+          )}
         </DrawerFooter>
       )}
     </>
