@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { PayChangeContextPanel } from '@/components/payroll/PayChangeContextPanel';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { SavedViewsMenu } from '@/components/SavedViewsMenu';
 import { ProgramSection } from './ProgramSection';
 import { WhatsAppStatusLine } from './WhatsAppStatusLine';
@@ -590,6 +591,11 @@ export function PeopleDirectory() {
         }
         secondaryActions={
           <>
+          {can('view:org') && (
+            <Button asChild variant="outline" title="People, agents and robots in one roster">
+              <Link to="/workers?type=PERSON">Workforce roster</Link>
+            </Button>
+          )}
           {can('manage:org') && (
             <Button asChild variant="outline">
               <Link to="/people/mass-update">Mass update</Link>
@@ -1033,6 +1039,8 @@ function DirectoryTable({
   onSelect: (row: DirectoryEntry) => void;
 }) {
   const term = useTerm();
+  const { can } = useAuth();
+  const navigate = useNavigate();
   const hasClients = useTenant().moduleOn('clientPortal');
   const directoryColumns = useMemo(
     () =>
@@ -1041,6 +1049,22 @@ function DirectoryTable({
       ),
     [term, hasClients],
   );
+  // Pick people, then act on just them (HR walk 7): mass update already
+  // takes a list of ids, so five named people at five stores is one batch.
+  const exportChosen = (ids: string[]) => {
+    const chosen = rows.filter((r) => ids.includes(r.id));
+    downloadCsv(`people-selected-${ymdLocal()}.csv`, [
+      ['Name', 'Status', 'Email', ...(hasClients ? ['Client'] : []), 'Type', 'Start date'],
+      ...chosen.map((r) => [
+        `${r.firstName} ${r.lastName}`,
+        statusLabel(r.status),
+        r.email,
+        ...(hasClients ? [r.workplaceClientName ?? ''] : []),
+        EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+        r.startDate ?? '',
+      ]),
+    ]);
+  };
   return (
     <Card className="p-3">
       <DataGrid<DirectoryEntry>
@@ -1056,6 +1080,20 @@ function DirectoryTable({
         virtualizeAfter={VIRTUALIZE_THRESHOLD}
         rowHeight={ROW_HEIGHT_PX}
         columns={directoryColumns}
+        selectable={{
+          actions: (ids) => (
+            <>
+              {can('manage:org') && (
+                <Button size="sm" onClick={() => navigate(`/people/mass-update?ids=${ids.join(',')}`)}>
+                  Mass update
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => exportChosen(ids)}>
+                Export selected
+              </Button>
+            </>
+          ),
+        }}
       />
     </Card>
   );
@@ -4330,6 +4368,8 @@ function NewRateDialog({
             </Field>
           </div>
 
+          <PayChangeContextPanel associateId={a.id} payType={payType} amount={amountNum} effectiveFrom={effectiveFrom} />
+
           <Field label="Notes (optional)">
             {(p) => (
               <Textarea
@@ -4422,9 +4462,9 @@ export function PaymentsTab({ associateId }: { associateId: string }) {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm text-silver">
-          Pay periods processed by the external payroll provider, with
-          uploaded evidence for audit. Files also appear in the Documents tab
-          under Tax &amp; payroll.
+          Pay periods paid outside in-house payroll (an earlier provider, a
+          manual check), with the evidence for audit. Files also appear in the
+          Documents tab under Tax &amp; payroll.
         </p>
         <Button
           size="sm"

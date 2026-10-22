@@ -46,7 +46,7 @@ export interface AssistantIdentity {
   name: string;
   /** The product name, said once when asked who it is. */
   product: string;
-  audience: 'associate' | 'manager' | 'admin';
+  audience: 'associate' | 'driver' | 'manager' | 'admin';
   roleLabel: string;
   /** ISO language: en, es, tr… */
   lang: string;

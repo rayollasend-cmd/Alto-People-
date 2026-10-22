@@ -32,9 +32,23 @@ interface Ring {
 
 let cachedRing: Ring | null = null;
 
+/**
+ * A keyring the app cannot use — a malformed key, an active id with no key
+ * behind it, a canary that no longer decrypts. index.ts exits on it at
+ * boot (with the message as the fix), before anyone's read can fail.
+ * Defined here, where the ring is parsed, so lib/keyring can re-export it
+ * without a cycle.
+ */
+export class KeyringError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KeyringError';
+  }
+}
+
 function decodeKey(b64: string, name: string): Buffer {
   const decoded = Buffer.from(b64, 'base64');
-  if (decoded.length !== 32) throw new Error(`${name} must decode to 32 bytes (use openssl rand -base64 32)`);
+  if (decoded.length !== 32) throw new KeyringError(`${name} must decode to 32 bytes (use openssl rand -base64 32)`);
   return decoded;
 }
 
@@ -44,11 +58,16 @@ function ring(): Ring {
   for (const part of (env.FIELD_KEYS ?? '').split(',').map((p) => p.trim()).filter(Boolean)) {
     const m = /^(\d{1,3}):(.+)$/.exec(part);
     const id = m ? Number(m[1]) : NaN;
-    if (!m || !Number.isInteger(id) || id < 1 || id > 255) throw new Error('FIELD_KEYS entries are "<id 1-255>:<base64 key>"');
+    if (!m || !Number.isInteger(id) || id < 1 || id > 255) throw new KeyringError('FIELD_KEYS entries are "<id 1-255>:<base64 key>"');
     keys.set(id, decodeKey(m[2]!, `FIELD_KEYS key ${id}`));
   }
   const active = env.FIELD_KEY_ACTIVE === undefined ? 0 : Number(env.FIELD_KEY_ACTIVE);
-  if (!keys.has(active)) throw new Error(`FIELD_KEY_ACTIVE=${active} is not in the keyring`);
+  if (!keys.has(active)) {
+    throw new KeyringError(
+      `FIELD_KEY_ACTIVE=${active} names a key that is not in the ring (keys on file: ${[...keys.keys()].sort((a, b) => a - b).join(', ')}). ` +
+        'Add it to FIELD_KEYS as "<id>:<base64>" or set FIELD_KEY_ACTIVE to a key that exists.',
+    );
+  }
   cachedRing = { keys, active };
   return cachedRing;
 }
@@ -66,8 +85,8 @@ export function __resetKeyringForTests(): void {
 
 /** Encrypt under a specific key of the ring (the canary writes one per key); new data uses encryptBytes. */
 export function encryptWithKey(plaintext: Uint8Array, keyId: number): Buffer<ArrayBuffer> {
+  const key = ring().keys.get(keyId); // a bad ring throws KeyringError here, never 'encryption failed'
   try {
-    const key = ring().keys.get(keyId);
     if (!key) throw new Error('no such key');
     const iv = randomBytes(IV_LEN);
     const cipher = createCipheriv('aes-256-gcm', key, iv);

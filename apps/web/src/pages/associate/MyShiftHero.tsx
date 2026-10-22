@@ -16,6 +16,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { useMyEarnings, useTickSeconds } from '@/components/EarningsCard';
 
@@ -358,17 +359,20 @@ export function MyShiftHero({
 }
 
 /**
- * The next seven days, one cell each — what the supervisor's "Next 7 days"
- * is to the store, for one person: which days they work, when they start,
- * and which still need a confirm.
+ * The next fourteen days, one cell each (floor walk 26) — which days they
+ * work, when they start, and which still need a confirm. It replaces a
+ * seven-day strip that counted a different week from the hours tile beside
+ * it (Wed–Tue against the Sat–Fri payroll week), so the two disagreed;
+ * this one makes no weekly claim at all. Days off are a quiet dash, not
+ * seven boxes that each say "Off".
  */
-export function MyWeekStrip({ shifts }: { shifts: Shift[] | null | undefined }) {
+export function MyNext14Strip({ shifts }: { shifts: Shift[] | null | undefined }) {
   const { t } = useI18n();
   if (!shifts) return null;
   const now = Date.now();
   const tz = shifts.find((s) => s.timezone)?.timezone ?? null;
   const todayKey = zonedDayKey(new Date(now), tz);
-  const days = Array.from({ length: 7 }, (_, i) => {
+  const days = Array.from({ length: 14 }, (_, i) => {
     const base = parseYmd(todayKey)!;
     const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -378,44 +382,45 @@ export function MyWeekStrip({ shifts }: { shifts: Shift[] | null | undefined }) 
     return { key, date: d, shifts: onDay };
   });
   const working = days.filter((d) => d.shifts.length > 0).length;
+  const needsConfirm = (d: (typeof days)[number]) =>
+    d.shifts.some((s) => s.status === 'ASSIGNED' && !s.acknowledgedAt && new Date(s.startsAt).getTime() > now);
 
   return (
     <Card className="mb-4 animate-enter">
       <CardContent>
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-sm font-medium text-white">{t('week.title')}</h2>
-          <span className="text-xs text-silver/70">
+          <SectionTitle as="h2" title={t('next14.title')} className="mb-0" />
+          <span className="text-xs text-ink-muted">
             {t(working === 1 ? 'week.daysOne' : 'week.daysMany', { count: working })}
           </span>
         </div>
-        <Link to="/scheduling" className="mt-3 grid grid-cols-7 gap-1.5" aria-label={t('dash.seeFullSchedule')}>
+        <Link
+          to="/scheduling"
+          className="mt-3 grid grid-cols-7 gap-1.5"
+          aria-label={t('next14.aria')}
+          data-testid="next-14-days"
+        >
           {days.map((d, i) => {
             const first = d.shifts[0];
-            const unconfirmed = d.shifts.some(
-              (s) => s.status === 'ASSIGNED' && !s.acknowledgedAt && new Date(s.startsAt).getTime() > now,
-            );
+            const unconfirmed = needsConfirm(d);
             return (
               <div
                 key={d.key}
+                data-day={d.key}
+                data-on={first ? 'true' : 'false'}
                 className={cn(
-                  'flex flex-col items-center rounded-md border px-0.5 py-2 text-center',
-                  i === 0 ? 'border-gold/50 bg-gold/[0.08]' : 'border-navy-secondary bg-navy-secondary/20',
-                  first && i !== 0 && 'border-gold/25',
+                  'flex flex-col items-center rounded-md border px-0.5 py-1.5 text-center',
+                  i === 0 ? 'border-gold/50 bg-gold/[0.08]' : first ? 'border-gold/25 bg-navy-secondary/20' : 'border-line bg-transparent',
                 )}
               >
-                <span className={cn('text-2xs uppercase', i === 0 ? 'text-gold' : 'text-silver/70')}>
+                <span className={cn('text-2xs uppercase', i === 0 ? 'text-gold' : 'text-ink-muted')}>
                   {fmtWeekday(d.date, 'narrow')}
                 </span>
-                <span className="text-sm font-semibold tabular-nums text-white">{d.date.getDate()}</span>
-                <span
-                  className={cn(
-                    'mt-1 text-2xs leading-tight tabular-nums',
-                    first ? 'text-gold' : 'text-silver/50',
-                  )}
-                >
+                <span className="text-sm font-semibold tabular-nums text-ink">{d.date.getDate()}</span>
+                <span className={cn('mt-0.5 text-2xs leading-tight tabular-nums', first ? 'text-gold' : 'text-ink-subtle')}>
                   {first
                     ? fmtTimeTz(first.startsAt, first.timezone).replace(':00', '').replace(/\s?([AP])M/i, (_m, p: string) => p.toLowerCase())
-                    : t('week.off')}
+                    : '–'}
                 </span>
                 <span
                   aria-hidden="true"
@@ -425,10 +430,8 @@ export function MyWeekStrip({ shifts }: { shifts: Shift[] | null | undefined }) 
             );
           })}
         </Link>
-        {days.some((d) =>
-          d.shifts.some((s) => s.status === 'ASSIGNED' && !s.acknowledgedAt && new Date(s.startsAt).getTime() > now),
-        ) && (
-          <p className="mt-2 flex items-center gap-1.5 text-2xs text-silver/70">
+        {days.some(needsConfirm) && (
+          <p className="mt-2 flex items-center gap-1.5 text-2xs text-ink-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden="true" />
             {t('week.needsConfirm')}
           </p>

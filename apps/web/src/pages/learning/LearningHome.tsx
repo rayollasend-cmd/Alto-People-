@@ -60,12 +60,34 @@ import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
 type Tab = 'courses' | 'enrollments' | 'expiring';
+type TFn = ReturnType<typeof useI18n>['t'];
+
+function courseStatusLabel(t: TFn, s: CourseStatus): string {
+  switch (s) {
+    case 'DRAFT': return t('learning.statusDraft');
+    case 'PUBLISHED': return t('learning.statusPublished');
+    case 'ARCHIVED': return t('learning.statusArchived');
+    default: return statusLabel(s);
+  }
+}
+
+function enrollmentStatusLabel(t: TFn, s: EnrollmentStatus): string {
+  switch (s) {
+    case 'ASSIGNED': return t('learning.statusAssigned');
+    case 'IN_PROGRESS': return t('learning.statusInProgress');
+    case 'COMPLETED': return t('lrn.done');
+    case 'EXPIRED': return t('learning.statusExpired');
+    case 'WAIVED': return t('lrn.waived');
+    default: return statusLabel(s);
+  }
+}
 
 export function LearningHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const canViewAdmin = user ? hasCapability(user.role, 'view:compliance') : false;
   const [tab, setTab] = useState<Tab>('courses');
+  const { t } = useI18n();
 
   // Associates got the compliance-admin console (associate search, CSV
   // export, expiry windows) whose every fetch 403'd for them. They get
@@ -77,20 +99,20 @@ export function LearningHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Learning"
-        subtitle="Courses, certifications, and expiration tracking."
-        breadcrumbs={[{ label: 'Me' }, { label: 'Learning' }]}
+        title={t('lrn.crumb')}
+        subtitle={t('learning.subtitle')}
+        breadcrumbs={[{ label: t('learning.crumbMe') }, { label: t('lrn.crumb') }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="courses">
-            <BookOpen className="mr-2 h-4 w-4" /> Courses
+            <BookOpen className="mr-2 h-4 w-4" /> {t('learning.courses')}
           </TabsTrigger>
           <TabsTrigger value="enrollments">
-            <GraduationCap className="mr-2 h-4 w-4" /> Enrollments
+            <GraduationCap className="mr-2 h-4 w-4" /> {t('learning.enrollments')}
           </TabsTrigger>
           <TabsTrigger value="expiring">
-            <AlertTriangle className="mr-2 h-4 w-4" /> Expiring
+            <AlertTriangle className="mr-2 h-4 w-4" /> {t('learning.expiring')}
           </TabsTrigger>
         </TabsList>
         <TabsContent value="courses"><CoursesTab canManage={canManage} /></TabsContent>
@@ -223,12 +245,13 @@ function MyTraining() {
 
 /** Shared load-failure block: message + Retry. Never fake an empty state. */
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useI18n();
   return (
     <div className="p-6">
       <ErrorBanner
         action={
           <Button size="sm" variant="secondary" onClick={onRetry}>
-            Retry
+            {t('common.retry')}
           </Button>
         }
       >
@@ -239,6 +262,7 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 }
 
 function CoursesTab({ canManage }: { canManage: boolean }) {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<CourseStatus | 'ALL'>('ALL');
@@ -247,7 +271,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
   // One in-flight action at a time — a double-click on Publish/Archive/
   // Delete used to fire the write twice.
   const [actionKey, setActionKey] = useState<string | null>(null);
-  const act = async (key: string, fn: () => Promise<void>) => {
+  const act = async (key: string, fn: () => void | Promise<void>) => {
     if (actionKey) return;
     setActionKey(key);
     try {
@@ -262,7 +286,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
   const error = coursesQuery.error
     ? coursesQuery.error instanceof ApiError
       ? coursesQuery.error.message
-      : 'Failed to load courses.'
+      : t('learning.coursesFailed')
     : null;
   const refresh = () => void coursesQuery.refetch();
 
@@ -278,27 +302,27 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput
           className="h-8 w-64"
-          placeholder="Search courses…"
+          placeholder={t('learning.searchCourses')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search courses by name"
+          aria-label={t('learning.searchCoursesAria')}
         />
         <Select
           size="sm"
           className="w-40"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as CourseStatus | 'ALL')}
-          aria-label="Filter courses by status"
+          aria-label={t('learning.filterCoursesAria')}
         >
-          <option value="ALL">All statuses</option>
-          <option value="DRAFT">Draft</option>
-          <option value="PUBLISHED">Published</option>
-          <option value="ARCHIVED">Archived</option>
+          <option value="ALL">{t('learning.allStatuses')}</option>
+          <option value="DRAFT">{t('learning.statusDraft')}</option>
+          <option value="PUBLISHED">{t('learning.statusPublished')}</option>
+          <option value="ARCHIVED">{t('learning.statusArchived')}</option>
         </Select>
         <div className="ml-auto">
           {canManage && (
             <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> New course
+              <Plus className="mr-2 h-4 w-4" /> {t('learning.newCourse')}
             </Button>
           )}
         </div>
@@ -312,34 +336,34 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
           ) : rows.length === 0 ? (
             <EmptyState
               icon={BookOpen}
-              title="No courses"
-              description="Build a course catalog with required and optional training."
+              title={t('learning.noCourses')}
+              description={t('learning.noCoursesDesc')}
             />
           ) : filtered.length === 0 ? (
             <EmptyState
               icon={BookOpen}
-              title="No matching courses"
-              description="Adjust the search or status filter."
+              title={t('learning.noMatchingCourses')}
+              description={t('learning.adjustFilters')}
             />
           ) : (
             <DataGrid<NonNullable<typeof filtered>[number]>
               id="courses"
-              caption="Courses"
+              caption={t('learning.courses')}
               rows={filtered}
               rowKey={(c) => c.id}
               search={false}
               urlState={false}
               exportCsv={{ filename: 'courses' }}
               columns={[
-                { key: 'title', header: 'Title', accessor: (c) => c.title, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'required', header: 'Required', accessor: (c) => (c.isRequired ? 'Required' : ''), sortable: true, searchable: false, cardMeta: true, cell: (c) => (c.isRequired ? <Badge variant="destructive">Required</Badge> : '—') },
-                { key: 'validity', header: 'Validity', accessor: (c) => c.validityDays, csv: (c) => (c.validityDays ? `${c.validityDays}d` : 'Never expires'), sortable: true, searchable: false, cell: (c) => (c.validityDays ? `${c.validityDays}d` : 'Never expires') },
-                { key: 'modules', header: 'Modules', accessor: (c) => c.moduleCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
-                { key: 'enrolled', header: 'Enrolled', accessor: (c) => c.enrollmentCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
-                { key: 'status', header: 'Status', accessor: (c) => c.status, sortable: true, cell: (c) => <StatusBadge status={c.status} /> },
+                { key: 'title', header: t('learning.fieldTitle'), accessor: (c) => c.title, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'required', header: t('lrn.required'), accessor: (c) => (c.isRequired ? t('lrn.required') : ''), sortable: true, searchable: false, cardMeta: true, cell: (c) => (c.isRequired ? <Badge variant="destructive">{t('lrn.required')}</Badge> : '—') },
+                { key: 'validity', header: t('learning.colValidity'), accessor: (c) => c.validityDays, csv: (c) => (c.validityDays ? t('learning.daysShort', { n: c.validityDays }) : t('learning.neverExpires')), sortable: true, searchable: false, cell: (c) => (c.validityDays ? t('learning.daysShort', { n: c.validityDays }) : t('learning.neverExpires')) },
+                { key: 'modules', header: t('learning.colModules'), accessor: (c) => c.moduleCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                { key: 'enrolled', header: t('learning.colEnrolled'), accessor: (c) => c.enrollmentCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                { key: 'status', header: t('learning.colStatus'), accessor: (c) => c.status, sortable: true, cell: (c) => <StatusBadge status={c.status} label={courseStatusLabel(t, c.status)} /> },
                 {
                   key: 'actions',
-                  header: 'Actions',
+                  header: t('learning.colActions'),
                   accessor: () => null,
                   searchable: false,
                   csv: () => '',
@@ -357,21 +381,21 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                             void act(`pub-${c.id}`, async () => {
                               try {
                                 await publishCourse(c.id);
-                                toast.success(`Published "${c.title}".`);
+                                toast.success(t('learning.publishedToast', { title: c.title }));
                                 refresh();
                               } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed to publish.');
+                                toast.error(err instanceof ApiError ? err.message : t('learning.publishFailed'));
                               }
                             })
                           }
                         >
-                          Publish
+                          {t('learning.publish')}
                         </Button>
                       )}
                       {canManage && c.status === 'PUBLISHED' && (
                         <>
                           <Button size="sm" onClick={() => setEnrollFor(c)}>
-                            Enroll
+                            {t('learning.enroll')}
                           </Button>
                           <Button
                             size="sm"
@@ -381,9 +405,9 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                             onClick={async () => {
                               if (
                                 !(await confirm({
-                                  title: 'Archive this course?',
-                                  description: `"${c.title}" will stop accepting new enrollments. Existing enrollments are kept.`,
-                                  confirmLabel: 'Archive',
+                                  title: t('learning.archiveConfirmTitle'),
+                                  description: t('learning.archiveConfirmDesc', { title: c.title }),
+                                  confirmLabel: t('learning.archive'),
                                   destructive: true,
                                 }))
                               )
@@ -391,15 +415,15 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                               await act(`arch-${c.id}`, async () => {
                                 try {
                                   await archiveCourse(c.id);
-                                  toast.success(`Archived "${c.title}".`);
+                                  toast.success(t('learning.archivedToast', { title: c.title }));
                                   refresh();
                                 } catch (err) {
-                                  toast.error(err instanceof ApiError ? err.message : 'Failed to archive.');
+                                  toast.error(err instanceof ApiError ? err.message : t('learning.archiveFailed'));
                                 }
                               });
                             }}
                           >
-                            Archive
+                            {t('learning.archive')}
                           </Button>
                         </>
                       )}
@@ -410,19 +434,19 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                           className="text-silver hover:text-alert"
                           disabled={actionKey !== null}
                           onClick={async () => {
-                            if (!(await confirm({ title: 'Delete this course?', destructive: true }))) return;
+                            if (!(await confirm({ title: t('learning.deleteConfirmTitle'), destructive: true }))) return;
                             await act(`del-${c.id}`, async () => {
                               try {
                                 await deleteCourse(c.id);
-                                toast.success(`Deleted "${c.title}".`);
+                                toast.success(t('learning.deletedToast', { title: c.title }));
                                 refresh();
                               } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Could not delete the course.');
+                                toast.error(err instanceof ApiError ? err.message : t('learning.deleteFailed'));
                               }
                             });
                           }}
                         >
-                          Delete
+                          {t('learning.delete')}
                         </Button>
                       )}
                     </>
@@ -463,6 +487,7 @@ function NewCourseDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isRequired, setIsRequired] = useState(false);
@@ -471,7 +496,7 @@ function NewCourseDrawer({
 
   const onSubmit = async () => {
     if (!title.trim()) {
-      toast.error('Title required.');
+      toast.error(t('learning.titleRequired'));
       return;
     }
     setSaving(true);
@@ -482,10 +507,10 @@ function NewCourseDrawer({
         isRequired,
         validityDays: validityDays ? Number(validityDays) : null,
       });
-      toast.success('Course drafted.');
+      toast.success(t('learning.courseDrafted'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not create the course.');
+      toast.error(err instanceof ApiError ? err.message : t('learning.createFailed'));
     } finally {
       setSaving(false);
     }
@@ -493,11 +518,11 @@ function NewCourseDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>New course</DrawerTitle>
+        <DrawerTitle>{t('learning.newCourse')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Title</Label>
+          <Label>{t('learning.fieldTitle')}</Label>
           <Input
             className="mt-1"
             value={title}
@@ -505,7 +530,7 @@ function NewCourseDrawer({
           />
         </div>
         <div>
-          <Label>Description</Label>
+          <Label>{t('learning.description')}</Label>
           <Textarea
             className="mt-1"
             value={description}
@@ -520,11 +545,11 @@ function NewCourseDrawer({
             onChange={(e) => setIsRequired(e.target.checked)}
           />
           <Label htmlFor="new-course-required" className="mb-0">
-            Required for compliance
+            {t('learning.requiredForCompliance')}
           </Label>
         </div>
         <div>
-          <Label>Validity (days) — leave empty for never expires</Label>
+          <Label>{t('learning.validityLabel')}</Label>
           <Input
             type="number"
             className="mt-1"
@@ -536,10 +561,10 @@ function NewCourseDrawer({
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Create'}
+          {saving ? t('learning.saving') : t('learning.create')}
         </Button>
       </DrawerFooter>
     </Drawer>
@@ -555,6 +580,7 @@ function EnrollDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const term = useTerm();
   // Multi-pick built on the single-value AssociatePicker: the picker's own
   // value stays null so it never collapses into its "selected" chip; each
@@ -566,7 +592,7 @@ function EnrollDrawer({
   const onSubmit = async () => {
     const associateIds = picked.map((p) => p.id);
     if (associateIds.length === 0) {
-      toast.error('Pick at least one associate.');
+      toast.error(t('learning.pickOne'));
       return;
     }
     setSaving(true);
@@ -577,16 +603,16 @@ function EnrollDrawer({
       const skippedNames = (r as { skippedNames?: string[] }).skippedNames;
       if (r.skipped > 0 && skippedNames && skippedNames.length > 0) {
         toast.success(
-          `Enrolled ${r.created}. Skipped (already enrolled): ${skippedNames.join(', ')}.`,
+          t('learning.enrolledSkippedNames', { created: r.created, names: skippedNames.join(', ') }),
         );
       } else if (r.skipped > 0) {
-        toast.success(`Enrolled ${r.created}, skipped ${r.skipped}.`);
+        toast.success(t('learning.enrolledSkipped', { created: r.created, skipped: r.skipped }));
       } else {
-        toast.success(`Enrolled ${r.created}.`);
+        toast.success(t('learning.enrolledCount', { created: r.created }));
       }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not enroll the associates.');
+      toast.error(err instanceof ApiError ? err.message : t('learning.enrollFailed'));
     } finally {
       setSaving(false);
     }
@@ -594,7 +620,7 @@ function EnrollDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Enroll into "{course.title}"</DrawerTitle>
+        <DrawerTitle>{t('learning.enrollInto', { title: course.title })}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
@@ -608,7 +634,7 @@ function EnrollDrawer({
                   prev.some((p) => p.id === a.id) ? prev : [...prev, a],
                 );
               }}
-              placeholder="Search to add an associate…"
+              placeholder={t('learning.searchToAdd')}
             />
           </div>
           {picked.length > 0 && (
@@ -621,7 +647,7 @@ function EnrollDrawer({
                   {p.name}
                   <button
                     type="button"
-                    aria-label={`Remove ${p.name}`}
+                    aria-label={t('learning.removeName', { name: p.name })}
                     className="text-silver/60 hover:text-white"
                     onClick={() =>
                       setPicked((prev) => prev.filter((x) => x.id !== p.id))
@@ -637,10 +663,10 @@ function EnrollDrawer({
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Enrolling…' : 'Enroll'}
+          {saving ? t('learning.enrolling') : t('learning.enroll')}
         </Button>
       </DrawerFooter>
     </Drawer>
@@ -654,6 +680,7 @@ function EnrollDrawer({
 const ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
 
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
+  const { t } = useI18n();
   const term = useTerm();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<EnrollmentStatus | 'ALL'>('ALL');
@@ -667,7 +694,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const error = enrollmentsQuery.error
     ? enrollmentsQuery.error instanceof ApiError
       ? enrollmentsQuery.error.message
-      : 'Failed to load enrollments.'
+      : t('learning.enrollmentsFailed')
     : null;
   const refresh = () => void enrollmentsQuery.refetch();
 
@@ -703,24 +730,24 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput
           className="h-8 w-64"
-          placeholder="Search associate or course…"
+          placeholder={t('learning.searchEnrollments')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search enrollments by associate or course"
+          aria-label={t('learning.searchEnrollmentsAria')}
         />
         <Select
           size="sm"
           className="w-40"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as EnrollmentStatus | 'ALL')}
-          aria-label="Filter enrollments by status"
+          aria-label={t('learning.filterEnrollmentsAria')}
         >
-          <option value="ALL">All statuses</option>
-          <option value="ASSIGNED">Assigned</option>
-          <option value="IN_PROGRESS">In progress</option>
-          <option value="COMPLETED">Completed</option>
-          <option value="EXPIRED">Expired</option>
-          <option value="WAIVED">Waived</option>
+          <option value="ALL">{t('learning.allStatuses')}</option>
+          <option value="ASSIGNED">{t('learning.statusAssigned')}</option>
+          <option value="IN_PROGRESS">{t('learning.statusInProgress')}</option>
+          <option value="COMPLETED">{t('lrn.done')}</option>
+          <option value="EXPIRED">{t('learning.statusExpired')}</option>
+          <option value="WAIVED">{t('lrn.waived')}</option>
         </Select>
         <Button
           size="sm"
@@ -729,7 +756,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
           onClick={exportCsv}
           disabled={filtered.length === 0}
         >
-          Export CSV
+          {t('learning.exportCsv')}
         </Button>
       </div>
     <Card>
@@ -741,34 +768,34 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
         ) : rows.length === 0 ? (
           <EmptyState
             icon={GraduationCap}
-            title="No enrollments"
-            description="Assign associates to a course from the Courses tab."
+            title={t('learning.noEnrollments')}
+            description={t('learning.noEnrollmentsDesc')}
           />
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={GraduationCap}
-            title="No matching enrollments"
-            description="Adjust the search or status filter."
+            title={t('learning.noMatchingEnrollments')}
+            description={t('learning.adjustFilters')}
           />
         ) : (
           <DataGrid<NonNullable<typeof filtered>[number]>
             id="course-enrollments"
-            caption="Enrollments"
+            caption={t('learning.enrollments')}
             rows={filtered}
             rowKey={(e) => e.id}
             search={false}
             urlState={false}
             exportCsv={{ filename: 'enrollments' }}
             columns={[
-              { key: 'course', header: 'Course', accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
+              { key: 'course', header: t('learning.colCourse'), accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
               { key: 'associate', header: term('worker'), accessor: (e) => e.associateName, sortable: true, cardMeta: true },
-              { key: 'status', header: 'Status', accessor: (e) => e.status, sortable: true, cardMeta: true, cell: (e) => <StatusBadge status={e.status} overrides={ENROLL_STATUS_TONES} /> },
-              { key: 'completed', header: 'Completed', accessor: (e) => e.completedAt, sortable: true, searchable: false, cell: (e) => fmtDate(e.completedAt) },
-              { key: 'expires', header: 'Expires', accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
-              { key: 'score', header: 'Score', accessor: (e) => e.score, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (e) => e.score ?? '—' },
+              { key: 'status', header: t('learning.colStatus'), accessor: (e) => e.status, sortable: true, cardMeta: true, cell: (e) => <StatusBadge status={e.status} overrides={ENROLL_STATUS_TONES} label={enrollmentStatusLabel(t, e.status)} /> },
+              { key: 'completed', header: t('learning.colCompleted'), accessor: (e) => e.completedAt, sortable: true, searchable: false, cell: (e) => fmtDate(e.completedAt) },
+              { key: 'expires', header: t('learning.colExpires'), accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
+              { key: 'score', header: t('learning.colScore'), accessor: (e) => e.score, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (e) => e.score ?? '—' },
               {
                   key: 'actions',
-                  header: 'Actions',
+                  header: t('learning.colActions'),
                   accessor: () => null,
                   searchable: false,
                   csv: () => '',
@@ -779,12 +806,12 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
                   <>
                     {(e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
                       <Button size="sm" onClick={() => onComplete(e.id)}>
-                        Complete
+                        {t('learning.complete')}
                       </Button>
                     )}
                     {canManage && (e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
                       <Button size="sm" variant="ghost" onClick={() => onWaive(e.id)}>
-                        Waive
+                        {t('learning.waive')}
                       </Button>
                     )}
                   </>
@@ -797,11 +824,11 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
       <ConfirmDialog
         open={completeId !== null}
         onOpenChange={(o) => !o && setCompleteId(null)}
-        title="Mark complete"
-        description="Record a score if applicable. Leave blank for pass/fail courses."
-        confirmLabel="Mark complete"
+        title={t('learning.markComplete')}
+        description={t('learning.markCompleteDesc')}
+        confirmLabel={t('learning.markComplete')}
         numericInput
-        numericLabel="Score (0–100, optional)"
+        numericLabel={t('learning.scoreLabel')}
         numericMin={0}
         numericMax={100}
         numericStep={0.1}
@@ -814,12 +841,12 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
               completeId,
               score === null ? undefined : score,
             );
-            toast.success('Marked complete.');
+            toast.success(t('learning.markedComplete'));
             setCompleteId(null);
             refresh();
           } catch (err) {
             toast.error(
-              err instanceof ApiError ? err.message : 'Could not mark the enrollment complete.',
+              err instanceof ApiError ? err.message : t('learning.markCompleteFailed'),
             );
           } finally {
             setCompleting(false);
@@ -829,9 +856,9 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
       <ConfirmDialog
         open={waiveId !== null}
         onOpenChange={(o) => !o && setWaiveId(null)}
-        title="Waive enrollment"
-        description="The associate will not be required to complete this course. They can still take it voluntarily."
-        confirmLabel="Waive"
+        title={t('learning.waiveTitle')}
+        description={t('learning.waiveDesc')}
+        confirmLabel={t('learning.waive')}
         destructive
         busy={waiving}
         onConfirm={async () => {
@@ -839,12 +866,12 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
           setWaiving(true);
           try {
             await waiveEnrollment(waiveId);
-            toast.success('Waived.');
+            toast.success(t('learning.waivedToast'));
             setWaiveId(null);
             refresh();
           } catch (err) {
             toast.error(
-              err instanceof ApiError ? err.message : 'Could not waive the enrollment.',
+              err instanceof ApiError ? err.message : t('learning.waiveFailed'),
             );
           } finally {
             setWaiving(false);
@@ -859,6 +886,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
 const EXPIRING_WINDOWS = [30, 60, 90] as const;
 
 function ExpiringTab() {
+  const { t } = useI18n();
   const term = useTerm();
   const [days, setDays] = useState<number>(30);
 
@@ -870,7 +898,7 @@ function ExpiringTab() {
   const error = expiringQuery.error
     ? expiringQuery.error instanceof ApiError
       ? expiringQuery.error.message
-      : 'Failed to load expiring enrollments.'
+      : t('learning.expiringFailed')
     : null;
   const refresh = async () => {
     await expiringQuery.refetch();
@@ -892,14 +920,14 @@ function ExpiringTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs uppercase tracking-wider text-silver">Window</span>
+        <span className="text-xs uppercase tracking-wider text-silver">{t('learning.window')}</span>
         <SegmentedControl<number>
-          ariaLabel="Expiration window"
+          ariaLabel={t('learning.windowAria')}
           value={days}
           onChange={setDays}
           options={EXPIRING_WINDOWS.map((w) => ({
             value: w,
-            label: `${w} days`,
+            label: t('learning.nDays', { n: w }),
           }))}
         />
         <Button
@@ -909,7 +937,7 @@ function ExpiringTab() {
           onClick={exportCsv}
           disabled={!rows || rows.length === 0}
         >
-          Export CSV
+          {t('learning.exportCsv')}
         </Button>
       </div>
       <Card>
@@ -921,24 +949,24 @@ function ExpiringTab() {
           ) : rows.length === 0 ? (
             <EmptyState
               icon={AlertTriangle}
-              title="No expirations in this window"
-              description="Certs with validity periods auto-expire — they'll show here as their deadlines approach."
+              title={t('learning.noExpiring')}
+              description={t('learning.noExpiringDesc')}
             />
           ) : (
             <DataGrid<NonNullable<typeof rows>[number]>
               id="course-expirations"
-              caption="Expiring certifications"
+              caption={t('learning.expiringCaption')}
               rows={rows}
               rowKey={(e) => e.id}
-              search={{ placeholder: 'Course, associate…' }}
+              search={{ placeholder: t('learning.expiringSearch') }}
               urlState={false}
               exportCsv={{ filename: 'expiring-certifications' }}
               columns={[
-                { key: 'course', header: 'Course', accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
+                { key: 'course', header: t('learning.colCourse'), accessor: (e) => e.courseTitle, sortable: true, primary: true, className: 'font-medium text-white' },
                 { key: 'associate', header: term('worker'), accessor: (e) => e.associateName, sortable: true, cardMeta: true },
-                { key: 'required', header: 'Required', accessor: (e) => (e.isRequired ? 'Required' : ''), sortable: true, searchable: false, cell: (e) => (e.isRequired ? <Badge variant="destructive">Required</Badge> : '—') },
-                { key: 'expires', header: 'Expires', accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
-                { key: 'daysLeft', header: 'Days left', accessor: (e) => e.daysLeft, csv: (e) => `${e.daysLeft}d`, sortable: true, searchable: false, cardMeta: true, cell: (e) => <Badge variant={e.daysLeft <= 7 ? 'destructive' : 'pending'}>{e.daysLeft}d</Badge> },
+                { key: 'required', header: t('lrn.required'), accessor: (e) => (e.isRequired ? t('lrn.required') : ''), sortable: true, searchable: false, cell: (e) => (e.isRequired ? <Badge variant="destructive">{t('lrn.required')}</Badge> : '—') },
+                { key: 'expires', header: t('learning.colExpires'), accessor: (e) => e.expiresAt, sortable: true, searchable: false, cardMeta: true, cell: (e) => fmtDate(e.expiresAt) },
+                { key: 'daysLeft', header: t('learning.colDaysLeft'), accessor: (e) => e.daysLeft, csv: (e) => t('learning.daysShort', { n: e.daysLeft }), sortable: true, searchable: false, cardMeta: true, cell: (e) => <Badge variant={e.daysLeft <= 7 ? 'destructive' : 'pending'}>{t('learning.daysShort', { n: e.daysLeft })}</Badge> },
               ]}
             />
           )}

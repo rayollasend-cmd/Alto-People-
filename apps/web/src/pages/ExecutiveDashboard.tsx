@@ -29,6 +29,7 @@ import { MetricCard, type MetricTrend, type TrendGood } from '@/components/ui/Me
 import { DetailsTable, PALETTE, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
 import { DonutChart } from '@/components/ui/DonutChart';
 import { AgentRoiTile } from '@/pages/executive/AgentRoiTile';
+import { MoneyBand } from '@/pages/executive/MoneyBand';
 import { ClientNpsCard } from '@/pages/executive/ClientNpsCard';
 import { WhatIfClientCard } from '@/pages/executive/WhatIfClientCard';
 
@@ -100,7 +101,8 @@ interface Receivables {
   totals: {
     outstandingAmount: number;
     outstandingCount: number;
-    aging: { current: number; days30: number; days45: number; days60plus: number };
+    /** By days past due — the one aging definition the finance home and Books use. */
+    aging: { current: number; days1to30: number; days31to60: number; days61to90: number; over90: number };
     avgDaysToPay: number | null;
     paidCount: number;
   };
@@ -1385,6 +1387,9 @@ export function ExecutiveDashboard() {
             <AgentRoiTile />
           </div>
 
+          {/* Real money from the books, the forecast and payroll (finance walk 17). */}
+          <MoneyBand />
+
           {/* Targets vs actuals + receivables aging. */}
           <div id="targets" className="grid scroll-mt-20 grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>
@@ -1478,13 +1483,14 @@ export function ExecutiveDashboard() {
                   </p>
                 ) : (
                   <>
-                    <div className="mb-3 grid grid-cols-4 gap-2 text-center">
+                    <div className="mb-3 grid grid-cols-3 gap-2 text-center sm:grid-cols-5">
                       {(
                         [
-                          ['0–30d', recv.totals.aging.current, 'text-white'],
-                          ['30–45d', recv.totals.aging.days30, 'text-white'],
-                          ['45–60d', recv.totals.aging.days45, 'text-warning'],
-                          ['60d+', recv.totals.aging.days60plus, 'text-alert'],
+                          ['Not yet due', recv.totals.aging.current, 'text-white'],
+                          ['1–30 days', recv.totals.aging.days1to30, 'text-white'],
+                          ['31–60 days', recv.totals.aging.days31to60, 'text-warning'],
+                          ['61–90 days', recv.totals.aging.days61to90, 'text-alert'],
+                          ['Over 90', recv.totals.aging.over90, 'text-alert'],
                         ] as const
                       ).map(([label, amount, tone]) => (
                         <div key={label} className="rounded-md bg-navy-secondary/50 p-2">
@@ -1506,9 +1512,9 @@ export function ExecutiveDashboard() {
                               {s.clientName} #{s.number ?? '—'}
                             </span>
                             <span
-                              className={`tabular-nums ${s.ageDays >= 45 ? 'text-alert' : 'text-silver'}`}
+                              className={`tabular-nums ${s.ageDays > 30 ? 'text-alert' : 'text-silver'}`}
                             >
-                              {fmtMoney(s.amount)} · {s.ageDays}d
+                              {fmtMoney(s.amount)} · {s.ageDays > 0 ? `${s.ageDays}d late` : 'not yet due'}
                             </span>
                           </Link>
                         </li>

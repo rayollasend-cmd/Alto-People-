@@ -4,25 +4,37 @@ import { round2 } from './payroll.js';
 import { getNextPayday, getPeriodAfter, type PeriodWindow } from './payrollSchedule.js';
 import { depositDueDate } from './taxDeposits.js';
 import { aggregatePayrollProjection } from './payrollAggregator.js';
+import { cashOnHand } from './books/ledger.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
- * The cash forecast: what leaves and what arrives over the next weeks,
- * from the records that already know —
+ * The cash forecast: where the money stands and what leaves and arrives
+ * over the next weeks, from the records that already know —
  *
+ *   opening balance  the Books cash position today: every bank account's
+ *                    ledger balance, less the card balances (the same
+ *                    number the Books overview shows)
  *   payroll          the next two paydays: the run that exists for the
  *                    period (its net), else a projection of the open
- *                    period, else the last run paid
+ *                    period, else the last run paid. A payday is NEVER
+ *                    skipped: with nobody on the schedule and no run, the
+ *                    line is the last run's net, marked estimated and
+ *                    flagged "0 people on schedule" (audit 2026-10-21 #18)
  *   tax deposits     pending FED_941 / FUTA rows by due date, plus the
  *                    deposit each forecast payday will create
  *   garnishments     pending remittances, assumed a week after payday
+ *   bills            approved, unpaid vendor bills on their due date
+ *                    (overdue ones expected this week)
  *   receivables      unpaid FINAL statements on their due date (terms),
  *                    overdue ones expected within the week
  *
- * There is no bank balance here — the product does not hold one — so the
- * answer is the net movement per week and its running total.
+ * Each week carries its net movement, the running total of movement, and
+ * the projected balance (opening + running total). The low point and the
+ * cash floor (Settings → Finance) let the chart say when the balance dips
+ * under the floor.
  */
 
-export type CashLineKind = 'PAYROLL' | 'TAX_DEPOSIT' | 'GARNISHMENT' | 'RECEIVABLE';
+export type CashLineKind = 'PAYROLL' | 'TAX_DEPOSIT' | 'GARNISHMENT' | 'RECEIVABLE' | 'BILL';
 
 export interface CashLine {
   date: string;
@@ -33,6 +45,8 @@ export interface CashLine {
   /** scheduled = a record with a date and an amount; estimated = our projection; overdue = past due, expected soon. */
   confidence: 'scheduled' | 'estimated' | 'overdue';
   linkUrl: string;
+  /** Why an estimate is what it is ("0 people on schedule — last run's net"). */
+  warning?: string | null;
 }
 
 export interface CashWeek {
@@ -41,13 +55,22 @@ export interface CashWeek {
   inflow: number;
   outflow: number;
   net: number;
+  /** Running total of movement since today. */
   cumulative: number;
+  /** Opening balance + cumulative: where the cash stands at the week's end. */
+  balance: number;
 }
 
 export interface CashForecast {
   generatedAt: string;
   from: string;
   to: string;
+  /** The Books cash position today (null when the books hold no bank account yet). */
+  opening: { balance: number; accounts: number; asOf: string } | null;
+  /** The cash floor from Settings → Finance; null when none is set. */
+  minimumCash: number | null;
+  /** The week the projected balance is lowest. */
+  lowest: { weekStart: string; balance: number; belowMinimum: boolean } | null;
   weeks: CashWeek[];
   lines: CashLine[];
   totals: { inflow: number; outflow: number; net: number };
@@ -68,6 +91,14 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
   const end = addDays(today, horizonWeeks * 7);
   const lines: CashLine[] = [];
   const inHorizon = (ymd: string) => ymd >= today && ymd < end;
+
+  // ---- Where the cash stands: the books ---------------------------------
+  const [cash, org] = await Promise.all([
+    cashOnHand(prisma, today).catch(() => null),
+    prisma.orgSetting.findFirst({ where: { tenantId: opts.tenantId ?? tenantIdForWrite() }, select: { cashMinimum: true } }),
+  ]);
+  const opening = cash && cash.accounts > 0 ? { balance: cash.total, accounts: cash.accounts, asOf: today } : null;
+  const minimumCash = org?.cashMinimum != null ? Number(org.cashMinimum) : null;
 
   // ---- Payroll: the next two paydays ------------------------------------
   const select = { id: true, name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
@@ -108,38 +139,46 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
         select: { id: true, status: true, totalNet: true, totalTax: true, items: { select: { fica: true, medicare: true, federalWithholding: true, employerFica: true, employerMedicare: true }, take: 10_000 } },
       });
       if (run?.status === 'DISBURSED') continue; // already out the door
-      let net: number;
+      let net = 0;
       let confidence: CashLine['confidence'];
       let fed: number | null = null;
+      let warning: string | null = null;
       if (run) {
         net = Number(run.totalNet);
         fed = run.items.reduce((s, x) => s + Number(x.federalWithholding) + Number(x.fica) + Number(x.medicare) + Number(x.employerFica) + Number(x.employerMedicare), 0);
         confidence = run.status === 'FINALIZED' ? 'scheduled' : 'estimated';
-      } else if (i === 0) {
-        // The open period: project it from approved hours so far.
-        const ps = new Date(`${win.periodStart}T00:00:00Z`);
-        const pe = new Date(`${win.periodEnd}T00:00:00Z`);
-        pe.setUTCDate(pe.getUTCDate() + 1);
-        try {
-          const proj = await aggregatePayrollProjection(prisma, { periodStart: ps, periodEndExclusive: pe, clientId: null, defaultRate: 15 });
-          net = proj.totals.totalNet;
-          fed = proj.items.reduce((s, x) => s + x.federalIncomeTax + x.fica + x.medicare + x.employerFica + x.employerMedicare, 0);
-          // A period that is barely begun projects low; the last run is the better guess until it is half over.
-          const daysIn = Math.max(0, (Date.parse(`${today}T00:00:00Z`) - ps.getTime()) / DAY_MS);
-          const days = Math.max(1, (pe.getTime() - ps.getTime()) / DAY_MS);
-          if (lastRun && daysIn / days < 0.5 && net < Number(lastRun.totalNet) * 0.5) {
-            net = Number(lastRun.totalNet);
-            fed = null;
-          }
-        } catch {
-          net = lastRun ? Number(lastRun.totalNet) : 0;
-        }
-        confidence = 'estimated';
       } else {
-        net = lastRun ? Number(lastRun.totalNet) : 0;
         confidence = 'estimated';
+        if (i === 0) {
+          // The open period: project it from approved hours so far.
+          const ps = new Date(`${win.periodStart}T00:00:00Z`);
+          const pe = new Date(`${win.periodEnd}T00:00:00Z`);
+          pe.setUTCDate(pe.getUTCDate() + 1);
+          try {
+            const proj = await aggregatePayrollProjection(prisma, { periodStart: ps, periodEndExclusive: pe, clientId: null, defaultRate: 15 });
+            net = proj.totals.totalNet;
+            fed = proj.items.reduce((s, x) => s + x.federalIncomeTax + x.fica + x.medicare + x.employerFica + x.employerMedicare, 0);
+            // A period that is barely begun projects low; the last run is the better guess until it is half over.
+            const daysIn = Math.max(0, (Date.parse(`${today}T00:00:00Z`) - ps.getTime()) / DAY_MS);
+            const days = Math.max(1, (pe.getTime() - ps.getTime()) / DAY_MS);
+            if (lastRun && daysIn / days < 0.5 && net < Number(lastRun.totalNet) * 0.5) {
+              net = Number(lastRun.totalNet);
+              fed = null;
+              warning = 'Period just begun — the last run’s net';
+            }
+          } catch {
+            net = 0;
+          }
+        }
+        // Nobody on the schedule yet (or nothing approved): the payday still comes. The last
+        // run's net is the estimate, and the line says so — never dropped from the picture.
+        if (net <= 0) {
+          const people = await prisma.associate.count({ where: { ...T, payrollScheduleId: schedule.id, deletedAt: null } }).catch(() => 0);
+          net = lastRun ? Number(lastRun.totalNet) : 0;
+          fed = null;
+          warning = `${people} ${people === 1 ? 'person' : 'people'} on schedule — ${lastRun ? 'the last run’s net' : 'no run paid yet to estimate from'}`;
+        }
       }
-      if (net <= 0) continue;
       lines.push({
         date: win.payDate,
         kind: 'PAYROLL',
@@ -147,6 +186,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
         amount: -round2(net),
         confidence,
         linkUrl: run ? `/payroll?run=${run.id}` : '/payroll',
+        warning,
       });
       const deposit = round2(fed ?? net * depositPerNet);
       if (deposit > 0) {
@@ -205,6 +245,27 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     });
   }
 
+  // ---- Vendor bills: approved and unpaid, on their due date ---------------
+  const bills = await prisma.bill.findMany({
+    where: { ...T, status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, dueDate: { lt: new Date(`${end}T00:00:00Z`) } },
+    select: { id: true, billNumber: true, dueDate: true, balance: true, vendor: { select: { name: true } } },
+    take: 2000,
+  });
+  for (const b of bills) {
+    const balance = Number(b.balance);
+    if (balance <= 0) continue;
+    const due = ymdOf(b.dueDate);
+    const overdue = due < today;
+    lines.push({
+      date: overdue ? today : due,
+      kind: 'BILL',
+      label: `${b.vendor.name}${b.billNumber ? ` — invoice ${b.billNumber}` : ''}${overdue ? ' (past due)' : ''}`,
+      amount: -round2(balance),
+      confidence: overdue ? 'overdue' : 'scheduled',
+      linkUrl: `/books/bills/${b.id}`,
+    });
+  }
+
   // ---- Receivables -------------------------------------------------------
   const [unpaid, paidRecent] = await Promise.all([
     prisma.clientStatement.findMany({
@@ -244,6 +305,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
 
   const weeks: CashWeek[] = [];
   let cumulative = 0;
+  const base = opening?.balance ?? 0;
   for (let i = 0; i < horizonWeeks; i++) {
     const ws = addDays(today, i * 7);
     const we = addDays(ws, 6);
@@ -252,9 +314,20 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     const outflow = round2(mine.filter((l) => l.amount < 0).reduce((s, l) => s - l.amount, 0));
     const net = round2(inflow - outflow);
     cumulative = round2(cumulative + net);
-    weeks.push({ weekStart: ws, weekEnd: we, inflow, outflow, net, cumulative });
+    weeks.push({ weekStart: ws, weekEnd: we, inflow, outflow, net, cumulative, balance: round2(base + cumulative) });
   }
   const inflow = round2(lines.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0));
   const outflow = round2(lines.filter((l) => l.amount < 0).reduce((s, l) => s - l.amount, 0));
-  return { generatedAt: now.toISOString(), from: today, to: addDays(end, -1), weeks, lines, totals: { inflow, outflow, net: round2(inflow - outflow) } };
+  const low = weeks.reduce<CashWeek | null>((m, w) => (m === null || w.balance < m.balance ? w : m), null);
+  return {
+    generatedAt: now.toISOString(),
+    from: today,
+    to: addDays(end, -1),
+    opening,
+    minimumCash,
+    lowest: low ? { weekStart: low.weekStart, balance: low.balance, belowMinimum: minimumCash !== null && low.balance < minimumCash } : null,
+    weeks,
+    lines,
+    totals: { inflow, outflow, net: round2(inflow - outflow) },
+  };
 }

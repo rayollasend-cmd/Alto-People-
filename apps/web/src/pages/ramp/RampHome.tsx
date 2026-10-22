@@ -57,6 +57,7 @@ const RAMP_STATUS_TONES = {
 } as const;
 
 export function RampHome() {
+  const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [open, setOpen] = useState<string | null>(null); // associateId
@@ -102,7 +103,7 @@ export function RampHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="30/60/90 plans"
-        subtitle="Every new hire's first weeks, from the first shift on — owned by their manager or the store's shift supervisor."
+        subtitle={`Every new hire's first weeks, from the first shift on — owned by their manager or the ${term('label.store').toLowerCase()}’s ${term('role.shiftSupervisor').toLowerCase()}.`}
         breadcrumbs={[{ label: 'People', to: '/people' }, { label: '30/60/90 plans' }]}
     >
 
@@ -112,7 +113,7 @@ export function RampHome() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-xs"
-          aria-label="Search plans by associate name"
+          aria-label={`Search plans by ${term('worker').toLowerCase()} name`}
         />
         <Button
           size="sm"

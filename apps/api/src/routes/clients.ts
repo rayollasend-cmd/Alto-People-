@@ -24,22 +24,23 @@ import { z } from 'zod';
 import { invitePortalAccount } from '../lib/portalInvite.js';
 import { portalEngagementFor } from '../lib/portalEngagement.js';
 import { computePortalReadiness, nudgePortalReadiness } from '../lib/portalReadiness.js';
-import { notifyUser, trackNotificationWork } from '../lib/notify.js';
+import { trackNotificationWork } from '../lib/notify.js';
 import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 import { computeStatementSnapshot, type StatementSnapshot } from '../lib/clientStatement.js';
-import { claimAdjustmentsForStatement } from '../lib/payBillLink.js';
 import { orgDateKey, startOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
   buildClientServiceReport,
   renderClientServiceReportPdf,
 } from '../lib/clientServiceReport.js';
 import { completeStatementSnapshot, renderStatementPdf, statementContext } from '../lib/statementPdf.js';
-import { finalizationTerms } from '../lib/statementDunning.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
-import { booksAfterStatement } from '../lib/books/posting/hooks.js';
-import { recordStatementPaidInFull } from '../lib/books/posting/receivables.js';
+import { finalizeStatement, notifyPortalOfStatement, statementLabel } from '../lib/statementFinalize.js';
+import { recordStatementPaidInFull, statementBalances } from '../lib/books/posting/receivables.js';
+import { daysPastDue, dueOnFor } from '../lib/books/aging.js';
+import { UNBILLED_GRACE_DAYS } from '../lib/payBillRecon.js';
+import { sendStatementReminderNow } from '../lib/statementDunning.js';
 
 export const clientsRouter = Router();
 
@@ -649,6 +650,7 @@ clientsRouter.put('/:id/state', MANAGE, async (req, res, next) => {
  * process:payroll (billing artifact, not a client-admin CRUD surface).
  * ========================================================================== */
 
+const DAY_MS = 86_400_000;
 const STATEMENTS = requireCapability('process:payroll');
 // Reading statements (list/PDF/CSV) is also an executive surface —
 // drafting and finalizing stay with payroll.
@@ -776,6 +778,80 @@ clientsRouter.post('/statements/generate-due', STATEMENTS, async (req, res, next
   }
 });
 
+/**
+ * Finance walk 6 — the weekly close roll-up in one call: every client's
+ * recent statements (in the caller's reach) with what closing needs — the
+ * due date, days late, what is still open, the change against the client's
+ * previous statement — and the weeks with billable approved time that no
+ * statement covers ("Missing weeks").
+ */
+const ROLLUP_PERIODS_PER_CLIENT = 12;
+clientsRouter.get('/statements/rollup', STATEMENTS_READ, async (req, res, next) => {
+  try {
+    const now = new Date();
+    const clients = await prisma.client.findMany({ where: { ...scopeClients(req.user!), tenantId: tenantIdForWrite(), deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: 2000 });
+    const clientName = new Map(clients.map((c) => [c.id, c.name]));
+    const ids = clients.map((c) => c.id);
+    const [all, balances] = await Promise.all([
+      prisma.clientStatement.findMany({ where: { clientId: { in: ids } }, orderBy: [{ clientId: 'asc' }, { periodStart: 'desc' }], include: { finalizedBy: { select: { email: true } } }, take: 20_000 }),
+      statementBalances(prisma, { clientId: { in: ids }, paidAt: null }),
+    ]);
+    const open = new Map(balances.map((b) => [b.statementId, b.open / 100]));
+    const byClient = new Map<string, typeof all>();
+    for (const st of all) byClient.set(st.clientId, [...(byClient.get(st.clientId) ?? []), st]);
+    const rows = [];
+    for (const [clientId, list] of byClient) {
+      // Newest first; each row's "previous" is the client's statement before it (adjustments-only ones skipped).
+      const hourly = list.filter((st) => !(st.snapshot as { adjustmentsOnly?: boolean } | null)?.adjustmentsOnly);
+      for (const st of list.slice(0, ROLLUP_PERIODS_PER_CLIENT)) {
+        const snap = (st.snapshot as { totals?: { hours?: number; amount?: number }; adjustmentsOnly?: boolean } | null) ?? {};
+        const prev = snap.adjustmentsOnly ? null : (hourly[hourly.indexOf(st) + 1] ?? null);
+        const prevSnap = (prev?.snapshot as { totals?: { hours?: number; amount?: number } } | null) ?? null;
+        const dueOn = st.status === 'FINAL' ? dueOnFor(st) : null;
+        const unpaid = st.status === 'FINAL' && !st.paidAt;
+        rows.push({
+          ...statementRow(st),
+          clientName: clientName.get(clientId) ?? 'Client',
+          dueOn,
+          daysLate: unpaid && dueOn ? Math.max(0, daysPastDue(dueOn, now)) : 0,
+          open: unpaid ? (open.get(st.id) ?? snap.totals?.amount ?? 0) : 0,
+          previous: prev && prevSnap?.totals ? { statementId: prev.id, periodStart: prev.periodStart.toISOString().slice(0, 10), hours: prevSnap.totals.hours ?? 0, amount: prevSnap.totals.amount ?? 0 } : null,
+        });
+      }
+    }
+    rows.sort((x, y) => y.periodStart.localeCompare(x.periodStart) || x.clientName.localeCompare(y.clientName));
+
+    // Missing weeks: approved time at a client, older than the grace, that no statement period covers.
+    const since = new Date(now.getTime() - 12 * 7 * DAY_MS);
+    const graceCut = new Date(now.getTime() - UNBILLED_GRACE_DAYS * DAY_MS);
+    const entries = ids.length
+      ? await prisma.timeEntry.findMany({
+          where: { tenantId: tenantIdForWrite(), clientId: { in: ids }, status: 'APPROVED', clockInAt: { gte: since, lt: graceCut }, clockOutAt: { not: null } },
+          select: { clientId: true, clockInAt: true, clockOutAt: true, breaks: { select: { startedAt: true, endedAt: true } } },
+          take: 100_000,
+        })
+      : [];
+    const covered = (clientId: string, at: Date) => (byClient.get(clientId) ?? []).some((st) => st.periodStart.getTime() <= at.getTime() && at.getTime() < st.periodEnd.getTime() + DAY_MS);
+    const missing = new Map<string, { clientId: string; clientName: string; weekStart: string; hours: number }>();
+    for (const e of entries) {
+      if (!e.clientId || covered(e.clientId, e.clockInAt)) continue;
+      const ws = orgDateKey(startOfWeekUTC(e.clockInAt));
+      const key = `${e.clientId}:${ws}`;
+      let ms = e.clockOutAt!.getTime() - e.clockInAt.getTime();
+      for (const b of e.breaks) ms -= Math.max(0, (b.endedAt ?? e.clockOutAt!).getTime() - b.startedAt.getTime());
+      const m = missing.get(key) ?? { clientId: e.clientId, clientName: clientName.get(e.clientId) ?? 'Client', weekStart: ws, hours: 0 };
+      m.hours += Math.max(0, ms) / 3_600_000;
+      missing.set(key, m);
+    }
+    res.json({
+      statements: rows,
+      missingWeeks: [...missing.values()].map((m) => ({ ...m, hours: Math.round(m.hours * 10) / 10 })).sort((a, b) => a.weekStart.localeCompare(b.weekStart) || a.clientName.localeCompare(b.clientName)),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 clientsRouter.get('/:id/statements', STATEMENTS_READ, async (req, res, next) => {
   try {
     const owner = await prisma.client.findFirst({ where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
@@ -864,84 +940,10 @@ clientsRouter.post('/:id/statements', STATEMENTS, async (req, res, next) => {
   }
 });
 
-/** Tell the client's portal accounts a statement was issued or paid. */
-function notifyPortalOfStatement(clientId: string, subject: string, body: string): void {
-  void trackNotificationWork(
-    (async () => {
-      const users = await prisma.user.findMany({
-        where: { clientId, role: 'CLIENT_PORTAL', status: 'ACTIVE', deletedAt: null },
-        select: { id: true },
-        take: 100,
-      });
-      await Promise.all(users.map((u) => notifyUser(u.id, { subject, body, category: 'portal.statement', linkUrl: '/portal' })));
-    })().catch((err: unknown) => {
-      console.warn('[clients] statement notice failed:', err instanceof Error ? err.message : err);
-    }),
-  );
-}
-
-const statementLabel = (number: number | null, start: Date, end: Date) => {
-  const d = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-  return `${number !== null ? `Statement No. ${String(number).padStart(4, '0')}` : 'Your statement'} (${d(start)} – ${d(end)})`;
-};
-
 clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res, next) => {
   try {
-    const user = req.user!;
-    const row = await prisma.clientStatement.findFirst({
-      where: { id: req.params.sid, clientId: req.params.id },
-    });
-    if (!row) throw new HttpError(404, 'not_found', 'Statement not found');
-    if (row.status === 'FINAL') {
-      throw new HttpError(409, 'already_final', 'Already finalized.');
-    }
-    // Record-then-commit: a numbered billing artifact must never exist
-    // without a durable record of who issued it.
-    const updated = await prisma.$transaction(async (tx) => {
-      const max = await tx.clientStatement.aggregate({ _max: { number: true } });
-      const finalizedAt = new Date();
-      // Invoicing: due on the client's terms; the standing PO unless the
-      // statement already carries its own (lib/statementDunning).
-      const terms = await finalizationTerms(tx, row.clientId, finalizedAt);
-      // Payroll's adjustments (retro rebills, contract premiums) are claimed by
-      // the statement that finalizes first; the frozen snapshot keeps exactly those.
-      const snapshot = await claimAdjustmentsForStatement(tx, row.id, row.snapshot as unknown as StatementSnapshot, finalizedAt);
-      return tx.clientStatement.update({
-        where: { id: row.id },
-        data: {
-          snapshot: snapshot as unknown as Prisma.InputJsonValue,
-          status: 'FINAL',
-          number: (max._max.number ?? 0) + 1,
-          finalizedById: user.id,
-          finalizedAt,
-          dueAt: terms.dueAt,
-          poNumber: row.poNumber ?? terms.poNumber,
-        },
-        include: { finalizedBy: { select: { email: true } } },
-      });
-    });
-    await recordCriticalAudit(
-      {
-        actorUserId: user.id,
-        clientId: row.clientId,
-        action: 'clients.statement_finalized',
-        entityType: 'ClientStatement',
-        entityId: row.id,
-        metadata: {
-          number: updated.number,
-          periodStart: row.periodStart.toISOString().slice(0, 10),
-          periodEnd: row.periodEnd.toISOString().slice(0, 10),
-        },
-      },
-      'clients.statement_finalized',
-    );
-    // The books: the statement is a receivable and revenue (lib/books/posting).
-    booksAfterStatement(row.id);
-    notifyPortalOfStatement(
-      row.clientId,
-      `${statementLabel(updated.number, row.periodStart, row.periodEnd)} is ready`,
-      'Your statement is ready in your portal, with the hours behind it and the PDF to download.',
-    );
+    // One path for finalizing (lib/statementFinalize): the number, the terms, the books, the portal.
+    const updated = await finalizeStatement(prisma, req.params.sid, req.user!.id, { clientId: req.params.id });
     res.json(statementRow(updated));
   } catch (err) {
     next(err);
@@ -1027,8 +1029,17 @@ clientsRouter.delete('/:id/dunning/pause', STATEMENTS, async (req, res, next) =>
 clientsRouter.patch('/:id/billing-terms', STATEMENTS, async (req, res, next) => {
   try {
     const body = z
-      .object({ poNumber: z.string().trim().max(60).nullable().optional(), paymentTermsDays: z.number().int().min(0).max(365).optional() })
+      .object({
+        poNumber: z.string().trim().max(60).nullable().optional(),
+        paymentTermsDays: z.number().int().min(0).max(365).optional(),
+        /** Sales tax on this client's statements (audit 2026-10-21 #17): taxable, and the rate in percent. */
+        salesTaxable: z.boolean().optional(),
+        salesTaxRatePct: z.number().min(0).max(100).nullable().optional(),
+      })
       .parse(req.body ?? {});
+    if (body.salesTaxable === true && (body.salesTaxRatePct == null || body.salesTaxRatePct <= 0)) {
+      throw new HttpError(400, 'tax_rate_required', 'A taxable client needs a sales tax rate above zero.');
+    }
     const client = await prisma.client.findFirst({ where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() } });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
     const updated = await prisma.client.update({
@@ -1036,11 +1047,92 @@ clientsRouter.patch('/:id/billing-terms', STATEMENTS, async (req, res, next) => 
       data: {
         ...(body.poNumber !== undefined ? { poNumber: body.poNumber || null } : {}),
         ...(body.paymentTermsDays !== undefined ? { paymentTermsDays: body.paymentTermsDays } : {}),
+        ...(body.salesTaxable !== undefined ? { salesTaxable: body.salesTaxable } : {}),
+        ...(body.salesTaxRatePct !== undefined ? { salesTaxRatePct: body.salesTaxRatePct } : {}),
       },
-      select: { poNumber: true, paymentTermsDays: true },
+      select: { poNumber: true, paymentTermsDays: true, salesTaxable: true, salesTaxRatePct: true },
     });
     await auditClient(req, 'client.billing_terms_updated', client.id, { ...body });
-    res.json(updated);
+    res.json({ ...updated, salesTaxRatePct: updated.salesTaxRatePct === null ? null : Number(updated.salesTaxRatePct) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Finance walk 7 — the collections worklist's actions on one client:
+ * "Send reminder now" for a statement (the next stage goes today), and the
+ * promise-to-pay / call / note log.
+ */
+clientsRouter.post('/:id/dunning/send-now', STATEMENTS, async (req, res, next) => {
+  try {
+    const { statementId } = z.object({ statementId: z.string().uuid() }).parse(req.body ?? {});
+    const client = await prisma.client.findFirst({ where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const st = await prisma.clientStatement.findFirst({ where: { id: statementId, clientId: client.id }, select: { id: true } });
+    if (!st) throw new HttpError(404, 'not_found', 'Statement not found.');
+    const r = await sendStatementReminderNow(prisma, st.id);
+    await auditClient(req, 'client.statement_reminder_sent_now', client.id, { statementId: st.id, ...r });
+    res.json(r);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const CollectionNoteInput = z.object({
+  kind: z.enum(['PROMISE', 'CALL', 'NOTE']).default('NOTE'),
+  note: z.string().trim().min(1).max(1000),
+  statementId: z.string().uuid().nullable().optional(),
+  promisedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  promisedAmount: z.number().positive().max(100_000_000).nullable().optional(),
+}).refine((n) => n.kind !== 'PROMISE' || !!n.promisedOn, { message: 'A promise to pay carries the day promised.', path: ['promisedOn'] });
+
+const noteRow = (n: { id: string; clientId: string; statementId: string | null; kind: string; note: string; promisedOn: Date | null; promisedAmount: Prisma.Decimal | null; createdById: string | null; createdAt: Date }) => ({
+  id: n.id,
+  clientId: n.clientId,
+  statementId: n.statementId,
+  kind: n.kind as 'PROMISE' | 'CALL' | 'NOTE',
+  note: n.note,
+  promisedOn: n.promisedOn ? n.promisedOn.toISOString().slice(0, 10) : null,
+  promisedAmount: n.promisedAmount === null ? null : Number(n.promisedAmount),
+  createdById: n.createdById,
+  createdAt: n.createdAt.toISOString(),
+});
+
+clientsRouter.get('/:id/collection-notes', STATEMENTS_READ, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({ where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const rows = await prisma.clientCollectionNote.findMany({ where: { tenantId: tenantIdForWrite(), clientId: client.id }, orderBy: { createdAt: 'desc' }, take: 100 });
+    res.json({ notes: rows.map(noteRow) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+clientsRouter.post('/:id/collection-notes', STATEMENTS, async (req, res, next) => {
+  try {
+    const body = CollectionNoteInput.parse(req.body ?? {});
+    const client = await prisma.client.findFirst({ where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() }, select: { id: true } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    if (body.statementId) {
+      const st = await prisma.clientStatement.findFirst({ where: { id: body.statementId, clientId: client.id }, select: { id: true } });
+      if (!st) throw new HttpError(404, 'not_found', 'Statement not found.');
+    }
+    const row = await prisma.clientCollectionNote.create({
+      data: {
+        tenantId: tenantIdForWrite(),
+        clientId: client.id,
+        statementId: body.statementId ?? null,
+        kind: body.kind,
+        note: body.note,
+        promisedOn: body.promisedOn ? new Date(`${body.promisedOn}T00:00:00.000Z`) : null,
+        promisedAmount: body.promisedAmount ?? null,
+        createdById: req.user!.id,
+      },
+    });
+    await auditClient(req, 'client.collection_note_added', client.id, { kind: body.kind, statementId: body.statementId ?? null, promisedOn: body.promisedOn ?? null, promisedAmount: body.promisedAmount ?? null });
+    res.status(201).json({ note: noteRow(row) });
   } catch (err) {
     next(err);
   }
@@ -1051,7 +1143,7 @@ clientsRouter.get('/:id/dunning', STATEMENTS_READ, async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
       where: { ...scopeClients(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
-      select: { id: true, poNumber: true, paymentTermsDays: true, dunningPausedAt: true, dunningPauseNote: true, dunningPausedById: true },
+      select: { id: true, poNumber: true, paymentTermsDays: true, salesTaxable: true, salesTaxRatePct: true, dunningPausedAt: true, dunningPauseNote: true, dunningPausedById: true },
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
     const reminders = await prisma.clientStatementReminder.findMany({
@@ -1063,6 +1155,8 @@ clientsRouter.get('/:id/dunning', STATEMENTS_READ, async (req, res, next) => {
     res.json({
       poNumber: client.poNumber,
       paymentTermsDays: client.paymentTermsDays,
+      salesTaxable: client.salesTaxable,
+      salesTaxRatePct: client.salesTaxRatePct === null ? null : Number(client.salesTaxRatePct),
       paused: client.dunningPausedAt ? { at: client.dunningPausedAt.toISOString(), note: client.dunningPauseNote, byUserId: client.dunningPausedById } : null,
       reminders: reminders.map((r) => ({
         id: r.id,

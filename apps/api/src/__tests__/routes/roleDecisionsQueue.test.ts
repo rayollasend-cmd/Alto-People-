@@ -176,12 +176,20 @@ describe('GET /me/decisions', () => {
     });
     await prisma.$executeRaw`UPDATE "Application" SET "updatedAt" = NOW() - INTERVAL '10 days' WHERE "associateId" = ${candidate.id}::uuid`;
 
-    // Recruiter: hiring items yes, money items never (despite full-admin caps).
+    // Recruiter: its own charter since audit #16 (no manage:onboarding, no
+    // money). The stuck application is the HR review desk's item, not the
+    // recruiter's — its hiring work (offers out, interviews, onboarding not
+    // started) lives on the recruiter home — and money items never reach it.
     const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });
     const rq = await (await loginAs(recruiter.email)).get('/me/decisions');
+    expect(rq.status).toBe(200);
     const rKeys = (rq.body.decisions as Item[]).map((d) => d.key);
-    expect(rKeys.some((k) => k === 'onboarding:stuck')).toBe(true);
+    expect(rKeys.some((k) => k === 'onboarding:stuck')).toBe(false);
     expect(rKeys.some((k) => k.startsWith('receivable:'))).toBe(false);
+    // ...and the desk that does review it still gets it.
+    const { user: hrDesk } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hq = await (await loginAs(hrDesk.email)).get('/me/decisions');
+    expect((hq.body.decisions as Item[]).some((d) => d.key === 'onboarding:stuck')).toBe(true);
 
     // Marketing: none of the ops/finance items at all.
     const { user: mkt } = await createUser({ role: 'MARKETING_MANAGER' });
@@ -458,7 +466,7 @@ describe('GET /me/decisions', () => {
     expect((await agent1.delete(`/me/plan/${created.body.id}`)).status).toBe(200);
   });
 
-  it('HR admin sees finance + compliance items; an associate login gets a personal (or empty) queue', async () => {
+  it('Finance chases the receivable, the HR admin does not (role walk HR 2); an associate login gets a personal (or empty) queue', async () => {
     const client = await createClient();
     await prisma.clientStatement.create({
       data: {
@@ -471,15 +479,19 @@ describe('GET /me/decisions', () => {
         snapshot: { totals: { amount: 4321.5 } },
       },
     });
-    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const hrAgent = await loginAs(hr.email);
-    const hrRes = await hrAgent.get('/me/decisions');
-    expect(hrRes.status).toBe(200);
-    const hrItems = hrRes.body.decisions as Item[];
-    const ar = hrItems.find((d) => d.key.startsWith('receivable:'));
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const finRes = await (await loginAs(fin.email)).get('/me/decisions');
+    expect(finRes.status).toBe(200);
+    const ar = (finRes.body.decisions as Item[]).find((d) => d.key.startsWith('receivable:'));
     expect(ar).toBeDefined();
     expect(ar!.stakes).toBeCloseTo(4321.5, 2);
     expect(ar!.severity).toBe('critical');
+
+    // The HR desk leads with legal deadlines; money is Finance's.
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrRes = await (await loginAs(hr.email)).get('/me/decisions');
+    expect(hrRes.status).toBe(200);
+    expect((hrRes.body.decisions as Item[]).some((d) => d.key.startsWith('receivable:'))).toBe(false);
 
     const assoc = await createAssociate({ firstName: 'Solo', lastName: 'Worker' });
     const { user } = await createUser({

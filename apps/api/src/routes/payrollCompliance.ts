@@ -28,6 +28,7 @@ import {
   deadlineDays,
   markSubmitted,
   newHireCsv,
+  filingStatus,
   providerForState,
   syncRecentHires,
 } from '../lib/newHireReporting.js';
@@ -306,6 +307,8 @@ payrollComplianceRouter.get('/pay-compliance/new-hire-reports', requireAuth, PRO
       filingService: providerForState(r.state)?.label ?? null,
     })),
     truncated: rows.length === 1000,
+    // How filing happens here today: the CSV for manual upload unless a state has an electronic service connected.
+    filing: filingStatus(),
   });
 });
 

@@ -278,6 +278,57 @@ export async function plannedHoursOn(driverUserId: string, date: string, db: Db 
   return { shiftHours, runHours };
 }
 
+/** Credentials are judged once the desk has recorded at least one driver profile. */
+export async function credentialsEnforced(db: Db = prisma): Promise<boolean> {
+  return (await db.driverProfile.count()) > 0;
+}
+
+/** The window a run keeps its van and driver busy: 15 minutes before it leaves until it ends (or RUN_SPAN_MS after leaving). */
+export function runBusyWindow(run: { departAt: Date; startedAt?: Date | null; endedAt?: Date | null }): { from: number; to: number } {
+  const start = run.startedAt ?? run.departAt;
+  return { from: run.departAt.getTime() - 15 * 60_000, to: (run.endedAt ?? new Date(start.getTime() + RUN_SPAN_MS)).getTime() };
+}
+
+const fmtClock = (d: Date) => new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TIMEZONE, hour: 'numeric', minute: '2-digit' }).format(d);
+
+/**
+ * Transport walk 1: a van and a driver take one run at a time. Any PLANNED
+ * or ACTIVE run of the same van or driver whose busy window overlaps this
+ * departure's refuses it — 409 van_busy / driver_busy, naming the run.
+ * The planner uses the same window (lib/transportPlan), so what it never
+ * proposes, dispatch never accepts by hand either.
+ */
+export async function assertVanDriverFree(
+  vanId: string,
+  driverUserId: string,
+  departAt: Date,
+  opts: { excludeRunId?: string; excludeRunIds?: string[] } = {},
+  db: Db = prisma,
+): Promise<void> {
+  const mine = runBusyWindow({ departAt });
+  const exclude = [...(opts.excludeRunIds ?? []), ...(opts.excludeRunId ? [opts.excludeRunId] : [])];
+  const others = await db.rideRun.findMany({
+    where: {
+      status: { in: ['PLANNED', 'ACTIVE'] },
+      OR: [{ vanId }, { driverUserId }],
+      ...(exclude.length ? { id: { notIn: exclude } } : {}),
+      // Only runs that could overlap: leaving inside a day either way.
+      departAt: { gte: new Date(mine.from - RUN_SPAN_MS - 86_400_000), lte: new Date(mine.to + 86_400_000) },
+    },
+    select: { id: true, vanId: true, driverUserId: true, departAt: true, startedAt: true, endedAt: true, van: { select: { name: true } }, driver: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } } },
+    orderBy: { departAt: 'asc' },
+  });
+  for (const r of others) {
+    const w = runBusyWindow(r);
+    if (!(w.from < mine.to && w.to > mine.from)) continue;
+    if (r.vanId === vanId) {
+      throw new HttpError(409, 'van_busy', `${r.van.name} is already on a run leaving ${fmtClock(r.departAt)}. Pick another van, or another time.`);
+    }
+    const who = r.driver.associate ? `${r.driver.associate.firstName} ${r.driver.associate.lastName}` : r.driver.email;
+    throw new HttpError(409, 'driver_busy', `${who} is already driving ${r.van.name}'s run leaving ${fmtClock(r.departAt)}. Pick another driver, or another time.`);
+  }
+}
+
 /**
  * May this driver take a run leaving at `departAt`? Credentials current;
  * on shift if the day schedules drivers; under the day's hours of service.
@@ -291,8 +342,12 @@ export async function assertDriverFit(driverUserId: string, departAt: Date, opts
   const name = user?.associate ? `${user.associate.firstName} ${user.associate.lastName}` : (user?.email ?? 'This driver');
   // Credentials are enforced once the desk has started recording them: a
   // fleet that has not opened a single profile is not refused every run.
-  if (profile) {
-    const cred = driverCredentialStatus(profile, new Date());
+  // From the first profile on, a driver with NO profile is a driver with
+  // no licence on file — the same refusal as a lapsed one (transport walk
+  // 2: a missing licence used to pass every check).
+  const judged = profile ?? ((await credentialsEnforced(db)) ? null : undefined);
+  if (judged !== undefined) {
+    const cred = driverCredentialStatus(judged, new Date());
     if (!cred.ok) {
       const what = cred.problems.map((p) => `${p.label}${p.expired ? ` expired ${p.expiresAt}` : ' not on file'}`).join('; ');
       throw new HttpError(409, 'driver_credentials', `${name} can't take a run: ${what}. Update their driver record first.`);

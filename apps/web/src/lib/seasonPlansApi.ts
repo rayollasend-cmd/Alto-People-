@@ -38,12 +38,6 @@ export function getSeasonPlan(id: string): Promise<SeasonPlanComputed> {
   return apiFetch<SeasonPlanComputed>(`/season-plans/${id}`);
 }
 
-export function getSeasonPlanDefaults(q: { clientId?: string | null; seasonStart: string; seasonEnd: string }): Promise<SeasonPlanDefaultsResponse> {
-  const sp = new URLSearchParams({ seasonStart: q.seasonStart, seasonEnd: q.seasonEnd });
-  if (q.clientId) sp.set('clientId', q.clientId);
-  return apiFetch<SeasonPlanDefaultsResponse>(`/season-plans/defaults?${sp.toString()}`);
-}
-
 export function createSeasonPlan(body: SeasonPlanInput): Promise<SeasonPlanComputed> {
   return apiFetch<SeasonPlanComputed>('/season-plans', { method: 'POST', body });
 }

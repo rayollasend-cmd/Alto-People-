@@ -12,6 +12,7 @@ import {
   driverClockOut,
   driverOk,
   getDriverProfile,
+  getDriverShifts,
   getDriverTime,
   getDriverToday,
   getPreTrip,
@@ -143,6 +144,9 @@ export function DriverTodayCard() {
   const queryClient = useQueryClient();
   const today = useQuery({ queryKey: ['transport', 'driver', 'today'], queryFn: getDriverToday, refetchInterval: 60_000 });
   const time = useQuery({ queryKey: ['transport', 'driver', 'time'], queryFn: getDriverTime, enabled: !!today.data?.associateId });
+  // Audit Tier 3: the two-week list (/transport/driver/shifts), one tap from the next five.
+  const [allShifts, setAllShifts] = useState(false);
+  const twoWeeks = useQuery({ queryKey: ['transport', 'driver', 'shifts', 14], queryFn: () => getDriverShifts(undefined, 14), enabled: allShifts && !!today.data?.associateId });
   const [busy, setBusy] = useState(false);
   if (today.isLoading) return <Skeleton className="h-28" />;
   if (today.isError) return <QueryError what="your day" query={today} />;
@@ -204,12 +208,21 @@ export function DriverTodayCard() {
       ) : (
         <>
           <div>
-            <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.myShifts')}</h3>
-            {d.shifts.length === 0 ? (
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.myShifts')}</h3>
+              <Button size="xs" variant="ghost" onClick={() => setAllShifts((v) => !v)} aria-expanded={allShifts}>
+                {allShifts ? t('drive.shiftsFewer') : t('drive.shiftsTwoWeeks')}
+              </Button>
+            </div>
+            {allShifts && twoWeeks.isError ? (
+              <QueryError what="your shifts" query={twoWeeks} />
+            ) : allShifts && twoWeeks.isLoading ? (
+              <Skeleton className="mt-1 h-16" />
+            ) : (allShifts ? (twoWeeks.data?.shifts ?? []) : d.shifts).length === 0 ? (
               <p className="mt-1 text-xs text-silver">{t('drive.noShifts')}</p>
             ) : (
               <ul className="mt-1 space-y-1">
-                {d.shifts.slice(0, 5).map((s) => (
+                {(allShifts ? (twoWeeks.data?.shifts ?? []) : d.shifts.slice(0, 5)).map((s) => (
                   <li key={s.id} className={cn('flex items-center gap-2 text-sm', s.today ? 'text-ink' : 'text-silver')}>
                     <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     <span className="tabular-nums">

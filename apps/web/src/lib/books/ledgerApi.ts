@@ -28,8 +28,6 @@ function qs(params: Record<string, string | number | null | undefined>): string 
   return s ? `?${s}` : '';
 }
 
-export const BOOKS_KEY = ['books'] as const;
-
 export const getBooksOverview = () => apiFetch<BooksOverview>(`${B}/overview`);
 export const getBooksDimensions = () => apiFetch<BooksDimensions>(`${B}/dimensions`);
 

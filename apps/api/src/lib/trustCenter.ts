@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { PRODUCT_NAME, SUB_PROCESSORS, TRUST_COMMITMENTS, type TrustControlPublic, type TrustStatus, type TrustSummary, type TrustSummaryPublic } from '@alto-people/shared';
+import { PRODUCT_NAME, SUB_PROCESSORS, TRUST_COMMITMENTS, type Soc2Progress, type TrustControlPublic, type TrustStatus, type TrustSummary, type TrustSummaryPublic } from '@alto-people/shared';
 import { complianceEvidence } from './evidence.js';
 import { MIN_RETENTION_YEARS, retentionYearsFor } from './auditChain.js';
 import { ALTO_TENANT_ID } from './tenant.js';
@@ -31,6 +31,43 @@ async function platformControls(db: Db, now: Date): Promise<TrustControlPublic[]
   }));
 }
 
+/**
+ * SOC 2 progress, said from the evidence (audit 2026-10-21). "Audited" only
+ * when the operator recorded the auditor's report date; "observation" once
+ * every control has evidence inside its freshness window (the period an
+ * auditor samples); "preparing" until then. Never a claim the controls do
+ * not back.
+ */
+export function soc2StageFrom(controls: ReadonlyArray<{ state: string; latest: { status: string; collectedAt: string } | null }>, reportIssuedOn: Date | null): Soc2Progress['stage'] {
+  if (reportIssuedOn) return 'audited';
+  const allCurrent = controls.length > 0 && controls.every((c) => c.state !== 'missing' && c.state !== 'stale');
+  return allCurrent ? 'observation' : 'preparing';
+}
+
+export async function soc2Progress(db: Db, now: Date = new Date()): Promise<Soc2Progress> {
+  const [ev, setting, firsts] = await Promise.all([
+    complianceEvidence(db, now),
+    db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { soc2ReportIssuedOn: true } }),
+    db.complianceEvidence.groupBy({ by: ['control'], _min: { collectedAt: true } }),
+  ]);
+  const controls = ev.controls;
+  const stage = soc2StageFrom(controls, setting?.soc2ReportIssuedOn ?? null);
+  const latest = controls.map((c) => c.latest?.collectedAt ?? null).filter((d): d is string => !!d).sort();
+  // Observation starts the day the last control first produced evidence.
+  const firstByControl = new Map(firsts.map((f) => [f.control, f._min.collectedAt]));
+  const starts = controls.map((c) => firstByControl.get(c.id) ?? null);
+  const observationSince = stage === 'preparing' || starts.some((d) => !d) ? null : new Date(Math.max(...starts.map((d) => d!.getTime()))).toISOString().slice(0, 10);
+  return {
+    stage,
+    controlsPassing: controls.filter((c) => c.latest?.status === 'PASS' && c.state !== 'stale').length,
+    controlsCurrent: controls.filter((c) => c.state !== 'missing' && c.state !== 'stale').length,
+    controlsTotal: controls.length,
+    lastEvidenceAt: latest.length ? latest[latest.length - 1]! : null,
+    observationSince,
+    reportIssuedOn: setting?.soc2ReportIssuedOn ? setting.soc2ReportIssuedOn.toISOString().slice(0, 10) : null,
+  };
+}
+
 async function platformChain(db: Db) {
   const last = await db.auditChainCheck.findFirst({ where: { tenantId: ALTO_TENANT_ID }, orderBy: { checkedAt: 'desc' }, select: { ok: true, checkedAt: true } });
   return { verifiedAt: last?.checkedAt.toISOString() ?? null, ok: last?.ok ?? null };
@@ -59,11 +96,12 @@ let publicCache: { at: number; value: TrustSummaryPublic } | null = null;
 
 export async function trustSummaryPublic(db: Db, now: Date = new Date()): Promise<TrustSummaryPublic> {
   if (publicCache && now.getTime() - publicCache.at < 60_000) return publicCache.value;
-  const [controls, auditChain, agents, setting] = await Promise.all([
+  const [controls, auditChain, agents, setting, soc2] = await Promise.all([
     platformControls(db, now),
     platformChain(db),
     platformAgents(db),
     db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } }),
+    soc2Progress(db, now),
   ]);
   const value: TrustSummaryPublic = {
     generatedAt: now.toISOString(),
@@ -75,6 +113,7 @@ export async function trustSummaryPublic(db: Db, now: Date = new Date()): Promis
     subProcessors: [...SUB_PROCESSORS],
     commitments: [...TRUST_COMMITMENTS],
     securityContactSet: !!setting?.securityContactEmail,
+    soc2,
   };
   publicCache = { at: now.getTime(), value };
   return value;

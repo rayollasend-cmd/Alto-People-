@@ -162,7 +162,7 @@ describe('<NotInYetCard>', () => {
         person({ shiftId: 's5', associateId: 'a5', name: 'Fay Ross', minutesLate: 40, status: 'on-leave', clientId: 'c2' }),
       ],
     });
-    floor.textCrew.mockResolvedValue({ sent: 2, noPhone: [] });
+    floor.textCrew.mockResolvedValue({ sent: 2, failed: 0, optedOut: 0, noPhone: [], notConfigured: null });
     const user = userEvent.setup();
     renderAs('SHIFT_SUPERVISOR', <NotInYetCard canCover />);
     const list = await screen.findByRole('list', { name: 'Not in yet' });

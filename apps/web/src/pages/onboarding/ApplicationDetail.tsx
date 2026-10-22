@@ -13,6 +13,7 @@ import {
   Eye,
   FileDown,
   MailCheck,
+  MoreHorizontal,
   MailWarning,
   ExternalLink,
   MinusCircle,
@@ -90,6 +91,7 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { StickyActionBar } from '@/components/ui/StickyActionBar';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import {
   Dialog,
@@ -108,8 +110,15 @@ import { getAssociatePaySchedule } from '@/lib/payScheduleFlowApi';
 import { ReadyToWorkLine } from '@/components/ReadyToWorkLine';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
+import { FirstDayCard } from './FirstDayCard';
 import { CancelInviteDialog, cancelledToast, type AfterCancel, type CancelledInvite } from './CancelInviteDialog';
 import { cn } from '@/lib/cn';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/DropdownMenu';
 
 const EMPLOYMENT_LABEL: Record<string, string> = {
   W2_EMPLOYEE: 'W-2',
@@ -287,7 +296,8 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
   const payScheduleQuery = useQuery({
     queryKey: ['associatePaySchedule', hireAssociateId],
     queryFn: () => getAssociatePaySchedule(hireAssociateId!),
-    enabled: canManage && !!hireAssociateId && detailQuery.data?.status !== 'APPROVED',
+    // Also after approval: the First day card names the schedule they landed on.
+    enabled: canManage && !!hireAssociateId,
     retry: false,
   });
 
@@ -667,6 +677,19 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         </CardContent>
       </Card>
 
+      {/* Day one, made ready from here (role walk HR 11). */}
+      {canManage && detail.status !== 'CANCELLED' && detail.status !== 'REJECTED' && (
+        <section className="mb-6">
+          <FirstDayCard
+            applicationId={detail.id}
+            associateId={detail.associateId}
+            clientId={detail.clientId}
+            status={detail.status}
+            payScheduleName={hireScheduleName}
+          />
+        </section>
+      )}
+
       <section
         className={cn(
           'grid grid-cols-1 gap-3 mb-8',
@@ -774,6 +797,21 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         </div>
       )}
 
+      {/* The decision, on screen on a phone (role walk HR 15): the header's
+          Approve and Reject sat past a sideways-scrolling row. */}
+      {canManage && <ApplicationDecisionBar
+        detail={detail}
+        onApprove={() => (directApproveDate ? void handleDirectApprove() : setApproveOpen(true))}
+        approveLabel={directApproveDate ? `Approve · starts ${fmtDateLabel(directApproveDate)}` : 'Approve'}
+        approving={directApproving}
+        onChangeDate={directApproveDate ? () => setApproveOpen(true) : undefined}
+        onReject={() => setRejectOpen(true)}
+        onResend={() => void handleResend()}
+        onCancel={() => setCancelOpen(true)}
+        onInPerson={() => navigate(`/onboarding/in-person/${detail.id}`)}
+        onPacket={() => window.open(`${compliancePacketUrl(detail.id)}?inline=1`, '_blank', 'noopener')}
+      />}
+
       <ApproveDialog
         open={approveOpen}
         onOpenChange={(o) => {
@@ -800,6 +838,9 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         position={detail.position}
         hireDate={celebration?.hireDate ?? ''}
         applicationId={detail.id}
+        associateId={detail.associateId}
+        clientId={detail.clientId}
+        payScheduleName={hireScheduleName}
         completedTasks={detail.tasks.filter((t) => t.status === 'DONE').length}
         totalTasks={detail.tasks.length}
       />
@@ -883,7 +924,7 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
   );
 }
 
-function DetailActions({
+export function DetailActions({
   detail,
   onResend,
   onApprove,
@@ -932,33 +973,23 @@ function DetailActions({
   const checklistComplete =
     detail.tasks.length === 0 || detail.percentComplete === 100;
 
+  // The reason Approve is off, said under it — a tooltip is invisible on a
+  // phone and to most people on a desktop.
+  const pendingTasks = detail.tasks.filter((t) => t.status !== 'DONE' && t.status !== 'SKIPPED').length;
+  const approveReason = !checklistComplete
+    ? `${pendingTasks} of ${detail.tasks.length} tasks pending`
+    : needsSchedule && !directApproveDate
+      ? 'No pay schedule covers this hire yet — choose one as you approve'
+      : null;
+
   return (
-    <div className="flex flex-wrap gap-2 shrink-0">
-      <a
-        href={`${compliancePacketUrl(detail.id)}?inline=1`}
-        target="_blank"
-        rel="noreferrer"
-        className={cn(
-          'inline-flex items-center gap-2 px-3 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 text-white hover:border-gold/60 hover:text-gold transition-colors',
-          compact ? 'h-8' : 'h-9'
-        )}
-        title="View the audit packet in the browser"
-      >
-        <Eye className="h-4 w-4" />
-        {compact ? 'View' : 'View packet'}
-      </a>
-      <a
-        href={compliancePacketUrl(detail.id)}
-        download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
-        className={cn(
-          'inline-flex items-center gap-2 px-3 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 text-white hover:border-gold/60 hover:text-gold transition-colors',
-          compact ? 'h-8' : 'h-9'
-        )}
-        title="Download single-PDF audit packet for this application"
-      >
-        <FileDown className="h-4 w-4" />
-        {compact ? 'Packet' : 'Download'}
-      </a>
+    <div className="flex shrink-0 flex-wrap items-start gap-2">
+      <Button asChild variant="outline" size="sm">
+        <a href={`${compliancePacketUrl(detail.id)}?inline=1`} target="_blank" rel="noreferrer" title="View the audit packet in the browser">
+          <Eye className="h-4 w-4" />
+          {compact ? 'Packet' : 'View packet'}
+        </a>
+      </Button>
       {!decided && (
         <Button asChild variant="secondary" size="sm">
           <Link
@@ -970,36 +1001,45 @@ function DetailActions({
           </Link>
         </Button>
       )}
-      {!decided && (
-        <Button variant="outline" size="sm" onClick={onResend}>
-          <Send className="h-4 w-4" />
-          Resend invite
-        </Button>
-      )}
       {detail.status === 'CANCELLED' && (
         <Button variant="outline" size="sm" onClick={onReopen} loading={reopening} title="Reopen with a fresh invite link">
           <RotateCcw className="h-4 w-4" />
           Reopen
         </Button>
       )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" aria-label="More actions">
+            <MoreHorizontal className="h-4 w-4" />
+            {!compact && 'More'}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {!decided && (
+            <DropdownMenuItem onSelect={onResend}>
+              <Send className="mr-2 h-3.5 w-3.5" />
+              Resend invite
+            </DropdownMenuItem>
+          )}
+          {!decided && (
+            <DropdownMenuItem onSelect={onCancel}>
+              <Ban className="mr-2 h-3.5 w-3.5" />
+              Cancel invite
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem asChild>
+            <a
+              href={compliancePacketUrl(detail.id)}
+              download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
+            >
+              <FileDown className="mr-2 h-3.5 w-3.5" />
+              Download packet (PDF)
+            </a>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {!decided && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onCancel}
-          title="Sent by mistake, or not joining — no email goes to them, and their link stops working"
-        >
-          <Ban className="h-4 w-4" />
-          {compact ? 'Cancel' : 'Cancel invite'}
-        </Button>
-      )}
-      {!decided && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onReject}
-          className="text-alert hover:text-alert"
-        >
+        <Button variant="outline" size="sm" onClick={onReject} className="hidden text-alert hover:text-alert sm:inline-flex">
           <ThumbsDown className="h-4 w-4" />
           Reject
         </Button>
@@ -1014,7 +1054,7 @@ function DetailActions({
           size="sm"
           onClick={onApprove}
           disabled={!checklistComplete || directApproving}
-          className="px-2"
+          className="hidden px-2 sm:inline-flex"
           aria-label="Approve with a different hire date"
           title="Change the hire date before approving"
         >
@@ -1022,28 +1062,87 @@ function DetailActions({
         </Button>
       )}
       {!decided && (
-        <Button
-          size="sm"
-          onClick={directApproveDate ? onDirectApprove : onApprove}
-          loading={directApproving}
-          disabled={!checklistComplete}
-          title={
-            checklistComplete
-              ? directApproveDate
-                ? `Approve now with the start date already on file${directApproveSchedule ? ` · paid on ${directApproveSchedule}` : ''}`
-                : needsSchedule
-                  ? 'No pay schedule covers this hire yet — choose one as you approve'
-                  : undefined
-              : 'Checklist must be 100% before approving'
-          }
-        >
-          <ThumbsUp className="h-4 w-4" />
-          {directApproveDate
-            ? `Approve · starts ${fmtDateLabel(directApproveDate)}`
-            : 'Approve'}
-        </Button>
+        <div className="hidden flex-col items-end gap-1 sm:flex">
+          <Button
+            size="sm"
+            onClick={directApproveDate ? onDirectApprove : onApprove}
+            loading={directApproving}
+            disabled={!checklistComplete}
+            aria-describedby={approveReason ? `approve-why-${detail.id}` : undefined}
+            title={directApproveDate && directApproveSchedule ? `Approve now with the start date already on file · paid on ${directApproveSchedule}` : undefined}
+          >
+            <ThumbsUp className="h-4 w-4" />
+            {directApproveDate ? `Approve · starts ${fmtDateLabel(directApproveDate)}` : 'Approve'}
+          </Button>
+          {approveReason && (
+            <span id={`approve-why-${detail.id}`} className="max-w-[16rem] text-right text-xs text-ink-muted">
+              {approveReason}
+            </span>
+          )}
+        </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The decision on a phone (role walk HR 15): Approve and Reject at the
+ * bottom of the screen, the rest behind More, and why Approve is blocked
+ * said in words. Below `sm` only — the header's own buttons hide there.
+ */
+export function ApplicationDecisionBar({
+  detail,
+  onApprove,
+  approveLabel,
+  approving,
+  onChangeDate,
+  onReject,
+  onResend,
+  onCancel,
+  onInPerson,
+  onPacket,
+}: {
+  detail: ApplicationDetailType;
+  onApprove: () => void;
+  approveLabel: string;
+  approving: boolean;
+  /** Present when one-tap approve uses the date on file: change it first. */
+  onChangeDate?: () => void;
+  onReject: () => void;
+  onResend: () => void;
+  onCancel: () => void;
+  onInPerson: () => void;
+  onPacket: () => void;
+}) {
+  const decided =
+    detail.status === 'APPROVED' || detail.status === 'REJECTED' || detail.status === 'CANCELLED';
+  if (decided) return null;
+  const checklistComplete = detail.tasks.length === 0 || detail.percentComplete === 100;
+  const done = detail.tasks.filter((t) => t.status === 'DONE' || t.status === 'SKIPPED').length;
+  return (
+    <StickyActionBar
+      label="Decision"
+      note={checklistComplete ? undefined : `${done} of ${detail.tasks.length} tasks done — Approve opens when all are done.`}
+      primary={
+        <Button onClick={onApprove} loading={approving} disabled={!checklistComplete || approving}>
+          <ThumbsUp className="h-4 w-4" />
+          {approveLabel}
+        </Button>
+      }
+      secondary={
+        <Button variant="outline" onClick={onReject} className="text-alert hover:text-alert">
+          <ThumbsDown className="h-4 w-4" />
+          Reject
+        </Button>
+      }
+      more={[
+        ...(onChangeDate ? [{ label: 'Approve with another date', onSelect: onChangeDate, icon: <CalendarDays className="mr-2 h-4 w-4" /> }] : []),
+        { label: 'Onboard in person', onSelect: onInPerson, icon: <UserCheck className="mr-2 h-4 w-4" /> },
+        { label: 'View packet', onSelect: onPacket, icon: <Eye className="mr-2 h-4 w-4" /> },
+        { label: 'Resend invite', onSelect: onResend, icon: <Send className="mr-2 h-4 w-4" /> },
+        { label: 'Cancel invite', onSelect: onCancel, destructive: true, icon: <Ban className="mr-2 h-4 w-4" /> },
+      ]}
+    />
   );
 }
 
@@ -1253,6 +1352,9 @@ function ApprovedCelebration({
   position,
   hireDate,
   applicationId,
+  associateId,
+  clientId,
+  payScheduleName,
   completedTasks,
   totalTasks,
   nextInQueue = null,
@@ -1264,6 +1366,9 @@ function ApprovedCelebration({
   position: string | null;
   hireDate: string;
   applicationId: string;
+  associateId: string;
+  clientId: string;
+  payScheduleName: string | null;
   completedTasks: number;
   totalTasks: number;
   /** Next application awaiting review — powers the assembly-line button. */
@@ -1332,6 +1437,19 @@ function ApprovedCelebration({
                 You'll see I-9 Section 2 in your queue when they finish
                 Section 1.
               </p>
+            </div>
+
+            {/* Day one, while the hire is fresh: each line fixed right here. */}
+            <div className="mt-4 max-h-[45vh] overflow-y-auto rounded-md border border-navy-secondary bg-navy/60 p-4">
+              <div className="mb-2 text-2xs uppercase tracking-widest text-silver">First day</div>
+              <FirstDayCard
+                applicationId={applicationId}
+                associateId={associateId}
+                clientId={clientId}
+                status="APPROVED"
+                payScheduleName={payScheduleName}
+                bare
+              />
             </div>
 
             <div className="mt-7 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
@@ -1589,24 +1707,18 @@ function TaskTile({ task, canSkip, quietSkip, onSkip, destination }: TaskTilePro
           )}
         </div>
         {canSkip && !isComplete && (
-          quietSkip ? (
-            // Deliberately understated: skipping W-4 / deposit / policy /
-            // profile is legitimate (1099 contractors) but shouldn't read
-            // as a casual shortcut. The trailing ellipsis signals the
-            // required-reason dialog behind it.
-            <button
-              type="button"
-              onClick={onSkip}
-              className="shrink-0 self-start text-xs text-silver/60 hover:text-silver underline-offset-4 hover:underline transition-colors"
-              title="Mark not applicable — requires a reason"
-            >
-              Skip…
-            </button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={onSkip} className="shrink-0">
-              Skip
-            </Button>
-          )
+          // One control everywhere: the small ghost button. The ellipsis
+          // marks the kinds that ask for a reason first (a 1099 contractor's
+          // W-4, say) — a legitimate skip, never a casual shortcut.
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onSkip}
+            className="shrink-0 self-start text-ink-muted"
+            title={quietSkip ? 'Mark not applicable — asks for a reason' : 'Mark not applicable'}
+          >
+            {quietSkip ? 'Skip…' : 'Skip'}
+          </Button>
         )}
       </div>
     </div>

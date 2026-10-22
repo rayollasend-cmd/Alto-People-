@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtRelativeDayTz, fmtShiftRangeTz } from '@/lib/format';
+import { withArticle } from '@/lib/validationCopy';
 import { CALL_OUT_REASONS, listCallOuts, recordCallOutFor, type CallOutItem, type CallOutReason } from '@/lib/callOutsApi';
 import { assignShift, getAutoFillBatch, listShifts } from '@/lib/schedulingApi';
 import type { AutoFillResponse } from '@alto-people/shared';
@@ -212,7 +213,7 @@ function RecordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Record a call-out</DialogTitle>
-          <DialogDescription>For a {term('worker').toLowerCase()} who called you directly. Cover starts as soon as you save, and they get a confirmation.</DialogDescription>
+          <DialogDescription>For {withArticle(term('worker').toLowerCase())} who called you directly. Cover starts as soon as you save, and they get a confirmation.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <Field label={`Which ${term('worker').toLowerCase()}`} required>

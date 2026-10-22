@@ -68,6 +68,8 @@ export interface PayrollReviewReport {
     createdByName: string | null;
     createdAt: string;
     finalizedAt: string | null;
+    /** The gross stored on the run (absent from older responses). */
+    storedGross?: number;
   };
   totals: {
     people: number;

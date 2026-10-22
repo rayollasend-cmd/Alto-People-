@@ -18,7 +18,8 @@ export interface HugoCan {
 
 export interface HugoMe {
   name: string;
-  audience: 'associate' | 'manager' | 'admin';
+  /** driver: a van driver — their runs, not a rider's ride (floor walk 19). */
+  audience: 'associate' | 'driver' | 'manager' | 'admin';
   intro: string;
   can: HugoCan[];
   /** A model answers (not only the registry's rules). */

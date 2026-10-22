@@ -58,8 +58,9 @@ import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
+import { ManagerOpenShifts } from './ManagerOpenShifts';
 
-type Tab = 'open' | 'claims' | 'catalog';
+type Tab = 'open' | 'mgr' | 'claims' | 'catalog';
 
 export function MarketplaceHome() {
   const { t } = useI18n();
@@ -70,8 +71,10 @@ export function MarketplaceHome() {
   // accounts) got a red 403 banner there; hide the tab and land them on
   // the manager views instead.
   const canPickUp = !!user?.associateId;
+  // A manager lands on the real open shifts (role walk, ops 11): "Open
+  // shifts" in the sidebar used to open on Pending claims with no shifts.
   const [tab, setTab] = useState<Tab>(
-    canManage || !canPickUp ? 'claims' : 'open',
+    canManage ? 'mgr' : !canPickUp ? 'claims' : 'open',
   );
 
   return (
@@ -86,12 +89,16 @@ export function MarketplaceHome() {
         {/* An associate has one view — a lone "Available" tab was chrome. */}
         {canManage && (
           <TabsList>
+            <TabsTrigger value="mgr">{t('mk.mgr.tab')}</TabsTrigger>
             {canPickUp && <TabsTrigger value="open">{t('mk.tab.available')}</TabsTrigger>}
             <TabsTrigger value="claims">Pending claims</TabsTrigger>
             <TabsTrigger value="catalog">Qualifications</TabsTrigger>
           </TabsList>
         )}
 
+        {canManage && (
+          <TabsContent value="mgr"><ManagerOpenShifts /></TabsContent>
+        )}
         {canPickUp && (
           <TabsContent value="open"><AvailableTab /></TabsContent>
         )}

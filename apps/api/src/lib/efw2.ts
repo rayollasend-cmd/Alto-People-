@@ -17,9 +17,20 @@
 //
 // Positions: SSA Publication 42-007, EFW2 Tax Year 2025, Version 3.3
 // (01/20/2026), sections 4.4–4.13 and Appendix E (paper-box cross
-// reference). The TY2026 publication (26efw2.pdf) could not be retrieved
-// (ssa.gov refuses automated download), so the 2026 additions — Box 12 TA,
-// TP, TT and Box 14b — are refused rather than guessed at (efw2Unsupported).
+// reference). Tax year 2026 (OBBBA §§70201, 70202, 70204) moves Codes A and
+// B to their own RO fields, gives J, K, L and P fields of their own, adds
+// TA, TP and TT to the RO record, and Box 14b (Treasury Tipped Occupation
+// Codes) to the RW record. ssa.gov refuses automated retrieval of
+// 26efw2.pdf; the TY2026 RO and RW positions here are transcribed from the
+// Ohio Department of Taxation's 2026 W-2 upload specification (revised
+// August 2026), which reproduces the SSA RO/RW layouts field by field:
+//   RO 155-165 A · 166-176 B · 177-187 J · 188-198 K · 199-209 L · 210-220 P ·
+//   221-231 TA · 232-242 TP · 243-253 TT · 254-274 blank;
+//   RW 490-492 and 493-495 Treasury Tipped Occupation Codes.
+// CONFIRM against 26efw2.pdf before the first TY2026 BSO upload (AccuWage
+// Online checks every position): the RU totals for the new RO fields are
+// not in the Ohio transcription, so the RU record leaves 205-354 blank for
+// TY2026, as the TY2025 layout does.
 //
 // Validate every file with AccuWage Online before a BSO upload:
 //   https://www.ssa.gov/employer/accuwage/
@@ -162,30 +173,45 @@ const RO_CODE: Record<string, [number, number]> = {
   HH: [133, 143],
   II: [144, 154],
 };
-/** Codes with no EFW2 field (Appendix E): reported on the paper form only. */
+/** Tax year 2026 and later: the RO fields the OBBBA year added (see the header). */
+const RO_CODE_2026: Record<string, [number, number]> = {
+  A: [155, 165],
+  B: [166, 176],
+  J: [177, 187],
+  K: [188, 198],
+  L: [199, 209],
+  P: [210, 220],
+  TA: [221, 231],
+  TP: [232, 242],
+  TT: [243, 253],
+};
+/** TY2025 and earlier: codes with no EFW2 field (Appendix E), reported on the paper form only. */
 const NO_FIELD = new Set(['J', 'K', 'L', 'P']);
-/** Codes A and B share RO 23-33 (uncollected tax on tips). */
+/** TY2025 and earlier: Codes A and B share RO 23-33 (uncollected tax on tips). */
 const RO_TIPS = new Set(['A', 'B']);
+/** The RO code table for a tax year. */
+const roCodesFor = (taxYear: number): Record<string, [number, number]> => (taxYear >= 2026 ? { ...RO_CODE, ...RO_CODE_2026 } : RO_CODE);
 
 export function efw2Unsupported(input: Efw2File): Efw2Gap[] {
   const gaps: Efw2Gap[] = [];
   const ty = input.employer.taxYear;
+  const ro = roCodesFor(ty);
   for (const e of input.employees) {
     const b = e.boxes;
     const missing: string[] = [];
     for (const c of b.box12 ?? []) {
       if (c.amount === 0) continue;
-      if (c.code === 'TA' || c.code === 'TP' || c.code === 'TT') missing.push(`Box 12 ${c.code} (TY${ty} position not confirmed)`);
-      else if (!RW_CODE[c.code] && !RO_CODE[c.code] && !NO_FIELD.has(c.code) && !RO_TIPS.has(c.code)) missing.push(`Box 12 ${c.code}`);
+      if (ty < 2026 && (c.code === 'TA' || c.code === 'TP' || c.code === 'TT')) missing.push(`Box 12 ${c.code} (not a TY${ty} code)`);
+      else if (!RW_CODE[c.code] && !ro[c.code] && !(ty < 2026 && (NO_FIELD.has(c.code) || RO_TIPS.has(c.code)))) missing.push(`Box 12 ${c.code}`);
     }
-    if ((b.box14bTippedOccupationCodes ?? []).length > 0) missing.push(`Box 14b (TY${ty} position not confirmed)`);
+    if (ty < 2026 && (b.box14bTippedOccupationCodes ?? []).length > 0) missing.push(`Box 14b (not a TY${ty} field)`);
     if (missing.length > 0) gaps.push({ ssnLast4: e.ssn.slice(-4), name: `${e.firstName} ${e.lastName}`, missing });
   }
   return gaps;
 }
 
 const code12 = (b: W2Boxes, code: string) => (b.box12 ?? []).filter((c) => c.code === code).reduce((s, c) => s + c.amount, 0);
-const needsRo = (b: W2Boxes) => (b.box12 ?? []).some((c) => c.amount !== 0 && (RO_CODE[c.code] || RO_TIPS.has(c.code)));
+const needsRo = (b: W2Boxes, taxYear: number) => (b.box12 ?? []).some((c) => c.amount !== 0 && (roCodesFor(taxYear)[c.code] || (taxYear < 2026 && RO_TIPS.has(c.code))));
 
 /**
  * Builds the full EFW2 file as a string (CRLF-joined records, no
@@ -208,7 +234,7 @@ export function buildEfw2File(input: Efw2File): string {
 
   for (const employee of input.employees) {
     const b = employee.boxes;
-    records.push(buildRW(employee));
+    records.push(buildRW(employee, input.employer.taxYear));
     rwCount += 1;
     addT(rt, 'box1', b.box1Wages);
     addT(rt, 'box2', b.box2FitWithheld);
@@ -219,10 +245,11 @@ export function buildEfw2File(input: Efw2File): string {
     addT(rt, 'box7', b.box7SsTips ?? 0);
     addT(rt, 'box10', b.box10DependentCare ?? 0);
     for (const c of Object.keys(RW_CODE)) addT(rt, c, code12(b, c));
-    if (needsRo(b)) {
-      records.push(buildRO(employee));
+    if (needsRo(b, input.employer.taxYear)) {
+      records.push(buildRO(employee, input.employer.taxYear));
       roCount += 1;
-      addT(ru, 'AB', code12(b, 'A') + code12(b, 'B'));
+      // TY2025: the combined A+B total. TY2026 totals for the new RO fields have no confirmed RU position (header).
+      if (input.employer.taxYear < 2026) addT(ru, 'AB', code12(b, 'A') + code12(b, 'B'));
       for (const c of Object.keys(RO_CODE)) addT(ru, c, code12(b, c));
     }
     for (const rs of rsRecords(employee, input.employer)) {
@@ -322,7 +349,7 @@ function buildRE(e: Efw2Employer, s: Efw2Submitter, thirdPartySick: boolean): st
   ]);
 }
 
-function buildRW(emp: Efw2Employee): string {
+function buildRW(emp: Efw2Employee, taxYear: number): string {
   const b = emp.boxes;
   const codeFields = Object.entries(RW_CODE).map(([c, [a, z]]) => money(code12(b, c), a, z));
   return assemble([
@@ -361,20 +388,25 @@ function buildRW(emp: Efw2Employee): string {
     blank(487, 487),
     fixed(b.box13RetirementPlan ? '1' : '0', 488, 488),
     fixed(b.box13ThirdPartySickPay ? '1' : '0', 489, 489),
-    blank(490, 512),
+    // TY2026 Box 14b: the Treasury Tipped Occupation Code(s), when Code TP is present ("000" with none).
+    ...(taxYear >= 2026 && code12(b, 'TP') !== 0
+      ? [text((b.box14bTippedOccupationCodes?.[0] ?? '000').padStart(3, '0').slice(0, 3), 490, 492), text(b.box14bTippedOccupationCodes?.[1] ? b.box14bTippedOccupationCodes[1].padStart(3, '0').slice(0, 3) : '', 493, 495), blank(496, 512)]
+      : [blank(490, 512)]),
   ]);
 }
 
-function buildRO(emp: Efw2Employee): string {
+function buildRO(emp: Efw2Employee, taxYear: number): string {
   const b = emp.boxes;
+  const ty2026 = taxYear >= 2026;
   return assemble([
     fixed('RO', 1, 2),
     blank(3, 11),
     money(0, 12, 22), // Allocated tips (Box 8)
-    money(code12(b, 'A') + code12(b, 'B'), 23, 33),
+    // Through TY2025 Codes A and B share one field; from TY2026 it is zero and each has its own (155-176).
+    money(ty2026 ? 0 : code12(b, 'A') + code12(b, 'B'), 23, 33),
     ...Object.entries(RO_CODE).map(([c, [a, z]]) => money(code12(b, c), a, z)),
     blank(100, 110),
-    blank(155, 274),
+    ...(ty2026 ? [...Object.entries(RO_CODE_2026).map(([c, [a, z]]) => money(code12(b, c), a, z)), blank(254, 274)] : [blank(155, 274)]),
     // Puerto Rico / Virgin Islands fields (W-2PR, W-2VI) — not used for a W-2.
     money(0, 275, 285),
     money(0, 286, 296),

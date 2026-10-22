@@ -3,6 +3,7 @@ import type {
   BooksBill,
   BooksBillInput,
   BooksBillPayment,
+  BooksBillPaymentBatchInput,
   BooksBillPaymentInput,
   BooksBillsApproveResult,
   BooksPayablesOptions,
@@ -69,8 +70,10 @@ export async function uploadBillAttachment(id: string, file: File): Promise<{ bi
 }
 
 export const payablesOptions = () => apiFetch<BooksPayablesOptions>('/books/payables/options');
-export const listBillPayments = (vendorId?: string) => apiFetch<{ payments: BooksBillPayment[] }>(`/books/bill-payments${vendorId ? `?vendorId=${vendorId}` : ''}`);
 export const payBills = (body: BooksBillPaymentInput) => apiFetch<{ payment: BooksBillPayment }>('/books/bill-payments', { method: 'POST', body });
+/** Finance walk 8 — one bill run across vendors (all or nothing); answers with each payment and the cash left. */
+export const payBillsBatch = (body: BooksBillPaymentBatchInput) =>
+  apiFetch<{ payments: BooksBillPayment[]; cashAfter: number | null }>('/books/bill-payments/batch', { method: 'POST', body, timeoutMs: 120_000 });
 export const voidBillPayment = (id: string, reason: string) => apiFetch<{ payment: BooksBillPayment }>(`/books/bill-payments/${id}/void`, { method: 'POST', body: { reason } });
 
 export const listRecurringBills = () => apiFetch<{ recurring: BooksRecurringBill[] }>('/books/recurring-bills');

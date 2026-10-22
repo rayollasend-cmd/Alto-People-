@@ -97,6 +97,8 @@ export interface PayrollReviewReport {
     createdByName: string | null;
     createdAt: string;
     finalizedAt: string | null;
+    /** The gross stored on the run itself — beside the paychecks so a run with money and no checks is seen (finance walk 11). */
+    storedGross: number;
   };
   totals: {
     people: number;
@@ -375,6 +377,7 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
       createdByName: run.createdBy?.email ?? null,
       createdAt: run.createdAt.toISOString(),
       finalizedAt: run.finalizedAt?.toISOString() ?? null,
+      storedGross: num(run.totalGross),
     },
     totals: {
       people: rows.length,

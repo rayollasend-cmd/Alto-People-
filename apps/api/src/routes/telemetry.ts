@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { ProductEventsBodySchema } from '@alto-people/shared';
 import { recordVital, routeKey, WEB_VITAL_METRICS, type WebVitalMetric } from '../lib/webVitals.js';
+import { recordProductEvent } from '../lib/productEvents.js';
 
 export const telemetryRouter = Router();
 
@@ -46,4 +48,22 @@ telemetryRouter.post('/web-vitals', requireAuth, (req, res) => {
     accepted += 1;
   }
   res.status(202).json({ accepted });
+});
+
+/**
+ * POST /telemetry/product-events
+ *
+ * The three behaviour events (ux-upgrade §6): a session's start, each decision
+ * taken, the first decision with how long it took, and a palette search that
+ * ended on a settings page. Rolled up by the caller's role; nothing per person.
+ */
+telemetryRouter.post('/product-events', requireAuth, (req, res) => {
+  const parsed = ProductEventsBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_body' });
+    return;
+  }
+  const role = req.user!.role;
+  for (const e of parsed.data.events) recordProductEvent(role, e.kind, e.value ?? 0);
+  res.status(202).json({ accepted: parsed.data.events.length });
 });

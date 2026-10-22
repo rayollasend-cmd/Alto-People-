@@ -14,8 +14,14 @@ const api = vi.hoisted(() => ({
   backfillPosting: vi.fn(),
   getClientReceivables: vi.fn(),
   getPostingGaps: vi.fn(),
+  getCollectionsWorklist: vi.fn(),
+  getDsoTrend: vi.fn(),
+  sendReminderNow: vi.fn(),
+  addCollectionNote: vi.fn(),
   autoApply: undefined as unknown,
 }));
+const clients = vi.hoisted(() => ({ pauseClientDunning: vi.fn(), resumeClientDunning: vi.fn() }));
+vi.mock('@/lib/clientsApi', async (orig) => ({ ...(await orig<typeof import('@/lib/clientsApi')>()), ...clients }));
 vi.mock('@/lib/books/receivablesApi', async (orig) => {
   const real = await orig<typeof import('@/lib/books/receivablesApi')>();
   return { ...api, autoApply: real.autoApply };
@@ -42,12 +48,26 @@ const AGING: ReceivablesAgingResponse = {
   totals: { buckets: { ...zero, days31to60: 1000, current: 500 }, open: 1500 },
 };
 
+const item = (st: ReturnType<typeof stmt>, extra: Record<string, unknown>) => ({ ...st, reminderStage: 0, lastReminderAt: null, nextReminderOn: null, paused: false, pauseNote: null, contactEmail: 'ap@coastal.test', lastNote: null, nextActionOn: '2026-10-20', ...extra });
+const WORKLIST = {
+  asOf: '2026-10-20',
+  items: [
+    item(stmt(S1, 1, 1000, '2026-09-15', 35), { reminderStage: 3, lastReminderAt: '2026-09-22T12:00:00Z', nextReminderOn: '2026-09-29' }),
+    item(stmt(S2, 2, 500, '2026-10-30', -10), { nextReminderOn: '2026-10-27', nextActionOn: '2026-10-27' }),
+  ],
+  totals: { open: 1500, statements: 2 },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   api.getReceivablesAging.mockResolvedValue(AGING);
   api.listClientPayments.mockResolvedValue({ payments: [] });
   api.listDepositAccounts.mockResolvedValue({ accounts: [{ id: 'acc-op', code: '1000', name: 'Operating checking', isDefault: true, forChecks: false }, { id: 'acc-ud', code: '1050', name: 'Undeposited funds', isDefault: false, forChecks: true }] });
   api.recordClientPayment.mockResolvedValue({ payment: { amount: 1200, clientName: 'Coastal Resort', unapplied: 0 } });
+  api.getCollectionsWorklist.mockResolvedValue(WORKLIST);
+  api.getDsoTrend.mockResolvedValue({ months: [{ key: '2026-09', label: 'Sep 26', days: 31, statements: 2, collected: 2400 }, { key: '2026-10', label: 'Oct 26', days: 26, statements: 1, collected: 900 }] });
+  api.sendReminderNow.mockResolvedValue({ stage: 3, recipients: 2 });
+  api.addCollectionNote.mockResolvedValue({ note: { id: 'n1' } });
   api.backfillPosting.mockResolvedValue({ payrollRuns: 3, statements: 2, taxPayments: 0, taxDeposits: 0, garnishmentRemittances: 0, wageAdvances: 0, failed: [] });
 });
 
@@ -100,6 +120,38 @@ describe('Receivables', () => {
     await screen.findByRole('link', { name: 'Coastal Resort' });
     expect(screen.queryByRole('button', { name: /Record a payment/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Post history/ })).toBeNull();
+  });
+});
+
+describe('collections (finance walk 7)', () => {
+  it('lists open statements by when the next action is due, sends a reminder now and logs a promise', async () => {
+    const user = userEvent.setup();
+    renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables?view=collections');
+    const grid = await screen.findByRole('table', { name: /Collections/ });
+    const rows = within(grid).getAllByRole('row').slice(1);
+    expect(rows[0]).toHaveTextContent('No. 0001');
+    expect(rows[0]).toHaveTextContent('7 days late · sent');
+    expect(rows[0]).toHaveTextContent('Today');
+    expect(rows[1]).toHaveTextContent('No. 0002');
+    // The worklist total is the sum of its rows.
+    expect(WORKLIST.items.reduce((a, i) => a + i.open, 0)).toBe(WORKLIST.totals.open);
+
+    await user.click(within(rows[0]!).getByRole('button', { name: /Send reminder now/ }));
+    await waitFor(() => expect(api.sendReminderNow).toHaveBeenCalledWith(C1, S1));
+    expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/Reminder sent to Coastal Resort \(2 people\)/));
+
+    await user.click(within(rows[0]!).getByRole('button', { name: /Log promise/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Pays by'), '2026-10-31');
+    await user.type(within(dialog).getByLabelText('Note'), 'Check Friday');
+    await user.click(within(dialog).getByRole('button', { name: 'Log promise' }));
+    await waitFor(() => expect(api.addCollectionNote).toHaveBeenCalledWith(C1, { kind: 'PROMISE', note: 'Check Friday', statementId: S1, promisedOn: '2026-10-31', promisedAmount: 1000 }));
+  });
+
+  it('the aging view shows what each client owes by age and the days-to-collect trend', async () => {
+    renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
+    expect(await screen.findByRole('img', { name: /1 client with money open; 1 past due\. Most owed: Coastal Resort, \$1,500\.00\./ })).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: /Days to collect over the last 2 months: Sep 26 31, Oct 26 26\./ })).toBeInTheDocument();
   });
 });
 

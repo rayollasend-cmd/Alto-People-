@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Copy, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import type { WhatsAppMessageRow, WhatsAppMessageStatus } from '@alto-people/shared';
+import { TERM_LANGS, type WhatsAppMessageRow, type WhatsAppMessageStatus } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import { getWhatsAppOverview, listWhatsAppMessages } from '@/lib/whatsappApi';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
@@ -107,7 +107,7 @@ export function WhatsAppAdmin() {
                 </summary>
                 <div className="mt-2 space-y-2 text-sm">
                   <p className="text-xs text-silver">Parameters: {tpl.params.map((p, i) => `{{${i + 1}}} ${p}`).join(' · ')}</p>
-                  {(['en', 'es', 'tr'] as const).map((lang) => (
+                  {TERM_LANGS.map((lang) => (
                     <div key={lang} className="flex items-start gap-2">
                       <Badge variant="outline">{lang.toUpperCase()}</Badge>
                       <pre className="flex-1 whitespace-pre-wrap font-sans text-sm text-white">{tpl.body[lang]}</pre>

@@ -6,7 +6,9 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { atClient, scopeAssociates, scopeWhere } from '../lib/scope.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { notifyUser } from '../lib/notify.js';
+import { deliverBroadcastInBackground, type BroadcastRecipient } from '../lib/broadcastDelivery.js';
+import { anyPushConfigured } from '../lib/notifications.js';
+import { smsAvailability } from '../lib/sms.js';
 import { assertInTenant } from '../lib/sameTenant.js';
 import type { SessionUser } from '../types/express.js';
 
@@ -132,6 +134,7 @@ directoryAndCommsRouter.get(
         scheduledFor: b.scheduledFor?.toISOString() ?? null,
         sentAt: b.sentAt?.toISOString() ?? null,
         receiptCount: b._count.receipts,
+        delivery: b.delivery ?? null,
         createdAt: b.createdAt.toISOString(),
       })),
     });
@@ -292,8 +295,10 @@ directoryAndCommsRouter.delete('/broadcasts/:id', MANAGE_COMMS, async (req, res)
 
 /**
  * Send-now: stamp sentAt, materialize a BroadcastReceipt for every
- * targeted user, and stub channels other than IN_APP. SMS/EMAIL/PUSH
- * delivery hooks land in Phase 89.
+ * targeted user, then deliver on exactly the channels the composer chose
+ * (lib/broadcastDelivery): bell, email, push, text — each counted onto
+ * Broadcast.delivery so the log never says "Sent" for a text that had no
+ * provider behind it.
  */
 directoryAndCommsRouter.post(
   '/broadcasts/:id/send',
@@ -313,16 +318,21 @@ directoryAndCommsRouter.post(
     // active people, this tenant, the sender's reach, then the audience.
     const associateWhere = audienceWhere(req.user!, b);
     // Every recipient, in pages, in a stable order — a silent cap used to skip everyone past 1,000.
+    // The phone rides along: a text reaches people with no account yet.
     const userIds: string[] = [];
+    const recipients: BroadcastRecipient[] = [];
     for (let cursor: string | undefined; ; ) {
-      const page: Array<{ id: string; user: { id: string } | null }> = await prisma.associate.findMany({
+      const page: Array<{ id: string; phone: string | null; user: { id: string } | null }> = await prisma.associate.findMany({
         where: associateWhere,
-        select: { id: true, user: { select: { id: true } } },
+        select: { id: true, phone: true, user: { select: { id: true } } },
         orderBy: { id: 'asc' },
         take: 1000,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       });
-      for (const a of page) if (a.user?.id) userIds.push(a.user.id);
+      for (const a of page) {
+        if (a.user?.id) userIds.push(a.user.id);
+        recipients.push({ userId: a.user?.id ?? null, phone: a.phone });
+      }
       if (page.length < 1000) break;
       cursor = page[page.length - 1]!.id;
     }
@@ -342,33 +352,24 @@ directoryAndCommsRouter.post(
       });
     });
 
-    // Fire-and-forget fan-out AFTER the receipts are written: every
-    // recipient also gets a bell notification (+ best-effort email via
-    // notifyUser) pointing at their inbox. Non-blocking — the send
-    // response never waits on, or fails because of, notification I/O.
-    if (userIds.length > 0) {
-      const bodyText =
-        b.body.length > 500 ? `${b.body.slice(0, 500)}…` : b.body;
-      void (async () => {
-        await Promise.allSettled(
-          userIds.map((uid) =>
-            notifyUser(uid, {
-              subject: b.title || 'Company announcement',
-              body: bodyText,
-              category: 'broadcast',
-              linkUrl: '/communications',
-            }),
-          ),
-        );
-      })().catch((err: unknown) => {
-        console.warn(
-          '[directoryAndComms] broadcast notification fan-out failed:',
-          err instanceof Error ? err.message : err,
-        );
-      });
+    // Fan-out AFTER the receipts are written, on the chosen channels only.
+    // Non-blocking — the send response never waits on, or fails because
+    // of, provider I/O; the counts land on the row when it finishes.
+    if (recipients.length > 0) {
+      deliverBroadcastInBackground({ id: b.id, title: b.title, body: b.body, channels: b.channels }, recipients);
     }
 
-    res.json({ recipientCount: userIds.length });
+    // Said up front, not after the fan-out: a chosen channel with no
+    // provider behind it sends nothing, and the composer's toast says so.
+    const notConfigured: Record<string, string> = {};
+    if (b.channels.includes('SMS')) {
+      const a = smsAvailability();
+      if (!a.available) notConfigured.SMS = a.reason ?? 'Texting isn’t connected.';
+    }
+    if (b.channels.includes('PUSH') && !anyPushConfigured()) {
+      notConfigured.PUSH = 'Push isn’t set up for this organization.';
+    }
+    res.json({ recipientCount: userIds.length, phoneCount: recipients.filter((r) => r.phone).length, channels: b.channels, notConfigured });
   },
 );
 

@@ -24,12 +24,6 @@ export function getFinancialChangesSummary(): Promise<{ pending: number; held: n
   return apiFetch(`/payroll/financial-changes/summary`);
 }
 
-export function getFinancialChange(
-  id: string,
-): Promise<{ change: FinancialChangeRow; trail: Array<{ id: string; action: string; actorUserId: string | null; at: string }> }> {
-  return apiFetch(`/payroll/financial-changes/${id}`);
-}
-
 export function verifyFinancialChange(id: string, body: VerifyFinancialChangeInput): Promise<{ change: FinancialChangeRow }> {
   return apiFetch(`/payroll/financial-changes/${id}/verify`, { method: 'POST', body });
 }

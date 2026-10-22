@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useI18n } from '@/lib/i18n';
 import { Download, Share, X } from 'lucide-react';
 import { Button } from '@/components/ui';
 import {
@@ -33,6 +34,7 @@ function isIOS(): boolean {
 }
 
 export function InstallPrompt() {
+  const { t } = useI18n();
   const [promptAvailable, setPromptAvailable] = useState(false);
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
@@ -73,7 +75,7 @@ export function InstallPrompt() {
   return (
     <div
       role="region"
-      aria-label="Install Alto"
+      aria-label={t('install.region')}
       className="mb-4 flex items-center gap-3 rounded-xl border border-gold/30 bg-navy-secondary/60 px-3 py-2.5 lg:fixed lg:bottom-6 lg:right-6 lg:z-50 lg:mb-0 lg:max-w-sm lg:items-start lg:rounded-lg lg:border-gold/40 lg:bg-navy-secondary lg:p-4 lg:elev-2"
     >
       <img
@@ -85,44 +87,44 @@ export function InstallPrompt() {
       <Download className="mt-0.5 hidden h-5 w-5 shrink-0 text-gold lg:block" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-white">
-          <span className="lg:hidden">Install Alto</span>
-          <span className="hidden lg:inline">Install Alto on this device</span>
+          <span className="lg:hidden">{t('install.title')}</span>
+          <span className="hidden lg:inline">{t('install.titleLong')}</span>
         </div>
         {ios && !promptAvailable ? (
           <div className="text-xs text-silver">
-            Tap{' '}
-            <Share className="inline h-3.5 w-3.5 align-text-bottom text-gold" aria-label="Share" />{' '}
-            then <span className="text-white">Add to Home Screen</span>
+            {t('install.tap')}{' '}
+            <Share className="inline h-3.5 w-3.5 align-text-bottom text-gold" aria-label={t('install.share')} />{' '}
+            {t('install.then')} <span className="text-white">{t('install.addToHome')}</span>
             <span className="hidden lg:inline">
-              . Installing is also what lets Alto send you notifications on iPhone and iPad.
+              . {t('install.iosPush')}
             </span>
           </div>
         ) : (
           <div className="text-xs text-silver">
-            Opens like an app, with an offline shell.
+            {t('install.body')}
           </div>
         )}
         <div className="mt-3 hidden gap-2 lg:flex">
           {promptAvailable && (
             <Button size="sm" onClick={onInstall}>
-              Install
+              {t('install.install')}
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={onDismiss}>
-            Not now
+            {t('install.notNow')}
           </Button>
         </div>
       </div>
       {promptAvailable && (
         <Button size="sm" onClick={onInstall} className="shrink-0 lg:hidden">
-          Install
+          {t('install.install')}
         </Button>
       )}
       <button
         type="button"
         onClick={onDismiss}
         className="shrink-0 rounded-md p-2 -m-1 text-silver transition-colors hover:text-white"
-        aria-label="Dismiss"
+        aria-label={t('install.dismiss')}
       >
         <X className="h-4 w-4" />
       </button>

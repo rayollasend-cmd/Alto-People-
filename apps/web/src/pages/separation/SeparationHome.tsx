@@ -10,6 +10,7 @@ import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import {
   advanceSeparation,
+  getFinalPayDeadline,
   getSeparationSummary,
   initiateSeparation,
   listSeparations,
@@ -431,9 +432,24 @@ function NewSeparationDrawer({
     const t = new Date();
     return ymdLocal(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 14));
   });
-  // Defaults to the last day worked; tracks it until manually edited.
+  // Defaults to the state's final-pay deadline (HR walk 12) — computed
+  // before the separation exists, not checked after — and follows the
+  // reason and last day until someone types a date of their own.
   const [finalPaycheckDate, setFinalPaycheckDate] = useState(lastDayWorked);
+  const [paycheckEdited, setPaycheckEdited] = useState(false);
   const [saving, setSaving] = useState(false);
+  const deadlineQuery = useQuery({
+    queryKey: ['separations', 'final-pay-deadline', assoc?.id ?? null, reason, lastDayWorked],
+    queryFn: () => getFinalPayDeadline({ associateId: assoc!.id, reason, lastDayWorked }),
+    enabled: Boolean(assoc && reason && /^\d{4}-\d{2}-\d{2}$/.test(lastDayWorked)),
+    retry: false,
+  });
+  const deadline = deadlineQuery.data ?? null;
+  useEffect(() => {
+    if (!deadline || paycheckEdited) return;
+    setFinalPaycheckDate(deadline.deadline ?? lastDayWorked);
+  }, [deadline, paycheckEdited, lastDayWorked]);
+  const lateByDeadline = Boolean(deadline?.deadline && finalPaycheckDate && finalPaycheckDate > deadline.deadline);
 
   // Dates have to read forward: notice → last day → final paycheck. A
   // reversed pair is always a typo, and the last day worked is what closes
@@ -525,9 +541,9 @@ function NewSeparationDrawer({
               min={noticeDate || undefined}
               onChange={(e) => {
                 const v = e.target.value;
-                // Keep the paycheck date in lockstep until it's been
-                // deliberately changed away from the last day worked.
-                setFinalPaycheckDate((p) => (p === lastDayWorked ? v : p));
+                // Until it's been typed by hand, the paycheck date follows;
+                // the deadline lookup then lands it on the legal date.
+                if (!paycheckEdited) setFinalPaycheckDate(v);
                 setLastDayWorked(v);
               }}
             />
@@ -539,10 +555,38 @@ function NewSeparationDrawer({
               className="mt-1"
               value={finalPaycheckDate}
               min={lastDayWorked || undefined}
-              onChange={(e) => setFinalPaycheckDate(e.target.value)}
+              onChange={(e) => {
+                setPaycheckEdited(true);
+                setFinalPaycheckDate(e.target.value);
+              }}
             />
           </div>
         </div>
+        {deadline && (
+          <div className="space-y-1 text-xs" data-testid="final-pay-why">
+            <p className="text-ink-muted">
+              Why: {deadline.note}
+              {deadline.deadline ? ` Due ${fmtDate(parseYmd(deadline.deadline) ?? deadline.deadline)} (${deadline.basis}).` : ` Due by the ${deadline.basis}.`}
+            </p>
+            {lateByDeadline && (
+              <p className="text-alert" role="alert">
+                That date is after the deadline — the final check would be late.
+              </p>
+            )}
+            {paycheckEdited && deadline.deadline && finalPaycheckDate !== deadline.deadline && (
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => {
+                  setPaycheckEdited(false);
+                  setFinalPaycheckDate(deadline.deadline!);
+                }}
+              >
+                Use the deadline
+              </Button>
+            )}
+          </div>
+        )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>

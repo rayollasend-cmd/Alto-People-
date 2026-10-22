@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useContext } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, useContext } from 'react';
 import { AuthContext } from '@/lib/auth';
 import type {
   CalendarFeedUrlResponse,
@@ -7,6 +7,8 @@ import type {
 } from '@alto-people/shared';
 import {
   claimOpenShift,
+  declineMyShift,
+  getMyAvailability,
   getMyCalendarUrl,
   listMyAvailabilityExceptions,
   listMyOpenShifts,
@@ -15,6 +17,7 @@ import {
   rotateMyCalendarUrl,
   withdrawOpenShiftClaim,
 } from '@/lib/schedulingApi';
+import { patchNotificationPreference } from '@/lib/settingsApi';
 import { ApiError, apiFetch } from '@/lib/api';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -28,6 +31,7 @@ import { fmtDateTime, fmtHours, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, 
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import {
+  BellRing,
   CalendarDays,
   Check,
   Copy,
@@ -35,6 +39,7 @@ import {
   HandHelping,
   RefreshCw,
   RotateCcw,
+  UserX,
   WifiOff,
 } from 'lucide-react';
 import { listMyRequests } from '@/lib/timeOffApi';
@@ -207,6 +212,15 @@ export function AssociateScheduleView() {
   // Days the associate can't work (one-off days off + approved time off) —
   // painted on the calendar views. Decorative: a failed fetch just leaves
   // the calendar unpainted.
+  // Empty availability is the reason a new hire sees no open shifts — say
+  // so on the schedule itself (role walk, floor 11). Same key as the editor
+  // below, so one read serves both.
+  const availabilityQuery = useQuery({
+    queryKey: ['AvailabilityEditor', 'drafts'],
+    queryFn: () => getMyAvailability(),
+  });
+  const availabilityEmpty = availabilityQuery.data !== undefined && availabilityQuery.data.windows.length === 0;
+
   const blockedQuery = useQuery({
     queryKey: ['me', 'blocked-days', refreshNonce],
     queryFn: async () => {
@@ -262,6 +276,18 @@ export function AssociateScheduleView() {
 
   // Confirming attendance — from the hero OR a list card — lands in the
   // page's copy of the shift, so the two surfaces can never disagree.
+  // A shift the server answered for (declined, re-confirmed): swap the row
+  // in place, no refetch, no scroll loss.
+  const patchShift = useCallback(
+    (updated: Shift) => {
+      queryCache.setQueryData<ScheduleRead>(scheduleKey, (prev) =>
+        prev ? { ...prev, shifts: prev.shifts.map((s) => (s.id === updated.id ? updated : s)) } : prev,
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queryCache, cacheKey],
+  );
+
   const markAcknowledged = useCallback(
     (shiftId: string, acknowledgedAt: string) => {
       queryCache.setQueryData<ScheduleRead>(scheduleKey, (prev) =>
@@ -478,6 +504,21 @@ export function AssociateScheduleView() {
         <p className="mb-4 text-xs text-silver/70">{t('sched.truncated')}</p>
       )}
 
+      {loaded && !unlinked && availabilityEmpty && (
+        <div
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3"
+          data-testid="availability-prompt"
+        >
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-ink">{t('sched.setAvailTitle')}</div>
+            <div className="text-xs text-silver">{t('sched.setAvailDesc')}</div>
+          </div>
+          <Button size="sm" onClick={() => document.getElementById('availability')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            {t('sched.setAvailCta')}
+          </Button>
+        </div>
+      )}
+
       {isEmpty &&
         (unlinked ? (
           <div
@@ -546,16 +587,20 @@ export function AssociateScheduleView() {
               </h2>
               <ul className="space-y-2">
                 {group.items.map((s, i) => (
-                  <ShiftCard
-                    key={s.id}
-                    shift={s}
-                    // The hero above owns "next" — no second gold ring here.
-                    isNext={false}
-                    appearIndex={i}
-                    estRate={estRate}
-                    onAcknowledged={markAcknowledged}
-                    onSwapCreated={() => setSwapVersion((v) => v + 1)}
-                  />
+                  <Fragment key={s.id}>
+                    <ShiftCard
+                      shift={s}
+                      // The hero above owns "next" — no second gold ring here.
+                      isNext={false}
+                      appearIndex={i}
+                      estRate={estRate}
+                      onAcknowledged={markAcknowledged}
+                      onSwapCreated={() => setSwapVersion((v) => v + 1)}
+                    />
+                    {canDeclineShift(s, now) && (
+                      <DeclineMyShiftRow shift={s} onDeclined={(updated) => patchShift(updated)} />
+                    )}
+                  </Fragment>
                 ))}
               </ul>
             </section>
@@ -662,7 +707,8 @@ function OpenShiftsSection({ estRate }: { estRate: number | null }) {
       </section>
     );
   }
-  if (!items || items.length === 0) return null;
+  if (!items) return null;
+  if (items.length === 0) return <NoOpenShifts />;
 
   const request = async (shift: OpenShiftsResponse['shifts'][number]) => {
     setBusyId(shift.id);
@@ -927,5 +973,114 @@ function CalendarSubscribeCard() {
         onConfirm={onReset}
       />
     </div>
+  );
+}
+
+/**
+ * "I can't make it" — offered only on an assigned, published, future shift
+ * the Workforce agent asked about and the person has not answered. The API
+ * answers 409 `not_asked` for any other shift; that message is shown plainly.
+ */
+export function canDeclineShift(s: Shift, now: number): boolean {
+  return (
+    s.status === 'ASSIGNED' &&
+    !!s.publishedAt &&
+    !!s.confirmationAsk &&
+    s.confirmationAsk.answer === null &&
+    new Date(s.startsAt).getTime() > now
+  );
+}
+
+function DeclineMyShiftRow({ shift, onDeclined }: { shift: Shift; onDeclined: (s: Shift) => void }) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const decline = async () => {
+    setBusy(true);
+    try {
+      const updated = await declineMyShift(shift.id);
+      onDeclined(updated);
+      toast.success(t('sched.cantMakeDone'));
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError && err.code === 'not_asked'
+          ? t('sched.cantMakeNotAsked')
+          : err instanceof ApiError
+            ? err.message
+            : t('sched.cantMakeFailed'),
+      );
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+  return (
+    <li className="-mt-1 flex justify-end" data-testid="decline-my-shift">
+      <Button
+        size="sm"
+        variant="ghost"
+        className="text-silver hover:text-alert"
+        onClick={() => setConfirming(true)}
+        disabled={busy}
+      >
+        <UserX className="h-3.5 w-3.5" aria-hidden="true" />
+        {t('sched.cantMake')}
+      </Button>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={(open) => !busy && setConfirming(open)}
+        title={t('sched.cantMake')}
+        description={`${fmtRelativeDayTz(shift.startsAt, shift.timezone)} · ${fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}`}
+        confirmLabel={t('sched.cantMake')}
+        destructive
+        onConfirm={decline}
+        busy={busy}
+      />
+    </li>
+  );
+}
+
+/**
+ * The open-shifts section no longer disappears when it is empty: a new hire
+ * never learned why nothing came their way. One tap turns schedule
+ * notifications on so the next fit reaches them.
+ */
+function NoOpenShifts() {
+  const { t } = useI18n();
+  const [state, setState] = useState<'idle' | 'busy' | 'on'>('idle');
+  const notify = async () => {
+    setState('busy');
+    try {
+      await patchNotificationPreference('scheduling', { inAppEnabled: true, emailEnabled: true });
+      setState('on');
+      toast.success(t('sched.notifyOn'));
+    } catch (err) {
+      setState('idle');
+      toast.error(err instanceof ApiError ? err.message : t('sched.notifyFailed'));
+    }
+  };
+  return (
+    <section className="mt-6" data-testid="no-open-shifts">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-navy-secondary bg-navy/60 px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-sm font-medium text-ink">
+            <HandHelping className="h-4 w-4 text-gold" aria-hidden="true" />
+            {t('sched.noOpenTitle')}
+          </div>
+          <div className="text-xs text-silver">{t('sched.noOpenDesc')}</div>
+        </div>
+        {state === 'on' ? (
+          <span className="inline-flex items-center gap-1 text-xs text-success">
+            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('sched.notifyOn')}
+          </span>
+        ) : (
+          <Button size="sm" variant="outline" onClick={notify} loading={state === 'busy'} disabled={state === 'busy'}>
+            <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('sched.notifyMe')}
+          </Button>
+        )}
+      </div>
+    </section>
   );
 }

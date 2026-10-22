@@ -115,7 +115,9 @@ describe('GET /me/inbox', () => {
     // The approvals page's own queues, its timesheets and its proposals are
     // three sources, each opening its own page — together the page's total.
     expect((byKey.get('approvals')?.count ?? 0) + (byKey.get('timesheets')?.count ?? 0) + (byKey.get('agent-proposals')?.count ?? 0)).toBe(approvals.body.total);
-    expect(byKey.get('timesheets')?.path).toMatch(/^\/time-attendance\?tab=queue&from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
+    // With pending rows the link carries the window the count covers
+    // (shared timesheetQueuePath); with none it is the plain queue.
+    expect(byKey.get('timesheets')?.path).toMatch(/^\/time-attendance\?tab=queue(&status=COMPLETED&from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2})?$/);
     expect(byKey.get('kiosk-review')?.count).toBe(punches.body.punches.length);
   });
 
@@ -218,7 +220,8 @@ describe('GET /me/inbox', () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const body = await inboxFor(user.email);
     expect(body.sources.find((s) => s.key === 'i9-section2')).toMatchObject({ count: 1, path: '/compliance?tab=i9' });
-    expect(body.sources.find((s) => s.key === 'everify')).toMatchObject({ count: 1, path: '/compliance?tab=everify' });
+    // Role walk HR 3: the link carries the filter its count uses.
+    expect(body.sources.find((s) => s.key === 'everify')).toMatchObject({ count: 1, path: '/compliance?tab=everify&status=not_run' });
 
     // The shift supervisor has no compliance desk.
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });

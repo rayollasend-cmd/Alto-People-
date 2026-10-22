@@ -35,7 +35,6 @@ src/pages/onboarding/tasks/PolicyAckTask.tsx
 src/pages/onboarding/tasks/BackgroundCheckTask.tsx
 src/pages/onboarding/tasks/EsignTask.tsx
 src/pages/onboarding/tasks/ProfilePhotoTask.tsx
-src/pages/onboarding/tasks/StubTask.tsx
 src/pages/AcceptInvite.tsx
 src/pages/marketplace/MarketplaceHome.tsx
 src/pages/agreements/AgreementsHome.tsx
@@ -78,3 +77,7 @@ src/components/PayPreviewCard.tsx
 src/components/DailyPayCard.tsx
 src/pages/payroll/W4Estimator.tsx
 src/pages/payroll/PaperCheckRequestCard.tsx
+src/components/OnboardingBanner.tsx
+src/components/home/HugoSeat.tsx
+src/components/InstallAppButton.tsx
+src/components/InstallPrompt.tsx

@@ -8,6 +8,7 @@ import { BottomTabBar, tabBarHiddenFrom } from '@/components/BottomTabBar';
 
 vi.mock('@/lib/useApprovalsCount', () => ({ useApprovalsCount: () => 3 }));
 vi.mock('@/lib/messagesApi', () => ({ unreadMessages: async () => ({ unread: 0 }) }));
+vi.mock('@/lib/inboxApi', () => ({ useInbox: () => ({ data: { total: 5, sources: [] } }) }));
 
 function renderBar(caps: Capability[], role: Role = 'ASSOCIATE') {
   const value = {
@@ -89,6 +90,18 @@ describe('<BottomTabBar>', () => {
     expect(screen.getByRole('link', { name: /my runs/i })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: /messages/i })).toHaveAttribute('href', '/messages');
     expect(screen.queryByRole('link', { name: /schedule/i })).not.toBeInTheDocument();
+  });
+
+  it('gives the HR admin HR’s tabs — Inbox with its count, People, Onboarding — not the scheduler’s (HR walk 14)', () => {
+    renderBar([...ROLE_CAPABILITIES.HR_ADMINISTRATOR], 'HR_ADMINISTRATOR');
+    expect(screen.getByRole('link', { name: /home/i })).toHaveAttribute('href', '/');
+    const inbox = screen.getByRole('link', { name: /inbox/i });
+    expect(inbox).toHaveAttribute('href', '/inbox');
+    expect(inbox).toHaveTextContent('5');
+    expect(screen.getByRole('link', { name: /^people$/i })).toHaveAttribute('href', '/people');
+    expect(screen.getByRole('link', { name: /^onboarding$/i })).toHaveAttribute('href', '/onboarding');
+    expect(screen.queryByRole('link', { name: /schedule/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /^time$/i })).not.toBeInTheDocument();
   });
 
   it('gives the transportation director the command center', () => {

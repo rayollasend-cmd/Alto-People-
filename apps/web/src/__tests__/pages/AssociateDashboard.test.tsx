@@ -339,6 +339,31 @@ describe('<AssociateDashboard> — the counted "Needs you"', () => {
     expect(within(list).queryByText(/shifts to confirm/i)).not.toBeInTheDocument();
   });
 
+  it('lists tasks, not the unread count: onboarding with its progress, the leave certification with a plain date, unread notices as one quiet line (floor 24)', async () => {
+    const due = new Date(2026, 10, 2, 12).toISOString();
+    vi.mocked(getInbox).mockResolvedValue({
+      total: 8,
+      sources: [
+        { key: 'my-notifications', label: 'Unread in your inbox', description: '', count: 5, path: '/communications' },
+        { key: 'my-onboarding', label: 'Finish onboarding', description: '2 of 8 tasks done.', count: 1, path: '/onboarding/me/app-1', progress: { done: 2, total: 8 } },
+        { key: 'my-leave-certification', label: 'Upload leave certification', description: '', count: 1, path: '/leave', dueAt: due },
+        { key: 'my-agreements', label: 'Agreements to sign', description: '', count: 1, path: '/agreements' },
+      ],
+    });
+    renderDashboard();
+    const list = await screen.findByTestId('associate-needs-you');
+    // The section counts the three tasks, not the five unread notices.
+    expect(screen.getByRole('heading', { name: /needs you/i })).toHaveTextContent('3');
+    const rows = within(list).getAllByRole('link');
+    // The dated task first.
+    expect(rows[0]).toHaveTextContent('Upload leave certification');
+    expect(rows[0]).toHaveTextContent(/Due \w{3}, Nov 2/);
+    expect(within(list).getByRole('link', { name: /finish onboarding/i })).toHaveAttribute('href', '/onboarding/me/app-1');
+    expect(within(list).getByText('2 of 8 done')).toBeInTheDocument();
+    expect(within(list).queryByText(/unread in your inbox/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('needs-unread')).toHaveTextContent('5 unread notices');
+  });
+
   it('puts required training in the flow of work, above the ride', async () => {
     vi.mocked(getMyTraining).mockResolvedValue({
       enrollments: [
@@ -391,25 +416,31 @@ describe('<AssociateDashboard> — the shift hero', () => {
 });
 
 describe('<AssociateDashboard> — their numbers and their week', () => {
-  it('tiles: hours this week, last paycheck, time off, open shifts — each opens where it is worked', async () => {
+  it('tiles: last paycheck, time off, open shifts — each opens where it is worked', async () => {
     vi.mocked(listMyShifts).mockResolvedValue({
       shifts: [shiftFixture(new Date(Date.now() + 3 * 3_600_000), new Date(Date.now() + 11 * 3_600_000))],
     });
     renderDashboard();
-    expect(await screen.findByText('This week')).toBeInTheDocument();
+    expect(await screen.findByText('Last paycheck')).toBeInTheDocument();
+    // The hours-this-week tile counted a different week from the strip beside it (floor walk 26).
+    expect(screen.queryByText('This week')).not.toBeInTheDocument();
     expect(screen.getByText('Last paycheck').closest('a')).toHaveAttribute('href', '/payroll');
     expect(screen.getByText('Open shifts').closest('a')).toHaveAttribute('href', '/marketplace');
     expect(screen.getByText('Time off').closest('a')).toHaveAttribute('href', '/time-off');
   });
 
-  it('the week strip marks the days on and the ones still to confirm', async () => {
+  it('the next 14 days mark the days on and the ones still to confirm', async () => {
     vi.mocked(listMyShifts).mockResolvedValue({
       shifts: [shiftFixture(new Date(Date.now() + 26 * 3_600_000), new Date(Date.now() + 30 * 3_600_000))],
     });
     renderDashboard();
-    expect(await screen.findByText('Your week')).toBeInTheDocument();
+    expect(await screen.findByText('Next 14 days')).toBeInTheDocument();
     expect(screen.getByText('1 day on')).toBeInTheDocument();
-    expect(screen.getAllByText('Off').length).toBeGreaterThanOrEqual(5);
+    const strip = screen.getByTestId('next-14-days');
+    expect(strip.querySelectorAll('[data-day]')).toHaveLength(14);
+    expect(strip.querySelectorAll('[data-on="true"]')).toHaveLength(1);
+    // Days off are a quiet dash, not boxes that each say "Off".
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
     expect(screen.getByText('Needs your confirm')).toBeInTheDocument();
   });
 });

@@ -33,8 +33,6 @@ export const createPaySchedule = (body: PayScheduleCreateInput) =>
 export const updatePaySchedule = (id: string, body: PayScheduleUpdateInput) =>
   apiFetch<{ schedule: PayScheduleDetail }>(`${B}/${id}`, { method: 'PATCH', body });
 
-export const deletePaySchedule = (id: string) => apiFetch<{ ok: true }>(`${B}/${id}`, { method: 'DELETE' });
-
 export const getPayCalendar = (id: string, months = 12) =>
   apiFetch<PayCalendarResponse>(`${B}/${id}/calendar?months=${months}`);
 

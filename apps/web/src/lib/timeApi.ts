@@ -122,16 +122,26 @@ export function tryGetGeolocation(timeoutMs = 5_000): Promise<{ lat: number; lng
 
 /** Cheap server-side COUNT for KPI badges — the list endpoint caps at 500
  *  rows, so counting its length both over-fetched and under-counted. */
+export interface PendingTimeCount {
+  count: number;
+  /** ISO clock-in of the oldest pending entry; null when nothing is pending. */
+  oldestPendingAt: string | null;
+  /** With `groupBy: 'payPeriod'`: pending rows per pay period, oldest first. */
+  byPeriod?: Array<{ start: string; end: string; count: number; hasRun: boolean }>;
+}
+
 export function countAdminTimeEntries(
   status?: TimeEntryStatus,
   scope?: { clientId?: string; locationId?: string },
-): Promise<{ count: number }> {
+  opts?: { groupBy?: 'payPeriod' },
+): Promise<PendingTimeCount> {
   const params = new URLSearchParams();
   if (status) params.set('status', status);
   if (scope?.clientId) params.set('clientId', scope.clientId);
   if (scope?.locationId) params.set('locationId', scope.locationId);
+  if (opts?.groupBy) params.set('groupBy', opts.groupBy);
   const qs = params.toString();
-  return apiFetch<{ count: number }>(`/time/admin/entries/count${qs ? `?${qs}` : ''}`);
+  return apiFetch<PendingTimeCount>(`/time/admin/entries/count${qs ? `?${qs}` : ''}`);
 }
 
 /** Selectable pay-period windows (schedule cadence + actual run history). */
@@ -150,9 +160,12 @@ export function listAdminTimeEntries(filters: {
   /** Exact-id lookup (notification deep-links) — pass alone, without a
    *  date window, to find the entry wherever it sits. */
   entryId?: string;
+  /** Oldest first — a queue worked from the top of the backlog. */
+  order?: 'asc';
 } = {}): Promise<TimeEntryListResponse> {
   const params = new URLSearchParams();
   if (filters.entryId) params.set('entryId', filters.entryId);
+  if (filters.order) params.set('order', filters.order);
   if (filters.status) params.set('status', filters.status);
   if (filters.associateId) params.set('associateId', filters.associateId);
   if (filters.clientId) params.set('clientId', filters.clientId);

@@ -44,11 +44,6 @@ export const listProbations = (status?: ProbationStatus, page = 0) => {
   return apiFetch<{ probations: ProbationRow[]; total?: number; page?: number; hasMore?: boolean }>(`/probations${q ? `?${q}` : ''}`);
 };
 
-export const listEndingSoon = (days = 14) =>
-  apiFetch<{ days: number; probations: ProbationEndingSoonRow[] }>(
-    `/probations/ending-soon?days=${days}`,
-  );
-
 export const getProbationSummary = () =>
   apiFetch<ProbationSummary>('/probations/summary');
 

@@ -4,6 +4,8 @@ import { flushPendingNotifications } from '../../lib/notify.js';
 import { runShiftReminderSweep } from '../../lib/shiftReminder.js';
 import { flushPendingAudits } from '../../lib/audit.js';
 import { agent, loginAs } from '../../../test/http.js';
+import { ALTO_TENANT_ID } from '../../lib/tenant.js';
+import { invalidateTenantProfile, setTenantProfile } from '../../lib/tenantProfile.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
 /**
@@ -277,6 +279,33 @@ describe('Emergency Mode — the tabletop', () => {
     const board = await hr.get(`/emergency/${declared.body.id}/board`);
     expect(board.body.escalation.map((r: { associateId: string }) => r.associateId)).toEqual([w.emre.id]);
     expect(board.body.escalation[0].note).toBe('Roof damage');
+  });
+
+  it('without the transportation module, no evacuation seat is offered or booked — the check-in itself still lands', async () => {
+    const w = await world();
+    await setTenantProfile(ALTO_TENANT_ID, { modules: { transportation: false } }, null);
+    invalidateTenantProfile();
+    try {
+      const hr = await loginAs(agent(), w.hr.email);
+      const declared = await hr.post('/emergency').send({
+        title: 'Hurricane watch',
+        message: 'Shelter in place.',
+        allSites: false,
+        locationIds: [w.siteA.id],
+        pickupAt: new Date(w.now.getTime() + 2 * HOUR).toISOString(),
+      });
+      expect(declared.status).toBe(201);
+      const maria = await loginAs(agent(), w.mariaUser.email);
+      expect((await maria.get('/emergency/me')).body.emergency.rideOffered).toBe(false);
+      // Maria has an address; with vans off the answer is kept and no ride row is made.
+      const tapped = await maria.post(`/emergency/${declared.body.id}/check-in`).send({ status: 'SAFE', needsRide: true });
+      expect(tapped.status).toBe(200);
+      expect(tapped.body.checkIn).toMatchObject({ status: 'SAFE', needsRide: false, ride: null });
+      expect(await prisma.ride.count()).toBe(0);
+    } finally {
+      await setTenantProfile(ALTO_TENANT_ID, { modules: { transportation: true } }, null);
+      invalidateTenantProfile();
+    }
   });
 
   it('refuses a scope with no sites and a second declaration while one is in effect is still allowed per site', async () => {

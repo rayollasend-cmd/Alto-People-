@@ -9,10 +9,7 @@ import type {
   PayrollRunListResponse,
   PayrollRunPreviewResponse,
   PayrollRunStatus,
-  PayrollSchedule,
-  PayrollScheduleCreateInput,
   PayrollScheduleListResponse,
-  PayrollScheduleUpdateInput,
   PayrollUpcomingSummary,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
@@ -23,7 +20,7 @@ export function getPayrollConfig(year?: number): Promise<PayrollConfig> {
 }
 
 export function listPayrollRuns(
-  filters: { status?: PayrollRunStatus } = {}
+  filters: { status?: PayrollRunStatus | 'OPEN' } = {}
 ): Promise<PayrollRunListResponse> {
   const qs = filters.status ? `?status=${filters.status}` : '';
   return apiFetch<PayrollRunListResponse>(`/payroll/runs${qs}`);
@@ -257,31 +254,6 @@ export function listPayrollSchedules(
   return apiFetch<PayrollScheduleListResponse>(`/payroll/schedules${qs}`);
 }
 
-export function createPayrollSchedule(body: PayrollScheduleCreateInput): Promise<PayrollSchedule> {
-  return apiFetch<PayrollSchedule>('/payroll/schedules', { method: 'POST', body });
-}
-
-export function updatePayrollSchedule(
-  id: string,
-  body: PayrollScheduleUpdateInput
-): Promise<PayrollSchedule> {
-  return apiFetch<PayrollSchedule>(`/payroll/schedules/${id}`, { method: 'PATCH', body });
-}
-
-export function deletePayrollSchedule(id: string): Promise<void> {
-  return apiFetch<void>(`/payroll/schedules/${id}`, { method: 'DELETE' });
-}
-
-export function assignPayrollSchedule(
-  id: string,
-  associateIds: string[]
-): Promise<{ assigned: number }> {
-  return apiFetch<{ assigned: number }>(
-    `/payroll/schedules/${id}/assign`,
-    { method: 'POST', body: { associateIds } }
-  );
-}
-
 /* ===== Payroll readiness dashboard ====================================== */
 
 export type ReadinessFlagKey =
@@ -299,7 +271,11 @@ export interface PayrollReadinessRow {
   employmentType: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
   flags: Record<ReadinessFlagKey, boolean>;
   ready: boolean;
+  /** The last time payroll asked this person for what a paycheck needs (POST /payroll/readiness/request). */
+  requested?: { at: string; items: ReadinessRequestItem[] } | null;
 }
+
+export type ReadinessRequestItem = 'w4' | 'payout' | 'address';
 
 export interface PayrollReadinessResponse {
   total: number;
@@ -536,27 +512,6 @@ export interface NewHireRow {
   reportable: boolean;
 }
 
-export function getNewHireReport(): Promise<{ unreported: NewHireRow[] }> {
-  return apiFetch<{ unreported: NewHireRow[] }>('/payroll/new-hire-report');
-}
-
-export function downloadNewHireReportCsv(state?: string): Promise<void> {
-  const qs = state ? `?state=${state}` : '';
-  return downloadPayrollFile(
-    `/api/payroll/new-hire-report.csv${qs}`,
-    'new-hire-report.csv'
-  );
-}
-
-export function markNewHiresReported(
-  associateIds: string[]
-): Promise<{ ok: boolean; marked: number }> {
-  return apiFetch<{ ok: boolean; marked: number }>('/payroll/new-hire-report/mark-reported', {
-    method: 'POST',
-    body: { associateIds },
-  });
-}
-
 // ----- Run add-ons (bonus / commission / tips / PTO payout) ----------------
 
 export type RunAddOnKind = 'BONUS' | 'COMMISSION' | 'TIPS' | 'HOLIDAY' | 'SICK' | 'VACATION';
@@ -595,10 +550,6 @@ export function deleteRunAddOn(runId: string, addOnId: string): Promise<{ ok: bo
 }
 
 // ----- Four-eyes approval + run reports ------------------------------------
-
-export function approvePayrollRun(runId: string): Promise<PayrollRunDetail> {
-  return apiFetch<PayrollRunDetail>(`/payroll/runs/${runId}/approve`, { method: 'POST' });
-}
 
 export interface WcPremiumClass {
   code: string;

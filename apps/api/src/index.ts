@@ -31,6 +31,7 @@ import { startForecastCron } from './lib/forecast/cron.js';
 import { startClientNpsCron } from './lib/clientNps.js';
 import { startMarketWageCron } from './lib/marketWages.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
+import { startRobotIncidentRetentionCron } from './lib/robotIncidentRetention.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
 import { startCaseSlaCron } from './lib/hrCaseSla.js';
 import { startPolicyCampaignCron } from './lib/policyCampaigns.js';
@@ -52,12 +53,14 @@ import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
 import { startOfferLetterCron } from './lib/offerLetters.js';
 import { startUsageFlusher } from './lib/usageTracker.js';
 import { startVitalsFlusher } from './lib/webVitals.js';
+import { startProductEventsFlusher } from './lib/productEvents.js';
 import { recordApiBoot } from './lib/reliability.js';
 import { startReliabilityDigestCron } from './lib/reliabilityDigest.js';
 import { startEvidenceCron } from './lib/evidence.js';
 import { startProgramDigestCron } from './lib/programDigest.js';
 import { startLaborShadowCron } from './lib/laborRules/shadow.js';
 import { startBankingCron } from './lib/banking/cron.js';
+import { startEquityExpiryCron } from './lib/equityExpiry.js';
 import { ensureEnvIdentity, ensureEnvScimToken } from './lib/identity.js';
 import { startBillingCron } from './lib/billing.js';
 import { startStatementDunningCron } from './lib/statementDunning.js';
@@ -86,11 +89,14 @@ import { startNotificationDigestCron } from './lib/notificationDelivery.js';
 import { startCertificationReminderCron } from './lib/accessCertification.js';
 import { startRetentionCron } from './lib/retention.js';
 import { startVanTrailRetentionCron } from './lib/transportLive.js';
+import { startStuckRunSweepCron } from './lib/transportStuckRuns.js';
 import { startRideSeriesCron } from './lib/rideSeries.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
 import { KeyringError, verifyKeyring } from './lib/keyring.js';
+import { startAuditChainCheckCron } from './lib/auditChain.js';
+import { startBiometricSealCron } from './lib/biometricFields.js';
 import { sweepTenantSchedules } from './lib/payScheduleMembership.js';
 
 const app = createApp();
@@ -156,6 +162,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startAccessGrantSweepCron();
   startComplianceSnapshotCron();
   startKioskMaintenanceCron();
+  // Robot incident evidence past its five-year retention is removed daily (the report stays).
+  startRobotIncidentRetentionCron();
   startDocumentMaintenanceCron();
   startStatementDunningCron();
   startDailyPayCron();
@@ -184,6 +192,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startUsageFlusher();
   // Same deal for the browser's web-vitals samples.
   startVitalsFlusher();
+  // And for the three behaviour events (first decision, decisions a session, settings searches).
+  startProductEventsFlusher();
   // One row per process start, so restarts show on the reliability page.
   // Best-effort: a boot must never fail because a bookkeeping row did.
   recordApiBoot(BUILD_VERSION).catch((err) => logger.warn({ err }, 'api boot row not written'));
@@ -199,6 +209,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startLaborShadowCron(prisma);
   // Payroll banking: funding and entries settle, prenotes clear and go out, hourly per tenant.
   startBankingCron();
+  // Equity grants past their expiration date read EXPIRED, daily per tenant (audit 2026-10-21, Tier 3).
+  startEquityExpiryCron();
   // Brief 2-3 step 2: the environment IdP and SCIM_TOKEN become Alto HR's first rows.
   // Brief 2-6 step 4: daily usage snapshots, and the month's invoices on its first days.
   startBillingCron(prisma);
@@ -206,6 +218,10 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startSecurityAlertsCron(prisma);
   // Brief 2-3 step 4: each tenant's SIEM sink, every minute.
   startAuditSinkCron(prisma);
+  // Audit 2026-10-21 item 20: the nightly hash-chain verifier, a break alerting the security contact.
+  startAuditChainCheckCron(prisma);
+  // SOC 2 decision 7: selfies and face templates written before the seal are encrypted in batches.
+  startBiometricSealCron(prisma);
   // The environment's SSO / SCIM settings belong to Alto HR: written as that tenant.
   void runWithTenant(ALTO_TENANT_ID, 'job', () => Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)])).catch((err) => console.error('[alto-people/api] identity migration from the environment failed:', err));
   // Brief 1D-1: a PERSON worker for every associate, at boot and every
@@ -290,6 +306,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startCertificationReminderCron();
   startRetentionCron();
   startVanTrailRetentionCron();
+  // Daily in effect: a van run left ACTIVE hours past its last stop is closed (lib/transportStuckRuns).
+  startStuckRunSweepCron();
   // Hourly: standing ride bookings booked forward a week.
   startRideSeriesCron();
 

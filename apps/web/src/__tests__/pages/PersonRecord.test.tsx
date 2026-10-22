@@ -338,3 +338,40 @@ describe('<PersonRecord>', () => {
     }
   });
 });
+
+describe('<PersonRecord> life-cycle actions (HR walk 12 and 13)', () => {
+  it('the header More menu holds Transfer, Promote and Separate for someone still employed', async () => {
+    renderRecord(ALTO);
+    await screen.findByRole('heading', { name: 'Ana Reyes' });
+    await settle();
+    await userEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]!);
+    expect(await screen.findByRole('menuitem', { name: 'Transfer…' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Promote…' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Separate…' }));
+    expect(lastLocation).toBe(`/separations?associateId=${ID}`);
+  });
+
+  it('no Separate for someone already separated', async () => {
+    FIXTURES[`/people/directory/${ID}`] = { ...ANA, status: 'TERMINATED', separatedAt: '2026-09-30T00:00:00.000Z' };
+    try {
+      renderRecord(ALTO);
+      await screen.findByRole('heading', { name: 'Ana Reyes' });
+      await settle();
+      await userEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]!);
+      expect(await screen.findByRole('menuitem', { name: 'Transfer…' })).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: 'Separate…' })).toBeNull();
+    } finally {
+      FIXTURES[`/people/directory/${ID}`] = ANA;
+    }
+  });
+
+  it('HR opens a case for them from the Cases tab, with the person already picked', async () => {
+    renderRecord(ALTO, `/people/${ID}?tab=cases`);
+    await screen.findByRole('heading', { name: 'Ana Reyes' });
+    await settle();
+    await userEvent.click(within(screen.getByRole('tabpanel')).getByRole('button', { name: 'New case' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Open a case for someone')).toBeInTheDocument();
+    expect(within(dialog).getByText('Ana Reyes')).toBeInTheDocument();
+  });
+});

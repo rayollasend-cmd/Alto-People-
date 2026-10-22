@@ -9,7 +9,11 @@
  *   3. an associate-facing file carries more hard-coded user-visible text
  *      than its line in scripts/i18n-baseline.json allows. The baseline is
  *      the day-one debt and it only shrinks: `--write` locks a lower count
- *      in, a higher count fails the commit that added the string.
+ *      in, a higher count fails the commit that added the string;
+ *   4. the same, for the screens the floor, the supervisors and the drivers
+ *      read (scripts/i18n-floor-files.txt against i18n-floor-baseline.json,
+ *      role walk floor 10). Their keys need English and Spanish (rule 2);
+ *      the six-language rule stays with the associate app.
  *
  *   node scripts/i18n-check.mjs            # check
  *   node scripts/i18n-check.mjs --write    # lock a smaller baseline in
@@ -50,24 +54,23 @@ const dictionaries = {
   uk: readDictionary(readFileSync(join(root, 'src/lib/i18n/uk.ts'), 'utf8'), 'uk'),
 };
 
-const associateFiles = readFileSync(join(here, 'i18n-associate-files.txt'), 'utf8')
-  .split(/\r?\n/)
-  .map((l) => l.trim())
-  .filter((l) => l && !l.startsWith('#'));
+const listOf = (name) =>
+  readFileSync(join(here, name), 'utf8')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+const associateFiles = listOf('i18n-associate-files.txt');
+const floorFiles = listOf('i18n-floor-files.txt');
 const allow = JSON.parse(readFileSync(join(here, 'i18n-allowlist.json'), 'utf8')).map((p) => new RegExp(p));
 const baselinePath = join(here, 'i18n-baseline.json');
 const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')) : {};
+const floorBaselinePath = join(here, 'i18n-floor-baseline.json');
+const floorBaseline = existsSync(floorBaselinePath) ? JSON.parse(readFileSync(floorBaselinePath, 'utf8')) : {};
 
-const used = new Set();
-const dynamicPrefixes = new Set();
-const hardCoded = {};
-for (const file of associateFiles) {
-  const source = readFileSync(join(root, file), 'utf8');
-  for (const m of source.matchAll(/\bt\('([A-Za-z0-9_.-]+)'/g)) used.add(m[1]);
-  for (const m of source.matchAll(/\bt\(`([A-Za-z0-9_.-]+)\./g)) dynamicPrefixes.add(m[1]);
+/** User-visible English in a file that t() does not produce — the heuristic in the header. */
+function hardCodedIn(source) {
   const found = [];
-  const lines = source.split('\n');
-  lines.forEach((line, idx) => {
+  source.split('\n').forEach((line, idx) => {
     if (line.includes('t(') || line.trimStart().startsWith('//') || line.trimStart().startsWith('*')) return;
     const candidates = [];
     for (const m of line.matchAll(/>\s*([A-Z][A-Za-z][^<>{}]{2,})\s*</g)) candidates.push(m[1].trim());
@@ -77,7 +80,17 @@ for (const file of associateFiles) {
       found.push(`${idx + 1}: ${text}`);
     }
   });
-  hardCoded[file] = found;
+  return found;
+}
+
+const used = new Set();
+const dynamicPrefixes = new Set();
+const hardCoded = {};
+for (const file of associateFiles) {
+  const source = readFileSync(join(root, file), 'utf8');
+  for (const m of source.matchAll(/\bt\('([A-Za-z0-9_.-]+)'/g)) used.add(m[1]);
+  for (const m of source.matchAll(/\bt\(`([A-Za-z0-9_.-]+)\./g)) dynamicPrefixes.add(m[1]);
+  hardCoded[file] = hardCodedIn(source);
 }
 for (const key of dictionaries.en) for (const p of dynamicPrefixes) if (key.startsWith(p + '.')) used.add(key);
 
@@ -112,12 +125,33 @@ for (const file of associateFiles) {
   }
 }
 
-console.log(`i18n-check: ${associateKeys.length} associate keys · ${LANGS.map((l) => `${l}=${dictionaries[l].size}`).join(' ')} · hard-coded debt ${debt}`);
+// 4. The floor's screens: hard-coded text against their own baseline; their
+// keys must be defined (and, by rule 2, in Spanish).
+let floorDebt = 0;
+let floorPaid = 0;
+const floorNext = {};
+for (const file of floorFiles) {
+  const source = readFileSync(join(root, file), 'utf8');
+  const unknownKeys = [...source.matchAll(/\bt\('([A-Za-z0-9_.-]+)'/g)].map((m) => m[1]).filter((k) => !dictionaries.en.has(k));
+  if (unknownKeys.length) problems.push(`${file}: key(s) used but never defined — ${[...new Set(unknownKeys)].join(', ')}`);
+  const found = hardCodedIn(source);
+  const allowed = floorBaseline[file] ?? 0;
+  floorNext[file] = found.length;
+  floorDebt += found.length;
+  if (found.length > allowed) {
+    problems.push(`${file}: ${found.length} hard-coded string(s), floor baseline ${allowed}:\n    ${found.join('\n    ')}`);
+  } else if (found.length < allowed) {
+    floorPaid += allowed - found.length;
+  }
+}
+
+console.log(`i18n-check: ${associateKeys.length} associate keys · ${LANGS.map((l) => `${l}=${dictionaries[l].size}`).join(' ')} · hard-coded debt ${debt} · floor debt ${floorDebt}`);
 if (write) {
   writeFileSync(baselinePath, JSON.stringify(next, null, 2) + '\n');
-  console.log(`i18n-check: baseline written (${Object.keys(next).length} files).`);
-} else if (paid > 0) {
-  console.log(`i18n-check: debt paid since the baseline: ${paid} — run --write to lock it in`);
+  writeFileSync(floorBaselinePath, JSON.stringify(floorNext, null, 2) + '\n');
+  console.log(`i18n-check: baselines written (${Object.keys(next).length} associate files, ${Object.keys(floorNext).length} floor files).`);
+} else if (paid > 0 || floorPaid > 0) {
+  console.log(`i18n-check: debt paid since the baseline: ${paid} associate, ${floorPaid} floor — run --write to lock it in`);
 }
 if (problems.length) {
   console.error('i18n-check: FAIL');

@@ -188,6 +188,12 @@ export function DeltaChip({
   );
 }
 
+/** Worth drawing: at least two real points, not all zero, and a real change. */
+export function trendDrawable(trend: MetricTrend): boolean {
+  const pts = trend.series.filter((v) => typeof v === 'number' && Number.isFinite(v));
+  return pts.length >= 2 && pts.some((v) => v !== 0) && Number.isFinite(trend.delta);
+}
+
 /** One sentence for a screen reader: where the line started, where it is, and the change. */
 export function trendSummary(trend: MetricTrend, good: TrendGood): string {
   const all = trend.series.filter((v) => Number.isFinite(v));
@@ -243,7 +249,8 @@ export function MetricCard({
         >
           <CountUpValue value={value} />
         </div>
-        {trend && (
+        {/* A line of nothing (all zero) or of NaN says nothing: no sparkline then (finance walk 3). */}
+        {trend && trendDrawable(trend) && (
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-silver">
             <KitSparkline series={trend.series} tone={sparkTone(trend.delta, good)} lastIsPartial={trend.lastIsPartial} />
             <DeltaChip delta={trend.delta} deltaLabel={trend.deltaLabel} good={good} format={trend.format} />

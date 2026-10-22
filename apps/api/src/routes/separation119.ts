@@ -371,6 +371,47 @@ const FINAL_PAY_DEADLINE: Record<string, { involuntary: number | null; voluntary
   GA: { involuntary: null, voluntary: null, note: 'Georgia sets no deadline; federal law requires the next regular payday.' },
 };
 
+/**
+ * The final paycheck's legal deadline for a person in `state` leaving for
+ * `reason` on `lastDayWorked` (YYYY-MM-DD). Exported so the Initiate dialog
+ * can default the date BEFORE the separation exists (HR walk 12) and the
+ * offboarding check reads the same rule after.
+ */
+export function finalPayDeadline(
+  state: string | null | undefined,
+  reason: string,
+  lastDayWorked: string,
+): { deadline: string | null; basis: string; note: string; state: string | null } {
+  const st = (state ?? '').trim().toUpperCase() || null;
+  const rule = (st && FINAL_PAY_DEADLINE[st]) || { involuntary: null, voluntary: null, note: 'No state deadline on file; federal law requires the next regular payday.' };
+  const days = reason.startsWith('INVOLUNTARY') ? rule.involuntary : rule.voluntary;
+  if (days === null) return { deadline: null, basis: 'next regular payday', note: rule.note, state: st };
+  const deadline = new Date(new Date(`${lastDayWorked}T00:00:00.000Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
+  const basis = days === 0 ? 'immediately — on the last day worked' : `${days} day${days === 1 ? '' : 's'} after the last day worked`;
+  return { deadline, basis, note: rule.note, state: st };
+}
+
+/**
+ * GET /separations/final-pay-deadline?associateId&reason&lastDayWorked —
+ * the deadline for a separation that doesn't exist yet, from the person's
+ * state on file. Registered before /separations/:id routes.
+ */
+separation119Router.get('/separations/final-pay-deadline', VIEW, async (req, res) => {
+  const q = z
+    .object({
+      associateId: z.string().uuid(),
+      reason: REASON,
+      lastDayWorked: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    })
+    .parse(req.query);
+  const a = await prisma.associate.findFirst({
+    where: { AND: [{ id: q.associateId, tenantId: tenantIdForWrite() }, scopeAssociatesIncludingFormer(req.user!)] },
+    select: { state: true },
+  });
+  if (!a) throw new HttpError(404, 'associate_not_found', 'Associate not found.');
+  res.json(finalPayDeadline(a.state, q.reason, q.lastDayWorked));
+});
+
 separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const s = await prisma.separation.findUnique({
@@ -419,10 +460,8 @@ separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) =
   const payable = a.timeOffBalances.filter((b) => (b.category === 'VACATION' || b.category === 'PTO') && b.balanceMinutes > 0);
   const leaveHours = Math.round((payable.reduce((sum, b) => sum + b.balanceMinutes, 0) / 60) * 100) / 100;
   const state = (a.state ?? '').toUpperCase();
-  const rule = FINAL_PAY_DEADLINE[state] ?? { involuntary: null, voluntary: null, note: 'No state deadline on file; federal law requires the next regular payday.' };
-  const involuntary = s.reason.startsWith('INVOLUNTARY');
-  const days = involuntary ? rule.involuntary : rule.voluntary;
-  const deadline = days === null ? null : new Date(s.lastDayWorked.getTime() + days * 86_400_000).toISOString().slice(0, 10);
+  const fp = finalPayDeadline(state, s.reason, s.lastDayWorked.toISOString().slice(0, 10));
+  const deadline = fp.deadline;
   const policy = getLaborPolicy(state || null);
   const snapshot = {
     computedAt: new Date().toISOString(),
@@ -435,7 +474,7 @@ separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) =
     leavePayoutHours: leaveHours,
     leaveBalances: a.timeOffBalances.map((b) => ({ category: b.category, hours: Math.round((b.balanceMinutes / 60) * 100) / 100, paidOut: b.category === 'VACATION' || b.category === 'PTO' })),
     estimatedGross: hourly === null ? null : Math.round((unpaidHours + leaveHours) * hourly * 100) / 100,
-    deadline: { date: deadline, basis: deadline ? `${days} day${days === 1 ? '' : 's'} after the last day worked` : 'next regular payday', note: rule.note, minimumWageCents: policy.minimumWageCents },
+    deadline: { date: deadline, basis: fp.basis, note: fp.note, minimumWageCents: policy.minimumWageCents },
     paySchedule: a.payrollSchedule ? { name: a.payrollSchedule.name, frequency: a.payrollSchedule.frequency } : null,
     finalPaycheckDate: s.finalPaycheckDate?.toISOString().slice(0, 10) ?? null,
     finalPaycheckLate: deadline && s.finalPaycheckDate ? s.finalPaycheckDate.toISOString().slice(0, 10) > deadline : false,

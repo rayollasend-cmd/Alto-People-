@@ -17,6 +17,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { armJob, stopJob } from './jobs.js';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -226,28 +227,19 @@ export async function runWeekAheadSweep(
   return { sent, shifts: inWeek.length };
 }
 
-let timer: NodeJS.Timeout | null = null;
+export const WEEK_AHEAD_JOB = 'weekAheadDigest';
 
+/** On by default (WEEK_AHEAD_INTERVAL_SECONDS=1800); sends the evening before each client's week. */
 export function startWeekAheadCron(): void {
-  if (timer) return;
-  const seconds = env.WEEK_AHEAD_INTERVAL_SECONDS;
-  if (seconds <= 0) return;
-  void tenantJob('weekAheadDigest', runWeekAheadSweep)().catch((err) => {
-    console.error('[alto-people/api] week-ahead sweep failed:', err);
+  armJob({
+    name: WEEK_AHEAD_JOB,
+    label: 'Week-ahead digest to associates',
+    intervalSeconds: env.WEEK_AHEAD_INTERVAL_SECONDS,
+    run: tenantJob(WEEK_AHEAD_JOB, runWeekAheadSweep),
+    note: `WEEK_AHEAD_INTERVAL_SECONDS; sends after ${env.WEEK_AHEAD_SEND_HOUR}:00 ${DEFAULT_TIMEZONE} the evening before each client's week.`,
   });
-  timer = setInterval(() => {
-    void tenantJob('weekAheadDigest', runWeekAheadSweep)().catch((err) => {
-      console.error('[alto-people/api] week-ahead sweep failed:', err);
-    });
-  }, seconds * 1000);
-  timer.unref();
-  console.log(
-    `[alto-people/api] week-ahead cron armed (every ${seconds}s, sends after ${env.WEEK_AHEAD_SEND_HOUR}:00 ${DEFAULT_TIMEZONE} the evening before each client's week)`,
-  );
 }
 
 export function stopWeekAheadCron(): void {
-  if (!timer) return;
-  clearInterval(timer);
-  timer = null;
+  stopJob(WEEK_AHEAD_JOB);
 }

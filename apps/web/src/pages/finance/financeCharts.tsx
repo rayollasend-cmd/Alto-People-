@@ -1,4 +1,4 @@
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ReferenceArea, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fmtDateTz, fmtMoney, fmtMoneyCompact, parseYmd } from '@/lib/format';
 import { ChartTooltipContent, LegendKey, PALETTE, TICK } from '@/components/ui/charts';
 import type { CashWeek, MarginWeek } from './financeTypes';
@@ -23,11 +23,21 @@ const CASH_SERIES = {
 };
 
 export function cashRows(weeks: CashWeek[]) {
-  return weeks.map((w) => ({ week: shortDay(w.weekStart), weekStart: w.weekStart, inflow: w.inflow, outflowNeg: -w.outflow, outflow: w.outflow, net: w.net, cumulative: w.cumulative }));
+  return weeks.map((w) => ({ week: shortDay(w.weekStart), weekStart: w.weekStart, inflow: w.inflow, outflowNeg: -w.outflow, outflow: w.outflow, net: w.net, cumulative: w.cumulative, balance: w.balance ?? w.cumulative }));
 }
 
-export function CashFlowChart({ weeks, compact = false }: { weeks: CashWeek[]; compact?: boolean }) {
+/**
+ * Money in above the line, out below, and one line over both: the cash
+ * BALANCE when the books hold one (opening + movement), else the running
+ * total of movement. With a floor set, the band under it is shaded; the
+ * lowest week is marked.
+ */
+export function CashFlowChart({ weeks, compact = false, withBalance = false, minimumCash = null }: { weeks: CashWeek[]; compact?: boolean; withBalance?: boolean; minimumCash?: number | null }) {
   const rows = cashRows(weeks);
+  const lineKey = withBalance ? 'balance' : 'cumulative';
+  const lineName = withBalance ? 'Cash balance' : 'Running total';
+  const low = rows.length ? rows.reduce((m, r) => (r[lineKey] < m[lineKey] ? r : m), rows[0]!) : null;
+  const series = { ...CASH_SERIES, [lineKey]: { name: lineName, color: CASH_COLORS.run } };
   return (
     <div className="flex h-full w-full flex-col">
       <div className="min-h-0 flex-1">
@@ -45,12 +55,15 @@ export function CashFlowChart({ weeks, compact = false }: { weeks: CashWeek[]; c
             />
             <Tooltip
               cursor={{ fill: PALETTE.cursor }}
-              content={<ChartTooltipContent series={CASH_SERIES} heading={(x) => `Week of ${x}`} format={(v, key) => fmtMoney(key === 'outflowNeg' ? Math.abs(v) : v)} />}
+              content={<ChartTooltipContent series={series} heading={(x) => `Week of ${x}`} format={(v, key) => fmtMoney(key === 'outflowNeg' ? Math.abs(v) : v)} />}
             />
+            {minimumCash !== null && minimumCash > 0 && <ReferenceArea y1={0} y2={minimumCash} fill={PALETTE.warn} fillOpacity={0.08} ifOverflow="extendDomain" />}
+            {minimumCash !== null && minimumCash > 0 && <ReferenceLine y={minimumCash} stroke={PALETTE.warn} strokeDasharray="4 3" ifOverflow="extendDomain" />}
             <ReferenceLine y={0} stroke={PALETTE.ref} />
             <Bar dataKey="inflow" stackId="flow" fill={CASH_COLORS.in} radius={[4, 4, 0, 0]} maxBarSize={compact ? 20 : 32} isAnimationActive={false} />
             <Bar dataKey="outflowNeg" stackId="flow" fill={CASH_COLORS.out} radius={[0, 0, 4, 4]} maxBarSize={compact ? 20 : 32} isAnimationActive={false} />
-            <Line dataKey="cumulative" type="monotone" stroke={CASH_COLORS.run} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+            <Line dataKey={lineKey} type="monotone" stroke={CASH_COLORS.run} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+            {low && !compact && <ReferenceDot x={low.week} y={low[lineKey]} r={5} fill={PALETTE.bad} stroke={PALETTE.surface} strokeWidth={2} ifOverflow="extendDomain" />}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -59,7 +72,9 @@ export function CashFlowChart({ weeks, compact = false }: { weeks: CashWeek[]; c
           items={[
             { name: 'Money in', color: CASH_COLORS.in },
             { name: 'Money out', color: CASH_COLORS.out },
-            { name: 'Running total', color: CASH_COLORS.run, line: true },
+            { name: lineName, color: CASH_COLORS.run, line: true },
+            ...(low && !compact ? [{ name: 'Low point', color: PALETTE.bad }] : []),
+            ...(minimumCash !== null && minimumCash > 0 ? [{ name: 'Under the cash floor', color: PALETTE.warn }] : []),
           ]}
         />
       </div>
@@ -128,9 +143,10 @@ export function MarginChart({ weeks, words }: { weeks: MarginWeek[]; words: { re
   );
 }
 
-/* ---- Receivables by age: one bar, current to 90+ ----------------------- */
+/* ---- Receivables by age: one bar, not yet due to 90+ ------------------- */
 
-export const AGING_COLORS = { current: PALETTE.good, d31: PALETTE.warn, d61: 'rgb(var(--color-alert) / 0.6)', d91: PALETTE.bad } as const;
+/** The one aging definition's buckets (days past due), one color each. */
+export const AGING_COLORS = { current: PALETTE.good, days1to30: 'rgb(var(--color-warning) / 0.6)', days31to60: PALETTE.warn, days61to90: 'rgb(var(--color-alert) / 0.6)', over90: PALETTE.bad } as const;
 
 export function AgingBar({ buckets }: { buckets: Array<{ key: keyof typeof AGING_COLORS; label: string; amount: number }> }) {
   const row = Object.fromEntries(buckets.map((b) => [b.key, b.amount]));

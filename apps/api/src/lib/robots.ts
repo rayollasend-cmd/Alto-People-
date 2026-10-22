@@ -266,10 +266,13 @@ function templateSummary(t: { id: string; locationId: string | null; name: strin
   return { id: t.id, locationId: t.locationId, name: t.name, items: (t.items as unknown as ChecklistItem[]) ?? [], active: t.active };
 }
 
-export async function listChecklistTemplates(db: Db, locationId: string | null, tenantId: string | null): Promise<RobotChecklistTemplateSummary[]> {
+/** The templates a robot at `locationId` may use (active, tenant-wide or that site's); `all` lists every template for the editor. */
+export async function listChecklistTemplates(db: Db, locationId: string | null, tenantId: string | null, opts: { all?: boolean } = {}): Promise<RobotChecklistTemplateSummary[]> {
   const rows = await db.robotChecklistTemplate.findMany({
-    where: { active: true, OR: [{ locationId: null }, ...(locationId ? [{ locationId }] : [])], ...(tenantId ? { tenantId } : {}) },
-    orderBy: [{ locationId: 'desc' }, { name: 'asc' }],
+    where: opts.all
+      ? { ...(tenantId ? { tenantId } : {}) }
+      : { active: true, OR: [{ locationId: null }, ...(locationId ? [{ locationId }] : [])], ...(tenantId ? { tenantId } : {}) },
+    orderBy: [{ active: 'desc' }, { locationId: 'desc' }, { name: 'asc' }],
   });
   return rows.map(templateSummary);
 }
@@ -465,10 +468,10 @@ export async function listEvents(db: Db, workerId: string, limit = 100): Promise
 
 /* ---------------------------------------------------------- incidents -- */
 
-function incidentSummary(i: { id: string; kind: RobotIncidentSummary['kind']; occurredAt: Date; description: string; locationId: string | null; site: { name: string } | null; reportedBy: { id: string; email: string; associate: { firstName: string; lastName: string } | null } | null; oshaIncidentId: string | null; peopleOnShift: unknown; samples: unknown; events: unknown; retainUntil: Date }): RobotIncidentSummary {
+function incidentSummary(i: { id: string; kind: RobotIncidentSummary['kind']; occurredAt: Date; description: string; locationId: string | null; site: { name: string } | null; reportedBy: { id: string; email: string; associate: { firstName: string; lastName: string } | null } | null; oshaIncidentId: string | null; peopleOnShift: unknown; samples: unknown; events: unknown; retainUntil: Date; evidencePurgedAt: Date | null }): RobotIncidentSummary {
   const samples = Array.isArray(i.samples) ? i.samples : [];
   const events = Array.isArray(i.events) ? i.events : [];
-  return { id: i.id, kind: i.kind, occurredAt: i.occurredAt.toISOString(), description: i.description, locationId: i.locationId, locationName: i.site?.name ?? null, reportedBy: nameOf(i.reportedBy), oshaIncidentId: i.oshaIncidentId, peopleOnShift: (i.peopleOnShift as unknown as RobotIncidentSummary['peopleOnShift']) ?? [], sampleCount: samples.length, eventCount: events.length, retainUntil: i.retainUntil.toISOString().slice(0, 10) };
+  return { id: i.id, kind: i.kind, occurredAt: i.occurredAt.toISOString(), description: i.description, locationId: i.locationId, locationName: i.site?.name ?? null, reportedBy: nameOf(i.reportedBy), oshaIncidentId: i.oshaIncidentId, peopleOnShift: (i.peopleOnShift as unknown as RobotIncidentSummary['peopleOnShift']) ?? [], sampleCount: samples.length, eventCount: events.length, retainUntil: i.retainUntil.toISOString().slice(0, 10), evidencePurgedAt: i.evidencePurgedAt?.toISOString() ?? null };
 }
 
 const incidentInclude = { site: { select: { name: true } }, reportedBy: userSelect } as const;

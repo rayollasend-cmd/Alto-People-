@@ -7,6 +7,7 @@ import type {
   AuditLogListResponse,
   BackgroundCheck,
   BackgroundCheckAuthorizeInput,
+  EeoSelfIdInput,
   BulkApproveInput,
   BulkApproveResponse,
   BulkInviteInput,
@@ -530,14 +531,26 @@ export function finishProfilePhoto(applicationId: string): Promise<{ ok: true }>
   );
 }
 
+/** The consent. `status` is NOT_RUN when no screening provider is connected
+ *  (the check never ran), INITIATED when it was ordered — never PASSED. */
 export function authorizeBackgroundCheck(
   applicationId: string,
   body: BackgroundCheckAuthorizeInput
-): Promise<BackgroundCheck> {
-  return apiFetch<BackgroundCheck>(
+): Promise<BackgroundCheck & { message?: string | null; providerError?: string | null }> {
+  return apiFetch<BackgroundCheck & { message?: string | null; providerError?: string | null }>(
     `/onboarding/applications/${applicationId}/background-check`,
     { method: 'POST', body }
   );
+}
+
+/** Whether the new hire has answered the voluntary EEO form — never the answers. */
+export function getEeoSelfIdStatus(applicationId: string): Promise<{ answered: boolean }> {
+  return apiFetch<{ answered: boolean }>(`/onboarding/applications/${applicationId}/eeo-self-id`);
+}
+
+/** The new hire's own, voluntary EEO self-identification (kept apart from the application). */
+export function submitEeoSelfId(applicationId: string, body: EeoSelfIdInput): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(`/onboarding/applications/${applicationId}/eeo-self-id`, { method: 'POST', body });
 }
 
 export function getJ1Profile(
@@ -603,4 +616,46 @@ export function cancelApplication(
 /** Bring a cancelled invite back, with a fresh link. */
 export function reopenApplication(applicationId: string): Promise<{ emailed: boolean; inviteUrl: string | null }> {
   return apiFetch(`/onboarding/applications/${applicationId}/reopen`, { method: 'POST' });
+}
+
+/* ===== First day (HR walk 11) ============================================ */
+
+/** Everything that has to be true before a new hire's first shift, with the
+ *  facts the card fixes in place: start date, store, manager, clock-in
+ *  number, first shift, I-9 Section 2. */
+export interface FirstDay {
+  startDate: string | null;
+  store: { id: string; name: string } | null;
+  /** The stores the hire could be placed at (the client's, or the company's own). */
+  stores: { id: string; name: string }[];
+  manager: { id: string; name: string } | null;
+  employeeNumber: { issued: boolean; clientId: string | null; validAtClient: boolean };
+  firstShift: { id: string; startsAt: string; locationName: string | null } | null;
+  i9: { section1CompletedAt: string | null; section2CompletedAt: string | null; section2DueBy: string | null };
+}
+
+export function getFirstDay(applicationId: string): Promise<FirstDay> {
+  return apiFetch(`/onboarding/applications/${applicationId}/first-day`);
+}
+
+export function patchFirstDay(
+  applicationId: string,
+  body: { startDate?: string; locationId?: string | null; managerId?: string | null },
+): Promise<FirstDay> {
+  return apiFetch(`/onboarding/applications/${applicationId}/first-day`, { method: 'PATCH', body });
+}
+
+/** The pay schedule the rules would put a hire on, before the hire exists
+ *  (HR walk 23) — read-only; nothing is assigned until approval. */
+export function payScheduleForHire(q: {
+  clientId?: string | null;
+  locationId?: string | null;
+  departmentId?: string | null;
+}): Promise<{ schedule: { id: string; name: string; because: string } | null; conflict: string | null }> {
+  const p = new URLSearchParams();
+  if (q.clientId) p.set('clientId', q.clientId);
+  if (q.locationId) p.set('locationId', q.locationId);
+  if (q.departmentId) p.set('departmentId', q.departmentId);
+  const qs = p.toString();
+  return apiFetch(`/onboarding/pay-schedule-for-hire${qs ? `?${qs}` : ''}`);
 }

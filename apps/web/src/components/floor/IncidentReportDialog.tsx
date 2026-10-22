@@ -10,6 +10,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { cn } from '@/lib/cn';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 
 /**
  * File an incident from the floor — the supervisor's phone, the moment it
@@ -18,11 +19,11 @@ import { cn } from '@/lib/cn';
  * A near miss — nobody hurt — is kept in the log and never recorded.
  */
 
-const SEVERITIES: Array<{ value: IncidentSeverity; label: string; hint: string }> = [
-  { value: 'FIRST_AID', label: 'First aid only', hint: 'A bandage, an ice pack — back to work.' },
-  { value: 'MEDICAL_TREATMENT', label: 'Needed a doctor', hint: 'Urgent care, a clinic, the ER.' },
-  { value: 'RESTRICTED_DUTY', label: 'Can’t do their usual job', hint: 'Working, but on lighter duty.' },
-  { value: 'DAYS_AWAY', label: 'Sent home / days away', hint: 'Could not keep working.' },
+const SEVERITIES: Array<{ value: IncidentSeverity; label: MessageKey; hint: MessageKey }> = [
+  { value: 'FIRST_AID', label: 'floorUi.sevFirstAid', hint: 'floorUi.sevFirstAidHint' },
+  { value: 'MEDICAL_TREATMENT', label: 'floorUi.sevDoctor', hint: 'floorUi.sevDoctorHint' },
+  { value: 'RESTRICTED_DUTY', label: 'floorUi.sevRestricted', hint: 'floorUi.sevRestrictedHint' },
+  { value: 'DAYS_AWAY', label: 'floorUi.sevDaysAway', hint: 'floorUi.sevDaysAwayHint' },
 ];
 
 export function IncidentReportDialog({
@@ -36,6 +37,7 @@ export function IncidentReportDialog({
   presetAssociate?: PickedAssociate | null;
   onFiled?: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [description, setDescription] = useState('');
@@ -66,7 +68,7 @@ export function IncidentReportDialog({
 
   const submit = async () => {
     if (description.trim().length < 5) {
-      toast.error('Say what happened — a sentence is enough.');
+      toast.error(t('floorUi.incSayWhat'));
       return;
     }
     setBusy(true);
@@ -79,17 +81,19 @@ export function IncidentReportDialog({
         associateId: nearMiss ? null : who?.id ?? null,
         photo,
       });
-      toast.success(nearMiss ? 'Hazard reported. HR has it.' : 'Incident filed. HR has it.');
+      toast.success(nearMiss ? t('floorUi.incHazardReported') : t('floorUi.incFiled'));
       void qc.invalidateQueries({ queryKey: ['inbox'] });
       onFiled?.(r.id);
       reset();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not file the incident.');
+      toast.error(err instanceof Error ? err.message : t('floorUi.incFileFailed'));
     } finally {
       setBusy(false);
     }
   };
+
+  const severityHint = SEVERITIES.find((s) => s.value === severity)?.hint;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)} confirmDiscard={() => description.trim().length > 0 || !!photo}>
@@ -97,13 +101,13 @@ export function IncidentReportDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-warning" aria-hidden="true" />
-            Report an incident
+            {t('floorUi.incTitle')}
           </DialogTitle>
-          <DialogDescription>Goes to HR’s safety log the moment you send it. Write it the way you’d say it.</DialogDescription>
+          <DialogDescription>{t('floorUi.incDesc')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="What kind">
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t('floorUi.incWhatKind')}>
             <button
               type="button"
               role="radio"
@@ -111,7 +115,7 @@ export function IncidentReportDialog({
               onClick={() => setNearMiss(false)}
               className={cn('rounded-md border px-3 py-2.5 text-left text-sm coarse:min-h-11', !nearMiss ? 'border-gold bg-gold/[0.08] text-ink' : 'border-navy-secondary text-silver')}
             >
-              Someone was hurt
+              {t('floorUi.incSomeoneHurt')}
             </button>
             <button
               type="button"
@@ -120,21 +124,21 @@ export function IncidentReportDialog({
               onClick={() => setNearMiss(true)}
               className={cn('rounded-md border px-3 py-2.5 text-left text-sm coarse:min-h-11', nearMiss ? 'border-gold bg-gold/[0.08] text-ink' : 'border-navy-secondary text-silver')}
             >
-              Hazard / near miss
+              {t('floorUi.incHazardNearMiss')}
             </button>
           </div>
 
           {!nearMiss && (
             <>
-              <Field label="Who">
-                {(p) => <AssociatePicker id={p.id} value={who} onChange={setWho} placeholder="Search your crew" />}
+              <Field label={t('floorUi.who')}>
+                {(p) => <AssociatePicker id={p.id} value={who} onChange={setWho} placeholder={t('floorUi.searchYourCrew')} />}
               </Field>
-              <Field label="How bad" hint={SEVERITIES.find((s) => s.value === severity)?.hint}>
+              <Field label={t('floorUi.incHowBad')} hint={severityHint ? t(severityHint) : undefined}>
                 {(p) => (
                   <Select {...p} value={severity} onChange={(e) => setSeverity(e.target.value as IncidentSeverity)}>
                     {SEVERITIES.map((s) => (
                       <option key={s.value} value={s.value}>
-                        {s.label}
+                        {t(s.label)}
                       </option>
                     ))}
                   </Select>
@@ -143,7 +147,7 @@ export function IncidentReportDialog({
             </>
           )}
 
-          <Field label="What happened" required>
+          <Field label={t('floorUi.incWhatHappened')} required>
             {(p) => (
               <Textarea
                 {...p}
@@ -151,13 +155,13 @@ export function IncidentReportDialog({
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
                 maxLength={2000}
-                placeholder={nearMiss ? 'Wet floor by dock 3, no sign out.' : 'Slipped on the dock, landed on the right wrist.'}
+                placeholder={nearMiss ? t('floorUi.incPhNearMiss') : t('floorUi.incPhHurt')}
                 autoFocus
               />
             )}
           </Field>
-          <Field label="Where in the building">
-            {(p) => <Input {...p} value={location} onChange={(e) => setLocation(e.target.value)} maxLength={200} placeholder="Receiving dock, aisle 12…" />}
+          <Field label={t('floorUi.incWhere')}>
+            {(p) => <Input {...p} value={location} onChange={(e) => setLocation(e.target.value)} maxLength={200} placeholder={t('floorUi.incWherePh')} />}
           </Field>
 
           <div>
@@ -168,17 +172,17 @@ export function IncidentReportDialog({
               capture="environment"
               className="sr-only"
               onChange={(e) => pick(e.target.files?.[0] ?? null)}
-              aria-label="Add a photo"
+              aria-label={t('floorUi.addPhoto')}
             />
             {preview ? (
               <div className="relative inline-block">
-                <img src={preview} alt="What you captured at the scene" className="max-h-40 rounded-md border border-navy-secondary" />
+                <img src={preview} alt={t('floorUi.incPhotoAlt')} className="max-h-40 rounded-md border border-navy-secondary" />
                 <Button
                   type="button"
                   size="icon-sm"
                   variant="secondary"
                   className="absolute -right-2 -top-2"
-                  aria-label="Remove the photo"
+                  aria-label={t('floorUi.removePhoto')}
                   onClick={() => {
                     pick(null);
                     if (fileRef.current) fileRef.current.value = '';
@@ -190,7 +194,7 @@ export function IncidentReportDialog({
             ) : (
               <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>
                 <Camera className="mr-2 h-4 w-4" aria-hidden="true" />
-                Add a photo
+                {t('floorUi.addPhoto')}
               </Button>
             )}
           </div>
@@ -198,10 +202,10 @@ export function IncidentReportDialog({
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={() => void submit()} loading={busy} disabled={busy || description.trim().length < 5}>
-            {nearMiss ? 'Report hazard' : 'File incident'}
+            {nearMiss ? t('floorUi.incReportHazard') : t('floorUi.incFile')}
           </Button>
         </DialogFooter>
       </DialogContent>

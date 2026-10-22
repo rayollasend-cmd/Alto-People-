@@ -26,6 +26,7 @@ import {
   type StoreRunningCost,
   type TermsInput,
   type UnbilledRow,
+  type BilledNotPaidRow,
 } from '@/lib/payBillApi';
 import { ListTemplate } from '@/components/templates';
 import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
@@ -129,6 +130,14 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
     { line: 'Premiums', paid: d.premiums.paid, billed: d.premiums.billed, waiting: d.premiums.queued + d.premiums.awaitingReview, notBilled: d.premiums.notBillable + d.premiums.unbilled },
     { line: 'Retro pay', paid: d.retro.paid, billed: d.retro.rebilled, waiting: d.retro.queued + d.retro.awaitingReview, notBilled: d.retro.notRebilled },
   ];
+  const nothingPaid = d.runs.length === 0 || d.paychecks.length === 0;
+  const billedCols: GridColumn<BilledNotPaidRow>[] = [
+    { key: 'worker', header: 'Worker', accessor: (r) => r.associateName, cell: (r) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>, primary: true },
+    { key: 'client', header: 'Client', accessor: (r) => r.clientName, cardMeta: true },
+    { key: 'week', header: 'Week of', accessor: (r) => r.weekStart, cell: (r) => fmtDate(r.weekStart), sortable: true },
+    { key: 'hours', header: 'Hours billed', accessor: (r) => r.hours, cell: (r) => `${r.hours.toFixed(2)}h`, align: 'right', sortable: true, className: 'tabular-nums text-alert' },
+    { key: 'statement', header: 'Statement', accessor: (r) => r.statementNumber ?? 0, cell: (r) => (r.statementNumber != null ? `#${r.statementNumber}` : 'Final'), cardMeta: true },
+  ];
   const unbilledCols: GridColumn<UnbilledRow>[] = [
     { key: 'worker', header: 'Worker', accessor: (r) => r.associateName, cell: (r) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>, primary: true },
     { key: 'client', header: 'Client', accessor: (r) => r.clientName, cardMeta: true },
@@ -160,7 +169,7 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <PaidBilled title="Hours" unit="h" rows={[['Paid', d.hours.paid], ['On a final statement', d.hours.billed], ['On a draft', d.hours.onDraft], ['On no statement', d.hours.unbilled]]} />
+        <PaidBilled title="Hours" unit="h" rows={[['Paid', d.hours.paid], ['On a final statement', d.hours.billed], ['On a draft', d.hours.onDraft], ['On no statement', d.hours.unbilled], ['Billed, not paid', d.billedNotPaidHours ?? 0]]} />
         <PaidBilled title="Premiums" rows={[['Paid', d.premiums.paid], ['Billed', d.premiums.billed], ['Queued or in review', d.premiums.queued + d.premiums.awaitingReview], ['Not billable by contract', d.premiums.notBillable], ['Not billed', d.premiums.unbilled]]} />
         <PaidBilled title="Retro pay" rows={[['Paid', d.retro.paid], ['Rebilled', d.retro.rebilled], ['Queued or in review', d.retro.queued + d.retro.awaitingReview], ['Not rebilled', d.retro.notRebilled]]} />
       </div>
@@ -204,7 +213,27 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
         rowKey={(r) => `${r.payrollItemId}:${r.kind}:${r.clientId}:${r.label}:${r.reason}`}
         noun={{ one: 'line', many: 'lines' }}
         defaultSort={{ key: 'pay', direction: 'desc' }}
-        empty={{ title: "Everything paid is on a bill", description: "Every billable hour, premium and retro dollar this period reached a client statement." }}
+        empty={
+          nothingPaid
+            ? // Nothing paid is nothing to check — not "all clear" (finance walk 11).
+              { title: 'Nothing paid to check', description: 'No finalized paychecks in this period, so there is no pay to match to a bill. Billed hours with no paycheck are listed below.' }
+            : { title: 'Everything paid is on a bill', description: 'Every billable hour, premium and retro dollar this period reached a client statement.' }
+        }
+      />
+
+      <DataGrid
+        id="pay-bill-billed-not-paid"
+        caption="Billed, not paid"
+        rows={d.billedNotPaid ?? []}
+        columns={billedCols}
+        rowKey={(r) => `${r.associateId}:${r.clientId}:${r.weekStart}`}
+        noun={{ one: 'week', many: 'weeks' }}
+        defaultSort={{ key: 'hours', direction: 'desc' }}
+        empty={
+          (d.billedNotPaid ?? []).length === 0 && d.hours.billed === 0
+            ? { title: 'No final statements to check', description: 'Nothing was billed on a final statement in this period yet.' }
+            : { title: 'Every billed hour was paid', description: 'Each person-week on a final statement has a paystub.' }
+        }
       />
     </div>
   );

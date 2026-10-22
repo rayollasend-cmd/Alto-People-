@@ -81,22 +81,6 @@ export const addLevel = (
     body: input,
   });
 
-export const updateLevel = (
-  id: string,
-  input: Partial<{
-    title: string;
-    description: string | null;
-    jobProfileId: string | null;
-    requiredQualificationCodes: string[];
-    minTenureMonths: number | null;
-    minReviewRating: number | null;
-  }>,
-) =>
-  apiFetch<{ ok: true }>(`/career-levels/${id}`, {
-    method: 'PATCH',
-    body: input,
-  });
-
 export const deleteLevel = (id: string) =>
   apiFetch<void>(`/career-levels/${id}`, { method: 'DELETE' });
 

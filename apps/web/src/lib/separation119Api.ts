@@ -72,6 +72,19 @@ export const listSeparations = (params: {
   );
 };
 
+/** The state's final-paycheck deadline for a separation that doesn't exist yet
+ *  — so the Initiate dialog defaults the date right, not after the fact. */
+export const getFinalPayDeadline = (q: {
+  associateId: string;
+  reason: SeparationReason;
+  lastDayWorked: string;
+}) => {
+  const p = new URLSearchParams({ associateId: q.associateId, reason: q.reason, lastDayWorked: q.lastDayWorked });
+  return apiFetch<{ deadline: string | null; basis: string; note: string; state: string | null }>(
+    `/separations/final-pay-deadline?${p.toString()}`,
+  );
+};
+
 export const getSeparationSummary = (days = 90) =>
   apiFetch<SeparationSummary>(`/separations/summary?days=${days}`);
 

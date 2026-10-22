@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useI18n } from '@/lib/i18n';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
@@ -43,6 +44,7 @@ function useRoleIfSignedIn(): string | null {
 }
 
 export function HugoSeat({ className, prompts }: { className?: string; /** Page-specific starters, used when a model answers. */ prompts?: string[] }) {
+  const { t } = useI18n();
   const role = useRoleIfSignedIn();
   // Inside the app the seat is a way into the one pane; the question is
   // asked there, where the thread lives. Outside the provider (a test
@@ -70,14 +72,14 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
       ? [...roleStarters.map((q, i) => ({ key: `page-${i}`, example: q })), ...registry.filter((c) => c.key === 'DESK')].slice(0, 3)
       : (registry.length ? registry : me.data.can).slice(0, 3);
   const send = (q: string) => {
-    const t = q.trim();
-    if (!t || ask.isPending) return;
+    const question = q.trim();
+    if (!question || ask.isPending) return;
     if (assistant.mounted && assistant.available) {
-      assistant.ask(t);
+      assistant.ask(question);
       setText('');
       return;
     }
-    ask.mutate(t);
+    ask.mutate(question);
   };
   return (
     <Card className={className} data-testid="hugo-seat">
@@ -106,21 +108,21 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
           }}
         >
           <label htmlFor="hugo-seat-ask" className="sr-only">
-            Ask {me.data.name}
+            {t('hugoSeat.askName', { name: me.data.name })}
           </label>
-          <Input id="hugo-seat-ask" className="min-w-0 flex-1" value={text} maxLength={500} onChange={(e) => setText(e.target.value)} placeholder={`Ask ${me.data.name}`} />
+          <Input id="hugo-seat-ask" className="min-w-0 flex-1" value={text} maxLength={500} onChange={(e) => setText(e.target.value)} placeholder={t('hugoSeat.askName', { name: me.data.name })} />
           <Button type="submit" size="sm" loading={ask.isPending} disabled={!text.trim() || ask.isPending}>
-            Ask
+            {t('hugoSeat.ask')}
           </Button>
         </form>
-        {ask.error && <p className="text-sm text-negative">{ask.error instanceof ApiError ? ask.error.message : 'The assistant could not answer.'}</p>}
+        {ask.error && <p className="text-sm text-negative">{ask.error instanceof ApiError ? ask.error.message : t('hugoSeat.failed')}</p>}
         {turn && (
           <div className="rounded-md border border-line bg-surface-raised/40 p-3 text-sm" aria-live="polite">
             <div className="text-xs2 text-ink-muted">{turn.question}</div>
             <div className="mt-1 whitespace-pre-wrap text-ink">{turn.answer.reply}</div>
             {turn.answer.linkUrl && (
               <Button asChild size="sm" variant="link" className="mt-1 px-0">
-                <Link to={turn.answer.linkUrl}>Open</Link>
+                <Link to={turn.answer.linkUrl}>{t('hugoSeat.open')}</Link>
               </Button>
             )}
           </div>

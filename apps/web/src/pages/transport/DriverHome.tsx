@@ -1,16 +1,21 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Bus,
   CalendarDays,
+  Camera,
   Check,
   CheckCheck,
   Clock,
+  CloudOff,
+  Fuel,
   Home,
   LocateFixed,
   LocateOff,
   MapPin,
+  MessageSquare,
   Navigation,
   Phone,
   RotateCcw,
@@ -30,9 +35,7 @@ import { fmtDayHeaderTz, fmtMoney, fmtMonthShortYear, fmtRelativeDayTz, fmtTimeT
 import {
   NO_SHOW_WAIT_MS,
   acceptSeat,
-  completeDriverRun,
   declineSeat,
-  driverArrived,
   getRiderProfile,
   getSeatRequests,
   getDriverClients,
@@ -43,12 +46,13 @@ import {
   getDriverToday,
   getDriverWeek,
   getDriverRuns,
-  markBoarded,
-  markNoShow,
+  logFuel,
   reportTransportIssue,
   sendVanLocation,
   startDriverRun,
-  undoRideMark,
+  textRiderHere,
+  uploadTransportPhoto,
+  type MarkEvidence,
   type Ride,
   type RideRun,
   type GeoPoint,
@@ -56,6 +60,10 @@ import {
   type TransportIssueCategory,
 } from '@/lib/transportApi';
 import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
+import { currentDriverFix, rememberDriverFix } from '@/lib/driverPosition';
+import { replayQueuedWrites } from '@/lib/offlineQueue';
+import { onPendingMarks, pendingFor, tapArrived, tapBoard, tapBoardAll, tapComplete, tapNoShow, tapUndo, type PendingMark } from '@/lib/offlineTransport';
+import { Input } from '@/components/ui/Input';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { SoundToggle } from '@/components/transport/SoundToggle';
 import { HomeTemplate } from '@/components/templates';
@@ -135,7 +143,9 @@ export interface Stop {
 const riding = (r: Ride) => r.status !== 'CANCELLED';
 const homeKey = (r: Ride) => (r.pickup.kind === 'stop' ? `stop:${r.pickup.id}` : `addr:${r.pickup.address.trim().toLowerCase()}`);
 
-function group(rides: Ride[], keyOf: (r: Ride) => string, make: (r: Ride) => Omit<Stop, 'rides' | 'key' | 'at'>): Stop[] {
+type StopHead = Omit<Stop, 'rides' | 'key' | 'at'>;
+
+function group(rides: Ride[], keyOf: (r: Ride) => string, make: (r: Ride) => StopHead): Stop[] {
   const out: Stop[] = [];
   for (const r of rides) {
     const key = keyOf(r);
@@ -174,6 +184,55 @@ const ShiftMapContext = createContext<(trip: TripKey) => void>(() => {});
 
 /** The safety sheet, from any run on the page. */
 const SafetyContext = createContext<{ open: (run: RideRun | null) => void }>({ open: () => {} });
+
+/** The driver's taps still waiting to send (floor walk 5) — the rows paint them as "(sending)". */
+const PendingMarksContext = createContext<PendingMark[]>([]);
+
+function usePendingMarks(): PendingMark[] {
+  const queryClient = useQueryClient();
+  const [marks, setMarks] = useState<PendingMark[]>([]);
+  const before = useRef(0);
+  useEffect(
+    () =>
+      onPendingMarks((m) => {
+        setMarks(m);
+        // Something sent: the server's word replaces the "(sending)" rows.
+        if (m.length < before.current) void queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
+        before.current = m.length;
+      }),
+    [queryClient],
+  );
+  return marks;
+}
+
+/** "3 taps waiting to send", with Send now — while the queue holds any. */
+function PendingPill({ marks }: { marks: PendingMark[] }) {
+  const { t } = useI18n();
+  const [sending, setSending] = useState(false);
+  if (marks.length === 0) return null;
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2 text-sm text-ink">
+      <CloudOff className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+      <span className="min-w-0 flex-1">{marks.length === 1 ? t('drive.pendingOne') : t('drive.pendingMany', { count: marks.length })}</span>
+      <Button
+        size="sm"
+        variant="secondary"
+        loading={sending}
+        disabled={sending}
+        onClick={async () => {
+          setSending(true);
+          try {
+            await replayQueuedWrites();
+          } finally {
+            setSending(false);
+          }
+        }}
+      >
+        {t('drive.sendNow')}
+      </Button>
+    </div>
+  );
+}
 
 /** "Stops" — the shift's pickups, clustered and in order. */
 function StopsButton({ trip, className }: { trip: TripKey | null; className?: string }) {
@@ -221,6 +280,11 @@ export function DriverHome() {
   // incident report it can hand on to.
   const [safetyRun, setSafetyRun] = useState<RideRun | null | undefined>(undefined);
   const [incidentRun, setIncidentRun] = useState<RideRun | null | undefined>(undefined);
+  const [fueling, setFueling] = useState(false);
+  const marks = usePendingMarks();
+  // The assistant's "Report a van issue" lands here (/?report=van): the report, van switch on.
+  const [params, setParams] = useSearchParams();
+  const vanReport = params.get('report') === 'van';
   const all = runs.data?.runs ?? [];
   // A rider's "I'm outside" / "running late", and a run the desk put on
   // them: buzz, chime.
@@ -256,6 +320,13 @@ export function DriverHome() {
   const restActive = heroRun ? active.slice(1) : active;
   const restPlanned = heroNext ? planned.slice(1) : planned;
   const restDone = heroDone ? done.slice(1) : done;
+  // Transport walk 9: fuel goes on the van being driven, else the last one, else theirs.
+  const fuelVan = (heroRun ?? heroNext ?? heroDone)?.van ?? setup.data?.van ?? null;
+  useEffect(() => {
+    if (vanReport && reporting === undefined) setReporting(heroRun?.id ?? heroNext?.id ?? null);
+    // Once, when the link opens the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vanReport]);
   const hero = runs.isLoading ? (
     <div className="space-y-3">
       <Skeleton className="h-20" />
@@ -275,6 +346,7 @@ export function DriverHome() {
 
   return (
     <SafetyContext.Provider value={{ open: (run) => setSafetyRun(run) }}>
+    <PendingMarksContext.Provider value={marks}>
     <ShiftMapContext.Provider value={setShiftMap}>
       <HomeTemplate
         className="mx-auto max-w-2xl"
@@ -298,22 +370,34 @@ export function DriverHome() {
               <ShieldAlert className="h-4 w-4" />
               {t('drive.safety')}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setReporting(null)}>
+            <Button variant="ghost" size="sm" onClick={() => setReporting(heroRun?.id ?? heroNext?.id ?? null)}>
               <AlertTriangle className="h-4 w-4" />
               {t('ride.report')}
             </Button>
+            {fuelVan && (
+              <Button variant="ghost" size="sm" onClick={() => setFueling(true)}>
+                <Fuel className="h-4 w-4" />
+                {t('drive.logFuel')}
+              </Button>
+            )}
           </div>
         }
         banners={
-          setupBanner ? (
-            <p role="status" className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">
-              {setupBanner}
-            </p>
+          setupBanner || marks.length > 0 ? (
+            <div className="space-y-2">
+              <PendingPill marks={marks} />
+              {setupBanner && (
+                <p role="status" className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-2.5 text-sm text-warning">
+                  {setupBanner}
+                </p>
+              )}
+            </div>
           ) : undefined
         }
         hero={hero}
         decisions={{ title: t('drive.requests'), count: requestCount, content: <SeatRequests onRider={setRider} /> }}
-        assistant={<HugoSeat />}
+        // Floor walk 19: the driver's own starters — their runs, never a rider's ride.
+        assistant={<HugoSeat prompts={[t('drive.hugoNextRun'), t('drive.hugoRiders'), t('drive.hugoVanIssue')]} />}
       >
         <DriverTodayCard />
         {all.length > 0 && <DayStats runs={[...active, ...planned, ...done]} />}
@@ -330,7 +414,20 @@ export function DriverHome() {
         <DriverWeekCalendar onRider={setRider} />
       </HomeTemplate>
       {reporting !== undefined && (
-        <DriverReportDialog runId={reporting} open onOpenChange={(o) => !o && setReporting(undefined)} />
+        <DriverReportDialog
+          runId={reporting}
+          open
+          vanOffFirst={vanReport}
+          onOpenChange={(o) => {
+            if (o) return;
+            setReporting(undefined);
+            if (vanReport) {
+              const next = new URLSearchParams(params);
+              next.delete('report');
+              setParams(next, { replace: true });
+            }
+          }}
+        />
       )}
       {rider && <RiderDialog associateId={rider} onClose={() => setRider(null)} />}
       <ShiftMapDrawer trip={shiftMap} open={!!shiftMap} onClose={() => setShiftMap(null)} />
@@ -345,7 +442,9 @@ export function DriverHome() {
         />
       )}
       {incidentRun !== undefined && <IncidentDialog run={incidentRun} onClose={() => setIncidentRun(undefined)} />}
+      {fueling && fuelVan && <FuelDialog van={fuelVan} onClose={() => setFueling(false)} />}
     </ShiftMapContext.Provider>
+    </PendingMarksContext.Provider>
     </SafetyContext.Provider>
   );
 }
@@ -547,24 +646,43 @@ function DayStats({ runs }: { runs: RideRun[] }) {
   );
 }
 
-/** Run a driver action, then refresh the runs. */
-function useAct() {
+type Act = (key: string, fn: () => Promise<unknown>, success?: string) => Promise<void>;
+type IsBusy = (key: string) => boolean;
+
+/**
+ * Run a driver action, then refresh the runs. Floor walk 5: a lock per
+ * control (one slow tap never freezes the whole card), a tap with no
+ * signal is saved and says so, and a tap that landed far from the stop
+ * says how far (floor walk 17).
+ */
+function useAct(): { act: Act; isBusy: IsBusy } {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  const act = async (fn: () => Promise<unknown>, success?: string) => {
-    setBusy(true);
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const act: Act = async (key, fn, success) => {
+    setBusy((b) => new Set(b).add(key));
     try {
-      await fn();
+      const out = (await fn()) as { queued?: boolean; result?: { evidence?: MarkEvidence | null } } | undefined;
       hapticConfirm();
+      if (out?.queued) {
+        toast.info(t('drive.savedOffline'));
+        return;
+      }
+      const evidence = out?.result?.evidence;
+      if (evidence?.far && evidence.distanceM !== null) toast.warning(t('drive.farFromStop', { meters: evidence.distanceM }));
       if (success) toast.success(success);
       await queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setBusy(false);
+      setBusy((b) => {
+        const n = new Set(b);
+        n.delete(key);
+        return n;
+      });
     }
   };
-  return { act, busy };
+  return { act, isBusy: (key) => busy.has(key) };
 }
 
 function RunHeader({ run, tone }: { run: RideRun; tone: 'success' | 'gold' | 'quiet' }) {
@@ -971,7 +1089,8 @@ function RiderDialog({ associateId, onClose }: { associateId: string; onClose: (
 function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => void; onRider: (associateId: string) => void }) {
   const { t } = useI18n();
   const safety = useContext(SafetyContext);
-  const { act, busy } = useAct();
+  const { act, isBusy } = useAct();
+  const { app } = useNavApp();
   const sharing = useShareVanLocation(run.id, true);
   const { pickups, drops } = stopsFor(run);
   const current = pickups.find((s) => !stopDone(s)) ?? null;
@@ -1007,9 +1126,9 @@ function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => v
         <RunMap runId={run.id} />
 
         {current ? (
-          <StopCard run={run} stop={current} n={n} total={pickups.length} act={act} busy={busy} onRider={onRider} />
+          <StopCard run={run} stop={current} n={n} total={pickups.length} act={act} isBusy={isBusy} onRider={onRider} />
         ) : (
-          <DropCard run={run} drops={drops} act={act} busy={busy} />
+          <DropCard run={run} drops={drops} act={act} isBusy={isBusy} />
         )}
 
         {later.length > 0 && (
@@ -1021,10 +1140,20 @@ function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => v
                   <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-navy-secondary text-xs font-semibold text-white">
                     {n + i + 1}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-white">{s.label}</span>
+                  {/* Floor walk 18: a later stop's address and directions, not just its name. */}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-ink">{s.label}</span>
+                    {s.address && s.address !== s.label && <span className="block truncate text-xs text-silver">{s.address}</span>}
+                    <span className="block truncate text-xs text-silver">{s.rides.map((r) => r.rider.name.split(' ')[0]).join(', ')}</span>
+                  </span>
                   <span className="shrink-0 text-xs tabular-nums text-silver">
                     {s.at ? fmtTimeTz(s.at, tz) : ''} · {s.rides.length}
                   </span>
+                  <Button size="icon-sm" variant="ghost" asChild>
+                    <a href={navigateTo(app, { point: stopPoint(s), address: s.address })} target="_blank" rel="noreferrer" aria-label={`${t('drive.navigate')}: ${s.label}`}>
+                      <Navigation className="h-4 w-4" />
+                    </a>
+                  </Button>
                 </li>
               ))}
             </ol>
@@ -1035,7 +1164,7 @@ function OnTheRoad({ run, onReport, onRider }: { run: RideRun; onReport: () => v
             <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.doneStops')}</h3>
             <ul className="mt-1 space-y-1">
               {finished.flatMap((s) => s.rides).map((r) => (
-                <MarkedRow key={r.id} ride={r} act={act} busy={busy} />
+                <MarkedRow key={r.id} ride={r} act={act} isBusy={isBusy} />
               ))}
             </ul>
           </div>
@@ -1105,32 +1234,38 @@ function StopCard({
   n,
   total,
   act,
-  busy,
+  isBusy,
   onRider,
 }: {
   run: RideRun;
   stop: Stop;
   n: number;
   total: number;
-  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
-  busy: boolean;
+  act: Act;
+  isBusy: IsBusy;
   onRider: (associateId: string) => void;
 }) {
   const { t } = useI18n();
   const { app } = useNavApp();
+  const marks = useContext(PendingMarksContext);
   const tz = runTz(run);
-  const waiting = stop.rides.filter((r) => r.status === 'SCHEDULED');
-  const arrivedAt = stop.rides.map((r) => r.vanArrivedAt).find(Boolean) ?? null;
+  const waiting = stop.rides.filter((r) => r.status === 'SCHEDULED' && !['board', 'no-show'].includes(pendingFor(r.id, run.id, marks) ?? ''));
+  // An Arrived still waiting to send counts as arrived on this screen; the
+  // no-show clock still runs on the server's own arrival time.
+  const queuedArrive = marks.find((m) => m.kind === 'arrived' && m.id === run.id && stop.rides.some((r) => m.rideIds?.includes(r.id)));
+  const arrivedAt = stop.rides.map((r) => r.vanArrivedAt).find(Boolean) ?? queuedArrive?.queuedAt ?? null;
   const now = useTick(1_000, !!arrivedAt);
   const fromDirections = useBackFromDirections(`${run.id}:${stop.rides.map((r) => r.id).join(',')}`, !!arrivedAt);
-  const arrive = () => void act(() => driverArrived(run.id, waiting.map((r) => r.id)));
+  const arriveKey = `arrive:${stop.key}`;
+  const boardAllKey = `boardAll:${stop.key}`;
+  const arrive = () => void act(arriveKey, () => tapArrived(run.id, waiting.map((r) => r.id), stop.label));
 
   return (
     <div className="mt-4 rounded-lg border border-gold/40 bg-gold/[0.06] p-4">
       {fromDirections.back && !arrivedAt && waiting.length > 0 && (
         <div role="status" className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-gold/60 bg-gold/15 p-3">
           <span className="min-w-0 flex-1 text-base font-semibold text-ink">{t('drive.backFromNav', { stop: stop.label })}</span>
-          <Button size="sm" className="coarse:text-sm" onClick={arrive} disabled={busy}>
+          <Button size="sm" className="coarse:text-sm" onClick={arrive} disabled={isBusy(arriveKey)}>
             <MapPin className="h-3.5 w-3.5" />
             {t('drive.arrived')}
           </Button>
@@ -1200,23 +1335,20 @@ function StopCard({
             // there is no "after" case to express here.
             variant="secondary"
             onClick={arrive}
-            disabled={busy}
+            disabled={isBusy(arriveKey)}
           >
             <MapPin className="h-3.5 w-3.5" />
             {t('drive.arrived')}
           </Button>
         )}
-        {waiting.length > 1 && (
+        {/* Floor walk 18: one request for the whole stop, offered for one rider too. */}
+        {waiting.length > 0 && (
           <Button
             size="sm"
             className="coarse:text-sm"
             variant={arrivedAt ? 'primary' : 'secondary'}
-            onClick={() =>
-              void act(async () => {
-                for (const r of waiting) await markBoarded(r.id);
-              })
-            }
-            disabled={busy}
+            onClick={() => void act(boardAllKey, () => tapBoardAll(run.id, waiting.map((r) => r.id), stop.label))}
+            disabled={isBusy(boardAllKey)}
           >
             <CheckCheck className="h-3.5 w-3.5" />
             {t('drive.allOnBoard')}
@@ -1227,7 +1359,7 @@ function StopCard({
 
       <ul className="mt-3 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
         {stop.rides.map((r) => (
-          <RiderAtStop key={r.id} ride={r} now={now} arrived={!!arrivedAt} act={act} busy={busy} onRider={onRider} />
+          <RiderAtStop key={r.id} ride={r} runId={run.id} now={now} arrived={!!arrivedAt} act={act} isBusy={isBusy} onRider={onRider} />
         ))}
       </ul>
     </div>
@@ -1236,24 +1368,43 @@ function StopCard({
 
 function RiderAtStop({
   ride,
+  runId,
   now,
   arrived,
   act,
-  busy,
+  isBusy,
   onRider,
 }: {
   ride: Ride;
+  runId: string;
   now: number;
   /** The STOP's arrival, not this ride's — one card, one answer to "are
    *  we there yet", so every control on it leads at the same moment. */
   arrived: boolean;
-  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
-  busy: boolean;
+  act: Act;
+  isBusy: IsBusy;
   onRider: (associateId: string) => void;
 }) {
   const { t } = useI18n();
   const confirm = useConfirm();
-  if (ride.status !== 'SCHEDULED') return <MarkedRow ride={ride} act={act} busy={busy} />;
+  const marks = useContext(PendingMarksContext);
+  const pending = pendingFor(ride.id, runId, marks);
+  const key = `ride:${ride.id}`;
+  if (ride.status !== 'SCHEDULED') return <MarkedRow ride={ride} act={act} isBusy={isBusy} />;
+  // Floor walk 5: the tap is on its way — the row says so at once.
+  if (pending === 'board' || pending === 'no-show') {
+    return (
+      <li className="flex items-center gap-2 py-3 text-sm">
+        {pending === 'board' ? <Check className="h-4 w-4 shrink-0 text-success" aria-hidden="true" /> : <UserX className="h-4 w-4 shrink-0 text-alert" aria-hidden="true" />}
+        <span className="min-w-0 flex-1 truncate text-ink">{ride.rider.name}</span>
+        <Badge size="sm" variant={pending === 'board' ? 'success' : 'destructive'}>
+          {pending === 'board' ? t('drive.onBoardSending') : t('drive.noShowSending')}
+        </Badge>
+      </li>
+    );
+  }
+  // The no-show clock runs from the server's arrival — never from a tap
+  // still waiting to send — so a rider always gets their 3 minutes.
   const openAt = ride.vanArrivedAt ? Date.parse(ride.vanArrivedAt) + NO_SHOW_WAIT_MS : null;
   const canNoShow = openAt !== null && now >= openAt;
   const noShow = async () => {
@@ -1263,8 +1414,20 @@ function RiderAtStop({
       confirmLabel: t('drive.noShow'),
       destructive: true,
     });
-    if (ok) await act(() => markNoShow(ride.id));
+    if (ok) await act(key, () => tapNoShow(ride));
   };
+  // Floor walk 18: "I'm here", in the rider's language, one tap.
+  const first = ride.rider.name.split(' ')[0] ?? ride.rider.name;
+  const textHere = () =>
+    void act(`text:${ride.id}`, async () => {
+      const r = await textRiderHere(ride.id);
+      if (r.sent) toast.success(t('drive.textSent', { name: first }));
+      else if (r.reason === 'no_phone') toast.error(t('drive.textNoPhone', { name: first }));
+      else if (r.smsHref) {
+        toast.info(t('drive.textNotConnected'));
+        window.location.href = r.smsHref;
+      } else toast.error(t('drive.textFailed'));
+    });
   return (
     <li className="py-3">
       <div className="flex items-center gap-3">
@@ -1299,11 +1462,16 @@ function RiderAtStop({
           {ride.note && <div className="text-xs text-gold">{ride.note}</div>}
         </div>
         {ride.rider.phone && (
-          <Button size="icon-sm" variant="ghost" asChild>
-            <a href={`tel:${ride.rider.phone}`} aria-label={`${t('drive.call')} ${ride.rider.name}`}>
-              <Phone className="h-4 w-4" />
-            </a>
-          </Button>
+          <>
+            <Button size="icon-sm" variant="ghost" onClick={textHere} disabled={isBusy(`text:${ride.id}`)} aria-label={`${t('drive.textHere')}: ${ride.rider.name}`}>
+              <MessageSquare className="h-4 w-4" />
+            </Button>
+            <Button size="icon-sm" variant="ghost" asChild>
+              <a href={`tel:${ride.rider.phone}`} aria-label={`${t('drive.call')} ${ride.rider.name}`}>
+                <Phone className="h-4 w-4" />
+              </a>
+            </Button>
+          </>
         )}
       </div>
       {/* The two marks that put money on or off a rider's account, named at
@@ -1321,16 +1489,17 @@ function RiderAtStop({
           size="sm"
           className="coarse:text-sm"
           variant={arrived ? 'primary' : 'secondary'}
-          onClick={() => void act(() => markBoarded(ride.id))}
-          disabled={busy}
+          onClick={() => void act(key, () => tapBoard(ride))}
+          disabled={isBusy(key)}
         >
           <Check className="h-3.5 w-3.5" />
           {t('drive.onBoard')}
         </Button>
-        <Button size="sm" className="coarse:text-sm" variant="secondary" onClick={() => void noShow()} disabled={busy || !canNoShow}>
+        <Button size="sm" className="coarse:text-sm" variant="secondary" onClick={() => void noShow()} disabled={isBusy(key) || !canNoShow}>
           {canNoShow || openAt === null ? <UserX className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
           {openAt !== null && !canNoShow ? t('drive.noShowIn', { time: fmtClock(openAt - now) }) : t('drive.noShow')}
         </Button>
+        {openAt === null && pending === 'arrived' && <span className="text-xs text-silver">{t('drive.noShowAfterSend')}</span>}
       </div>
     </li>
   );
@@ -1339,13 +1508,15 @@ function RiderAtStop({
 function MarkedRow({
   ride,
   act,
-  busy,
+  isBusy,
 }: {
   ride: Ride;
-  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
-  busy: boolean;
+  act: Act;
+  isBusy: IsBusy;
 }) {
   const { t } = useI18n();
+  const marks = useContext(PendingMarksContext);
+  const undoing = pendingFor(ride.id, ride.run?.id ?? '', marks) === 'undo';
   const noShow = ride.status === 'NO_SHOW';
   return (
     <li className="flex items-center gap-2 py-1.5 text-sm">
@@ -1362,9 +1533,9 @@ function MarkedRow({
           12px ghost label reads as chrome; on the device where the mis-tap
           happens it should read as a way out. */}
       {(ride.status === 'BOARDED' || noShow) && (
-        <Button size="xs" variant="ghost" className="coarse:text-sm" onClick={() => void act(() => undoRideMark(ride.id))} disabled={busy}>
+        <Button size="xs" variant="ghost" className="coarse:text-sm" onClick={() => void act(`ride:${ride.id}`, () => tapUndo(ride))} disabled={undoing || isBusy(`ride:${ride.id}`)}>
           <RotateCcw className="h-3.5 w-3.5" />
-          {t('drive.undo')}
+          {undoing ? t('drive.undoSending') : t('drive.undo')}
         </Button>
       )}
     </li>
@@ -1376,12 +1547,12 @@ function DropCard({
   run,
   drops,
   act,
-  busy,
+  isBusy,
 }: {
   run: RideRun;
   drops: Stop[];
-  act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
-  busy: boolean;
+  act: Act;
+  isBusy: IsBusy;
 }) {
   const { t } = useI18n();
   const { app } = useNavApp();
@@ -1419,7 +1590,7 @@ function DropCard({
           by breakpoint and every tap on it is still a finger. Gating the
           shrink behind fine: keeps the wide, unmissable bar on all touch
           and the tidy inline button on a mouse. */}
-      <Button className="mt-3 w-full fine:sm:w-auto" onClick={() => void act(() => completeDriverRun(run.id), t('drive.finished'))} disabled={busy}>
+      <Button className="mt-3 w-full fine:sm:w-auto" onClick={() => void act(`complete:${run.id}`, () => tapComplete(run.id, run.van.name), t('drive.finished'))} disabled={isBusy(`complete:${run.id}`)}>
         <Check className="h-4 w-4" />
         {t('drive.finish')}
         {aboard > 0 ? ` · ${aboard}` : ''}
@@ -1432,7 +1603,7 @@ function DropCard({
 
 function UpNext({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport: () => void }) {
   const { t } = useI18n();
-  const { act, busy } = useAct();
+  const { act, isBusy } = useAct();
   const today = useQuery({ queryKey: ['transport', 'driver', 'today'], queryFn: getDriverToday, staleTime: 60_000 });
   const [checking, setChecking] = useState(false);
   // The run leaves only once the van has been walked around (when the
@@ -1441,7 +1612,7 @@ function UpNext({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport
   // setting not loaded yet), the check opens then.
   const needsCheck = today.data?.preTripRequired === true && !run.preTrip?.passed;
   const start = () =>
-    void act(async () => {
+    void act(`start:${run.id}`, async () => {
       try {
         await startDriverRun(run.id);
       } catch (err) {
@@ -1483,7 +1654,7 @@ function UpNext({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport
           ))}
         </ol>
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button onClick={() => (needsCheck ? setChecking(true) : start())} disabled={busy}>
+          <Button onClick={() => (needsCheck ? setChecking(true) : start())} disabled={isBusy(`start:${run.id}`)}>
             {needsCheck ? t('drive.preTrip') : t('drive.start')}
           </Button>
           {run.preTrip?.passed && (
@@ -1568,6 +1739,8 @@ export function useShareVanLocation(runId: string, active: boolean): SharingStat
       (pos) => {
         if (stopped) return;
         latest.current = pos;
+        // Floor walk 17: the taps carry where the van is.
+        rememberDriverFix({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null });
         setState('on');
         const prev = lastSent.current;
         const moved = prev ? Math.hypot(pos.coords.latitude - prev.lat, pos.coords.longitude - prev.lng) > 0.0008 : true;
@@ -1672,24 +1845,81 @@ function RunMap({ runId }: { runId: string }) {
   );
 }
 
+/** The phone's position now: the stream's last fix, else one quick read (5 s). Null when there is none. */
+function positionNow(): Promise<{ lat: number; lng: number } | null> {
+  const fix = currentDriverFix();
+  if (fix) return Promise.resolve({ lat: fix.lat, lng: fix.lng });
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 5_000, maximumAge: 30_000 },
+    );
+  });
+}
+
+/** Photos for a report or a receipt: up to `max`, uploaded as they're picked. */
+function usePhotoPicker(max: number) {
+  const [keys, setKeys] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const add = async (files: FileList | null) => {
+    if (!files) return;
+    setUploading(true);
+    try {
+      for (const f of Array.from(files).slice(0, Math.max(0, max - keys.length))) {
+        const { key } = await uploadTransportPhoto(f);
+        setKeys((k) => [...k, key]);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+  return { keys, uploading, add };
+}
+
+/**
+ * Report a problem from the road. Floor walk 16: photos, where the phone
+ * is, and "Van can't run safely" — which takes the van off the road (the
+ * out-of-service record and an incident), and moves or flags its runs.
+ */
 function DriverReportDialog({
   runId,
   open,
   onOpenChange,
+  vanOffFirst = false,
 }: {
   runId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Opened from "Report a van issue": the van-off switch starts on. */
+  vanOffFirst?: boolean;
 }) {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const [category, setCategory] = useState<TransportIssueCategory>('VEHICLE');
   const [body, setBody] = useState('');
+  const [vanOff, setVanOff] = useState(vanOffFirst);
   const [busy, setBusy] = useState(false);
+  const photos = usePhotoPicker(6);
+  const fileRef = useRef<HTMLInputElement>(null);
   const send = async () => {
     setBusy(true);
     try {
-      await reportTransportIssue({ category, body: body.trim(), ...(runId ? { runId } : {}) });
-      toast.success(t('ride.reportSent'));
+      const at = await positionNow();
+      const r = await reportTransportIssue({
+        category,
+        body: body.trim(),
+        ...(runId ? { runId } : {}),
+        ...(photos.keys.length ? { photoKeys: photos.keys } : {}),
+        ...(at ? { lat: at.lat, lng: at.lng } : {}),
+        ...(vanOff ? { vanOutOfService: true } : {}),
+      });
+      hapticConfirm();
+      toast.success(r.vanParked ? t('drive.vanParked') : t('ride.reportSent'));
+      if (r.vanParked) await queryClient.invalidateQueries({ queryKey: ['transport', 'driver'] });
       onOpenChange(false);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : String(err));
@@ -1721,10 +1951,104 @@ function DriverReportDialog({
           <Field label={t('ride.reportBody')} required>
             {(p) => <Textarea {...p} rows={4} value={body} onChange={(e) => setBody(e.target.value)} maxLength={2000} />}
           </Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={(e) => void photos.add(e.target.files)} />
+            <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()} loading={photos.uploading} disabled={photos.uploading || photos.keys.length >= 6}>
+              <Camera className="h-3.5 w-3.5" />
+              {t('drive.reportAddPhoto')}
+            </Button>
+            {photos.keys.length > 0 && <span className="text-xs text-silver">{t('drive.photosAdded', { count: photos.keys.length })}</span>}
+          </div>
+          <p className="flex items-center gap-1.5 text-xs text-silver">
+            <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {t('drive.reportLocation')}
+          </p>
+          <label className="flex items-start gap-2 rounded-md border border-alert/40 bg-alert/[0.06] p-3 text-sm text-ink coarse:min-h-11">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 coarse:h-6 coarse:w-6" checked={vanOff} onChange={(e) => setVanOff(e.target.checked)} />
+            <span>
+              <span className="block font-medium">{t('drive.vanCantRun')}</span>
+              <span className="block text-xs text-silver">{t('drive.vanCantRunHint')}</span>
+            </span>
+          </label>
         </div>
         <DialogFooter>
-          <Button onClick={() => void send()} loading={busy} disabled={busy || body.trim().length < 5}>
-            {t('ride.reportSend')}
+          <Button variant={vanOff ? 'destructive' : 'primary'} onClick={() => void send()} loading={busy} disabled={busy || photos.uploading || body.trim().length < 5}>
+            {vanOff ? t('drive.vanCantRunSend') : t('ride.reportSend')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Transport walk 9 — fuel at the pump, one tap from the driver's home:
+ * what it cost, gallons, the odometer, a photo of the receipt. It lands in
+ * the van's service log (with who logged it) and in cost per seat.
+ */
+function FuelDialog({ van, onClose }: { van: { id: string; name: string }; onClose: () => void }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [cost, setCost] = useState('');
+  const [gallons, setGallons] = useState('');
+  const [odometer, setOdometer] = useState('');
+  const [busy, setBusy] = useState(false);
+  const photo = usePhotoPicker(1);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const dollars = Number.parseFloat(cost);
+  const valid = Number.isFinite(dollars) && dollars > 0;
+  const save = async () => {
+    setBusy(true);
+    try {
+      const gal = Number.parseFloat(gallons);
+      const odo = Number.parseInt(odometer, 10);
+      await logFuel(van.id, {
+        costCents: Math.round(dollars * 100),
+        gallons: Number.isFinite(gal) ? gal : null,
+        odometerMiles: Number.isFinite(odo) ? odo : null,
+        photoKey: photo.keys[0] ?? null,
+      });
+      hapticConfirm();
+      toast.success(t('drive.fuelSaved'));
+      await queryClient.invalidateQueries({ queryKey: ['transport'] });
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{t('drive.fuelTitle', { van: van.name })}</DialogTitle>
+          <DialogDescription>{t('drive.fuelBody')}</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={t('drive.fuelCost')} required className="col-span-2">
+            {(p) => <Input {...p} type="number" inputMode="decimal" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} />}
+          </Field>
+          <Field label={t('drive.fuelGallons')}>
+            {(p) => <Input {...p} type="number" inputMode="decimal" min="0" step="0.1" value={gallons} onChange={(e) => setGallons(e.target.value)} />}
+          </Field>
+          <Field label={t('drive.fuelOdometer')}>
+            {(p) => <Input {...p} type="number" inputMode="numeric" min="0" step="1" value={odometer} onChange={(e) => setOdometer(e.target.value)} />}
+          </Field>
+          <div className="col-span-2 flex items-center gap-2">
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => void photo.add(e.target.files)} />
+            <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()} loading={photo.uploading} disabled={photo.uploading || photo.keys.length > 0}>
+              <Camera className="h-3.5 w-3.5" />
+              {photo.keys.length > 0 ? t('drive.fuelReceiptAdded') : t('drive.fuelReceipt')}
+            </Button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={() => void save()} loading={busy} disabled={busy || photo.uploading || !valid}>
+            {t('drive.fuelSave')}
           </Button>
         </DialogFooter>
       </DialogContent>

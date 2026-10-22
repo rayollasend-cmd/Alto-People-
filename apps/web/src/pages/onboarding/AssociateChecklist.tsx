@@ -15,7 +15,8 @@ import type {
   ChecklistTask,
   DocumentRecord,
 } from '@alto-people/shared';
-import { getApplication } from '@/lib/onboardingApi';
+import { getApplication, getEeoSelfIdStatus, submitEeoSelfId } from '@/lib/onboardingApi';
+import { EeoSelfIdCard } from './EeoSelfIdCard';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -158,25 +159,6 @@ function taskLabel(t: Translate, task: Pick<ChecklistTask, 'kind' | 'title'>): s
   return key ? t(key) : task.title;
 }
 
-// Tasks that route to a real associate-facing form. Anything not in
-// this set falls through to the StubTask "coming soon" placeholder.
-const REAL_KINDS = new Set([
-  'PROFILE_INFO',
-  'W4',
-  'DIRECT_DEPOSIT',
-  'POLICY_ACK',
-  'I9_VERIFICATION',
-  // Phase 63
-  'DOCUMENT_UPLOAD',
-  'BACKGROUND_CHECK',
-  'J1_DOCS',
-  // E-sign (Alto HR Employment Agreement + any HR-drafted addenda).
-  'E_SIGN',
-  // Live headshot (camera capture).
-  'PROFILE_PHOTO',
-  // WOTC tax credit pre-screening (optional for the applicant).
-  'WOTC_SCREENING',
-]);
 
 // Which checklist row a rejected document belongs to. The checklist task
 // payload itself carries no rejection info, so this is derived from the
@@ -248,6 +230,14 @@ export function AssociateChecklist() {
   // topbar fell back to the bare wordmark for the entire onboarding flow.
   usePublishPageTitle(t('ob.check.pageTitle'));
 
+  // The voluntary EEO card (audit 2026-10-21 #14): only whether they
+  // answered comes back, and only to them — a failed read just hides it.
+  const eeo = useQuery({
+    queryKey: ['AssociateChecklist', 'eeo', applicationId ?? null],
+    queryFn: () => getEeoSelfIdStatus(applicationId!),
+    enabled: !!applicationId,
+    retry: false,
+  });
   const appQuery = useQuery({
     queryKey: ['AssociateChecklist', 'application', applicationId ?? null],
     queryFn: () => getApplication(applicationId!),
@@ -355,7 +345,7 @@ export function AssociateChecklist() {
   const firstName = detail.associateName.split(' ')[0];
   const allDone = detail.percentComplete === 100;
   const nextTask = detail.tasks.find(
-    (task) => task.status !== 'DONE' && task.status !== 'SKIPPED' && REAL_KINDS.has(task.kind)
+    (task) => task.status !== 'DONE' && task.status !== 'SKIPPED'
   );
 
   // Plain-language status banner so a non-technical hire understands where
@@ -461,6 +451,14 @@ export function AssociateChecklist() {
           ));
         })()}
       </section>
+
+      {eeo.data && (
+        <EeoSelfIdCard
+          className="mt-6"
+          answered={eeo.data.answered}
+          onSubmit={(input) => submitEeoSelfId(detail.id, input)}
+        />
+      )}
     </div>
   );
 }
@@ -535,11 +533,11 @@ interface AssociateTaskRowProps {
 function AssociateTaskRow({ task, applicationId, isNext, attention, justCompleted, appearIndex, canRevisit }: AssociateTaskRowProps) {
   const { t } = useI18n();
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
-  const isReal = REAL_KINDS.has(task.kind);
-  // Completed tasks stay linkable until HR settles the application — each
-  // task page hydrates what's on file, so revisiting means reviewing and
-  // correcting, not retyping. The server enforces the same boundary.
-  const linkable = isReal && (!isComplete || canRevisit);
+  // Every task kind has its own page. Completed tasks stay linkable until
+  // HR settles the application — each task page hydrates what's on file,
+  // so revisiting means reviewing and correcting, not retyping. The server
+  // enforces the same boundary.
+  const linkable = !isComplete || canRevisit;
   const linkTo = `/onboarding/me/${applicationId}/tasks/${task.kind.toLowerCase()}`;
 
   const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
@@ -592,7 +590,7 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, justComplete
               </span>
             )}
           </>
-        ) : linkable ? (
+        ) : (
           <span
             className={cn(
               'inline-flex items-center gap-1.5 px-3 py-1.5 coarse:min-h-11 rounded-md text-sm font-semibold transition-colors whitespace-nowrap',
@@ -603,10 +601,6 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, justComplete
           >
             {isNext ? t('ob.check.startNow') : t('ob.check.start')}
             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-          </span>
-        ) : (
-          <span className="text-2xs uppercase tracking-wider text-silver/70 px-1.5 py-0.5 rounded bg-silver/10">
-            {t('ob.check.comingSoon')}
           </span>
         )}
       </div>

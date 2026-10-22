@@ -151,7 +151,7 @@ export function PortalToday() {
         topbarTitle={t('portal.todayNav')}
         subtitle={
           data
-            ? `${data.store ? data.store.name : data.client.name} · ${fmtDate(parseYmd(data.date))}${
+            ? `${data.store ? data.store.name : data.client.name}${
                 isToday ? ` · ${t('portal.asOf', { time: fmtTime(data.generatedAt) })}` : ''
               }`
             : undefined
@@ -303,6 +303,7 @@ export function PortalToday() {
                   // The shift supervisor reaches their crew from the wall:
                   // call, text, message — and one text to the whole wave.
                   canReach={user?.role === 'SHIFT_SUPERVISOR' && can('message:crew')}
+                  floorLead={isFloorLead}
                 />
               ))}
             </>
@@ -347,12 +348,19 @@ function DaySummary({
               open: sum.open,
             })
           : t('portal.daySummaryFuture', { expected: sum.expected, open: sum.open })}
-      <span className="text-silver/50"> · {t('portal.faceHint')}</span>
+      <span className="hidden text-silver/50 sm:inline"> · {t('portal.faceHint')}</span>
     </p>
   );
 }
 
 type WindowLead = NonNullable<DayPayload['windowLeads']>[number];
+
+/** 12 → "12m", 75 → "1h 15m". */
+function lateSpan(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
 
 /** The store shift window a wave starts in — its name and its leads. */
 function waveWindow(w: Wave, windows: WindowLead[]): WindowLead | null {
@@ -447,6 +455,7 @@ function WaveCard({
   focused = false,
   window: win = null,
   canReach = false,
+  floorLead = false,
 }: {
   wave: Wave;
   multiStore: boolean;
@@ -455,6 +464,8 @@ function WaveCard({
   window?: WindowLead | null;
   /** The shift supervisor: contact actions on a face, a text to the wave. */
   canReach?: boolean;
+  /** The store's own supervisors: "Late 12m" on a row. The client portal reads punch times only. */
+  floorLead?: boolean;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<WaveRow | null>(null);
@@ -505,8 +516,71 @@ function WaveCard({
     return `${who}${where} · ${when}`;
   };
 
+  // A phone reads names, not faces (role walk floor 20): one row per
+  // person with what they're doing now and a call/text button, so finding
+  // who is missing is a glance, not a tap per face.
+  const rowStatus = (r: WaveRow): { text: string; tone: 'good' | 'bad' | 'muted' } => {
+    if (r.state === 'on-floor' && r.clockInAt) return { text: t('portal.rowIn', { time: fmtTimeTz(r.clockInAt, r.timezone) }), tone: 'good' };
+    if (r.state === 'worked' && r.clockInAt)
+      return {
+        text: r.clockOutAt
+          ? t('portal.punchRange', { in: fmtTimeTz(r.clockInAt, r.timezone), out: fmtTimeTz(r.clockOutAt, r.timezone) })
+          : t('portal.rowIn', { time: fmtTimeTz(r.clockInAt, r.timezone) }),
+        tone: 'muted',
+      };
+    if (r.state === 'missed') return { text: t('portal.faceNoPunch'), tone: 'bad' };
+    if (r.state === 'not-in') {
+      const late = Math.floor((Date.now() - Date.parse(r.startsAt)) / 60_000);
+      return { text: floorLead && late > 0 ? t('portal.rowLate', { span: lateSpan(late) }) : t('portal.faceNotIn'), tone: 'bad' };
+    }
+    return { text: r.state === 'confirmed' ? t('portal.state.confirmed') : t('portal.state.unconfirmed'), tone: 'muted' };
+  };
+  const phoneRows = groups.flatMap((g) => g.rows);
+  const phoneList = (
+    <ul className="divide-y divide-navy-secondary/60 sm:hidden" aria-label={t('portal.rosterAria')} data-testid="roster-rows">
+      {phoneRows.map((r) => {
+        const st = rowStatus(r);
+        return (
+          <li key={r.shiftId} className="flex items-center gap-3 py-2">
+            <Avatar src={r.associateId ? photoUrl(r.associateId) : null} name={r.name ?? ''} email="" size="sm" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-ink">
+                {r.name ?? '—'}
+                {r.isLead && <span className="ml-1.5 text-2xs font-semibold uppercase text-gold">{t('portal.leadTag')}</span>}
+              </div>
+              <div className="truncate text-xs">
+                <span className={cn(st.tone === 'good' ? 'text-success' : st.tone === 'bad' ? 'text-alert' : 'text-ink-muted')}>{st.text}</span>
+                <span className="text-ink-muted"> · {r.position}{multiStore && r.locationName ? ` · ${r.locationName}` : ''}</span>
+              </div>
+            </div>
+            {canReach && r.phone && (
+              <>
+                <a
+                  href={`tel:${r.phone}`}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-navy-secondary text-silver active:bg-navy-secondary/50"
+                  aria-label={t('portal.callX', { name: r.name ?? '' })}
+                >
+                  <Phone className="h-4 w-4" aria-hidden="true" />
+                </a>
+                <a
+                  href={`sms:${r.phone}`}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-navy-secondary text-silver active:bg-navy-secondary/50"
+                  aria-label={t('portal.textX', { name: r.name ?? '' })}
+                >
+                  <MessageSquareText className="h-4 w-4" aria-hidden="true" />
+                </a>
+              </>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+
   const body = (
     <div className="space-y-4">
+      {phoneList}
+      <div className="hidden space-y-4 sm:block">
       {groups.map((g) => (
         <div key={g.key}>
           <div className="mb-2 flex items-baseline gap-2 text-2xs uppercase tracking-wider text-silver/60">
@@ -576,6 +650,7 @@ function WaveCard({
           </ul>
         </div>
       ))}
+      </div>
       {w.open.length > 0 && (
         <div>
           <div className="mb-2 flex items-baseline gap-2 text-2xs uppercase tracking-wider text-silver/60">
@@ -609,7 +684,7 @@ function WaveCard({
       )}
       <div
         className={cn(
-          'min-h-5 text-sm transition-opacity',
+          'hidden min-h-5 text-sm transition-opacity sm:block',
           selected ? 'text-white opacity-100' : 'text-silver/40 opacity-0',
         )}
         aria-live="polite"
@@ -617,12 +692,12 @@ function WaveCard({
         {selected ? caption(selected) : ''}
       </div>
       {canReach && selected?.associateId && (
-        <div className="flex flex-wrap gap-2" data-testid="face-reach">
+        <div className="hidden flex-wrap gap-2 sm:flex" data-testid="face-reach">
           {selected.phone && (
             <Button size="sm" variant="outline" asChild>
               <a href={`tel:${selected.phone}`}>
                 <Phone className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Call
+                {t('portal.call')}
               </a>
             </Button>
           )}
@@ -630,7 +705,7 @@ function WaveCard({
             <Button size="sm" variant="outline" asChild>
               <a href={`sms:${selected.phone}`}>
                 <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Text
+                {t('portal.text')}
               </a>
             </Button>
           )}
@@ -638,7 +713,7 @@ function WaveCard({
             <Button size="sm" variant="outline" asChild>
               <Link to={`/messages?to=${selected.messageUserId}`}>
                 <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Message
+                {t('portal.message')}
               </Link>
             </Button>
           )}
@@ -646,10 +721,6 @@ function WaveCard({
       )}
       {canReach && crew.length > 0 && w.phase !== 'finished' && (
         <>
-          <Button size="sm" variant="ghost" onClick={() => setCrewTextOpen(true)}>
-            <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            Text the crew ({crew.length})
-          </Button>
           <CrewTextDialog
             open={crewTextOpen}
             onOpenChange={setCrewTextOpen}
@@ -675,13 +746,22 @@ function WaveCard({
           </span>
         )}
       </h2>
-      <span
-        className={cn(
-          'text-sm font-semibold tabular-nums',
-          short ? 'text-warning' : missedSome ? 'text-alert' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+      <span className="flex items-center gap-2">
+        {/* One text to everyone on this shift, from its header (floor 20). */}
+        {canReach && crew.length > 0 && w.phase !== 'finished' && (
+          <Button size="sm" variant="outline" className="h-8 print:hidden" onClick={() => setCrewTextOpen(true)}>
+            <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            {t('portal.textShift', { n: crew.length })}
+          </Button>
         )}
-      >
-        {headline}
+        <span
+          className={cn(
+            'text-sm font-semibold tabular-nums',
+            short ? 'text-warning' : missedSome ? 'text-alert' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+          )}
+        >
+          {headline}
+        </span>
       </span>
     </div>
   );

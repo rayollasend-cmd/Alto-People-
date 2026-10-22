@@ -46,6 +46,7 @@ import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { ListTemplate } from '@/components/templates';
 import { StatusBadge } from '@/lib/status';
+import { VtoPolicyEditor } from './VtoPolicyEditor';
 
 // MATCHED is domain-only (not in the shared vocabulary): a matched entry is
 // terminal-good, so it reads green like APPROVED. Everything else comes from
@@ -57,7 +58,7 @@ export function VtoHome() {
   const canManage = user
     ? hasCapability(user.role, 'manage:performance')
     : false;
-  const [tab, setTab] = useState<'mine' | 'queue'>('mine');
+  const [tab, setTab] = useState<'mine' | 'queue' | 'policy'>('mine');
   const [statusFilter, setStatusFilter] = useState<VtoStatus | 'ALL'>('PENDING');
   const [showNew, setShowNew] = useState(false);
   const [openMine, setOpenMine] = useState<MyVolunteerEntry | null>(null);
@@ -217,7 +218,7 @@ export function VtoHome() {
     >
 
       <div className="flex items-center justify-between">
-        <SegmentedControl<'mine' | 'queue'>
+        <SegmentedControl<'mine' | 'queue' | 'policy'>
           options={[
             { value: 'mine', label: 'My hours' },
             ...(canManage
@@ -235,6 +236,7 @@ export function VtoHome() {
                       </span>
                     ),
                   },
+                  { value: 'policy' as const, label: 'Policy' },
                 ]
               : []),
           ]}
@@ -393,7 +395,9 @@ export function VtoHome() {
         </div>
       )}
 
-      {tab === 'mine' ? (
+      {tab === 'policy' && canManage && <VtoPolicyEditor />}
+
+      {tab === 'policy' ? null : tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
             {mine === null ? (

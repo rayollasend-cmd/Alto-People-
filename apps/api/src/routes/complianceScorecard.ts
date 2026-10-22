@@ -43,6 +43,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { internalSites } from '../lib/scope.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
+import { fieldglassDueAt } from '../lib/fieldglassDesk.js';
 import { notifyUser, notifyAssociate } from '../lib/notify.js';
 import { env } from '../config/env.js';
 import { getShiftMetrics, isConfigured as asnNexusConfigured, type AsnNexusMetric } from '../lib/asnNexus.js';
@@ -1034,7 +1035,16 @@ export async function buildShiftsTile(
   const fillSeverity: ScorecardSeverity =
     fillRate === null ? 'ok' : fillRate >= 97 ? 'ok' : fillRate >= 90 ? 'warn' : 'critical';
 
-  const placeholderReason = 'Connect ASN Nexus (set ASN_NEXUS_BASE_URL + ASN_NEXUS_API_KEY) to enable.';
+  // The four signals the schema can answer, from the shifts, the SOP runs
+  // and the Fieldglass desk. MOD sign-off has no record in Alto (the store
+  // manager signs nothing here), so it is not on the local card: a signal
+  // that can never go live is not a "coming soon", it is a blank promise.
+  const [noShowRate, shiftLeadPresent, temperatureLogs, fieldglassOnTime] = await Promise.all([
+    localNoShowRate(since, clientId),
+    localShiftLeadPresence(since, clientId),
+    localTemperatureLogsWithPhotos(since, clientId),
+    localFieldglassOnTime(since, clientId),
+  ]);
 
   const signals: ScorecardShiftsResponse['signals'] = [
     {
@@ -1046,19 +1056,141 @@ export async function buildShiftsTile(
       target: 97,
       reason: null,
     },
-    { key: 'NO_SHOW_RATE',         label: 'No-show rate',                          contractClause: CLAUSE.NO_SHOW,      status: 'unsupported', value: null, target: 2,   reason: placeholderReason },
-    { key: 'SHIFT_LEAD_PRESENT',   label: 'Shift Lead present',                    contractClause: CLAUSE.SHIFT_LEAD,   status: 'unsupported', value: null, target: 100, reason: placeholderReason },
-    { key: 'TEMPERATURE_LOGS',     label: 'Temperature logs with photos',          contractClause: CLAUSE.TEMP_LOG,     status: 'unsupported', value: null, target: 100, reason: placeholderReason },
-    { key: 'MOD_SIGNOFF',          label: 'MOD sign-off captured',                 contractClause: CLAUSE.MOD_SIGNOFF,  status: 'unsupported', value: null, target: 100, reason: placeholderReason },
-    { key: 'FIELDGLASS_TIMESHEETS',label: 'Fieldglass timesheet by Mon 2pm PST',   contractClause: CLAUSE.FIELDGLASS,   status: 'unsupported', value: null, target: 100, reason: placeholderReason },
+    { key: 'NO_SHOW_RATE', label: 'No-show rate', contractClause: CLAUSE.NO_SHOW, status: 'live', value: noShowRate, target: 2, reason: null },
+    { key: 'SHIFT_LEAD_PRESENT', label: 'Shift Lead present', contractClause: CLAUSE.SHIFT_LEAD, status: 'live', value: shiftLeadPresent, target: 100, reason: null },
+    { key: 'TEMPERATURE_LOGS', label: 'Temperature logs with photos', contractClause: CLAUSE.TEMP_LOG, status: 'live', value: temperatureLogs, target: 100, reason: null },
+    { key: 'FIELDGLASS_TIMESHEETS', label: 'Fieldglass timesheet by Mon 2pm PST', contractClause: CLAUSE.FIELDGLASS, status: 'live', value: fieldglassOnTime, target: 100, reason: null },
   ];
+
+  const severity = worstSeverity(fillSeverity, shiftsSeverity(signals));
 
   return ScorecardShiftsResponseSchema.parse({
     windowDays,
     signals,
-    severity: fillSeverity,
+    severity,
     generatedAt: new Date().toISOString(),
   });
+}
+
+const pct = (num: number, den: number): number | null => (den === 0 ? null : Number(((num / den) * 100).toFixed(1)));
+
+function worstSeverity(a: ScorecardSeverity, b: ScorecardSeverity): ScorecardSeverity {
+  const rank: Record<ScorecardSeverity, number> = { ok: 0, warn: 1, critical: 2 };
+  return rank[a] >= rank[b] ? a : b;
+}
+
+/**
+ * No-show rate: of the assigned shifts that have ended in the window, the
+ * share filed as a no-call no-show (Shift.noShowRecordedAt — written only
+ * once the shift ENDED with no punch, so a late arrival never counts).
+ * Null when no assigned shift has ended yet.
+ */
+export async function localNoShowRate(since: Date, clientId?: string | null): Promise<number | null> {
+  const where: Prisma.ShiftWhereInput = {
+    tenantId: tenantIdForWrite(),
+    endsAt: { gte: since, lte: new Date() },
+    assignedAssociateId: { not: null },
+    status: { in: ['ASSIGNED', 'COMPLETED'] },
+    ...(clientId ? { clientId } : {}),
+  };
+  const [ended, noShows] = await Promise.all([
+    prisma.shift.count({ where }),
+    prisma.shift.count({ where: { ...where, noShowRecordedAt: { not: null } } }),
+  ]);
+  return pct(noShows, ended);
+}
+
+/**
+ * Shift Lead present: of the store-days worked in the window (a client,
+ * a site, a calendar day with at least one assigned shift that has
+ * started), the share with an assigned shift in a lead position — a
+ * ShiftPosition flagged isLead for that client. The position carries the
+ * pay rate, so the lead split can't drift from who was scheduled as one.
+ */
+export async function localShiftLeadPresence(since: Date, clientId?: string | null): Promise<number | null> {
+  const tenantId = tenantIdForWrite();
+  const shifts = await prisma.shift.findMany({
+    where: {
+      tenantId,
+      startsAt: { gte: since, lte: new Date() },
+      assignedAssociateId: { not: null },
+      status: { in: ['ASSIGNED', 'COMPLETED'] },
+      ...(clientId ? { clientId } : {}),
+    },
+    select: { clientId: true, locationId: true, startsAt: true, position: true },
+    take: 20_000,
+  });
+  if (shifts.length === 0) return null;
+  const leadPositions = await prisma.shiftPosition.findMany({
+    where: { tenantId, isLead: true, deletedAt: null, ...(clientId ? { clientId } : {}) },
+    select: { clientId: true, name: true },
+  });
+  const leadNames = new Map<string, Set<string>>();
+  for (const p of leadPositions) {
+    const k = p.clientId ?? '*';
+    if (!leadNames.has(k)) leadNames.set(k, new Set());
+    leadNames.get(k)!.add(p.name.trim().toLowerCase());
+  }
+  const isLead = (cid: string | null, position: string) => {
+    const name = position.trim().toLowerCase();
+    return Boolean(leadNames.get(cid ?? '*')?.has(name) || leadNames.get('*')?.has(name));
+  };
+  const days = new Map<string, boolean>();
+  for (const s of shifts) {
+    const key = `${s.clientId ?? '-'}|${s.locationId ?? '-'}|${s.startsAt.toISOString().slice(0, 10)}`;
+    days.set(key, (days.get(key) ?? false) || isLead(s.clientId, s.position));
+  }
+  let covered = 0;
+  for (const v of days.values()) if (v) covered += 1;
+  return pct(covered, days.size);
+}
+
+/**
+ * Temperature logs with photos: of the required TEMPERATURE items on SOP
+ * runs closed in the window, the share answered with at least one photo
+ * attached (FSMA 204 wants the reading and the picture of the gauge).
+ */
+export async function localTemperatureLogsWithPhotos(since: Date, clientId?: string | null): Promise<number | null> {
+  const tasks = await prisma.opsTask.findMany({
+    where: {
+      tenantId: tenantIdForWrite(),
+      responseType: 'TEMPERATURE',
+      required: true,
+      opsShift: { status: 'CLOSED', closedAt: { gte: since }, ...(clientId ? { clientId } : {}) },
+    },
+    select: { status: true, _count: { select: { photos: true } } },
+    take: 20_000,
+  });
+  if (tasks.length === 0) return null;
+  const logged = tasks.filter((t) => t.status === 'DONE' && t._count.photos > 0).length;
+  return pct(logged, tasks.length);
+}
+
+/**
+ * Fieldglass timesheet by Monday 2pm Pacific: of the weekly timesheets
+ * whose buyer deadline passed in the window, the share entered into
+ * Fieldglass before it. A row never entered counts as late once its
+ * deadline is gone; a week still open is not judged yet.
+ */
+export async function localFieldglassOnTime(since: Date, clientId?: string | null): Promise<number | null> {
+  // Weeks are Sat→Fri; the earliest week whose Monday deadline can fall in the window started ~10 days before it.
+  const earliestWeekStart = new Date(since.getTime() - 10 * 24 * 3600 * 1000);
+  const rows = await prisma.fieldglassTimesheet.findMany({
+    where: { tenantId: tenantIdForWrite(), weekStart: { gte: earliestWeekStart }, ...(clientId ? { clientId } : {}) },
+    select: { weekStart: true, enteredAt: true },
+    take: 20_000,
+  });
+  const now = Date.now();
+  let due = 0;
+  let onTime = 0;
+  for (const r of rows) {
+    const weekEnd = new Date(r.weekStart.getTime() + 6 * 24 * 3600 * 1000);
+    const deadline = fieldglassDueAt(weekEnd.toISOString().slice(0, 10));
+    if (deadline.getTime() > now || deadline < since) continue;
+    due += 1;
+    if (r.enteredAt && r.enteredAt <= deadline) onTime += 1;
+  }
+  return pct(onTime, due);
 }
 
 // Maps an ASN Nexus metric onto a scorecard signal. value=null means ASN

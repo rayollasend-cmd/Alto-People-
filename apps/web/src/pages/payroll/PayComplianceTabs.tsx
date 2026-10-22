@@ -119,9 +119,19 @@ export function NewHireReportsTab() {
     <div className="space-y-4">
       <Card>
         <CardContent className="flex flex-wrap items-end justify-between gap-4">
-          <div className="max-w-xl text-sm text-silver">
-            Every new employee must be reported to the state within 20 days of hire, and sooner in some states. An employer in more than one state may
-            report everyone to one state after telling the federal Office of Child Support Services which.
+          <div className="max-w-xl space-y-2 text-sm text-silver">
+            <p>
+              Every new employee must be reported to the state within 20 days of hire, and sooner in some states. An employer in more than one state may
+              report everyone to one state after telling the federal Office of Child Support Services which.
+            </p>
+            {reportsQ.data?.filing && (
+              <p className="flex flex-wrap items-center gap-2 text-xs" data-testid="new-hire-filing-status">
+                <Badge variant={reportsQ.data.filing.kind === 'ELECTRONIC' ? 'success' : 'default'}>
+                  {reportsQ.data.filing.kind === 'ELECTRONIC' ? 'Files electronically' : 'Manual upload'}
+                </Badge>
+                <span>{reportsQ.data.filing.note}</span>
+              </p>
+            )}
           </div>
           {canSetMultistate && (
             <Field label="Report every hire to one state" hint="Leave on “Each worker’s state” unless you registered as a multistate employer.">

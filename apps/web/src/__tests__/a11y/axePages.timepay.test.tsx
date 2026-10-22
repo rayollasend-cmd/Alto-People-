@@ -127,7 +127,6 @@ vi.mock('@/lib/holiday117Api', () => ({
   listHolidays: vi.fn(async () => ({ holidays: [] })),
   createHoliday: vi.fn(),
   deleteHoliday: vi.fn(),
-  importUsFederalHolidays2026: vi.fn(),
 }));
 
 vi.mock('@/lib/vto130Api', () => ({
@@ -180,6 +179,17 @@ vi.mock('@/lib/qualApi', () => ({
   deleteQualification: vi.fn(),
   updateClaim: vi.fn(),
   grantAssociateQual: vi.fn(),
+}));
+
+// MarketplaceHome's manager "Open shifts" tab (role walk, ops 11) reads the
+// schedule and this week's call-outs.
+vi.mock('@/lib/schedulingApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/schedulingApi')>()),
+  listShifts: vi.fn(async () => ({ shifts: [], truncated: false })),
+}));
+vi.mock('@/lib/callOutsApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/callOutsApi')>()),
+  listCallOuts: vi.fn(async () => ({ range: 'week', total: 0, covered: 0, looking: 0, uncovered: 0, late: 0, truncated: false, items: [] })),
 }));
 
 vi.mock('@/lib/payrollTax91Api', () => ({
@@ -365,9 +375,9 @@ describe('axe: time & pay pages (settled empty states)', () => {
   });
 
   it('<MarketplaceHome> has no axe violations', async () => {
-    // Admin auth → the page opens on the "Pending claims" tab.
+    // Admin auth → the page opens on the manager "Open shifts" tab.
     const { container } = renderPage(<MarketplaceHome />);
-    await screen.findByText('No pending claims');
+    await screen.findByText('Every published shift has someone');
     await expectNoViolations(container);
   });
 

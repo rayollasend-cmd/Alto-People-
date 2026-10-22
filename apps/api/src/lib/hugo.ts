@@ -29,10 +29,14 @@ export type HugoIntentKey =
   | 'PAYDAY'
   | 'RIDE'
   | 'SCHEDULE'
+  | 'DRIVER_NEXT_RUN'
+  | 'DRIVER_RUN_RIDERS'
+  | 'DRIVER_VAN_ISSUE'
   | 'HELP_CENTER'
   | 'HANDOFF';
 
-export type HugoAudience = 'associate' | 'manager' | 'admin';
+/** driver: a van driver (drive:transport) — their runs, not a rider's ride (floor walk 19). */
+export type HugoAudience = 'associate' | 'driver' | 'manager' | 'admin';
 export type HugoChannel = 'whatsapp' | 'app';
 
 export interface HugoIntent {
@@ -57,7 +61,7 @@ export const normalizeHugoText = (s: string) =>
     .trim();
 
 const STAFF: readonly HugoAudience[] = ['manager', 'admin'];
-const EVERYONE: readonly HugoAudience[] = ['associate', 'manager', 'admin'];
+const EVERYONE: readonly HugoAudience[] = ['associate', 'driver', 'manager', 'admin'];
 
 const OPT_OUT = /^\s*(stop|baja|dur|unsubscribe|cancelar|salir|parar|iptal)\b/;
 const OPT_IN = /^\s*(start|alta|basla|unstop|empezar|activar)\b/;
@@ -75,6 +79,10 @@ const RENEW = /\b(renew\w*|expir\w*|my documents?|my papers|documents?|papers|re
 const PAYDAY = /\b(pay ?day|paid|pay\b|paycheck|paystub|cobr\w*|pago|pagan|sueldo|nomina|maas|odeme|para)\b/;
 const RIDE = /\b(ride|van|pick ?up|bus|shuttle|viaje|camioneta|recog\w*|transporte|servis|arac|minibus|ulasim)\b/;
 const SCHEDULE = /\b(schedule|shift|shifts|work|working|hours|horario|turno|turnos|trabajo|vardiya|calis\w*|program\w*|mesai)\b/;
+// The driver's three: the next run, who's on it, a van that can't run.
+const DRIVER_RIDERS = /\b(who('s| is)? (on|riding)|riders?|passengers?|pick ?ups?|quien(es)? va|pasajeros?|quien sube|kim(ler)? (var|biniyor)|yolcu\w*)\b/;
+const DRIVER_RUN = /\b(run|runs|route|routes|next run|my van|leave|leaving|depart\w*|ruta|rutas|salgo|salida|mi van|rota\w*|sefer\w*|cikis)\b/;
+const DRIVER_VAN_ISSUE = /\b(van (issue|problem|broke|broken|won'?t|cant|can'?t)|flat|breakdown|broke down|check engine|brakes?|problema (con|de) la van|averi\w*|pinchazo|freno\w*|ariza\w*|lastik|fren\w*|bozul\w*)\b/;
 
 const h = (en: [string, string], es: [string, string], tr: [string, string]) => ({
   en: { label: en[0], example: en[1] },
@@ -102,7 +110,7 @@ export const HUGO_INTENTS: readonly HugoIntent[] = [
   {
     key: 'HELP',
     capability: null,
-    audiences: STAFF,
+    audiences: ['driver', ...STAFF],
     channels: ['app'],
     requiresModule: null,
     match: (t) => HELP.test(t),
@@ -162,6 +170,36 @@ export const HUGO_INTENTS: readonly HugoIntent[] = [
     match: (t) => SCHEDULE.test(t),
     help: h(['Your next shifts', "What's my schedule?"], ['Tus próximos turnos', '¿Cuál es mi horario?'], ['Sonraki vardiyaların', 'Programım ne?']),
   },
+  // The driver (floor walk 19): their runs, not a rider's ride. A van that
+  // can't run is matched before "my next run" — "the van broke down before
+  // my run" is a problem, not a question about the schedule.
+  {
+    key: 'DRIVER_VAN_ISSUE',
+    capability: null,
+    audiences: ['driver'],
+    channels: ['app'],
+    requiresModule: 'transportation',
+    match: (t) => DRIVER_VAN_ISSUE.test(t),
+    help: h(['Report a van issue', 'Report a van issue'], ['Reportar un problema con la van', 'Reportar un problema con la van'], ['Araç sorunu bildir', 'Araç sorunu bildir']),
+  },
+  {
+    key: 'DRIVER_RUN_RIDERS',
+    capability: null,
+    audiences: ['driver'],
+    channels: ['app'],
+    requiresModule: 'transportation',
+    match: (t) => DRIVER_RIDERS.test(t),
+    help: h(["Who's on this run", "Who's on this run?"], ['Quién va en esta ruta', '¿Quién va en esta ruta?'], ['Bu rotada kim var', 'Bu rotada kim var?']),
+  },
+  {
+    key: 'DRIVER_NEXT_RUN',
+    capability: null,
+    audiences: ['driver'],
+    channels: ['app'],
+    requiresModule: 'transportation',
+    match: (t) => DRIVER_RUN.test(t),
+    help: h(['My next run', 'When is my next run?'], ['Mi próxima ruta', '¿Cuándo es mi próxima ruta?'], ['Bir sonraki rotam', 'Bir sonraki rotam ne zaman?']),
+  },
   // The help center (HR pack 2026-10): policy and how-to questions are answered
   // from the published articles, with the article linked. Last in precedence —
   // a question about pay or a ride is answered from the records first.
@@ -214,10 +252,11 @@ export function detectHugoIntent(text: string, ctx: HugoContext): { intent: Hugo
   return { intent: ctx.channel === 'whatsapp' ? 'HANDOFF' : ctx.audience === 'associate' ? 'HANDOFF' : 'HELP' };
 }
 
-/** Who is asking, by the hat they wear: admin (manage:org), manager (a desk or the org view), or an associate. */
+/** Who is asking, by the hat they wear: admin (manage:org), manager (a desk or the org view), a driver (drive:transport, before the associate hat they may also wear), or an associate. */
 export function hugoAudienceOf(user: { role: Role; associateId: string | null }): HugoAudience | null {
   if (can(user, 'manage:org')) return 'admin';
   if (can(user, 'manage:scheduling') || can(user, 'view:org')) return 'manager';
+  if (can(user, 'drive:transport') && !can(user, 'manage:transport')) return 'driver';
   if (user.associateId) return 'associate';
   return null;
 }

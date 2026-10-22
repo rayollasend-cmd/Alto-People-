@@ -21,11 +21,11 @@ import type {
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
-import { getActiveTimeEntry } from '@/lib/timeApi';
+import { getActiveTimeEntry, listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { listOpenShifts } from '@/lib/qualApi';
 import { fmtDate, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
-import { getMyNextPayday, listMyPayrollItems } from '@/lib/payrollApi';
+import { getMyNextPayday, listMyPayrollItems, type NextPayday } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
 import { Button } from '@/components/ui/Button';
@@ -42,14 +42,13 @@ import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { OnboardingBanner, useOpenOnboarding } from '@/components/OnboardingBanner';
 import { ReadyToWorkCard } from '@/components/ReadyToWorkCard';
 import { CelebrationRibbon } from '@/components/CelebrationRibbon';
-import { EarningsCard } from '@/components/EarningsCard';
+import { EarningsCard, useMyEarnings } from '@/components/EarningsCard';
+import { RingMeter } from '@/components/ui/charts';
 import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
 import { RideStrip } from '@/pages/transport/RideStrip';
 import { StatTile } from '@/pages/portal/portalCharts';
-import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
-import { MyShiftHero, MyWeekStrip, pickNextShift } from '@/pages/associate/MyShiftHero';
+import { MyShiftHero, MyNext14Strip, pickNextShift } from '@/pages/associate/MyShiftHero';
 import { AssociateNeedsYou, TrainingNudge, useAssociateNeedsYou } from '@/components/home/AssociateNeedsYou';
-import { workweekBounds } from '@/lib/workweek';
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -132,9 +131,6 @@ export function AssociateDashboard() {
   }, [refetchActive, refetchShifts, refetchPay, refetchBalance, refetchOpen]);
 
   const pullState = usePullToRefresh(refreshAll);
-  // The counted "Needs you" the template promises — the same numbers as
-  // the sidebar badge, from GET /me/inbox.
-  const needs = useAssociateNeedsYou();
   // The place, the way the supervisor's floor leads with its store: where
   // their next (or current) shift is.
   const place = nextShift
@@ -142,6 +138,11 @@ export function AssociateDashboard() {
     : '';
 
   const openOnboarding = useOpenOnboarding();
+  // The counted "Needs you" the template promises: the associate's tasks,
+  // from GET /me/inbox. While onboarding is the hero it isn't said a
+  // second time there.
+  const needsHide = openOnboarding ? ['my-onboarding'] : [];
+  const needs = useAssociateNeedsYou({ hide: needsHide });
   // Their shift, in the tone of the moment — on the clock, late, coming
   // up, or nothing scheduled.
   const shiftHero =
@@ -205,7 +206,7 @@ export function AssociateDashboard() {
           // person has to do, so it is the hero and the shift follows it.
           openOnboarding ? <OnboardingBanner hero /> : shiftHero
         }
-        decisions={{ title: t('home.needsYou'), count: needs.count, content: <AssociateNeedsYou /> }}
+        decisions={{ title: t('home.needsYou'), count: needs.count, content: <AssociateNeedsYou hide={needsHide} /> }}
         assistant={<HugoSeat />}
         waysIn={<QuickActions />}
       >
@@ -220,7 +221,6 @@ export function AssociateDashboard() {
         {/* The four numbers their week runs on — the supervisor's KPI strip,
             for one person. */}
         <MyNumbers
-          shifts={shifts}
           paystub={latestPaystub}
           payFailed={payQuery.isError}
           balances={balances}
@@ -233,7 +233,12 @@ export function AssociateDashboard() {
               this answers is a case that never gets filed. */}
           <FirstPaycheckCard />
         </div>
-        <MyWeekStrip shifts={shiftsQuery.isError ? null : shifts} />
+        {/* One look ahead, one look at the money: the next 14 days, and
+            what this pay period has earned so far (floor walk 26). */}
+        <div className="mb-4 grid gap-4 md:grid-cols-[2fr_1fr] [&>*]:mb-0">
+          <MyNext14Strip shifts={shiftsQuery.isError ? null : shifts} />
+          <EarnedThisPeriod />
+        </div>
       </HomeTemplate>
     </>
   );
@@ -385,20 +390,19 @@ const CATEGORY_KEY: Record<string, MessageKey> = {
 };
 
 /**
- * Their four numbers, as tiles — hours this week (the Sat→Fri workweek
- * payroll counts, lib/workweek), the last paycheck, time off, and the open
- * shifts they can grab. They replace two tall cards whose empty states
+ * Their numbers, as tiles — the last paycheck, time off, and the open
+ * shifts they can grab. (The hours-this-week tile counted a different week
+ * from the strip beside it; the next-14-days timeline and the pay-period
+ * ring below replace both.) They replace two tall cards whose empty states
  * ("No paystubs yet", "No balance yet") filled a phone screen by themselves.
  */
 function MyNumbers({
-  shifts,
   paystub,
   payFailed,
   balances,
   balanceFailed,
   openShiftCount,
 }: {
-  shifts: Shift[] | undefined;
   paystub: PayrollItem | null | undefined;
   payFailed: boolean;
   balances: TimeOffBalance[] | null | undefined;
@@ -413,33 +417,10 @@ function MyNumbers({
     staleTime: 10 * 60_000,
   });
   const nextPayday = paydayQuery.data?.nextPayday ?? null;
-  const week = (() => {
-    if (!shifts) return null;
-    const { start, end } = workweekBounds();
-    const inWeek = shifts.filter((s) => {
-      const at = new Date(s.startsAt).getTime();
-      return s.status !== 'CANCELLED' && at >= start.getTime() && at < end.getTime();
-    });
-    return { count: inWeek.length, minutes: inWeek.reduce((n, s) => n + paidShiftMinutes(s), 0) };
-  })();
   const primary = balances && balances.length > 0 ? [...balances].sort((a, b) => b.balanceMinutes - a.balanceMinutes)[0]! : null;
 
   return (
-    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter">
-      <TileLink to="/scheduling">
-        <StatTile
-          className="h-full"
-          label={t('tile.thisWeek')}
-          value={week ? fmtHours(week.minutes / 60) : '—'}
-          sub={
-            week
-              ? week.count === 0
-                ? t('tile.noShifts')
-                : t(week.count === 1 ? 'tile.shiftsOne' : 'tile.shiftsMany', { count: week.count })
-              : undefined
-          }
-        />
-      </TileLink>
+    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 animate-enter">
       <TileLink to={paystub ? `/payroll?item=${paystub.id}` : '/payroll'}>
         <StatTile
           className="h-full"
@@ -490,6 +471,93 @@ function MyNumbers({
         />
       </TileLink>
     </div>
+  );
+}
+
+/* ---- Earned this pay period ------------------------------------------- */
+
+const ymdOf = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addDaysLocal = (ymd: string, n: number) => {
+  const d = parseYmd(ymd)!;
+  return ymdOf(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
+};
+const daysBetween = (a: string, b: string) =>
+  Math.round((parseYmd(b)!.getTime() - parseYmd(a)!.getTime()) / 86_400_000);
+
+/**
+ * The pay period running today. The payday lookup answers for the NEXT
+ * payday, whose period may already have closed (paid the Friday after);
+ * the period after it runs the same length, so step forward to the one
+ * that holds today.
+ */
+export function currentPeriod(p: NextPayday, today: string = ymdOf(new Date())): { start: string; end: string; payDate: string } | null {
+  if (!parseYmd(p.periodStart) || !parseYmd(p.periodEnd) || !parseYmd(p.payDate)) return null;
+  const len = daysBetween(p.periodStart, p.periodEnd) + 1;
+  if (len < 1) return null;
+  let start = p.periodStart;
+  let end = p.periodEnd;
+  let pay = p.payDate;
+  for (let i = 0; i < 4 && today > end; i++) {
+    start = addDaysLocal(start, len);
+    end = addDaysLocal(end, len);
+    pay = addDaysLocal(pay, len);
+  }
+  return today >= start && today <= end ? { start, end, payDate: pay } : null;
+}
+
+/**
+ * What this pay period has earned so far — a ring for how far into the
+ * period they are, the money in the middle. A gross estimate from the
+ * hours they clocked at their rate, and labelled as one; hidden when
+ * there is no rate or no pay schedule to measure a period by.
+ */
+function EarnedThisPeriod() {
+  const { t } = useI18n();
+  const earnings = useMyEarnings();
+  const payday = useQuery({
+    queryKey: ['me', 'nextPayday'],
+    queryFn: () => getMyNextPayday().catch(() => ({ nextPayday: null })),
+    staleTime: 10 * 60_000,
+  });
+  const period = payday.data?.nextPayday ? currentPeriod(payday.data.nextPayday) : null;
+  const entries = useQuery({
+    queryKey: ['me', 'entries', 'period', period?.start, period?.end],
+    queryFn: () =>
+      listMyTimeEntries({
+        from: parseYmd(period!.start)!.toISOString(),
+        to: parseYmd(addDaysLocal(period!.end, 1))!.toISOString(),
+      }),
+    enabled: Boolean(period),
+    staleTime: 60_000,
+  });
+  const rate = earnings.data?.hourlyRate ?? 0;
+  if (!period || !(rate > 0) || !entries.data) return null;
+  const minutes = entries.data.entries
+    .filter((e) => e.status !== 'REJECTED')
+    .reduce((n, e) => n + (e.netMinutes ?? e.minutesElapsed), 0);
+  const hours = minutes / 60;
+  const earned = Math.round(hours * rate * 100) / 100;
+  const total = daysBetween(period.start, period.end) + 1;
+  const day = Math.min(total, daysBetween(period.start, ymdOf(new Date())) + 1);
+  const short = (ymd: string) => fmtDayShort(parseYmd(ymd)!, { anchored: true }) ?? ymd;
+  return (
+    <Card className="mb-4 animate-enter" data-testid="earned-this-period">
+      <CardContent className="flex items-center gap-4">
+        <RingMeter percent={(day / total) * 100} label={t('earned.dayOf', { d: day, n: total })}>
+          <span className="text-2xs tabular-nums text-ink-muted">{t('earned.dayOf', { d: day, n: total })}</span>
+        </RingMeter>
+        <div className="min-w-0">
+          <div className="text-xs text-ink-muted">{t('earned.title')}</div>
+          <div className="font-display text-2xl tabular-nums text-ink">{fmtMoney(earned)}</div>
+          <div className="text-xs text-ink-muted">{t('earned.hours', { hours: fmtHours(hours) })}</div>
+          <div className="mt-1 text-2xs text-ink-muted">
+            {t('earned.period', { start: short(period.start), end: short(period.end), pay: short(period.payDate) })}
+          </div>
+          <div className="text-2xs text-ink-subtle">{t('earned.estimate')}</div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

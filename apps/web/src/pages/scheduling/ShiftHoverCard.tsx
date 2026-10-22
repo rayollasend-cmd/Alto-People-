@@ -12,7 +12,7 @@ import {
   fmtDateTz,
   fmtMoney,
   fmtPayRate,
-  fmtTimeTz,
+  fmtShiftTz,
   fmtWeekdayTz,
 } from '@/lib/format';
 import { colorForPosition } from '@/lib/positionColor';
@@ -78,8 +78,9 @@ interface Props {
 
 function fmtTimeRange(s: Shift): string {
   const date = `${fmtWeekdayTz(s.startsAt, s.timezone)}, ${fmtDateTz(s.startsAt, s.timezone)}`;
-  const t1 = fmtTimeTz(s.startsAt, s.timezone);
-  const t2 = fmtTimeTz(s.endsAt, s.timezone);
+  // The store's wall-clock, zone named when the viewer isn't in it (ops 2).
+  const t1 = fmtShiftTz(s.startsAt, s.timezone, { day: false });
+  const t2 = fmtShiftTz(s.endsAt, s.timezone, { day: false });
   return `${date} · ${t1} – ${t2}`;
 }
 

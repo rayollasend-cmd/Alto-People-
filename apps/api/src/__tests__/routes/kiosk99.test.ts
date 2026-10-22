@@ -540,9 +540,20 @@ describe('POST /kiosk/punch — selfie storage requires recorded consent', () =>
 
     const punch = await prisma.kioskPunch.findFirst({
       where: { action: 'CLOCK_IN' },
-      select: { selfie: true },
+      select: { id: true, selfie: true, selfieEncrypted: true },
     });
     expect(punch!.selfie).not.toBeNull();
+    // SOC 2 decision 7: sealed at rest under the field keyring, opened on read.
+    expect(punch!.selfieEncrypted).toBe(true);
+    const jpegBytes = Buffer.from(JPEG.split(',')[1]!, 'base64');
+    expect(Buffer.from(punch!.selfie!).equals(jpegBytes)).toBe(false);
+    const served = await request(app()).get(`/kiosk-punches/${punch!.id}/selfie`).set('Cookie', await adminCookie()).buffer(true).parse((res, cb) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(served.status).toBe(200);
+    expect(Buffer.from(served.body as Buffer).equals(jpegBytes)).toBe(true);
   });
 });
 

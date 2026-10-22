@@ -98,13 +98,3 @@ export const bulkRenderMissing = (templateId: string) =>
     body: {},
   });
 
-export const listRenders = (templateId: string) =>
-  apiFetch<{
-    renders: Array<{
-      id: string;
-      version: number;
-      associateName: string | null;
-      renderedSubject: string | null;
-      createdAt: string;
-    }>;
-  }>(`/document-templates/${templateId}/renders`);

@@ -203,6 +203,8 @@ enum BgCheckStatus {
   PASSED
   FAILED
   NEEDS_REVIEW
+  /// Consent recorded, no screening provider connected — the check never ran (audit 2026-10-21 #3).
+  NOT_RUN
 }
 
 // Same lifecycle as BgCheckStatus, separate type: the two ledgers evolve
@@ -350,6 +352,8 @@ enum PayrollEarningKind {
   // between shifts, predictability pay); the note cites the rule.
   PREMIUM
   DAILY_SETTLED // PAYEXP: what daily pay already paid this period (negative, on the true-up)
+  // Non-cash taxable income: group-term life over $50,000 (IRS Pub 15-B Table I). Taxed, never paid out; W-2 Box 12 C.
+  IMPUTED_INCOME
 }
 
 enum NotificationChannel {
@@ -369,6 +373,7 @@ enum NotificationStatus {
   COMPLAINED // EMAIL only — recipient marked it as spam (async via Resend webhook)
   DELIVERED // WHATSAPP — the handset took it (read is READ)
   SUPPRESSED // EMAIL only — send short-circuited because the address is on the suppression list
+  NOT_CONFIGURED // SMS / PUSH — no provider is configured, so nothing left the building (never reported as SENT)
 }
 
 enum PerformanceReviewStatus {
@@ -577,6 +582,7 @@ model User {
   timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
   createdShifts                     Shift[]                       @relation("ShiftCreator")
   createdPayrollRuns                PayrollRun[]                  @relation("PayrollRunCreator")
+  readinessRequestsMade             PayrollReadinessRequest[]     @relation("ReadinessRequestedBy")
   cancelledPayrollRuns              PayrollRun[]                  @relation("PayrollRunCanceller")
   verifiedDocuments                 DocumentRecord[]              @relation("DocumentVerifier")
   externalPaymentsCreated           ExternalPayment[]             @relation("ExternalPaymentCreator")
@@ -642,6 +648,8 @@ model User {
   // Phase 90 — recruiting authorship.
   interviewKitsCreated              InterviewKit[]                @relation("InterviewKitCreator")
   interviewsAsInterviewer           Interview[]                   @relation("Interviewer")
+  interviewPanels                   InterviewInterviewer[]        @relation("InterviewPanel")
+  hrCasesFiledOnBehalf              HrCase[]                      @relation("HrCaseFiledBy")
   offersCreated                     Offer[]                       @relation("OfferCreator")
   offersApproved                    Offer[]                       @relation("OfferApprover")
   referralsMade                     Referral[]                    @relation("Referrer")
@@ -834,6 +842,10 @@ model Client {
   dunningPausedAt        DateTime?               @db.Timestamptz(6)
   dunningPausedById      String?                 @db.Uuid
   dunningPauseNote       String?
+  /// Finance walk (2026-10-21): sales tax on this client's statements — whether the
+  /// services are taxable and at what rate (percent, e.g. 7.000). Off = no tax line.
+  salesTaxable           Boolean                 @default(false)
+  salesTaxRatePct        Decimal?                @db.Decimal(6, 3)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific
@@ -871,7 +883,6 @@ model Client {
   payrollSchedules        PayrollSchedule[]
   jobs                    Job[]
   benefitsPlans           BenefitsPlan[]
-  quickbooksConnection    QuickbooksConnection?
   shiftTemplates          ShiftTemplate[]
   // Phase 76 — org hierarchy entities are per-client.
   departments             Department[]
@@ -1843,6 +1854,26 @@ model ClientStatementReminder {
   @@index([tenantId])
 }
 
+/// Finance walk 7 (2026-10-21): the collections worklist's notes — a promise to pay
+/// (with the date and amount promised), a call made, a note. Per client, optionally
+/// on one statement. Append-only in practice: the worklist shows the latest.
+model ClientCollectionNote {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  clientId        String    @db.Uuid
+  statementId     String?   @db.Uuid
+  /// PROMISE | CALL | NOTE
+  kind            String    @default("NOTE") @db.VarChar(10)
+  note            String    @db.VarChar(1000)
+  promisedOn      DateTime? @db.Date
+  promisedAmount  Decimal?  @db.Decimal(14, 2)
+  createdById     String?   @db.Uuid
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, clientId, createdAt(sort: Desc)])
+  @@index([statementId])
+}
+
 // Quarterly executive targets — what "on plan" means. One row per
 // quarter key ('2026-Q3'); admins (manage:org) set them, the executive
 // dashboard and board pack show actual-vs-target pace.
@@ -2132,13 +2163,6 @@ model Associate {
   // tax annualization. NULL = legacy associates that haven't been
   // assigned to a schedule yet (treated as biweekly default until set).
   payrollScheduleId       String?                  @db.Uuid
-  // Wave 3.2 — QBO Employee.Id (W2) or Vendor.Id (1099) cache. Set the
-  // first time we sync this associate to QuickBooks. Used as the dedup
-  // key so we never create duplicate QBO records, and (future) as the
-  // EmployeeRef on per-associate journal entries.
-  qboEmployeeId           String?
-  qboVendorId             String?
-  qboSyncedAt             DateTime?                @db.Timestamptz(6)
   // Stamped when HR approves the associate's onboarding application
   // (POST /onboarding/applications/:id/approve). The date HR enters in
   // the approve dialog — distinct from Application.startDate (the
@@ -2234,6 +2258,7 @@ model Associate {
   readyToWorkHandoff       ReadyToWorkHandoff?
   policyAcks               PolicyAcknowledgment[]
   i9Verification           I9Verification?
+  eeoSelfId                EeoSelfIdentification?
   w4Submission             W4Submission?
   payoutMethods            PayoutMethod[]
   financialChanges         FinancialChange[]
@@ -2271,6 +2296,7 @@ model Associate {
   orgUnit                  OrgUnit?                    @relation("OrgUnitAssociates", fields: [orgUnitId], references: [id], onDelete: SetNull)
   jobProfile               JobProfile?                 @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
   payScheduleAssignments   PayrollScheduleAssignment[]
+  readinessRequests        PayrollReadinessRequest[]
   payrollSchedule          PayrollSchedule?            @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
   // Phase 77 — effective-dated history of tracked fields.
   history                  AssociateHistory[]
@@ -3276,6 +3302,32 @@ model I9Verification {
   @@index([tenantId])
 }
 
+/// Voluntary applicant EEO self-identification (audit 2026-10-21 #14). Kept
+/// apart from the candidate and the application on purpose: no candidate or
+/// application read ever joins it, and the only reader is the aggregate
+/// report in routes/compliance.ts, which suppresses buckets under five.
+/// Values are plain strings (gender FEMALE|MALE|NONBINARY|DECLINE; ethnicity
+/// the EEO-1 categories or DECLINE; veteran PROTECTED|NOT_PROTECTED|DECLINE;
+/// disability YES|NO|DECLINE); `declined` is the whole-form opt-out.
+model EeoSelfIdentification {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId         String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  candidateId      String?   @unique @db.Uuid
+  associateId      String?   @unique @db.Uuid
+  gender           String?   @db.VarChar(20)
+  ethnicity        String?   @db.VarChar(40)
+  veteranStatus    String?   @db.VarChar(30)
+  disabilityStatus String?   @db.VarChar(30)
+  declined         Boolean   @default(false)
+  submittedAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  candidate Candidate? @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  associate Associate? @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, submittedAt])
+}
+
 model W4Submission {
   id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId         String          @unique @db.Uuid
@@ -3993,22 +4045,15 @@ model PayrollRun {
   cancelledAt                 DateTime?                 @db.Timestamptz(6)
   // Gap 3 — void metadata. cancelledById = HR Admin who voided. cancelReason
   // is the mandatory free-text justification (CHECK enforces non-empty when
-  // status=CANCELLED). voidJournalEntryId is the QBO reversing JE id.
+  // status=CANCELLED).
   cancelledById               String?                   @db.Uuid
   cancelReason                String?
-  voidJournalEntryId          String?                   @db.VarChar(64)
   // Gap 3 — amendment metadata. amendsRunId points to the run this run
   // corrects (required + non-self when kind=AMENDMENT). amendmentReason is
   // the mandatory free-text justification (CHECK enforces non-empty when
   // kind=AMENDMENT) — rendered on the amendment paystub PDF.
   amendsRunId                 String?                   @db.Uuid
   amendmentReason             String?
-  // Phase 44 — QuickBooks Online journal-entry sync. Set to the QBO
-  // JournalEntry.Id on first successful sync; qboSyncError carries the
-  // last failure reason so HR can retry from the UI.
-  qboJournalEntryId           String?                   @db.VarChar(64)
-  qboSyncedAt                 DateTime?                 @db.Timestamptz(6)
-  qboSyncError                String?
   client                      Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdBy                   User?                     @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
   approvedBy                  User?                     @relation("PayrollRunApprover", fields: [approvedById], references: [id], onDelete: SetNull)
@@ -4039,6 +4084,9 @@ model PayrollRun {
   /// The pay schedule this run pays (lib/payScheduleMembership): only its people, for their days on it.
   payrollScheduleId           String?                   @db.Uuid
   payrollSchedule             PayrollSchedule?          @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
+  /// An off-cycle run made from a missed payday: it pays the period's approved time, not add-ons alone (lib/payrollPeriodLedger).
+  includesApprovedTime        Boolean                   @default(false)
+  readinessRequests           PayrollReadinessRequest[] @relation("ReadinessRequestRun")
 
   @@index([clientId, periodStart])
   @@index([status, disbursedAt])
@@ -4046,6 +4094,26 @@ model PayrollRun {
   @@index([amendsRunId])
   @@index([tenantId])
   @@index([payrollScheduleId, periodStart])
+}
+
+/// Payroll asked a person for what a paycheck needs (a W-4, a pay account, an address) — finance walk 4.
+/// One row per request; the readiness grid shows "Requested <date>" until the item is on file.
+model PayrollReadinessRequest {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String?     @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  associateId   String      @db.Uuid
+  /// w4 | payout | address
+  items         String[]    @default([])
+  requestedById String?     @db.Uuid
+  requestedAt   DateTime    @default(now()) @db.Timestamptz(6)
+  /// The off-cycle run this request was made for, when one was.
+  payrollRunId  String?     @db.Uuid
+  associate     Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  requestedBy   User?       @relation("ReadinessRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  payrollRun    PayrollRun? @relation("ReadinessRequestRun", fields: [payrollRunId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, requestedAt(sort: Desc)])
+  @@index([tenantId])
 }
 
 model PayrollItem {
@@ -4727,6 +4795,7 @@ model Candidate {
   events           CandidateEvent[]
   submittals       CandidateSubmittal[]
   documentRequests CandidateDocumentRequest[]
+  eeoSelfId        EeoSelfIdentification?
 
   @@index([stage])
   @@index([deletedAt])
@@ -5277,6 +5346,8 @@ model BenefitsEnrollment {
   rothPercent                 Decimal?  @db.Decimal(5, 2)
   /// The recordkeeper plan (RetirementPlan) this deferral reports to.
   retirementPlanId            String?   @db.Uuid
+  /// LIFE_INSURANCE: the face amount of group-term coverage, in cents. Over $50,000 the Table I cost is imputed income (lib/groupTermLife).
+  lifeCoverageCents           Int?
   createdAt                   DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt                   DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -5289,79 +5360,6 @@ model BenefitsEnrollment {
   @@index([associateId, terminationDate])
   @@index([retirementPlanId])
   @@index([planId])
-  @@index([tenantId])
-}
-
-// ===== Phase 44 — QuickBooks Online integration ===========================
-//
-// Per-client OAuth 2.0 connection to Intuit QuickBooks Online. One row per
-// Client (single connection). accessToken / refreshToken are encrypted at
-// rest with the same crypto used for SSN / bank accounts (lib/crypto.ts).
-// On payroll finalize/disburse, lib/quickbooks.ts builds a JournalEntry
-// payload and (when env-configured) posts it via the v3 API; the resulting
-// JE id is stamped on PayrollRun.qboJournalEntryId.
-// Wave 5.2 — JE granularity. AGGREGATE posts one journal entry per run
-// (sum of all paystubs); PER_EMPLOYEE iterates items and posts one JE per
-// associate with EmployeeRef set, mirroring how QBO Payroll itself records
-// payroll. PER_EMPLOYEE requires that every associate in the run has been
-// synced via Wave 3.2 first (qboEmployeeId / qboVendorId set).
-enum QboJeMode {
-  AGGREGATE
-  PER_EMPLOYEE
-}
-
-model QuickbooksConnection {
-  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId                 String    @unique @db.Uuid
-  realmId                  String // Intuit company / realm identifier
-  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
-  tenantId                 String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  accessTokenEnc           Bytes
-  refreshTokenEnc          Bytes
-  expiresAt                DateTime  @db.Timestamptz(6)
-  // Intuit may rotate refresh tokens; track the last refresh timestamp
-  // so we can warn if it's been > 100 days (their TTL).
-  lastRefreshedAt          DateTime  @default(now()) @db.Timestamptz(6)
-  // Account ref IDs in QBO that the journal-entry posting needs. HR
-  // configures these once per company. NULL = use defaults derived from
-  // QBO chart-of-accounts lookup (best-effort, may fail).
-  accountSalariesExpense   String?
-  accountFederalTaxPayable String?
-  accountStateTaxPayable   String?
-  accountFicaPayable       String?
-  accountMedicarePayable   String?
-  accountBenefitsPayable   String?
-  accountNetPayPayable     String?
-  // Wave 5.2 — per-run vs per-employee JE granularity.
-  jeMode                   QboJeMode @default(AGGREGATE)
-  // GL by cost center: when on, the salary-expense debit is split by the
-  // associates' cost centers using the mappings below; unmapped people
-  // fall back to accountSalariesExpense. Liabilities stay one line each.
-  glByCostCenter           Boolean   @default(false)
-  createdAt                DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime  @updatedAt @db.Timestamptz(6)
-
-  client             Client                        @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  costCenterMappings QuickbooksCostCenterMapping[]
-
-  @@index([tenantId])
-}
-
-// Which QBO expense account each cost center's wages debit.
-model QuickbooksCostCenterMapping {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId     String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  connectionId String   @db.Uuid
-  costCenterId String   @db.Uuid
-  accountRef   String   @db.VarChar(64)
-  accountName  String?  @db.VarChar(120)
-  createdAt    DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
-
-  connection QuickbooksConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  costCenter CostCenter           @relation(fields: [costCenterId], references: [id], onDelete: Cascade)
-
-  @@unique([connectionId, costCenterId])
   @@index([tenantId])
 }
 
@@ -5418,7 +5416,6 @@ model CostCenter {
   // Phase 87 — broadcast targeting.
   broadcasts  Broadcast[]
   orgUnit     OrgUnit?
-  qboMappings QuickbooksCostCenterMapping[]
 
   @@index([clientId, deletedAt])
   @@index([tenantId])
@@ -5714,6 +5711,8 @@ enum ApprovalRequestKind {
   BILL_APPROVAL
   VENDOR_BANK
   PERIOD_REOPEN
+  /// One second-person approval for a mass pay change (finance walk 13, POST /compensation/batch).
+  PAY_RATE_BATCH
 }
 
 enum ApprovalRequestStatus {
@@ -6789,6 +6788,11 @@ model Broadcast {
   status       BroadcastStatus    @default(DRAFT)
   scheduledFor DateTime?          @db.Timestamptz(6)
   sentAt       DateTime?          @db.Timestamptz(6)
+  /// What actually left per chosen channel after send-now — counts of sent / failed /
+  /// notConfigured / noPhone / optedOut / muted per channel (lib/broadcastDelivery).
+  /// Null until the fan-out finishes; the sent log reads it so "Sent" never hides a
+  /// text that had no provider behind it.
+  delivery     Json?
   createdAt    DateTime           @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime           @updatedAt @db.Timestamptz(6)
 
@@ -7226,9 +7230,30 @@ model Interview {
   candidate   Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   kit         InterviewKit? @relation(fields: [kitId], references: [id], onDelete: SetNull)
   interviewer User?         @relation("Interviewer", fields: [interviewerUserId], references: [id], onDelete: SetNull)
+  /// The panel (HR walk 9): everyone doing this interview. interviewerUserId stays as its first member.
+  panel       InterviewInterviewer[]
 
   @@index([candidateId])
   @@index([interviewerUserId])
+  @@index([tenantId])
+}
+
+/// One seat on an interview panel (HR walk 9): an interview can be done by up
+/// to three people — a hiring manager, a recruiter, a store lead — and every
+/// one of them gets the calendar invite.
+model InterviewInterviewer {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  interviewId String    @db.Uuid
+  userId      String    @db.Uuid
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId    String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  user      User      @relation("InterviewPanel", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([interviewId, userId])
+  @@index([userId])
   @@index([tenantId])
 }
 
@@ -8464,6 +8489,10 @@ enum ReportEntity {
   APPLICATION
   EXPENSE
   CANDIDATE
+  SEPARATION
+  LEAVE_CASE
+  HR_CASE
+  OFFER
 }
 
 enum ReportScheduleCadence {
@@ -8753,6 +8782,9 @@ model KioskPunch {
   tenantId        String?                 @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   action          KioskPunchAction
   selfie          Bytes?
+  /// SOC 2 decision 7: the selfie bytes are sealed under the field keyring (lib/biometricFields).
+  /// False on rows written before the seal; the backfill job encrypts them in batches.
+  selfieEncrypted Boolean                 @default(false)
   rejectReason    String?
   // Phase 100 — coords reported by the kiosk + computed distance from
   // the device's geofence center. NULL when device has no geofence.
@@ -8812,6 +8844,9 @@ model KioskFaceReference {
   /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
   tenantId          String?   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   descriptor        Bytes
+  /// SOC 2 decision 7: the template is sealed under the field keyring (lib/biometricFields).
+  /// False on rows written before the seal; the backfill job encrypts them in batches.
+  descriptorEncrypted Boolean @default(false)
   enrolledByPunchId String?   @db.Uuid
   enrolledAt        DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
@@ -9603,11 +9638,16 @@ model HrCase {
   slaPausedMinutes Int          @default(0)
   slaBreachedAt    DateTime?    @db.Timestamptz(6)
   slaEscalatedAt   DateTime?    @db.Timestamptz(6)
+  /// HR walk 13: how a case HR filed for the person came in — PHONE | WALK_IN | EMAIL. Null when self-filed.
+  channel          String?      @db.VarChar(12)
+  /// The HR user who filed it on the associate's behalf; null when the associate filed it.
+  filedByUserId    String?      @db.Uuid
   createdAt        DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
 
   associate     Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
   assignedTo    User?           @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  filedBy       User?           @relation("HrCaseFiledBy", fields: [filedByUserId], references: [id], onDelete: SetNull)
   /// The safety incidents this case was opened for (incident.loop).
   oshaIncidents OshaIncident[]
   comments      HrCaseComment[]
@@ -10214,6 +10254,9 @@ model OrgSetting {
   timezone               String                 @default("America/New_York") @db.VarChar(64)
   /// Brief 2-5 step 7: who hears the security alerts (sign-in anomalies, privilege changes, exports) by email.
   securityContactEmail   String?                @db.VarChar(254)
+  /// The date an auditor issued the SOC 2 report, set by the operator (PUT /trust/soc2). Null until one
+  /// exists: the Trust Center then says "preparing" or "in observation" from the controls, never "audited".
+  soc2ReportIssuedOn     DateTime?              @db.Date
   // The display name in the From: header — combined at send time as
   // "{senderName} <{RESEND_FROM bare email}>". When null, the env's
   // RESEND_FROM is used verbatim.
@@ -10270,6 +10313,14 @@ model OrgSetting {
   payrollReviewRequired  Boolean                @default(true)
   /// Overtime offered fewest-overtime-first (lib/overtimeRotation).
   otEqualization         Boolean                @default(false)
+  /// Finance walk (2026-10-21): the remit-to printed on every invoice and statement — the
+  /// name checks are payable to, the address lines (newline-separated) and how to pay (ACH
+  /// details). Null = the employer-of-record's legal name and address.
+  remitToName            String?                @db.VarChar(255)
+  remitToAddress         String?                @db.VarChar(500)
+  remitToInstructions    String?                @db.VarChar(500)
+  /// The cash floor the forecast draws as a band; null = no floor set.
+  cashMinimum            Decimal?               @db.Decimal(14, 2)
   updatedAt              DateTime               @updatedAt @db.Timestamptz(6)
 }
 
@@ -10501,6 +10552,22 @@ model EmailSuppression {
   reason    EmailSuppressionReason
   notes     String?
   createdAt DateTime               @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId])
+}
+
+/// A phone number that texted STOP (or was opted out by hand): no SMS goes to it
+/// until START / a manual clear. Keyed by the E.164 number, platform-wide — the
+/// carrier opt-out applies to the number, whichever tenant texted it.
+model SmsOptOut {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phone     String   @unique
+  /// Brief 2-1: the tenant this row belongs to. Nullable and defaulted until the enforcing migration.
+  tenantId  String?  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  /// STOP (the carrier keyword), MANUAL (an admin), or the keyword as received.
+  reason    String   @db.VarChar(40)
+  source    String?  @db.VarChar(80)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([tenantId])
 }
@@ -11173,6 +11240,16 @@ model Ride {
   /// The driver tapped "Arrived" at this rider's pickup — the rider hears
   /// "your van is here", and a no-show can only be marked 3 minutes later.
   vanArrivedAt          DateTime?     @db.Timestamptz(6)
+  // Where the driver's phone was at Arrived and at No-show, and how far
+  // that is from the stop — the evidence behind a disputed no-show fee.
+  arrivedLat            Decimal?      @db.Decimal(9, 6)
+  arrivedLng            Decimal?      @db.Decimal(9, 6)
+  arrivedAccuracyM      Int?
+  arrivedDistanceM      Int?
+  noShowLat             Decimal?      @db.Decimal(9, 6)
+  noShowLng             Decimal?      @db.Decimal(9, 6)
+  noShowAccuracyM       Int?
+  noShowDistanceM       Int?
   /// The rider told the driver "I'm outside" (OUTSIDE) or "running a few
   /// minutes late" (LATE).
   riderSignal           String?       @db.VarChar(20)
@@ -11255,6 +11332,10 @@ model RideRun {
   sosAckById       String?       @db.Uuid
   /// The driver shift (a Shift with position Driver) this run sits in.
   shiftId          String?       @db.Uuid
+  /// Closed by the stuck-run sweep (lib/transportStuckRuns), not by a
+  /// driver or the desk: left ACTIVE hours past its last stop. Riders
+  /// never marked stay SCHEDULED for review — nobody is charged a guess.
+  autoClosedAt     DateTime?     @db.Timestamptz(6)
 
   van          Van                 @relation(fields: [vanId], references: [id], onDelete: Restrict)
   driver       User                @relation("RideRunDriver", fields: [driverUserId], references: [id], onDelete: Restrict)
@@ -11286,6 +11367,14 @@ model TransportIssue {
   resolvedById String?                @db.Uuid
   createdAt    DateTime               @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime               @updatedAt @db.Timestamptz(6)
+  // A driver's report from the road: photos (transport photo keys), where
+  // the phone was, and — when the van can't run safely — the van it took
+  // off the road (vanParked), which opens the out-of-service record.
+  photoKeys    Json                   @default("[]")
+  lat          Decimal?               @db.Decimal(9, 6)
+  lng          Decimal?               @db.Decimal(9, 6)
+  vanId        String?                @db.Uuid
+  vanParked    Boolean                @default(false)
 
   reportedBy User     @relation("TransportIssueReporter", fields: [reportedById], references: [id], onDelete: Cascade)
   ride       Ride?    @relation(fields: [rideId], references: [id], onDelete: SetNull)
@@ -12849,6 +12938,11 @@ model Tenant {
   terminology         Json          @default("{}")
   /// Brief 2-3 step 4: how long audit rows are kept before they are archived (never below 7 years).
   auditRetentionYears Int           @default(7)
+  /// Brief 2-6 (billing): the invoice's legal name and billing contact, and the Stripe
+  /// customer once one is made (so it is never re-found by metadata search).
+  billingName         String?       @db.VarChar(160)
+  billingEmail        String?       @db.VarChar(254)
+  stripeCustomerId    String?       @db.VarChar(120)
   createdAt           DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt           DateTime      @updatedAt @db.Timestamptz(6)
 }
@@ -14212,18 +14306,22 @@ model WorkTaskPolicy {
   id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenantId              String?                @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
   locationId            String?                @db.Uuid
-  handoffSeconds        Int                    @default(30)
+  /// Every rule is nullable: a null on a site's row means "as the company's row says", and a null on the
+  /// company's row means the shared default (DEFAULT_WORK_TASK_POLICY). lib/tasks/engine.policyFor merges
+  /// them field by field, so a site that only sets its handoff seconds inherits the rest (audit 2026-10-21).
+  handoffSeconds        Int?
+  /// Null on the company row = no cap. A site cannot lift the company's cap (a null site value inherits it).
   maxAutoAssignCents    Int?
-  highRiskPolicy        WorkTaskHighRiskPolicy @default(PERSON_OR_SUPERVISED_ROBOT)
+  highRiskPolicy        WorkTaskHighRiskPolicy?
   /// Cents per task for a robot by capability code.
-  robotCostPerTaskCents Json                   @default("{}")
-  robotDefaultCostCents Int                    @default(400)
-  agentCostPerTaskCents Int                    @default(0)
+  robotCostPerTaskCents Json?
+  robotDefaultCostCents Int?
+  agentCostPerTaskCents Int?
   /// Brief 3-3: the span of control the scheduler warns on.
-  maxRobotsPerCrewLead  Int                    @default(4)
+  maxRobotsPerCrewLead  Int?
   /// Brief 3-3: share of a robot's shift spent on tasks (the planner's capacity), and standby people per robot minute, as percents.
-  robotUtilizationPct   Int                    @default(70)
-  backupCrewRatioPct    Int                    @default(25)
+  robotUtilizationPct   Int?
+  backupCrewRatioPct    Int?
   updatedByUserId       String?                @db.Uuid
   createdAt             DateTime               @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
@@ -14473,6 +14571,9 @@ model RobotIncident {
   events           Json              @default("[]")
   /// Evidence retention: kept at least until this date.
   retainUntil      DateTime          @db.Date
+  /// Set by the retention sweep (lib/robotIncidentRetention) once the hour's samples, events and the
+  /// people on shift were removed past retainUntil. The report itself (kind, when, what) stays.
+  evidencePurgedAt DateTime?         @db.Timestamptz(6)
   createdAt        DateTime          @default(now()) @db.Timestamptz(6)
 
   worker       Worker        @relation(fields: [workerId], references: [id], onDelete: Cascade)
@@ -16630,4 +16731,77 @@ model PunchPhotoRule {
   @@index([associateId])
   @@index([siteId])
   @@index([clientId])
+}
+
+/// Trust Center gated downloads (audit 2026-10-21, ux-upgrade §5.5): a prospect asks for a
+/// report on the public page; the operator approves; a signed, expiring link goes out by email;
+/// every download is logged. The documents themselves are uploaded by the operator, one current
+/// file per kind, stored under the blob store.
+enum TrustDocumentKind {
+  SOC2_REPORT
+  PEN_TEST_SUMMARY
+  SUB_PROCESSOR_LIST
+  DPA
+}
+
+enum TrustRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+model TrustDocument {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?           @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  kind             TrustDocumentKind
+  title            String            @db.VarChar(200)
+  s3Key            String            @db.VarChar(400)
+  contentType      String            @db.VarChar(120)
+  bytes            Int
+  uploadedByUserId String?           @db.Uuid
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, kind])
+}
+
+model TrustDownloadRequest {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  kind             TrustDocumentKind
+  name             String             @db.VarChar(160)
+  email            String             @db.VarChar(254)
+  company          String             @db.VarChar(200)
+  note             String?            @db.VarChar(1000)
+  status           TrustRequestStatus @default(PENDING)
+  requestedAt      DateTime           @default(now()) @db.Timestamptz(6)
+  decidedAt        DateTime?          @db.Timestamptz(6)
+  decidedByUserId  String?            @db.Uuid
+  /// The signed link stops working after this; set on approval (7 days).
+  linkExpiresAt    DateTime?          @db.Timestamptz(6)
+  downloadCount    Int                @default(0)
+  lastDownloadedAt DateTime?          @db.Timestamptz(6)
+
+  @@index([tenantId, status, requestedAt(sort: Desc)])
+  @@index([email])
+}
+
+/// Product analytics (ux-upgrade §6): the three behaviour events — the time from sign-in to a
+/// session's first decision, decisions per session by role, and palette searches that end on a
+/// settings page — rolled up per UTC day, role and kind. `sum` carries the milliseconds for
+/// first_decision; a session_start row per role makes "per session" a division, not a guess.
+model ProductEventDaily {
+  id    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day   DateTime @db.Date
+  role  String   @db.VarChar(40)
+  kind  String   @db.VarChar(40)
+  count Int      @default(0)
+  sum   Float    @default(0)
+
+  /// Brief 2-1: platform telemetry like WebVitalDaily — nullable, no default (the rollup is not any tenant's).
+  tenantId String? @db.Uuid
+
+  @@unique([day, role, kind])
+  @@index([day])
+  @@index([tenantId])
 }

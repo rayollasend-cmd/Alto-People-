@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { COMPLIANCE_CONTROL_IDS, EvidenceSignoffInputSchema } from '@alto-people/shared';
+import { COMPLIANCE_CONTROL_IDS, EVIDENCE_STATUSES, EvidenceSignoffInputSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
@@ -106,7 +106,7 @@ complianceEvidenceRouter.post('/admin/compliance-evidence/ingest', async (req, r
   const b = Buffer.from(token);
   if (a.length !== b.length || !timingSafeEqual(a, b)) throw new HttpError(401, 'unauthenticated', 'A valid ingest token is required.');
   const input = z
-    .object({ control: z.enum(INGESTIBLE), status: z.enum(['PASS', 'FAIL', 'WARN']), summary: z.string().trim().min(3).max(500), details: z.record(z.string(), z.unknown()).default({}) })
+    .object({ control: z.enum(INGESTIBLE), status: z.enum(EVIDENCE_STATUSES), summary: z.string().trim().min(3).max(500), details: z.record(z.string(), z.unknown()).default({}) })
     .strict()
     .parse(req.body);
   const id = await recordEvidence(input.control, 'ci', { status: input.status, summary: input.summary, details: input.details }, prisma);

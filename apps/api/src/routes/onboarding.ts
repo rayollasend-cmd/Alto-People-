@@ -76,6 +76,9 @@ import {
   markTaskDoneByKind,
   markTaskSkippedById,
 } from '../lib/checklist.js';
+import { backgroundApprovalWarning, markBackgroundTaskInProgress, recordSelfServeConsent } from '../lib/backgroundCheckConsent.js';
+import { saveEeoSelfId } from '../lib/hiringCompliance.js';
+import { EeoSelfIdInputSchema } from '@alto-people/shared';
 import multer, { MulterError } from 'multer';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
@@ -132,6 +135,10 @@ import {
 } from '../lib/compliancePacket.js';
 import { AGREEMENT_BODY, AGREEMENT_TITLE } from '../lib/altoHrContent.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
+import { becauseLabel, desiredFor, loadWorld } from '../lib/payScheduleMembership.js';
+import { addBusinessDaysUtc } from '../lib/contractors.js';
+import { recordChange } from '../lib/associateHistory.js';
+import { scopeAssociates } from '../lib/scope.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 import { queueScheduleRecompute } from '../lib/payScheduleTriggers.js';
@@ -911,6 +918,24 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       throw new HttpError(404, 'application_not_found', 'Application not found');
     }
 
+    // HR walk 11: the I-9 task follows the I-9 record. A Section 2 recorded
+    // from the compliance tab (or in person) never touched the checklist, so
+    // the task said PENDING beside an I-9 card showing both sections done.
+    const openI9Task = row.checklist?.tasks.find(
+      (t) => t.kind === 'I9_VERIFICATION' && (t.status === 'PENDING' || t.status === 'IN_PROGRESS'),
+    );
+    if (openI9Task && row.checklist) {
+      const i9 = await prisma.i9Verification.findUnique({
+        where: { associateId: row.associateId },
+        select: { section1CompletedAt: true, section2CompletedAt: true },
+      });
+      if (i9?.section1CompletedAt && i9.section2CompletedAt) {
+        await markTaskDoneByKind(prisma, row.checklist.id, 'I9_VERIFICATION');
+        openI9Task.status = 'DONE';
+        openI9Task.completedAt = openI9Task.completedAt ?? i9.section2CompletedAt;
+      }
+    }
+
     const tasks: ChecklistTask[] = (row.checklist?.tasks ?? []).map((t) => ({
       id: t.id,
       kind: t.kind,
@@ -960,6 +985,239 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       locationName: row.location?.name ?? null,
     };
     res.json(detail);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== First day (HR walk 11) ============================================ */
+//
+// What has to be true before a new hire's first shift, on one card: start
+// date, store, manager, a clock-in number that works at their client, the
+// first shift booked, and the I-9 Section 2 deadline. GET reads them; PATCH
+// fixes the three that live on the application and the person.
+
+const ymdOf = (d: Date | null | undefined): string | null => (d ? d.toISOString().slice(0, 10) : null);
+
+async function firstDayApplication(req: Request) {
+  const app = await prisma.application.findFirst({
+    where: { ...scopeApplications(req.user!), id: req.params.id, tenantId: tenantIdForWrite(), deletedAt: null },
+    select: {
+      id: true,
+      status: true,
+      associateId: true,
+      clientId: true,
+      locationId: true,
+      startDate: true,
+      location: { select: { id: true, name: true } },
+      associate: {
+        select: {
+          id: true,
+          managerId: true,
+          manager: { select: { id: true, firstName: true, lastName: true } },
+        },
+      },
+    },
+  });
+  if (!app) throw new HttpError(404, 'application_not_found', 'Application not found');
+  return app;
+}
+
+async function firstDayView(app: Awaited<ReturnType<typeof firstDayApplication>>) {
+  const tenantId = tenantIdForWrite();
+  const [stores, pin, i9] = await Promise.all([
+    prisma.site.findMany({
+      where: { tenantId, clientId: app.clientId ?? null, deletedAt: null, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      take: 200,
+    }),
+    prisma.kioskPin.findUnique({ where: { associateId: app.associateId }, select: { clientId: true } }),
+    prisma.i9Verification.findUnique({
+      where: { associateId: app.associateId },
+      select: { section1CompletedAt: true, section2CompletedAt: true },
+    }),
+  ]);
+  // Their first booked shift on or after the start date (today when none).
+  const from = app.startDate ?? new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+  const shift = await prisma.shift.findFirst({
+    where: { assignedAssociateId: app.associateId, status: 'ASSIGNED', startsAt: { gte: from } },
+    orderBy: { startsAt: 'asc' },
+    select: { id: true, startsAt: true, locationRel: { select: { name: true } }, location: true },
+  });
+  return {
+    startDate: ymdOf(app.startDate),
+    store: app.location ? { id: app.location.id, name: app.location.name } : null,
+    stores,
+    manager: app.associate.manager
+      ? { id: app.associate.manager.id, name: `${app.associate.manager.firstName} ${app.associate.manager.lastName}` }
+      : null,
+    employeeNumber: {
+      issued: !!pin,
+      clientId: pin?.clientId ?? null,
+      // The kiosk refuses a number filed under another client.
+      validAtClient: !!pin && (pin.clientId ?? null) === (app.clientId ?? null),
+    },
+    firstShift: shift
+      ? { id: shift.id, startsAt: shift.startsAt.toISOString(), locationName: shift.locationRel?.name ?? shift.location ?? null }
+      : null,
+    i9: {
+      section1CompletedAt: i9?.section1CompletedAt?.toISOString() ?? null,
+      section2CompletedAt: i9?.section2CompletedAt?.toISOString() ?? null,
+      // Federal rule: Section 2 within 3 business days of the first day.
+      section2DueBy: app.startDate ? ymdOf(addBusinessDaysUtc(app.startDate, 3)) : null,
+    },
+  };
+}
+
+onboardingRouter.get('/applications/:id/first-day', MANAGE, async (req, res, next) => {
+  try {
+    res.json(await firstDayView(await firstDayApplication(req)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const FirstDayPatchSchema = z
+  .object({
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    locationId: z.string().uuid().nullable().optional(),
+    managerId: z.string().uuid().nullable().optional(),
+  })
+  .refine((b) => b.startDate !== undefined || b.locationId !== undefined || b.managerId !== undefined, {
+    message: 'Change at least one thing.',
+  });
+
+onboardingRouter.patch('/applications/:id/first-day', MANAGE, async (req, res, next) => {
+  try {
+    const input = FirstDayPatchSchema.parse(req.body ?? {});
+    const app = await firstDayApplication(req);
+    const tenantId = tenantIdForWrite();
+    if (app.status === 'REJECTED' || app.status === 'CANCELLED') {
+      throw new HttpError(409, 'application_closed', `This application is ${app.status.toLowerCase()}.`);
+    }
+    if (input.locationId) {
+      const site = await prisma.site.findFirst({
+        where: { id: input.locationId, tenantId, clientId: app.clientId ?? null, deletedAt: null, isActive: true },
+        select: { id: true },
+      });
+      if (!site) throw new HttpError(400, 'invalid_location', 'That store does not belong to this client.');
+    }
+    if (input.managerId) {
+      if (input.managerId === app.associateId) {
+        throw new HttpError(400, 'self_manager', 'A person can’t be their own manager.');
+      }
+      const manager = await prisma.associate.findFirst({
+        where: { AND: [{ id: input.managerId, tenantId, deletedAt: null, deactivatedAt: null }, scopeAssociates(req.user!)] },
+        select: { id: true },
+      });
+      if (!manager) throw new HttpError(400, 'invalid_manager', 'Pick a manager from your team.');
+    }
+    const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+    await prisma.$transaction(async (tx) => {
+      if (input.startDate !== undefined || input.locationId !== undefined) {
+        await tx.application.update({
+          where: { id: app.id },
+          data: {
+            ...(input.startDate !== undefined ? { startDate: new Date(`${input.startDate}T00:00:00.000Z`) } : {}),
+            ...(input.locationId !== undefined ? { locationId: input.locationId } : {}),
+          },
+        });
+      }
+      // After approval the placement is a live assignment: move it the way
+      // approval opened it. One not yet started is re-pointed in place.
+      if (app.status === 'APPROVED' && input.locationId && input.locationId !== app.locationId) {
+        const open = await tx.associateAssignment.findFirst({
+          where: { associateId: app.associateId, endedAt: null },
+          orderBy: { startedAt: 'desc' },
+          select: { id: true, startedAt: true, locationId: true },
+        });
+        if (open && open.locationId === input.locationId) {
+          // Already there.
+        } else if (open && open.startedAt >= today) {
+          await tx.associateAssignment.update({ where: { id: open.id }, data: { locationId: input.locationId } });
+        } else {
+          await closeOpenAssignments(tx, { associateId: app.associateId, endedAt: today, endLabel: 'store change' });
+          await tx.associateAssignment.create({
+            data: {
+              associateId: app.associateId,
+              locationId: input.locationId,
+              startedAt: today,
+              reason: 'First-day store set',
+              notedById: req.user!.id,
+            },
+          });
+        }
+      }
+      if (input.managerId !== undefined && input.managerId !== app.associate.managerId) {
+        await tx.associate.update({ where: { id: app.associateId }, data: { managerId: input.managerId } });
+      }
+    }, TX_OPTS);
+    // The effective-dated org history, as the People record's org PUT keeps it.
+    if (input.managerId !== undefined && input.managerId !== app.associate.managerId) {
+      const updated = await prisma.associate.findUniqueOrThrow({
+        where: { id: app.associateId },
+        select: { managerId: true, departmentId: true, costCenterId: true, jobProfileId: true, state: true },
+      });
+      await recordChange(prisma, {
+        associateId: app.associateId,
+        managerId: updated.managerId,
+        departmentId: updated.departmentId,
+        costCenterId: updated.costCenterId,
+        jobProfileId: updated.jobProfileId,
+        state: updated.state,
+        hourlyRate: null,
+        reason: 'first_day',
+        actorUserId: req.user!.id,
+      });
+    }
+    await recordOnboardingEvent({
+      actorUserId: req.user!.id,
+      action: 'onboarding.first_day_updated',
+      applicationId: app.id,
+      clientId: app.clientId,
+      metadata: {
+        ...(input.startDate !== undefined ? { startDate: input.startDate } : {}),
+        ...(input.locationId !== undefined ? { locationId: input.locationId } : {}),
+        ...(input.managerId !== undefined ? { managerId: input.managerId } : {}),
+      },
+      req,
+    });
+    res.json(await firstDayView(await firstDayApplication(req)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /onboarding/pay-schedule-for-hire?clientId&locationId&departmentId —
+ * which pay schedule the rules would put a hire on (HR walk 23), before the
+ * hire exists. Read-only: the same resolver membership uses, with the facts
+ * the new-application dialog knows; nothing is assigned here.
+ */
+onboardingRouter.get('/pay-schedule-for-hire', MANAGE, async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        clientId: z.string().uuid().optional(),
+        locationId: z.string().uuid().optional(),
+        departmentId: z.string().uuid().optional(),
+      })
+      .parse(req.query);
+    const world = await loadWorld(prisma);
+    const today = new Date().toISOString().slice(0, 10);
+    const d = desiredFor(
+      { associateId: '', name: '', clientId: q.clientId ?? null, siteId: q.locationId ?? null, departmentId: q.departmentId ?? null, payType: null, legacyScheduleId: null },
+      // A prospective hire has no individual rules.
+      world.rules.filter((r) => r.kind !== 'INDIVIDUAL' && r.kind !== 'EXCLUDE'),
+      today,
+      { defaultScheduleId: world.defaultScheduleId, activeScheduleIds: world.activeScheduleIds, scheduleNames: world.names.schedules },
+    );
+    const sched = d.scheduleId ? world.schedules.get(d.scheduleId) : undefined;
+    res.json({
+      schedule: sched ? { id: sched.id, name: sched.name, because: becauseLabel(d, world.rules, world.names) } : null,
+      conflict: d.conflict,
+    });
   } catch (err) {
     next(err);
   }
@@ -1118,6 +1376,15 @@ async function approveOneApplication(
       );
     }
   }
+  // A background check that never ran (no provider), is still out, or came
+  // back for review is a hire that is not cleared — say so at the gate.
+  const latestCheck = await prisma.backgroundCheck.findFirst({
+    where: { associateId: app.associateId },
+    orderBy: { initiatedAt: 'desc' },
+    select: { status: true, provider: true },
+  });
+  const bgWarning = backgroundApprovalWarning(latestCheck);
+  if (bgWarning) approvalWarnings.push(bgWarning);
   if (approvalWarnings.length > 0 && !acknowledgeWarnings) {
     throw new HttpError(
       409,
@@ -2752,10 +3019,11 @@ onboardingRouter.post(
 );
 
 // BACKGROUND_CHECK ----------------------------------------------------- */
-// Stub provider for now — associate types their full legal name (acts as
-// a consent signature) and the BackgroundCheck row flips straight to
-// PASSED. Phase 64+ will swap in a real Checkr / Sterling integration;
-// this endpoint's contract stays the same so the UI doesn't change.
+// The associate types their full legal name (the consent signature). With a
+// screening provider connected the check is ordered through it and stays
+// INITIATED until the report comes back; with none, it is recorded NOT_RUN
+// and the approval gate says so (lib/backgroundCheckConsent.ts). Never PASSED
+// from here.
 onboardingRouter.post(
   '/applications/:id/background-check',
   async (req, res, next) => {
@@ -2787,39 +3055,29 @@ onboardingRouter.post(
         );
       }
 
-      const now = new Date();
-      const bg = await prisma.$transaction(async (tx) => {
-        // One BackgroundCheck per associate is enough for v1. Re-running
-        // the endpoint just refreshes the row so a re-applying associate
-        // gets a fresh PASSED record instead of a stale one.
-        const existing = await tx.backgroundCheck.findFirst({
-          where: { associateId: app.associateId },
-          orderBy: { initiatedAt: 'desc' },
-        });
-        const data = {
-          provider: 'stub',
-          // PASSED in the stub world; a real provider would set INITIATED
-          // here and flip to PASSED via webhook later.
-          status: 'PASSED' as const,
-          completedAt: now,
-        };
-        return existing
-          ? tx.backgroundCheck.update({ where: { id: existing.id }, data })
-          : tx.backgroundCheck.create({
-              data: {
-                ...data,
-                associateId: app.associateId,
-                clientId: app.clientId,
-                initiatedAt: now,
-              },
-            });
-      }, TX_OPTS);
+      // The consent is recorded; the check itself runs only through a
+      // connected screening provider, and is never marked PASSED here
+      // (audit 2026-10-21 #3 — this route used to write a stub PASSED).
+      const { position } = await prisma.application.findUniqueOrThrow({
+        where: { id: app.id },
+        select: { position: true },
+      });
+      const outcome = await recordSelfServeConsent({
+        associateId: app.associateId,
+        clientId: app.clientId,
+        position,
+      });
+      const bg = outcome.check;
 
       const checklist = await prisma.onboardingChecklist.findUnique({
         where: { applicationId: app.id },
       });
       if (checklist) {
-        await markTaskDoneByKind(prisma, checklist.id, 'BACKGROUND_CHECK');
+        if (bg.status === 'PASSED') {
+          await markTaskDoneByKind(prisma, checklist.id, 'BACKGROUND_CHECK');
+        } else {
+          await markBackgroundTaskInProgress(prisma, checklist.id);
+        }
       }
 
       await flagPostSubmissionEdit(app, req.user!, 'background-check authorization');
@@ -2829,7 +3087,7 @@ onboardingRouter.post(
         action: 'onboarding.background_check_authorized',
         applicationId: app.id,
         clientId: app.clientId,
-        metadata: { provider: bg.provider, status: bg.status, typedName },
+        metadata: { provider: bg.provider, status: bg.status, typedName, ...(outcome.providerError ? { providerError: outcome.providerError } : {}) },
         req,
       });
 
@@ -2841,7 +3099,48 @@ onboardingRouter.post(
         status: bg.status,
         initiatedAt: bg.initiatedAt.toISOString(),
         completedAt: bg.completedAt ? bg.completedAt.toISOString() : null,
+        message: outcome.message,
+        providerError: outcome.providerError,
       });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// EEO SELF-IDENTIFICATION (voluntary) ----------------------------------- */
+// The new hire's own, optional answers (audit 2026-10-21 #14). Kept apart
+// from the application (EeoSelfIdentification) and never returned on any
+// application read; HR sees only the aggregate report under /compliance.
+// Only the person themself may answer — HR cannot fill it in for them.
+onboardingRouter.post(
+  '/applications/:id/eeo-self-id',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
+      if (req.user!.associateId !== app.associateId) {
+        throw new HttpError(403, 'self_only', 'Only the person themself can answer the voluntary self-identification.');
+      }
+      const input = EeoSelfIdInputSchema.parse(req.body ?? {});
+      await saveEeoSelfId(prisma, { associateId: app.associateId }, input);
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/** Whether the person has answered (or declined) — never the answers. Self only. */
+onboardingRouter.get(
+  '/applications/:id/eeo-self-id',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: false });
+      if (req.user!.associateId !== app.associateId) {
+        throw new HttpError(403, 'self_only', 'Only the person themself can see this.');
+      }
+      const answered = (await prisma.eeoSelfIdentification.count({ where: { associateId: app.associateId } })) > 0;
+      res.json({ answered });
     } catch (err) {
       next(err);
     }

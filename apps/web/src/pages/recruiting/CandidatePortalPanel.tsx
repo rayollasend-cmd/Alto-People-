@@ -50,7 +50,9 @@ export function CandidatePortalPanel({ candidateId, canManage, onChanged }: { ca
         await navigator.clipboard?.writeText(r.link).catch(() => undefined);
         toast.success('Link copied — email isn’t set up here, so send it yourself.');
       } else {
-        toast.success(`Their page link sent by ${[r.emailed && 'email', r.texted && 'text'].filter(Boolean).join(' and ')}.`);
+        const by = [r.emailed && 'email', r.texted && 'text'].filter(Boolean).join(' and ');
+        // A text that had no provider behind it is said, not implied.
+        toast.success(r.textReason && !r.texted && by ? `Their page link sent by ${by}. Not texted: ${r.textReason}` : `Their page link sent by ${by}.`);
       }
       refresh();
     },

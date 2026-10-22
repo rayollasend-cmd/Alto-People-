@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { currentAlerts, listPrograms } from '../../lib/programs.js';
 import { programDigestBody, runProgramDigestSweep } from '../../lib/programDigest.js';
 import { listEligibleOpenShifts } from '../../routes/qualifications.js';
@@ -123,12 +123,21 @@ describe('alerts fire from the dates on the record', () => {
     await admin.put('/programs/alert-settings').send({ programEndDays: [60], visaExpiryDays: [30], i9ReverifyDays: [30], sponsorCheckInDays: [0], petitionEndDays: [30] });
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: clientA.id });
     const supAgent = await loginAs(agent(), sup.email);
-    const mine = await supAgent.get('/programs/alerts/mine');
-    expect(mine.status).toBe(200);
-    expect(mine.body.alerts.filter((a: { kind: string }) => a.kind === 'PROGRAM_END').map((a: { associateId: string }) => a.associateId)).toEqual([ana.id]);
-    // The full list is compliance's.
-    expect((await supAgent.get('/programs/alerts')).status).toBe(403);
-    expect((await admin.get('/programs/alerts')).body.alerts.filter((a: { kind: string }) => a.kind === 'PROGRAM_END')).toHaveLength(2);
+    // The route reads the real clock; hold it at NOW so the program (NOW + 45
+    // days) is still ahead of it whenever the suite runs. Only Date is faked,
+    // so the HTTP round trips keep their real timers.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      const mine = await supAgent.get('/programs/alerts/mine');
+      expect(mine.status).toBe(200);
+      expect(mine.body.alerts.filter((a: { kind: string }) => a.kind === 'PROGRAM_END').map((a: { associateId: string }) => a.associateId)).toEqual([ana.id]);
+      // The full list is compliance's.
+      expect((await supAgent.get('/programs/alerts')).status).toBe(403);
+      expect((await admin.get('/programs/alerts')).body.alerts.filter((a: { kind: string }) => a.kind === 'PROGRAM_END')).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('the Monday digest lists what is due and sends once a week to compliance managers', async () => {

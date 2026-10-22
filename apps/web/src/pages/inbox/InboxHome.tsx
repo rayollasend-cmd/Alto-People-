@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Inbox } from 'lucide-react';
-import type { InboxSource } from '@alto-people/shared';
+import { ArrowRight, CalendarClock, ChevronRight, Inbox } from 'lucide-react';
+import { INBOX_URGENCIES, rankInboxSources, type InboxSource, type InboxUrgency } from '@alto-people/shared';
 import { ListTemplate } from '@/components/templates';
-import { Badge, Card, EmptyState, SectionTitle, SkeletonRows, buttonVariants } from '@/components/ui';
+import { Badge, Card, EmptyState, SkeletonRows, buttonVariants } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { cn } from '@/lib/cn';
+import { fmtDate } from '@/lib/format';
 import { inboxLink, useInbox } from '@/lib/inboxApi';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { useListKeyboard } from '@/lib/shortcuts';
 
 /**
@@ -16,20 +17,37 @@ import { useListKeyboard } from '@/lib/shortcuts';
  * The principle (docs/ux-upgrade-investigation.md): the person sees
  * decisions; navigation is how you get elsewhere. So this page is a ranked
  * list of queues with something in them, each a count and an "Open" link
- * into the queue's own page. Queues the person may see but that are empty
- * fold under "All clear" so they still know what is being watched.
+ * into the queue's own page.
+ *
+ * Ranked by what it costs to be late, not by size (role walk HR 4): a
+ * legal clock — an E-Verify mismatch, a claim's three-day notice — sits
+ * above money, above routine work, however big the routine queue is;
+ * within a band the soonest deadline first, and each row says when. The
+ * queues the person may see but that are empty fold behind one line
+ * ("40 queues clear", ops 20) so they still know what is being watched
+ * without scrolling past forty zeros.
  */
+
+const BAND_LABEL: Record<InboxUrgency, MessageKey> = {
+  legal: 'decisions.bandLegal',
+  money: 'decisions.bandMoney',
+  routine: 'decisions.bandRoutine',
+};
+
 export function InboxHome() {
   const { t } = useI18n();
   const inbox = useInbox();
   const navigate = useNavigate();
 
-  const { waiting, quiet } = useMemo(() => {
+  const { waiting, quiet, bands } = useMemo(() => {
     const sources = inbox.data?.sources ?? [];
-    return {
-      waiting: sources.filter((s) => s.count > 0).sort((a, b) => b.count - a.count),
-      quiet: sources.filter((s) => s.count === 0),
-    };
+    const waiting = rankInboxSources(sources.filter((s) => s.count > 0));
+    const quiet = sources.filter((s) => s.count === 0);
+    const bands = INBOX_URGENCIES.map((urgency) => ({
+      urgency,
+      rows: waiting.filter((s) => (s.urgency ?? 'routine') === urgency),
+    })).filter((b) => b.rows.length > 0);
+    return { waiting, quiet, bands };
   }, [inbox.data]);
   // j/k move over the queues, Enter opens one (lib/shortcuts).
   const kb = useListKeyboard({ items: waiting, idOf: (s) => s.key, onOpen: (s) => navigate(inboxLink(s.path, s.key)) });
@@ -48,22 +66,41 @@ export function InboxHome() {
             />
           ) : (
             <Card animate={false}>
-              <ul className="divide-y divide-navy-secondary" aria-label={t('decisions.waitingAria')} {...kb.listProps}>
-                {waiting.map((s) => (
-                  <SourceRow key={s.key} source={s} rowProps={kb.rowProps(s.key)} />
+              <div {...kb.listProps} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-lg">
+                {bands.map((band) => (
+                  <section key={band.urgency} aria-labelledby={`inbox-band-${band.urgency}`}>
+                    <h2
+                      id={`inbox-band-${band.urgency}`}
+                      className={cn(
+                        'border-b border-navy-secondary px-[var(--d-card)] pt-3 pb-1.5 text-2xs font-semibold uppercase tracking-widest',
+                        band.urgency === 'legal' ? 'text-alert' : band.urgency === 'money' ? 'text-gold' : 'text-silver/80',
+                      )}
+                    >
+                      {t(BAND_LABEL[band.urgency])}
+                      <span className="ml-1.5 font-normal tabular-nums text-silver/60">{band.rows.length}</span>
+                    </h2>
+                    <ul className="divide-y divide-navy-secondary" aria-label={t('decisions.waitingAria')}>
+                      {band.rows.map((s) => (
+                        <SourceRow key={s.key} source={s} rowProps={kb.rowProps(s.key)} />
+                      ))}
+                    </ul>
+                  </section>
                 ))}
-              </ul>
+              </div>
             </Card>
           )}
           {quiet.length > 0 && (
-            <section aria-labelledby="inbox-quiet">
-              <SectionTitle
-                as="h2"
-                title={<span id="inbox-quiet">{t('decisions.allClear')}</span>}
-                description={t('decisions.allClearBody')}
-                className="mb-2"
-              />
-              <ul className="flex flex-wrap gap-2" aria-label={t('decisions.quietAria')}>
+            // Folded: the names still answer "is that being watched?", the
+            // zeros no longer take 1,200px of scroll (ops 20).
+            <details className="group rounded-lg border border-navy-secondary/60" data-testid="inbox-quiet">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-[var(--d-card)] py-3 text-sm text-silver hover:text-ink [&::-webkit-details-marker]:hidden">
+                <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+                <span id="inbox-quiet" className="font-medium">
+                  {quiet.length === 1 ? t('decisions.quietFoldOne') : t('decisions.quietFold', { n: quiet.length })}
+                </span>
+                <span className="hidden text-xs text-silver/70 sm:inline">· {t('decisions.allClearBody')}</span>
+              </summary>
+              <ul className="flex flex-wrap gap-2 px-[var(--d-card)] pb-[var(--d-card)]" aria-label={t('decisions.quietAria')}>
                 {quiet.map((s) => (
                   <li key={s.key}>
                     <Link
@@ -76,11 +113,23 @@ export function InboxHome() {
                   </li>
                 ))}
               </ul>
-            </section>
+            </details>
           )}
         </div>
       )}
     </ListTemplate>
+  );
+}
+
+/** "Next due Oct 24" — in alert tone once the day has passed. */
+function DueChip({ dueAt }: { dueAt: string }) {
+  const { t } = useI18n();
+  const overdue = Date.parse(dueAt) < Date.now() - 86_400_000;
+  return (
+    <Badge variant={overdue ? 'destructive' : 'default'} size="sm" withDot={false} className="gap-1 tabular-nums" data-testid="inbox-due">
+      <CalendarClock className="h-3 w-3" aria-hidden="true" />
+      {overdue ? t('decisions.overdue', { date: fmtDate(dueAt) }) : t('decisions.nextDue', { date: fmtDate(dueAt) })}
+    </Badge>
   );
 }
 
@@ -98,7 +147,10 @@ function SourceRow({ source, rowProps }: { source: InboxSource; rowProps?: Retur
         {source.count >= 999 ? '999+' : source.count}
       </Badge>
       <div className="min-w-0 flex-1">
-        <h3 className="text-base font-medium text-ink">{source.label}</h3>
+        <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base font-medium text-ink">
+          <span>{source.label}</span>
+          {source.dueAt && <DueChip dueAt={source.dueAt} />}
+        </h3>
         <p className="mt-0.5 text-sm text-silver">{source.description}</p>
       </div>
       <Link

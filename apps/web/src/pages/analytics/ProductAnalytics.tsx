@@ -5,6 +5,7 @@ import type { WebVitalMetric, WebVitalRating, WebVitalRouteRow } from '@alto-peo
 import {
   getActiveUsers,
   getAdoption,
+  getProductEvents,
   getRouteUsage,
   getTraffic,
   getWebVitals,
@@ -67,6 +68,20 @@ const ratingWord = (r: WebVitalRating | null) =>
 const fmtVital = (metric: WebVitalMetric, v: number | null) =>
   v === null ? '—' : metric === 'CLS' ? v.toFixed(2) : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`;
 
+/** "1m 20s" for a duration in milliseconds. */
+function fmtDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+}
+
+/** "SHIFT_SUPERVISOR" → "Shift supervisor". */
+function roleLabel(role: string): string {
+  const words = role.toLowerCase().split('_');
+  return words.map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(' ');
+}
+
 export function ProductAnalytics() {
   const [window, setWindow] = useState('30');
   const days = Number(window);
@@ -90,6 +105,10 @@ export function ProductAnalytics() {
   const adoption = useQuery({
     queryKey: ['product-analytics', 'adoption', days],
     queryFn: () => getAdoption(days),
+  });
+  const behaviour = useQuery({
+    queryKey: ['product-analytics', 'product-events', days],
+    queryFn: () => getProductEvents(days),
   });
 
   const activeSeries = useMemo(
@@ -374,6 +393,59 @@ export function ProductAnalytics() {
                   { key: 'inp', header: 'Tap response', accessor: (r) => r.inpP75, csv: (r) => fmtVital('INP', r.inpP75), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtVital('INP', r.inpP75) },
                   { key: 'cls', header: 'Layout shift', accessor: (r) => r.clsP75, csv: (r) => fmtVital('CLS', r.clsP75), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmtVital('CLS', r.clsP75) },
                   { key: 'ttfb', header: 'Server time', accessor: (r) => r.ttfbP75, csv: (r) => fmtVital('TTFB', r.ttfbP75), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmtVital('TTFB', r.ttfbP75) },
+                ]}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ---- Decisions (ux-upgrade §6) --------------------------------- */}
+      {behaviour.isError ? (
+        <QueryError what="decision measures" query={behaviour} />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Decisions before menus</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-silver">How fast a session reaches its first decision, how many decisions a session takes by role, and how often a search ends on a settings page — the sign that something could not be found.</p>
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+              <MetricCard
+                label="Time to first decision"
+                value={behaviour.isLoading ? '—' : behaviour.data?.firstDecision.avgMs == null ? 'No decisions yet' : fmtDuration(behaviour.data.firstDecision.avgMs)}
+                hint={behaviour.data ? `Average over ${behaviour.data.firstDecision.sessions} session${behaviour.data.firstDecision.sessions === 1 ? '' : 's'} that took one` : 'From sign-in to the first approve, assign or acknowledge'}
+              />
+              <MetricCard
+                label="Decisions a session"
+                value={behaviour.isLoading ? '—' : behaviour.data && behaviour.data.decisionsPerSession.length > 0 ? String(Math.round((behaviour.data.decisionsPerSession.reduce((s, r) => s + r.decisions, 0) / Math.max(1, behaviour.data.decisionsPerSession.reduce((s, r) => s + r.sessions, 0))) * 100) / 100) : '0'}
+                hint="All roles; the table splits it"
+              />
+              <MetricCard
+                label="Searches ending in settings"
+                value={behaviour.isLoading ? '—' : behaviour.data?.settingsSearches.perHundredSessions == null ? String(behaviour.data?.settingsSearches.count ?? 0) : `${behaviour.data.settingsSearches.perHundredSessions} per 100`}
+                hint={behaviour.data ? `${behaviour.data.settingsSearches.count} searches, ${behaviour.data.settingsSearches.sessions} sessions` : 'A ⌘K search whose result opened a settings page'}
+              />
+            </div>
+            {behaviour.isLoading ? (
+              <Skeleton className="h-32" />
+            ) : (behaviour.data?.decisionsPerSession ?? []).length === 0 ? (
+              <EmptyState icon={Activity} title="No sessions recorded yet" description="Sessions and decisions are counted from the first signed-in page after this shipped." />
+            ) : (
+              <DataGrid<NonNullable<typeof behaviour.data>['decisionsPerSession'][number]>
+                id="analytics-decisions"
+                caption="Decisions a session by role"
+                rows={behaviour.data?.decisionsPerSession ?? []}
+                rowKey={(r) => r.role}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'decisions-by-role' }}
+                columnChooser={false}
+                columns={[
+                  { key: 'role', header: 'Role', accessor: (r) => r.role, sortable: true, primary: true, cell: (r) => roleLabel(r.role) },
+                  { key: 'sessions', header: 'Sessions', accessor: (r) => r.sessions, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                  { key: 'decisions', header: 'Decisions', accessor: (r) => r.decisions, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                  { key: 'perSession', header: 'A session', accessor: (r) => r.perSession ?? 0, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => (r.perSession == null ? '—' : String(r.perSession)) },
                 ]}
               />
             )}

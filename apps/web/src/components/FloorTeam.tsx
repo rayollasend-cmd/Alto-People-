@@ -5,6 +5,7 @@ import { ArrowRightLeft, MessageSquare, UserRound, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtTime, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { useI18n } from '@/lib/i18n';
 import {
   cancelShiftCover,
   createShiftCover,
@@ -66,22 +67,24 @@ function shiftNames(windows: FloorTeamWindow[]): string {
 }
 
 function Presence({ since }: { since: string | null }) {
+  const { t } = useI18n();
   return since ? (
     <span className="inline-flex items-center gap-1.5 text-xs text-success">
       <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
-      On the clock since {fmtTime(since)}
+      {t('floorUi.onClockSince', { time: fmtTime(since) })}
     </span>
   ) : (
-    <span className="text-xs text-silver/70">Off the clock</span>
+    <span className="text-xs text-silver/70">{t('floorUi.offClock')}</span>
   );
 }
 
 function MessageButton({ userId, name }: { userId: string; name: string }) {
+  const { t } = useI18n();
   return (
     <Button size="sm" variant="ghost" asChild>
-      <Link to={`/messages?to=${userId}`} aria-label={`Message ${name}`}>
+      <Link to={`/messages?to=${userId}`} aria-label={t('floorUi.messageName', { name })}>
         <MessageSquare className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />
-        <span className="hidden sm:inline">Message</span>
+        <span className="hidden sm:inline">{t('portal.message')}</span>
       </Link>
     </Button>
   );
@@ -90,6 +93,7 @@ function MessageButton({ userId, name }: { userId: string; name: string }) {
 /* ===== Shift supervisor: My floor supervisors ============================ */
 
 export function FloorTeamStrip({ className }: { className?: string }) {
+  const { t } = useI18n();
   const q = useFloorTeam();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -115,10 +119,10 @@ export function FloorTeamStrip({ className }: { className?: string }) {
     setTakingBack(id);
     try {
       await cancelShiftCover(id);
-      toast.success('Taken back — the shift is yours again.');
+      toast.success(t('floorUi.takenBack'));
       await queryClient.invalidateQueries({ queryKey: ['floor', 'team'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not take it back.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.takeBackFailed'));
     } finally {
       setTakingBack(null);
     }
@@ -130,17 +134,17 @@ export function FloorTeamStrip({ className }: { className?: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
             <Users className="h-4 w-4 text-gold" aria-hidden="true" />
-            My floor supervisors
+            {t('floorUi.myFloorSupervisors')}
           </h2>
           {data.team.length > 0 && (
             <Button size="sm" variant="outline" onClick={() => setHandOver({})}>
               <ArrowRightLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Hand over my shift
+              {t('floorUi.handOverMyShift')}
             </Button>
           )}
         </div>
         {data.team.length === 0 ? (
-          <p className="mt-3 text-sm text-silver/70">Nobody reports to you right now.</p>
+          <p className="mt-3 text-sm text-silver/70">{t('floorUi.nobodyReports')}</p>
         ) : (
           <ul className="mt-3 divide-y divide-navy-secondary/60">
             {data.team.map((m) => (
@@ -154,7 +158,7 @@ export function FloorTeamStrip({ className }: { className?: string }) {
                     )}
                     {m.coveringToday && (
                       <Badge variant="accent" size="sm">
-                        Running your shift today
+                        {t('floorUi.runningYourShiftToday')}
                       </Badge>
                     )}
                   </div>
@@ -167,12 +171,12 @@ export function FloorTeamStrip({ className }: { className?: string }) {
         )}
         {data.covers.length > 0 && (
           <div className="mt-3 rounded-md border border-gold/30 bg-gold/[0.05] p-3">
-            <div className="text-2xs font-medium uppercase tracking-wider text-gold">Handed over</div>
+            <div className="text-2xs font-medium uppercase tracking-wider text-gold">{t('floorUi.handedOver')}</div>
             <ul className="mt-1.5 space-y-1.5">
               {data.covers.map((c) => (
                 <li key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                   <span className="min-w-0 flex-1 text-white">
-                    {c.coverName} runs your shift · <span className="text-silver">{span(c.fromDate, c.toDate)}</span>
+                    {t('floorUi.coverRunsYourShift', { name: c.coverName })} · <span className="text-silver">{span(c.fromDate, c.toDate)}</span>
                   </span>
                   <Button
                     size="sm"
@@ -180,7 +184,7 @@ export function FloorTeamStrip({ className }: { className?: string }) {
                     loading={takingBack === c.id}
                     onClick={() => void takeBack(c.id)}
                   >
-                    Take back
+                    {t('floorUi.takeBack')}
                   </Button>
                 </li>
               ))}
@@ -228,13 +232,14 @@ export function HandOverDialog({
   initialTo?: string;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [coverId, setCoverId] = useState<string>(team.length === 1 ? team[0]!.userId : '');
   const [from, setFrom] = useState(initialFrom && initialFrom >= today ? initialFrom : today);
   const [to, setTo] = useState(initialTo && initialTo >= (initialFrom ?? today) ? initialTo : (initialFrom ?? today));
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const backwards = to < from;
-  const whose = lead ? `${lead.name.split(' ')[0]}'s` : 'your';
+  const leadFirst = lead ? (lead.name.split(' ')[0] ?? '') : null;
   const picked = team.find((m) => m.userId === coverId);
 
   const save = async () => {
@@ -247,11 +252,17 @@ export function HandOverDialog({
         note: note.trim() || undefined,
         ...(lead ? { leadUserId: lead.userId } : {}),
       });
-      toast.success(`${picked?.name ?? 'They'} runs ${whose} shift ${from === to ? 'on' : 'from'} ${span(from, to)}.`);
+      const name = picked?.name ?? t('floorUi.coverFallback');
+      const dates = span(from, to);
+      toast.success(
+        leadFirst !== null
+          ? t(from === to ? 'floorUi.handedLeadOn' : 'floorUi.handedLeadFrom', { name, lead: leadFirst, dates })
+          : t(from === to ? 'floorUi.handedYoursOn' : 'floorUi.handedYoursFrom', { name, dates }),
+      );
       onSaved();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not hand it over.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.handOverFailed'));
     } finally {
       setSaving(false);
     }
@@ -261,20 +272,22 @@ export function HandOverDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Hand over {whose} shift</DialogTitle>
+          <DialogTitle>
+            {leadFirst !== null ? t('floorUi.handOverLeadTitle', { name: leadFirst }) : t('floorUi.handOverYourTitle')}
+          </DialogTitle>
           <DialogDescription>
-            On these days, clocking in at the store tablet opens {whose} shift&apos;s SOP for them. They read the
-            previous shift&apos;s notes, run the checklist, hand over, and can&apos;t clock out until it&apos;s submitted.
-            {lead ? ` If ${lead.name.split(' ')[0]} clocks in, it goes back to them.` : ' Clock in yourself and it comes back to you.'}
+            {leadFirst !== null ? t('floorUi.handOverDescLead', { name: leadFirst }) : t('floorUi.handOverDescYours')}
           </DialogDescription>
         </DialogHeader>
 
         {team.length === 0 ? (
-          <p className="text-sm text-silver">No floor supervisor reports to {lead ? lead.name : 'you'} yet.</p>
+          <p className="text-sm text-silver">
+            {lead ? t('floorUi.noFloorSupLead', { name: lead.name }) : t('floorUi.noFloorSupYou')}
+          </p>
         ) : (
           <div className="space-y-4">
             <fieldset>
-              <legend className="mb-1.5 text-xs uppercase tracking-wide text-silver/80">Who runs it</legend>
+              <legend className="mb-1.5 text-xs uppercase tracking-wide text-silver/80">{t('floorUi.whoRunsIt')}</legend>
               <div className="space-y-1.5">
                 {team.map((m) => {
                   const on = coverId === m.userId;
@@ -297,7 +310,7 @@ export function HandOverDialog({
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-white">{m.name}</div>
                         <div className="text-xs2 text-silver/80">
-                          {m.windows.length > 0 ? shiftNames(m.windows) : 'No shift assigned'}
+                          {m.windows.length > 0 ? shiftNames(m.windows) : t('floorUi.noShiftAssigned')}
                         </div>
                       </div>
                     </label>
@@ -308,7 +321,7 @@ export function HandOverDialog({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="handover-from" className="text-xs text-silver">
-                  First day
+                  {t('floorUi.firstDay')}
                 </Label>
                 <Input
                   id="handover-from"
@@ -323,7 +336,7 @@ export function HandOverDialog({
               </div>
               <div>
                 <Label htmlFor="handover-to" className="text-xs text-silver">
-                  Last day
+                  {t('floorUi.lastDay')}
                 </Label>
                 <Input
                   id="handover-to"
@@ -337,13 +350,13 @@ export function HandOverDialog({
             </div>
             <div>
               <Label htmlFor="handover-note" className="text-xs text-silver">
-                A note for them <span className="text-silver/60">(optional)</span>
+                {t('floorUi.noteForThem')} <span className="text-silver/60">{t('floorUi.optional')}</span>
               </Label>
               <Textarea
                 id="handover-note"
                 rows={2}
                 maxLength={500}
-                placeholder="The produce truck is at 6 — check it in before the walk."
+                placeholder={t('floorUi.handOverNotePlaceholder')}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
               />
@@ -353,11 +366,11 @@ export function HandOverDialog({
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           {team.length > 0 && (
             <Button onClick={() => void save()} loading={saving} disabled={!coverId || !from || !to || backwards}>
-              Hand over
+              {t('floorUi.handOver')}
             </Button>
           )}
         </DialogFooter>
@@ -369,6 +382,7 @@ export function HandOverDialog({
 /* ===== Floor supervisor: your shift supervisor =========================== */
 
 export function MyLeadStrip({ className }: { className?: string }) {
+  const { t } = useI18n();
   const q = useFloorTeam();
   const team = q.data;
   const data: FloorSupervisorTeam | null = team && team.role === 'floor' ? team : null;
@@ -381,7 +395,7 @@ export function MyLeadStrip({ className }: { className?: string }) {
       <CardContent className="p-5">
         <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
           <UserRound className="h-4 w-4 text-gold" aria-hidden="true" />
-          Your shift supervisor
+          {t('floorUi.yourShiftSupervisor')}
         </h2>
         {lead ? (
           <div className="mt-3 flex items-center gap-3">
@@ -399,14 +413,14 @@ export function MyLeadStrip({ className }: { className?: string }) {
           </div>
         ) : (
           <p className="mt-3 text-sm text-warning">
-            No shift supervisor assigned to you yet — ask HR or Workforce to assign one.
+            {t('floorUi.noLeadAssigned')}
           </p>
         )}
         {upcoming.length > 0 && (
           <ul className="mt-3 space-y-1 rounded-md border border-gold/30 bg-gold/[0.05] p-3 text-sm">
             {upcoming.map((c) => (
               <li key={c.id} className="text-white">
-                You run {c.leadName.split(' ')[0]}&apos;s shift · <span className="text-silver">{span(c.fromDate, c.toDate)}</span>
+                {t('floorUi.youRunLeadShift', { name: c.leadName.split(' ')[0] ?? '' })} · <span className="text-silver">{span(c.fromDate, c.toDate)}</span>
                 {c.note && <span className="block text-xs text-silver/80">“{c.note}”</span>}
               </li>
             ))}

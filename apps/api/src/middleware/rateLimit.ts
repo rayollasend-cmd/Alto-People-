@@ -1,5 +1,6 @@
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import type { Request } from 'express';
+import { env } from '../config/env.js';
 
 // express-rate-limit 8: an IP fallback must go through ipKeyGenerator so an
 // IPv6 client is keyed by its /56 subnet (one device with rotating addresses
@@ -11,16 +12,14 @@ const ipKey = (req: Request): string => `ip:${req.ip ? ipKeyGenerator(req.ip) : 
 // brute-force defense and is exercised explicitly by auth.test.ts.
 // LOGIN_IP_LIMIT exists for the E2E stack, where every persona in every
 // spec signs in from the one runner address; production never sets it.
-const IP_LIMIT =
-  process.env.NODE_ENV === 'test' ? 100_000 : Number(process.env.LOGIN_IP_LIMIT) || 20;
+const IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : env.LOGIN_IP_LIMIT;
 
 // Brute-force defense matters in prod and is exercised in tests; in
 // development it just gets in the way when iterating on the login flow.
 // LOGIN_EMAIL_LIMIT exists for the design walk's stack, which signs in as
 // each persona several times (desktop, phone, each theme); never set in
 // production.
-const EMAIL_LIMIT =
-  process.env.NODE_ENV === 'development' ? 100_000 : Number(process.env.LOGIN_EMAIL_LIMIT) || 5;
+const EMAIL_LIMIT = process.env.NODE_ENV === 'development' ? 100_000 : env.LOGIN_EMAIL_LIMIT;
 
 /** 20 requests / minute / IP for /auth/login. */
 export const loginIpLimiter = rateLimit({
@@ -345,12 +344,10 @@ export const integrationsApiKeyLimiter = rateLimit({
 // actor, and office NAT would otherwise pool unrelated admins together.
 
 const PII_REVEAL_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 30;
-// Env-overridable (BULK_PII_EXPORTS_PER_HOUR) so an audit-response day
-// can be accommodated from Railway config without a code change.
-const BULK_EXPORT_LIMIT =
-  process.env.NODE_ENV === 'test'
-    ? 100_000
-    : Number(process.env.BULK_PII_EXPORTS_PER_HOUR ?? '') || 5;
+// Env-overridable (BULK_PII_EXPORTS_PER_HOUR, config/env.ts) so an
+// audit-response day can be accommodated from Railway config without a
+// code change.
+const BULK_EXPORT_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : env.BULK_PII_EXPORTS_PER_HOUR;
 
 const perActorKey = (req: Request) =>
   req.user?.id ? `user:${req.user.id}` : ipKey(req);
@@ -477,8 +474,7 @@ export const integrationsAnonLimiter = rateLimit({
 // ---------------------------------------------------------------------------
 // DEFAULT_API_LIMIT exists for the load-test stack, where one runner plays
 // thousands of people per minute; production never sets it.
-const DEFAULT_API_LIMIT =
-  process.env.NODE_ENV === 'test' ? 100_000 : Number(process.env.DEFAULT_API_LIMIT) || 600;
+const DEFAULT_API_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : env.DEFAULT_API_LIMIT;
 
 /** 600 requests / minute / authenticated user across the whole API. */
 export const defaultApiLimiter = rateLimit({

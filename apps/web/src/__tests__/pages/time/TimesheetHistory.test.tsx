@@ -10,6 +10,16 @@ vi.mock('@/lib/api', async (orig) => ({
   apiFetch: vi.fn(),
 }));
 
+// The tenant's modules: Fieldglass is a client's vendor system, so a tenant with no clients (clientPortal off) never sees it.
+const tenantState = vi.hoisted(() => ({ clientPortal: true }));
+vi.mock('@/lib/auth', async (orig) => {
+  const real = await orig<typeof import('@/lib/auth')>();
+  return {
+    ...real,
+    useTenant: () => ({ ...real.DEFAULT_TENANT, moduleOn: (m: string) => (m === 'clientPortal' ? tenantState.clientPortal : true) }),
+  };
+});
+
 import { apiFetch } from '@/lib/api';
 import { TimesheetHistory } from '@/pages/time/TimesheetHistory';
 
@@ -150,6 +160,24 @@ function renderPage(history: TimesheetHistoryResponse = HISTORY) {
 
 beforeEach(() => {
   vi.mocked(apiFetch).mockReset();
+  tenantState.clientPortal = true;
+});
+
+describe('a tenant with no clients', () => {
+  it('sees the hours and the pay periods, and nothing about Fieldglass', async () => {
+    tenantState.clientPortal = false;
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Ann Lee' })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 2, name: /Pay period/ })).toHaveLength(2);
+    expect(screen.queryByText(/Fieldglass/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy Worker ID: WKR1' })).not.toBeInTheDocument();
+    expect(screen.queryByText('WALTTS2 · rev 1')).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Fieldglass' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Week ending 09/11/2026 at Walmart Destin' }));
+    expect(await screen.findByText('10:00 PM → 6:30 AM')).toBeInTheDocument();
+    expect(screen.queryByText('In Fieldglass')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mark resubmitted' })).not.toBeInTheDocument();
+  });
 });
 
 describe('an associate’s timesheet history', () => {

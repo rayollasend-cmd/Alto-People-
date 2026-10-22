@@ -142,7 +142,8 @@ describe('one-click approve and the hire’s pay schedule', () => {
     const user = userEvent.setup();
     renderBody();
     const approve = await screen.findByRole('button', { name: /^Approve$/ });
-    expect(approve).toHaveAttribute('title', expect.stringMatching(/No pay schedule covers this hire/));
+    // Said under the button, in words (role walk HR 21) — not a hover tooltip.
+    expect(approve).toHaveAccessibleDescription(/No pay schedule covers this hire/);
     expect(screen.queryByRole('button', { name: /Approve · starts/ })).not.toBeInTheDocument();
     await user.click(approve);
     const dialog = await screen.findByRole('dialog', { name: 'Approve onboarding' });

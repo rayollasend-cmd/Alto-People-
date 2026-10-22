@@ -17,6 +17,11 @@
  *   RetirementContribution loans and the employer match / safe harbor
  *   the rest of post-tax "Other deductions (before itemizing)"
  *
+ * The derivation lives in src/lib/deductionBackfill.ts; the paystub reads
+ * the same lines in memory for a check that still has none, so this script
+ * is a one-time write for year-to-date per line and the W-2 bases, not a
+ * precondition for a readable stub.
+ *
  * Each line's exemptFrom carries TODAY's federal and state treatment (lib/
  * deductionTaxability) for the check's work state and the person's home
  * state, so the W-2 and state returns rebuild legally correct wage bases.
@@ -25,15 +30,13 @@
  * correct wages either way, and reconcile-payroll.ts shows any difference.
  */
 import { PrismaClient } from '@prisma/client';
-import { LOCAL_TAX_STATES, type TaxabilityContext } from '../src/lib/deductionTaxability.js';
-import { deductionRows, garnishmentLabel, line, reconcile, type DeductionLine } from '../src/lib/deductionLines.js';
-import { readDeferrals } from '../src/lib/retirementDeferrals.js';
+import { deriveLegacyDeductionLines } from '../src/lib/deductionBackfill.js';
+import { deductionRows } from '../src/lib/deductionLines.js';
 
 const prisma = new PrismaClient();
 const apply = process.argv.includes('--apply');
 const yearArg = process.argv.indexOf('--year');
 const year = yearArg > -1 ? Number(process.argv[yearArg + 1]) : null;
-const r2 = (n: number) => Math.round(n * 100) / 100;
 
 async function main() {
   const items = await prisma.payrollItem.findMany({
@@ -63,49 +66,8 @@ async function main() {
   let written = 0;
   let lineCount = 0;
   for (const it of items) {
-    const states = [it.taxState, it.associate.state].filter((s): s is string => !!s).map((s) => s.toUpperCase());
-    const ctx: TaxabilityContext = { workStates: it.taxState ? [it.taxState.toUpperCase()] : [], residentState: it.associate.state?.toUpperCase() ?? null, localApplies: states.some((s) => LOCAL_TAX_STATES.has(s)) };
-    const d = readDeferrals(it.deferrals, Number(it.preTaxRetirement));
-    const lines: DeductionLine[] = [];
-    const add = (l: DeductionLine) => {
-      if (l.employeeAmount !== 0 || l.employerAmount !== 0) lines.push(l);
-    };
-    add(line('RET_401K', { employee: d.pre401k }, ctx));
-    add(line('RET_403B', { employee: d.pre403b }, ctx));
-    add(line('HSA', { employee: d.hsa }, ctx));
-    add(line('HEALTH_FSA', { employee: d.fsa }, ctx));
-    add(line('DCAP', { employee: d.dcap }, ctx));
-    const named = r2(d.pre401k + d.pre403b + d.hsa + d.fsa + d.dcap);
-    const otherPre = r2(Number(it.preTaxDeductions) - named);
-    if (otherPre > 0) add(line('MEDICAL', { employee: otherPre }, ctx, { label: 'Health & benefits (before itemizing)', w2Box12Code: null }));
-    add(line('ER_TRUMP_ACCOUNT', { employer: d.trumpAccountEmployer }, ctx));
-
-    add(line('ROTH_401K', { employee: d.roth401k }, ctx));
-    add(line('ROTH_403B', { employee: d.roth403b }, ctx));
-    const [garns, contrib, ewa] = await Promise.all([
-      prisma.garnishmentDeduction.findMany({
-        where: { payrollRunId: it.payrollRunId, garnishment: { associateId: it.associateId } },
-        select: { amount: true, adminFee: true, garnishmentId: true, garnishment: { select: { kind: true, caseNumber: true, state: true, agencyName: true } } },
-      }),
-      prisma.retirementContribution.findMany({ where: { payrollItemId: it.id }, select: { employerMatch: true, safeHarbor: true, loanRepayments: true, planId: true } }),
-      prisma.earnedWageAdvance.findMany({ where: { associateId: it.associateId, recoveryLog: { array_contains: [{ runId: it.payrollRunId }] } }, select: { id: true, recoveryLog: true } }),
-    ]);
-    for (const g of garns) {
-      add(line('GARNISHMENT', { employee: Number(g.amount) }, ctx, { sourceType: 'Garnishment', sourceId: g.garnishmentId, label: garnishmentLabel(g.garnishment) }));
-      add(line('GARNISHMENT_FEE', { employee: Number(g.adminFee) }, ctx, { sourceType: 'Garnishment', sourceId: g.garnishmentId }));
-    }
-    for (const c of contrib) {
-      const loans = Array.isArray(c.loanRepayments) ? (c.loanRepayments as Array<{ loanNumber: string; amount: number }>) : [];
-      for (const l of loans) add(line('RET_LOAN', { employee: l.amount }, ctx, { sourceType: 'RetirementLoan', label: `401(k) loan ${l.loanNumber}` }));
-      add(line('ER_401K_MATCH', { employer: r2(Number(c.employerMatch) + Number(c.safeHarbor)) }, ctx, { sourceType: 'RetirementPlan', sourceId: c.planId }));
-    }
-    add(line('RIDES', { employee: r2(it.rideChargesCents / 100) }, ctx, { sourceType: 'RideCharge' }));
-    const ewaCents = ewa.reduce((s, a) => s + (Array.isArray(a.recoveryLog) ? (a.recoveryLog as Array<{ runId: string; cents: number }>) : []).filter((x) => x.runId === it.payrollRunId).reduce((t, x) => t + x.cents, 0), 0);
-    add(line('EWA_RECOVERY', { employee: r2(ewaCents / 100) }, ctx, { sourceType: 'EarnedWageAdvance' }));
-
-    const final = reconcile(lines, { preTax: Number(it.preTaxDeductions), postTax: Number(it.postTaxDeductions) }, ctx).map((l) =>
-      l.code === 'AFTER_TAX_OTHER' && !l.sourceType ? { ...l, label: 'Other deductions (before itemizing)' } : l,
-    );
+    // The same derivation the paystub reads in memory (lib/deductionBackfill).
+    const final = await deriveLegacyDeductionLines(prisma, it);
     if (final.length === 0) continue;
     lineCount += final.length;
     if (written < 5) console.log(`${it.associate.firstName} ${it.associate.lastName} · item ${it.id.slice(0, 8)}: ${final.map((l) => `${l.label} ${l.employeeAmount || l.employerAmount}`).join(', ')}`);

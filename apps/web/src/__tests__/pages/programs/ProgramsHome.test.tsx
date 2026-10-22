@@ -9,11 +9,9 @@ import { AuthContext } from '@/lib/auth';
 
 vi.mock('@/lib/programsApi', () => ({
   listPrograms: vi.fn(),
-  getProgram: vi.fn(),
   createProgram: vi.fn(),
   updateProgram: vi.fn(),
   getAssociateProgram: vi.fn(),
-  listProgramAlerts: vi.fn(),
   listMyProgramAlerts: vi.fn(),
   getAlertSettings: vi.fn(),
   saveAlertSettings: vi.fn(),

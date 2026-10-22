@@ -4,6 +4,7 @@ import { employerFor } from './employment.js';
 import { decryptString } from './crypto.js';
 import type { PaystubData, PaystubEarningLine, PaystubLine } from './paystub.js';
 import { emptyDeferrals, readDeferrals, type DeferralRecord } from './retirementDeferrals.js';
+import { LEGACY_DEDUCTION_SELECT, deriveLegacyDeductionLines } from './deductionBackfill.js';
 
 /**
  * Single source of truth for turning a PayrollItem into the PaystubData
@@ -253,88 +254,29 @@ async function jurisdictionTaxLines(prisma: PrismaLike, item: PaystubItem): Prom
   return { jurisdictions, programs };
 }
 
-/** The grouped lines of a check from before itemized deductions (no PayrollItemDeduction rows). */
-async function legacyDeductionLines(
-  item: PaystubItem,
-  ytd: Record<string, number>,
-  cur: DeferralRecord,
-  dy: { deferrals: DeferralRecord },
-): Promise<{ preTaxDeductions: PaystubLine[]; postTaxDeductions: PaystubLine[] }> {
-  // Pre-tax deductions by kind: retirement, HSA and FSAs from the check's
-  // deferral record; everything else under §125 stays "Health & benefits".
-  const preTaxDeductions: PaystubLine[] = [];
-  const named: Array<[string, keyof DeferralRecord]> = [
-    ['401(k)', 'pre401k'],
-    ['403(b)', 'pre403b'],
-    ['HSA', 'hsa'],
-    ['Health FSA', 'fsa'],
-    ['Dependent care FSA', 'dcap'],
-  ];
-  let namedCur = 0;
-  let namedYtd = 0;
-  for (const [label, k] of named) {
-    const c = cur[k] as number;
-    const yv = dy.deferrals[k] as number;
-    namedCur += c;
-    namedYtd += yv;
-    if (c > 0) preTaxDeductions.push({ label, current: c, ytd: yv });
-  }
-  const otherPreTax = round2(Number(item.preTaxDeductions) - namedCur);
-  if (otherPreTax > 0) preTaxDeductions.push({ label: 'Health & benefits', current: otherPreTax, ytd: round2(ytd.preTax - namedYtd) });
-  // Roth deferrals are post-tax; they get their own lines.
-  const rothLines: PaystubLine[] = [];
-  if (cur.roth401k > 0) rothLines.push({ label: 'Roth 401(k)', current: cur.roth401k, ytd: dy.deferrals.roth401k });
-  if (cur.roth403b > 0) rothLines.push({ label: 'Roth 403(b)', current: cur.roth403b, ytd: dy.deferrals.roth403b });
-  const rothCur = round2(cur.roth401k + cur.roth403b);
-  const rothYtd = round2(dy.deferrals.roth401k + dy.deferrals.roth403b);
-  // Brief 1A-3: van ride charges are their own line — what this check
-  // took, and when the minimum-wage guard held part back, the statement
-  // says so in the label. Other post-tax deductions keep their line.
-  const rideCurrent = round2(item.rideChargesCents / 100);
-  const rideDeferred = round2(item.rideChargesDeferredCents / 100);
-  const guard = (item.rideChargeGuard ?? null) as { minimumWageCents?: number; state?: string } | null;
-  const otherPostTax = round2(Number(item.postTaxDeductions) - rideCurrent);
-  const postTaxDeductions: PaystubLine[] = [...rothLines];
-  if (rideCurrent > 0 || rideDeferred > 0) {
-    const guardNote =
-      rideDeferred > 0 && guard?.minimumWageCents
-        ? ` — $${rideDeferred.toFixed(2)} carried to a later check so pay stays at the ${guard.state && guard.state !== 'FEDERAL' ? guard.state + ' ' : ''}minimum wage of $${(guard.minimumWageCents / 100).toFixed(2)}/h`
-        : '';
-    postTaxDeductions.push({ label: `Van rides${guardNote}`, current: rideCurrent, ytd: ytd.rides });
-  }
-  // Earned-wage advances this check recovered get their own line; the
-  // rest of the post-tax bucket keeps its generic one.
-  const ewaRows = await defaultPrisma.earnedWageAdvance.findMany({
-    where: { associateId: item.associateId, recoveryLog: { array_contains: [{ runId: item.payrollRunId }] } },
-    select: { recoveryLog: true },
-  });
-  const ewaCurrent = round2(
-    ewaRows.reduce((s, r) => {
-      const log = Array.isArray(r.recoveryLog) ? (r.recoveryLog as Array<{ runId: string; cents: number }>) : [];
-      return s + log.filter((l) => l.runId === item.payrollRunId).reduce((x, l) => x + l.cents, 0) / 100;
-    }, 0),
-  );
-  if (ewaCurrent > 0) {
-    postTaxDeductions.push({ label: 'Earned-wage advance repaid', current: ewaCurrent, ytd: ewaCurrent });
-  }
-  const remainingPostTax = round2(otherPostTax - ewaCurrent - rothCur);
-  if (remainingPostTax > 0) {
-    postTaxDeductions.push({ label: 'Post-tax deductions', current: remainingPostTax, ytd: round2(ytd.postTax - ytd.rides - ewaCurrent - rothYtd) });
-  }
-
-
-  return { preTaxDeductions, postTaxDeductions };
-}
-
 const PRE_ORDER = ['RET_401K', 'RET_403B', 'RET_457B', 'MEDICAL', 'DENTAL', 'VISION', 'HSA', 'HEALTH_FSA', 'DCAP', 'LIFE', 'DISABILITY'];
 const POST_ORDER = ['ROTH_401K', 'ROTH_403B', 'RET_LOAN', 'GARNISHMENT', 'GARNISHMENT_FEE', 'UNION_DUES', 'RIDES', 'EWA_RECOVERY', 'AFTER_TAX_OTHER'];
 const ER_ORDER = ['ER_401K_MATCH', 'ER_HEALTH', 'ER_HSA'];
 
+type ItemizedLine = { code: string; category: string; label: string; sourceId: string | null; employeeAmount: Prisma.Decimal | number; employerAmount: Prisma.Decimal | number };
+
+/**
+ * A check's lines: the PayrollItemDeduction rows it has, or — for a check
+ * from before itemizing whose backfill (scripts/backfill-deduction-lines.ts)
+ * has not run — the same lines derived in memory from what it recorded.
+ * The stub itemizes either way; the backfill only makes the lines queryable.
+ */
+async function linesOf(item: Parameters<typeof deriveLegacyDeductionLines>[1] & { deductions: ItemizedLine[] }): Promise<ItemizedLine[]> {
+  if (item.deductions.length > 0) return item.deductions;
+  const derived = await deriveLegacyDeductionLines(defaultPrisma, item);
+  return derived.map((l) => ({ code: l.code, category: l.category, label: l.label, sourceId: l.sourceId, employeeAmount: l.employeeAmount, employerAmount: l.employerAmount }));
+}
+
 /**
  * The check's deduction lines with year-to-date per line: the same plan,
  * order or loan (code + source) summed over this year's paid checks, the
- * same inclusion rule as computePaystubYtd. Run the backfill
- * (scripts/backfill-deduction-lines.ts) so earlier checks count too.
+ * same inclusion rule as computePaystubYtd. Earlier checks with no lines
+ * on file are derived the way the backfill would write them.
  */
 async function itemizedDeductions(prisma: PrismaLike, item: PaystubItem): Promise<{ preTaxDeductions: PaystubLine[]; postTaxDeductions: PaystubLine[]; employer: PaystubLine[] }> {
   const year = item.payrollRun.periodStart.getUTCFullYear();
@@ -345,12 +287,12 @@ async function itemizedDeductions(prisma: PrismaLike, item: PaystubItem): Promis
       id: { not: item.id },
       payrollRun: { status: { not: 'CANCELLED' }, periodStart: { gte: new Date(Date.UTC(year, 0, 1)), lt: item.payrollRun.periodStart } },
     },
-    select: { deductions: { select: { code: true, sourceId: true, employeeAmount: true, employerAmount: true } } },
+    select: { ...LEGACY_DEDUCTION_SELECT, deductions: { select: { code: true, category: true, label: true, sourceId: true, employeeAmount: true, employerAmount: true } } },
   });
   const key = (l: { code: string; sourceId: string | null }) => `${l.code}|${l.sourceId ?? ''}`;
   const ytdBy = new Map<string, { employee: number; employer: number }>();
   for (const row of prior) {
-    for (const l of row.deductions) {
+    for (const l of await linesOf(row)) {
       const k = key(l);
       const v = ytdBy.get(k) ?? { employee: 0, employer: 0 };
       ytdBy.set(k, { employee: round2(v.employee + Number(l.employeeAmount)), employer: round2(v.employer + Number(l.employerAmount)) });
@@ -358,7 +300,7 @@ async function itemizedDeductions(prisma: PrismaLike, item: PaystubItem): Promis
   }
   // Two lines of the same plan or order on one check fold into one row.
   const merged = new Map<string, { code: string; category: string; label: string; employee: number; employer: number; k: string }>();
-  for (const l of item.deductions) {
+  for (const l of await linesOf(item)) {
     const k = key(l);
     const m = merged.get(k);
     if (m) {
@@ -428,11 +370,9 @@ export async function buildPaystubDataFromItem(
   const cur = readDeferrals(item.deferrals, Number(item.preTaxRetirement));
   const dy = await computeDeferralYtd(prisma, item);
   // Itemized (PayrollItemDeduction): every plan, order and loan on its own
-  // line with its own year-to-date. A check from before itemizing keeps the
-  // grouped lines it always had.
-  const itemized = item.deductions.length > 0 ? await itemizedDeductions(prisma, item) : null;
-  const { preTaxDeductions, postTaxDeductions } = itemized ?? (await legacyDeductionLines(item, ytd, cur, dy));
-  const employerContributions = itemized?.employer ?? [];
+  // line with its own year-to-date. A check from before itemizing gets the
+  // same lines derived from what it recorded (lib/deductionBackfill).
+  const { preTaxDeductions, postTaxDeductions, employer: employerContributions } = await itemizedDeductions(prisma, item);
 
   // For the record: the 2026 W-2 Box 12 amounts (OBBBA §§70201, 70202, 70204).
   const informational: PaystubLine[] = [];

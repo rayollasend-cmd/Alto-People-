@@ -1,3 +1,4 @@
+import { requireModule } from '../lib/tenantProfile.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -14,7 +15,9 @@ import { notifyUser } from '../lib/notify.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { buildFieldglassPacket } from '../lib/fieldglassPacket.js';
 import { buildFieldglassQueue, buildFieldglassRoster } from '../lib/fieldglassQueue.js';
-import { billingWeek, marginTrend, payCycle, receivablesAging } from '../lib/financeCockpit.js';
+import { billingWeek, marginTrend, payCycle } from '../lib/financeCockpit.js';
+import { agingReport } from '../lib/books/posting/receivables.js';
+import { AGING_BUCKETS } from '../lib/books/aging.js';
 import { cashForecast } from '../lib/cashForecast.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -43,8 +46,15 @@ import type { SessionUser } from '../types/express.js';
  */
 
 export const financeOverviewRouter = Router();
+// Tenant profile (Brief 2-1b): the margin overview belongs to bill rates; the Fieldglass desk to the client portal.
+// The cash forecast and the close nudge are the company's own books and payroll, always on.
+financeOverviewRouter.use('/finance/overview', requireModule('billRates'));
+financeOverviewRouter.use('/finance/fieldglass', requireModule('clientPortal'));
 
 const DAY_MS = 86_400_000;
+/** The aging report keeps cents; the overview speaks dollars. */
+const round2c = (c: number) => Math.round(c) / 100;
+const cents5 = (b: Record<(typeof AGING_BUCKETS)[number], number>) => Object.fromEntries(AGING_BUCKETS.map((k) => [k, round2c(b[k])])) as Record<(typeof AGING_BUCKETS)[number], number>;
 
 /** A site/region-bound office account works its own people's Fieldglass batons, not the company's. */
 function reachOf(user: SessionUser): { people?: Prisma.AssociateWhereInput } {
@@ -59,7 +69,7 @@ financeOverviewRouter.get(
       const now = new Date();
       const T = tenantIdForWrite();
 
-      const [schedules, inFlightRun, lastDisbursed, pendingEntries, settleAgg, unpaidStatements, paidRecent, draftCount, weekBilled, weekRuns] =
+      const [schedules, inFlightRun, lastDisbursed, pendingEntries, settleAgg, receivables, paidRecent, draftCount, weekBilled, weekRuns] =
         await Promise.all([
           prisma.payrollSchedule.findMany({
             where: { isActive: true, deletedAt: null, tenantId: T },
@@ -101,10 +111,9 @@ financeOverviewRouter.get(
             _count: true,
             _sum: { totalAmount: true },
           }),
-          prisma.clientStatement.findMany({
-            where: { status: 'FINAL', paidAt: null, tenantId: T },
-            select: { finalizedAt: true, dueAt: true, snapshot: true, clientId: true, client: { select: { name: true } } },
-          }),
+          // What clients owe: the Books aging report (lib/books/posting/receivables) — open
+          // balances net of payments, aged by the one definition (lib/books/aging).
+          agingReport(prisma, orgDateKey(now)),
           prisma.clientStatement.findMany({
             where: {
               tenantId: T,
@@ -196,15 +205,6 @@ financeOverviewRouter.get(
         const snap = snapshot as { totals?: { amount?: number } } | null;
         return typeof snap?.totals?.amount === 'number' ? snap.totals.amount : 0;
       };
-      const outstandingTotal = unpaidStatements.reduce(
-        (sum, s) => sum + stAmount(s.snapshot),
-        0,
-      );
-      const oldestUnpaid = unpaidStatements.reduce<Date | null>(
-        (acc, s) =>
-          s.finalizedAt && (!acc || s.finalizedAt < acc) ? s.finalizedAt : acc,
-        null,
-      );
       const payLags = paidRecent
         .filter((s) => s.finalizedAt && s.paidAt)
         .map((s) => (s.paidAt!.getTime() - s.finalizedAt!.getTime()) / DAY_MS);
@@ -223,16 +223,14 @@ financeOverviewRouter.get(
         billingWeek(now, { tenantId: T }),
         marginTrend(now, 8, { tenantId: T }),
       ]);
-      const aging = receivablesAging(
-        unpaidStatements.map((s) => ({
-          clientId: s.clientId,
-          clientName: s.client?.name ?? null,
-          finalizedAt: s.finalizedAt,
-          dueAt: s.dueAt,
-          amount: stAmount(s.snapshot),
-        })),
-        now,
-      );
+      // The receivables figures, each from the same report: the total is the sum of its
+      // statements' open balances, the buckets add up to it, and "oldest" is the largest
+      // days-past-due among them — so the card and the Today list never disagree.
+      const aging = {
+        aging: receivables.totals.buckets,
+        byClient: receivables.rows.slice(0, 5).map((r) => ({ clientId: r.clientId, clientName: r.clientName, amount: round2c(r.open), oldestDays: r.oldestDaysPastDue })),
+        oldestDays: receivables.statements.length ? Math.max(...receivables.statements.map((st) => st.daysPastDue)) : null,
+      };
       // Finance's hold queue — changes to pay accounts and W-4s waiting on
       // a verification call — and the four-week cash picture.
       const [fcPending, fcHeld, cash] = await Promise.all([
@@ -297,21 +295,19 @@ financeOverviewRouter.get(
           total: Number(settleAgg._sum.totalAmount ?? 0),
         },
         receivables: {
-          outstandingTotal: Math.round(outstandingTotal * 100) / 100,
-          outstandingCount: unpaidStatements.length,
-          oldestDays: oldestUnpaid
-            ? Math.floor((now.getTime() - oldestUnpaid.getTime()) / DAY_MS)
-            : null,
+          outstandingTotal: round2c(receivables.totals.open),
+          outstandingCount: receivables.statements.length,
+          oldestDays: aging.oldestDays,
           avgDaysToPay,
           draftStatements: draftCount,
-          aging: aging.aging,
+          aging: cents5(aging.aging),
           byClient: aging.byClient,
         },
         fieldglassQueue,
         fieldglassQueueTotal: fullFieldglassQueue.length,
         payrollCases: { open: casesOpen, assignedToMe: casesMine },
         financialChanges: { pending: fcPending, held: fcHeld, open: fcPending + fcHeld },
-        cash: cash ? { weeks: cash.weeks, totals: cash.totals, from: cash.from, to: cash.to } : null,
+        cash: cash ? { weeks: cash.weeks, totals: cash.totals, from: cash.from, to: cash.to, opening: cash.opening, lowest: cash.lowest, minimumCash: cash.minimumCash } : null,
         billedVsPaid:
           billed > 0 || paidGross > 0
             ? {

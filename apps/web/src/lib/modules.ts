@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import type { Capability } from './roles';
 import type { Role, TenantModule, TenantModules, TermKey } from '@alto-people/shared';
 import { PLATFORM_OPERATOR_TENANT_ID, ROLE_MODULE } from '@alto-people/shared';
+import { groupPayMenu, type PayMenuGroupView } from './payMenu';
 
 export type ModuleKey =
   | 'inbox'
@@ -438,7 +439,6 @@ const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'people',
   'documents',
   'compliance',
-  'hr-cases',
   // Headcount (the requisitions they hire against), the report builder and
   // the internal job board were reachable only by URL (2026-10-17).
   'headcount',
@@ -565,6 +565,9 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   region: 'clientPortal',
   clients: 'clientPortal',
   dircomms: 'clientPortal',
+  // The messenger is the portal's store channels; the agent registry is the agent builder's (the API 404s both the same way).
+  messages: 'clientPortal',
+  agents: 'agentBuilder',
 };
 
 /** The roles that exist only with a module on (shared: the API refuses them too). */
@@ -2235,6 +2238,17 @@ const ROLE_RAIL: Partial<Record<Role, readonly DoorKey[]>> = {
   MARKETING_MANAGER: ['me', 'marketing', 'hire', 'people', 'comms', 'insights'],
 };
 
+/**
+ * Roles whose capabilities say "everything" but whose job is a team: the
+ * doors they work from stay on top, and every other door is kept — whole,
+ * still a door — under one folded group (role walk ops 21: a people
+ * manager saw 135 links, Garnishments and Branding among them). Nothing
+ * is dropped, so every page keeps its way in.
+ */
+const ROLE_FOLD: Partial<Record<Role, { keep: readonly DoorKey[]; label: string }>> = {
+  MANAGER: { keep: ['me', 'team', 'time', 'people'], label: 'Company admin' },
+};
+
 export interface NavDoorView {
   key: DoorKey;
   label: string;
@@ -2243,6 +2257,8 @@ export interface NavDoorView {
   children: ModuleNav[];
   /** One link to the target — see NavDoor.flat. */
   flat?: boolean;
+  /** Sub-headings inside the door (the Pay door's five jobs, lib/payMenu). */
+  groups?: PayMenuGroupView[];
 }
 
 export interface NavShape {
@@ -2251,6 +2267,8 @@ export interface NavShape {
   doors: NavDoorView[];
   /** Visible modules an explicit rail chose to leave out of the menu. */
   dropped: ModuleNav[];
+  /** Doors kept but folded under one group (ROLE_FOLD) — still doors, one tap further. */
+  folded?: { label: string; doors: NavDoorView[] };
 }
 
 /**
@@ -2284,13 +2302,26 @@ export function navShapeFor(
     for (const c of children) used.add(c.key);
     const target = hub ?? children[0];
     if (!target) continue;
-    doors.push({ key: doorKey, label: typeof door.label === 'function' ? door.label(term) : door.label, target, children, ...(door.flat && hub ? { flat: true } : {}) });
+    doors.push({
+      key: doorKey,
+      label: typeof door.label === 'function' ? door.label(term) : door.label,
+      target,
+      children,
+      ...(door.flat && hub ? { flat: true } : {}),
+      ...(doorKey === 'pay' ? { groups: groupPayMenu(children) } : {}),
+    });
   }
   const left = visible.filter((m) => !used.has(m.key));
   // An explicit rail leaves the rest out on purpose. The default rail has
   // a safety net: anything visible that no door named still gets a row.
   if (own) return { rows, doors, dropped: left };
   if (left.length > 0) doors.push({ key: 'more', label: 'More', target: left[0]!, children: left });
+  const fold = ROLE_FOLD[role as Role];
+  if (fold) {
+    const kept = doors.filter((d) => fold.keep.includes(d.key));
+    const rest = doors.filter((d) => !fold.keep.includes(d.key));
+    return { rows, doors: kept, dropped: [], ...(rest.length > 0 ? { folded: { label: fold.label, doors: rest } } : {}) };
+  }
   return { rows, doors, dropped: [] };
 }
 
@@ -2298,10 +2329,15 @@ export function navShapeFor(
 export function doorKeyForPath(shape: NavShape, pathname: string): DoorKey | null {
   const key = moduleKeyForPath(pathname);
   if (!key) return null;
-  for (const d of shape.doors) {
+  for (const d of [...shape.doors, ...(shape.folded?.doors ?? [])]) {
     if (d.target.key === key || d.children.some((c) => c.key === key)) return d.key;
   }
   return null;
+}
+
+/** Every door of a shape, the folded ones included — for coverage checks and search. */
+export function allDoors(shape: NavShape): NavDoorView[] {
+  return [...shape.doors, ...(shape.folded?.doors ?? [])];
 }
 
 /**

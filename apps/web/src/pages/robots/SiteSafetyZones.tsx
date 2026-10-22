@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldAlert, Users } from 'lucide-react';
+import { Pentagon, ShieldAlert, Undo2, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import type { SiteSafetyZoneSummary } from '@alto-people/shared';
+import type { SiteSafetyZoneSummary, ZoneShape } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDateTime } from '@/lib/format';
+import { boundsOf, closesPolygon, polygonValid, round1, shapeLabel, shapePoints, type Point } from '@/lib/robotZones';
 import { createSafetyZone, listSafetyZones, setZoneOccupied, updateSafetyZone } from '@/lib/robotsApi';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
@@ -17,12 +18,126 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 const err = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
-function shapeLine(z: SiteSafetyZoneSummary): string {
-  return z.shape.type === 'rect' ? `Rectangle ${z.shape.w} × ${z.shape.h} at ${z.shape.x}, ${z.shape.y}` : `Polygon, ${z.shape.points.length} points`;
+const shapeLine = (z: SiteSafetyZoneSummary) => shapeLabel(z.shape);
+
+type DrawMode = 'polygon' | 'rect';
+const MODES: { value: DrawMode; label: string }[] = [
+  { value: 'polygon', label: 'Polygon' },
+  { value: 'rect', label: 'Rectangle' },
+];
+
+/**
+ * The site map as a drawing surface: the zones that exist, and the polygon
+ * being drawn. A click adds a vertex; a click on the first vertex (or
+ * "Close shape") closes it; a vertex can be dragged after it is placed.
+ * Units are the commissioning map's own.
+ */
+export function ZoneCanvas({
+  zones,
+  draft,
+  onDraftChange,
+  onClose,
+  drawing,
+}: {
+  zones: SiteSafetyZoneSummary[];
+  draft: Point[];
+  onDraftChange: (next: Point[]) => void;
+  onClose: () => void;
+  drawing: boolean;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const b = useMemo(() => boundsOf([...zones.map((z) => z.shape), ...(draft.length ? [{ type: 'polygon' as const, points: draft.length >= 3 ? draft : [...draft, draft[0]!, draft[0]!] }] : [])]), [zones, draft]);
+  const w = b.maxX - b.minX;
+  const h = b.maxY - b.minY;
+  const tolerance = Math.max(w, h) * 0.03;
+
+  const toMap = (e: { clientX: number; clientY: number }): Point => {
+    const svg = svgRef.current!;
+    const rect = svg.getBoundingClientRect();
+    const x = b.minX + ((e.clientX - rect.left) / Math.max(1, rect.width)) * w;
+    const y = b.minY + ((e.clientY - rect.top) / Math.max(1, rect.height)) * h;
+    return [round1(x), round1(y)];
+  };
+
+  return (
+    <div className="space-y-2">
+      <svg
+        ref={svgRef}
+        viewBox={`${b.minX} ${b.minY} ${w} ${h}`}
+        className={`aspect-square w-full max-w-xl rounded-lg border border-line bg-surface-raised/40 ${drawing ? 'cursor-crosshair' : ''}`}
+        role="img"
+        aria-label={drawing ? 'Site map: click to add a vertex, click the first vertex to close the zone' : 'Site map with its safety zones'}
+        data-testid="zone-canvas"
+        onClick={(e) => {
+          if (!drawing || dragging !== null) return;
+          const p = toMap(e);
+          if (closesPolygon(draft, p, tolerance)) {
+            onClose();
+            return;
+          }
+          onDraftChange([...draft, p]);
+        }}
+        onPointerMove={(e) => {
+          if (dragging === null) return;
+          const p = toMap(e);
+          onDraftChange(draft.map((v, i) => (i === dragging ? p : v)));
+        }}
+        onPointerUp={() => setDragging(null)}
+        onPointerLeave={() => setDragging(null)}
+      >
+        {zones.map((z) => (
+          <g key={z.id}>
+            <polygon points={shapePoints(z.shape)} className={z.guestOccupied ? 'fill-alert/25 stroke-alert' : 'fill-success/15 stroke-success'} strokeWidth={Math.max(w, h) * 0.005} vectorEffect="non-scaling-stroke" />
+            <text x={labelX(z.shape)} y={labelY(z.shape)} fontSize={Math.max(w, h) * 0.035} className="fill-ink" textAnchor="middle">
+              {z.name}
+            </text>
+          </g>
+        ))}
+        {draft.length > 0 && (
+          <g>
+            <polyline points={draft.map(([x, y]) => `${x},${y}`).join(' ')} fill="none" className="stroke-gold" strokeWidth={Math.max(w, h) * 0.006} strokeDasharray={`${Math.max(w, h) * 0.015} ${Math.max(w, h) * 0.01}`} />
+            {draft.map(([x, y], i) => (
+              <circle
+                key={i}
+                cx={x}
+                cy={y}
+                r={Math.max(w, h) * (i === 0 ? 0.02 : 0.014)}
+                className={i === 0 ? 'fill-gold stroke-ink cursor-pointer' : 'fill-surface stroke-gold cursor-move'}
+                strokeWidth={Math.max(w, h) * 0.004}
+                data-testid={`vertex-${i}`}
+                onPointerDown={(e) => {
+                  if (i === 0 && draft.length >= 3) return; // the first vertex closes on click
+                  e.stopPropagation();
+                  setDragging(i);
+                }}
+                onClick={(e) => {
+                  if (i === 0 && draft.length >= 3) {
+                    e.stopPropagation();
+                    onClose();
+                  }
+                }}
+              />
+            ))}
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function labelX(shape: ZoneShape): number {
+  if (shape.type === 'rect') return shape.x + shape.w / 2;
+  return shape.points.reduce((s, p) => s + p[0], 0) / shape.points.length;
+}
+function labelY(shape: ZoneShape): number {
+  if (shape.type === 'rect') return shape.y + shape.h / 2;
+  return shape.points.reduce((s, p) => s + p[1], 0) / shape.points.length;
 }
 
 /**
@@ -53,12 +168,20 @@ export function SiteSafetyZones() {
     onError: (e) => toast.error(err(e, 'Could not update the zone.')),
   });
   const [name, setName] = useState('');
+  const [mode, setMode] = useState<DrawMode>('polygon');
   const [rect, setRect] = useState({ x: '0', y: '0', w: '10', h: '10' });
+  const [draft, setDraft] = useState<Point[]>([]);
+  const [closed, setClosed] = useState(false);
+  const shape = (): ZoneShape =>
+    mode === 'rect' ? { type: 'rect', x: Number(rect.x), y: Number(rect.y), w: Number(rect.w), h: Number(rect.h) } : { type: 'polygon', points: draft };
+  const shapeReady = mode === 'rect' ? Number(rect.w) > 0 && Number(rect.h) > 0 : closed && polygonValid(draft);
   const create = useMutation({
-    mutationFn: () => createSafetyZone(locationId, { name: name.trim(), shape: { type: 'rect', x: Number(rect.x), y: Number(rect.y), w: Number(rect.w), h: Number(rect.h) } }),
+    mutationFn: () => createSafetyZone(locationId, { name: name.trim(), shape: shape() }),
     onSuccess: () => {
       toast.success('Zone added.');
       setName('');
+      setDraft([]);
+      setClosed(false);
       void invalidate();
     },
     onError: (e) => toast.error(err(e, 'Could not add the zone.')),
@@ -118,15 +241,47 @@ export function SiteSafetyZones() {
       {canManage && (
         <Card className="mt-5">
           <CardContent className="space-y-3">
-            <SectionTitle title="Add a zone" description="A rectangle on the commissioning map, in its units. Polygons come through the API." />
-            <div className="grid gap-3 sm:grid-cols-5">
-              <Field label="Name" required className="sm:col-span-1">{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Pool deck" />}</Field>
-              {(['x', 'y', 'w', 'h'] as const).map((k) => (
-                <Field key={k} label={k === 'w' ? 'Width' : k === 'h' ? 'Height' : k.toUpperCase()}>{(fp) => <Input {...fp} type="number" value={rect[k]} onChange={(e) => setRect((r) => ({ ...r, [k]: e.target.value }))} />}</Field>
-              ))}
-            </div>
+            <SectionTitle title="Add a zone" description="Draw it on the commissioning map, in its units: a polygon around the lobby bar, or a rectangle by its numbers." />
+            <SegmentedControl ariaLabel="Zone shape" options={MODES} value={mode} onChange={(m) => { setMode(m); setDraft([]); setClosed(false); }} />
+            {mode === 'polygon' ? (
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem]">
+                <ZoneCanvas zones={zones} draft={draft} drawing={!closed} onDraftChange={(next) => setDraft(next)} onClose={() => setClosed(true)} />
+                <div className="space-y-3">
+                  <Field label="Name" required>{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Pool deck" />}</Field>
+                  <p className="text-xs text-ink-muted" aria-live="polite">
+                    {draft.length === 0
+                      ? 'Click the map to place the first corner.'
+                      : closed
+                        ? `${draft.length} corners, closed. Drag a corner to adjust it, or add the zone.`
+                        : draft.length < 3
+                          ? `${draft.length} of at least 3 corners.`
+                          : `${draft.length} corners. Click the first corner, or Close shape, to finish.`}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={() => setClosed(true)} disabled={closed || !polygonValid(draft)}>
+                      <Pentagon className="h-3.5 w-3.5" />
+                      Close shape
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => { setDraft((d) => d.slice(0, -1)); setClosed(false); }} disabled={draft.length === 0}>
+                      <Undo2 className="h-3.5 w-3.5" />
+                      Undo corner
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => { setDraft([]); setClosed(false); }} disabled={draft.length === 0}>
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-5">
+                <Field label="Name" required className="sm:col-span-1">{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Pool deck" />}</Field>
+                {(['x', 'y', 'w', 'h'] as const).map((k) => (
+                  <Field key={k} label={k === 'w' ? 'Width' : k === 'h' ? 'Height' : k.toUpperCase()}>{(fp) => <Input {...fp} type="number" value={rect[k]} onChange={(e) => setRect((r) => ({ ...r, [k]: e.target.value }))} />}</Field>
+                ))}
+              </div>
+            )}
             <div className="flex justify-end">
-              <Button onClick={() => create.mutate()} loading={create.isPending} disabled={!name.trim() || !(Number(rect.w) > 0) || !(Number(rect.h) > 0)}>
+              <Button onClick={() => create.mutate()} loading={create.isPending} disabled={!name.trim() || !shapeReady}>
                 Add zone
               </Button>
             </div>

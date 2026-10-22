@@ -103,7 +103,7 @@ describe('pay before payday', () => {
 
 describe('the guided close', () => {
   const close: PayrollClose = {
-    run: { id: 'r1', status: 'DRAFT', kind: 'REGULAR', clientName: 'Coastal Resort', periodStart: '2026-10-10', periodEnd: '2026-10-23', totalGross: 4000, totalNet: 3200, totalEmployerTax: 300, finalizedAt: null, approvedAt: null, approvedByEmail: null, disbursedAt: null, qboJournalEntryId: null, qboSyncError: null },
+    run: { id: 'r1', status: 'DRAFT', kind: 'REGULAR', clientName: 'Coastal Resort', periodStart: '2026-10-10', periodEnd: '2026-10-23', totalGross: 4000, totalNet: 3200, totalEmployerTax: 300, finalizedAt: null, approvedAt: null, approvedByEmail: null, disbursedAt: null },
     approvalRequired: false,
     items: { pending: 3, disbursed: 0, held: 0, failed: 0, voided: 0 },
     heldItems: [],
@@ -113,14 +113,14 @@ describe('the guided close', () => {
     exceptions: { counts: { blocking: 1, warning: 0, info: 0 }, rows: [{ associateName: 'Pat Nguyen', kind: 'UNSUPPORTED_STATE', severity: 'BLOCKING', message: 'State income tax is not supported for AR.' }] },
     deposit: null,
     remittances: [],
-    quickbooks: { connected: false, glByCostCenter: false },
+    quickbooks: { connected: false, status: null, companyName: null },
     steps: [
       { key: 'readiness', label: 'Readiness', state: 'blocked', blockers: 1, warnings: 0, to: '/payroll/readiness' },
       { key: 'exceptions', label: 'Exceptions', state: 'blocked', blockers: 1, warnings: 0, to: '/payroll?run=r1' },
       { key: 'approve', label: 'Finalize', state: 'blocked', blockers: 0, warnings: 0, to: '/payroll?run=r1' },
       { key: 'disburse', label: 'Disburse', state: 'todo', blockers: 0, warnings: 0, to: '/payroll?run=r1' },
       { key: 'deposits', label: 'Tax deposit', state: 'todo', blockers: 0, warnings: 0, to: '/payroll/tax' },
-      { key: 'quickbooks', label: 'QuickBooks', state: 'skip', blockers: 0, warnings: 0, to: '/clients' },
+      { key: 'quickbooks', label: 'QuickBooks', state: 'skip', blockers: 0, warnings: 0, to: '/books/quickbooks' },
     ],
   };
 
@@ -159,6 +159,42 @@ describe('the cash forecast', () => {
     expect(screen.getByText('Payroll · Estimated')).toBeInTheDocument();
     expect(screen.getAllByText('-$1,200.00').length).toBeGreaterThan(0);
     expect(apiFetch).toHaveBeenCalledWith('/finance/cash-forecast?weeks=4');
+  });
+});
+
+describe('the cash forecast from the books (audit #18, finance walk 2)', () => {
+  it('starts at the cash in the books, lists the bills, flags the payday nobody is scheduled for, and calls out the floor', async () => {
+    const weeks = [
+      { weekStart: '2026-10-21', weekEnd: '2026-10-27', inflow: 0, outflow: 370, net: -370, cumulative: -370, balance: 4630 },
+      { weekStart: '2026-10-28', weekEnd: '2026-11-03', inflow: 0, outflow: 3490.2, net: -3490.2, cumulative: -3860.2, balance: 1139.8 },
+    ];
+    const lines = [
+      { date: '2026-10-21', kind: 'BILL', label: 'Shell Fleet — invoice F-0 (past due)', amount: -120, confidence: 'overdue', linkUrl: '/books/bills/b0' },
+      { date: '2026-10-24', kind: 'BILL', label: 'Shell Fleet — invoice F-1', amount: -250, confidence: 'scheduled', linkUrl: '/books/bills/b1' },
+      { date: '2026-10-30', kind: 'PAYROLL', label: 'Payroll 2026-10-10 – 2026-10-23 (projected)', amount: -3490.2, confidence: 'estimated', linkUrl: '/payroll', warning: '0 people on schedule — the last run’s net' },
+    ];
+    vi.mocked(apiFetch).mockResolvedValue({
+      generatedAt: '2026-10-21T12:00:00Z',
+      from: '2026-10-21',
+      to: '2026-11-03',
+      opening: { balance: 5000, accounts: 2, asOf: '2026-10-21' },
+      minimumCash: 2000,
+      lowest: { weekStart: '2026-10-28', balance: 1139.8, belowMinimum: true },
+      weeks,
+      lines,
+      totals: { inflow: 0, outflow: 3860.2, net: -3860.2 },
+    } as never);
+    renderAs('FINANCE_ACCOUNTANT', <CashForecastPage />);
+    expect(await screen.findByText('Shell Fleet — invoice F-1')).toBeInTheDocument();
+    expect(screen.getByText('Cash today').parentElement).toHaveTextContent('$5,000.00');
+    expect(screen.getAllByText('Low point')[0]!.parentElement).toHaveTextContent('$1,139.80');
+    expect(screen.getByRole('status')).toHaveTextContent('under the $2,000.00 floor');
+    expect(screen.getAllByText('Vendor bill · Past due').length).toBe(1);
+    expect(screen.getByText(/0 people on schedule — the last run’s net/)).toBeInTheDocument();
+    // The sum shown equals the sum of the rows: money out is every line out, and each week's balance is cash today plus its running total.
+    expect(lines.reduce((s, l) => s + l.amount, 0)).toBeCloseTo(-3860.2, 2);
+    expect(screen.getAllByText('Out')[0]!.parentElement).toHaveTextContent('$3,860.20');
+    for (const w of weeks) expect(w.balance).toBeCloseTo(5000 + w.cumulative, 2);
   });
 });
 

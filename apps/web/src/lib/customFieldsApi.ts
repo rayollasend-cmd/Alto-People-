@@ -79,13 +79,6 @@ export function deleteDefinition(id: string): Promise<void> {
   return apiFetch(`/custom-fields/definitions/${id}`, { method: 'DELETE' });
 }
 
-export function listValues(
-  entityType: CustomFieldEntity,
-  entityId: string,
-): Promise<{ values: CustomFieldValueRow[] }> {
-  return apiFetch(`/custom-fields/values/${entityType}/${entityId}`);
-}
-
 export function setValues(
   entityType: CustomFieldEntity,
   entityId: string,

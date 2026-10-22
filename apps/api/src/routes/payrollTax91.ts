@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { payrollMoneyGate } from '../lib/payrollMoney.js';
 import { employerByEin, employersForYear } from '../lib/employment.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -72,6 +73,10 @@ import { assertInTenant } from '../lib/sameTenant.js';
  */
 
 export const payrollTax91Router = Router();
+
+// W-2s, 1099s, returns and garnishments carry company-wide amounts: a
+// site-bound office account is refused on them (lib/payrollMoney).
+payrollTax91Router.use(payrollMoneyGate([/^(?!\/tax-forms(\/|$)|\/garnishments(\/|$))/]));
 
 // process:payroll, NOT view:payroll — view:payroll is what every ASSOCIATE
 // holds for their own paystubs, and this router serves employer-side tax

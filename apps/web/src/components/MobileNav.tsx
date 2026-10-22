@@ -9,6 +9,7 @@ import {
   useActiveNavPath,
   visibleModules,
   type ModuleNav,
+  type NavDoorView,
 } from '@/lib/modules';
 import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
@@ -170,6 +171,62 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const pinnedRows = pinnedModules.filter(notInTabBar);
   const recentRows = recentModules.filter(notInTabBar);
   const doors = user?.role !== 'CLIENT_PORTAL' ? shape.doors : [];
+  // A manager's company-wide doors (ops 21): kept, under their own heading.
+  const folded = user?.role !== 'CLIENT_PORTAL' ? shape.folded : undefined;
+
+  const renderDoor = (door: NavDoorView) => {
+            const single = door.flat || (door.children.length === 1 && door.target.key === door.children[0]!.key);
+            if (single) {
+              if (!notInTabBar(door.target)) return null;
+              return <MobileLink key={door.key} to={door.target.path} active={activePath === door.target.path} label={door.label} icon={DOOR_ICONS[door.key]} badge={badgeFor(door.target)} />;
+            }
+            const items = (door.children.includes(door.target) ? door.children : [door.target, ...door.children]).filter(notInTabBar);
+            if (items.length === 0) return null;
+            const total = items.reduce((n, m) => n + (badgeFor(m) ?? 0), 0);
+            const holdsActive = items.some((m) => m.path === activePath);
+            const isOpen = openDoors.has(door.key) || (holdsActive && !closedDoors.has(door.key));
+            return (
+              <div key={door.key}>
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={(e) => {
+                    // Opening a section doesn't close the sheet.
+                    e.stopPropagation();
+                    toggleDoor(door.key, isOpen);
+                  }}
+                  className={cn(
+                    'mx-2 my-0.5 flex min-h-12 w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
+                    holdsActive ? 'text-ink' : 'text-silver hover:text-ink hover:bg-navy-secondary/50',
+                  )}
+                >
+                  {(() => {
+                    const Icon = DOOR_ICONS[door.key];
+                    return Icon ? <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /> : null;
+                  })()}
+                  <span className="truncate font-medium">{door.label}</span>
+                  {!isOpen && total > 0 && <CountPill n={total} />}
+                  <ChevronDown className={cn('h-4 w-4 shrink-0 text-silver/70 transition-transform', !isOpen || total > 0 ? 'ml-1' : 'ml-auto', isOpen && 'rotate-180', !(!isOpen && total > 0) && 'ml-auto')} aria-hidden="true" />
+                </button>
+                {isOpen && (
+                  <div className="mb-1 ml-6 border-l border-navy-secondary pl-1">
+                    {(door.groups ?? [{ key: 'all', label: '', children: items }]).map((g) => {
+                      const shown = g.children.filter((m) => items.includes(m));
+                      if (shown.length === 0) return null;
+                      return (
+                        <div key={g.key}>
+                          {g.label && <div className="px-3 pt-2 pb-0.5 text-2xs font-semibold uppercase tracking-widest text-silver/60">{g.label}</div>}
+                          {shown.map((m) => (
+                            <MobileLink key={m.key} to={m.path} active={activePath === m.path} label={m.label} icon={MODULE_ICONS[m.key]} badge={badgeFor(m)} />
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          };
 
   return (
     <div
@@ -244,50 +301,12 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             </SheetGroup>
           )}
           {doors.length > 0 && <div className="mt-2" />}
-          {doors.map((door) => {
-            const single = door.flat || (door.children.length === 1 && door.target.key === door.children[0]!.key);
-            if (single) {
-              if (!notInTabBar(door.target)) return null;
-              return <MobileLink key={door.key} to={door.target.path} active={activePath === door.target.path} label={door.label} icon={DOOR_ICONS[door.key]} badge={badgeFor(door.target)} />;
-            }
-            const items = (door.children.includes(door.target) ? door.children : [door.target, ...door.children]).filter(notInTabBar);
-            if (items.length === 0) return null;
-            const total = items.reduce((n, m) => n + (badgeFor(m) ?? 0), 0);
-            const holdsActive = items.some((m) => m.path === activePath);
-            const isOpen = openDoors.has(door.key) || (holdsActive && !closedDoors.has(door.key));
-            return (
-              <div key={door.key}>
-                <button
-                  type="button"
-                  aria-expanded={isOpen}
-                  onClick={(e) => {
-                    // Opening a section doesn't close the sheet.
-                    e.stopPropagation();
-                    toggleDoor(door.key, isOpen);
-                  }}
-                  className={cn(
-                    'mx-2 my-0.5 flex min-h-12 w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
-                    holdsActive ? 'text-ink' : 'text-silver hover:text-ink hover:bg-navy-secondary/50',
-                  )}
-                >
-                  {(() => {
-                    const Icon = DOOR_ICONS[door.key];
-                    return Icon ? <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /> : null;
-                  })()}
-                  <span className="truncate font-medium">{door.label}</span>
-                  {!isOpen && total > 0 && <CountPill n={total} />}
-                  <ChevronDown className={cn('h-4 w-4 shrink-0 text-silver/70 transition-transform', !isOpen || total > 0 ? 'ml-1' : 'ml-auto', isOpen && 'rotate-180', !(!isOpen && total > 0) && 'ml-auto')} aria-hidden="true" />
-                </button>
-                {isOpen && (
-                  <div className="mb-1 ml-6 border-l border-navy-secondary pl-1">
-                    {items.map((m) => (
-                      <MobileLink key={m.key} to={m.path} active={activePath === m.path} label={m.label} icon={MODULE_ICONS[m.key]} badge={badgeFor(m)} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {doors.map(renderDoor)}
+          {folded && folded.doors.length > 0 && (
+            <SheetGroup title={folded.label}>
+              {folded.doors.map(renderDoor)}
+            </SheetGroup>
+          )}
           <DisplayAndLanguage lang={lang} setLang={setLang} preference={preference} setTheme={setTheme} />
         </nav>
       </aside>

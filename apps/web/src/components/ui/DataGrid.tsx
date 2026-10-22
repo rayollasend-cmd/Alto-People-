@@ -734,10 +734,16 @@ function GridCore<T>({
   };
 
   /* ---- one card ------------------------------------------------------ */
+  // Finance walk 20: on a phone every column keeps its label. A cell that
+  // holds its own control (stopRowClick) but has a header — a readiness ✗
+  // link, a status toggle — is a labelled pair inside the card like any
+  // other field; only a true actions column (no header, or keyed
+  // "actions") goes to the card's footer, still inside its border.
+  const isActionCol = (c: GridColumn<T>) => Boolean(c.stopRowClick) && (!String(c.header ?? '').trim() || c.key === 'actions');
   const cardBody = (row: T, child: boolean) => {
     const key = rowKey(row);
     const metaCols = visible.filter((c) => c.cardMeta && c !== primary);
-    const fields = visible.filter((c) => c !== primary && !c.cardMeta && !c.stopRowClick);
+    const fields = visible.filter((c) => c !== primary && !c.cardMeta && !isActionCol(c));
     return (
       <>
         <div className="flex items-start justify-between gap-2">
@@ -798,9 +804,9 @@ function GridCore<T>({
 
   const renderCard = (row: T) => {
     const key = rowKey(row);
-    // Columns that hold their own controls go under the card, outside
-    // anything that opens the row — a button never nests inside another.
-    const actionCols = visible.filter((c) => c.stopRowClick && c !== primary && c.cell);
+    // The row's actions go in the card's footer: inside its border, above
+    // the open-row overlay — a button never nests inside another.
+    const actionCols = visible.filter((c) => isActionCol(c) && c !== primary && c.cell);
     const clickable = Boolean(onRowClick);
     const isOpen = Boolean(expandable) && expanded.has(key);
     const children = subRows?.(row) ?? [];
@@ -834,9 +840,8 @@ function GridCore<T>({
               className="absolute -inset-px rounded-lg transition-shadow hover:ring-1 hover:ring-inset hover:ring-gold/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             />
           )}
-        </div>
-        {(actionCols.length > 0 || expandable) && (
-          <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2 px-1">
+          {(actionCols.length > 0 || expandable) && (
+          <div className="relative z-10 mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-navy-secondary pt-2" data-card-footer="">
             {expandable && (
               <Button
                 variant="ghost"
@@ -857,7 +862,8 @@ function GridCore<T>({
               <React.Fragment key={c.key}>{c.cell!(row)}</React.Fragment>
             ))}
           </div>
-        )}
+          )}
+        </div>
         {children.length > 0 && (
           <ul className="ml-3 mt-1.5 space-y-1.5 border-l border-navy-secondary pl-2" aria-label={`Under ${primary.accessor(row) ?? 'row'}`}>
             {children.map((c) => (

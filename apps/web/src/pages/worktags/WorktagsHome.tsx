@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Tags } from 'lucide-react';
+import { BarChart3, Plus, Tags, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
+  assignWorktags,
   createCategory,
   createWorktag,
   deleteWorktag,
+  getAssignments,
   listCategories,
   listWorktags,
+  removeAssignment,
+  worktagsReport,
   type Worktag,
   type WorktagCategory,
+  type WorktagEntityKind,
 } from '@/lib/worktags95Api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -41,7 +46,15 @@ import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
-type Tab = 'categories' | 'values';
+type Tab = 'categories' | 'values' | 'assign' | 'report';
+
+const ENTITY_KINDS: Array<{ value: WorktagEntityKind; label: string }> = [
+  { value: 'TIME_ENTRY', label: 'Time entry' },
+  { value: 'PAYROLL_ITEM', label: 'Payroll item' },
+  { value: 'EXPENSE', label: 'Expense' },
+  { value: 'PURCHASE_ORDER', label: 'Purchase order' },
+];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** "GL Account" → "gl_account" — the machine-key format the API enforces. */
 const slugifyKey = (s: string) =>
@@ -67,6 +80,8 @@ export function WorktagsHome() {
         <TabsList>
           <TabsTrigger value="categories">Categories</TabsTrigger>
           <TabsTrigger value="values">Values</TabsTrigger>
+          <TabsTrigger value="assign">Tag a record</TabsTrigger>
+          <TabsTrigger value="report">Report</TabsTrigger>
         </TabsList>
         <TabsContent value="categories">
           <CategoriesTab canManage={canManage} />
@@ -74,8 +89,251 @@ export function WorktagsHome() {
         <TabsContent value="values">
           <ValuesTab canManage={canManage} />
         </TabsContent>
+        <TabsContent value="assign">
+          <AssignTab />
+        </TabsContent>
+        <TabsContent value="report">
+          <ReportTab />
+        </TabsContent>
       </Tabs>
     </ListTemplate>
+  );
+}
+
+/**
+ * Tag one record — a time entry, a payroll item, an expense, a purchase
+ * order — with one value per category. The categories and values existed;
+ * nothing was ever tagged, so the report below had nothing to count.
+ */
+export function AssignTab() {
+  const [entityKind, setEntityKind] = useState<WorktagEntityKind>('TIME_ENTRY');
+  const [entityId, setEntityId] = useState('');
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const cats = useQuery({ queryKey: ['worktags', 'categories'], queryFn: () => listCategories() });
+  const tags = useQuery({ queryKey: ['worktags', 'values', 'all'], queryFn: () => listWorktags() });
+  const current = useQuery({
+    queryKey: ['worktags', 'assignments', entityKind, loadedId],
+    queryFn: () => getAssignments(entityKind, loadedId!),
+    enabled: Boolean(loadedId),
+  });
+  const active = (cats.data?.categories ?? []).filter((c) => c.isActive);
+  const byCategory = useMemo(() => {
+    const m = new Map<string, Worktag[]>();
+    for (const t of tags.data?.worktags ?? []) m.set(t.categoryId, [...(m.get(t.categoryId) ?? []), t]);
+    return m;
+  }, [tags.data]);
+  // What the record holds now is the starting point of each pick.
+  useEffect(() => {
+    const assigned = current.data?.assignments ?? [];
+    const next: Record<string, string> = {};
+    for (const a of assigned) {
+      const t = tags.data?.worktags.find((x) => x.id === a.worktagId);
+      if (t) next[t.categoryId] = t.id;
+    }
+    setPicks(next);
+  }, [current.data, tags.data]);
+
+  const load = () => {
+    const id = entityId.trim();
+    if (!UUID_RE.test(id)) {
+      toast.error('That is not a record id — paste the id from the record itself.');
+      return;
+    }
+    setLoadedId(id);
+  };
+  const save = async () => {
+    if (!loadedId) return;
+    const worktagIds = Object.values(picks).filter(Boolean);
+    if (worktagIds.length === 0) {
+      toast.error('Pick at least one value.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await assignWorktags({ entityKind, entityId: loadedId, worktagIds });
+      toast.success(`${r.assigned} tag${r.assigned === 1 ? '' : 's'} saved on the record.`);
+      await current.refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not tag the record.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async (id: string) => {
+    try {
+      await removeAssignment(id);
+      toast.success('Tag removed.');
+      await current.refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not remove the tag.');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="grid gap-3 py-4 sm:grid-cols-[12rem_1fr_auto] sm:items-end">
+          <div>
+            <Label htmlFor="wt-kind">Record</Label>
+            <Select
+              id="wt-kind"
+              className="mt-1"
+              value={entityKind}
+              onChange={(e) => {
+                setEntityKind(e.target.value as WorktagEntityKind);
+                setLoadedId(null);
+              }}
+            >
+              {ENTITY_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="wt-id">Record id</Label>
+            <Input
+              id="wt-id"
+              className="mt-1 font-mono text-xs"
+              value={entityId}
+              onChange={(e) => setEntityId(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && load()}
+              placeholder="Paste the id from the time entry, payroll item or expense"
+            />
+          </div>
+          <Button variant="outline" onClick={load}>
+            Open
+          </Button>
+        </CardContent>
+      </Card>
+      {loadedId && (
+        <Card>
+          <CardContent className="space-y-4 py-4">
+            {cats.isError || tags.isError || current.isError ? (
+              <ErrorBanner>Could not load the worktags for this record.</ErrorBanner>
+            ) : active.length === 0 ? (
+              <EmptyState icon={Tags} title="No categories" description="Create a category and its values first — then tag records with them here." />
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {active.map((c) => (
+                    <div key={c.id}>
+                      <Label htmlFor={`wt-cat-${c.id}`}>
+                        {c.label}
+                        {c.isRequired ? ' (required)' : ''}
+                      </Label>
+                      <Select
+                        id={`wt-cat-${c.id}`}
+                        className="mt-1"
+                        value={picks[c.id] ?? ''}
+                        onChange={(e) => setPicks((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                      >
+                        <option value="">Not tagged</option>
+                        {(byCategory.get(c.id) ?? []).map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.value}
+                            {t.code ? ` (${t.code})` : ''}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end">
+                  <Button onClick={() => void save()} loading={saving} disabled={saving}>
+                    Save tags
+                  </Button>
+                </div>
+                {(current.data?.assignments.length ?? 0) > 0 && (
+                  <div>
+                    <div className="mb-1.5 text-xs text-ink-muted">On the record now</div>
+                    <ul className="flex flex-wrap gap-1.5" aria-label="Tags on this record">
+                      {current.data!.assignments.map((a) => (
+                        <li key={a.id}>
+                          <Badge variant="outline" className="gap-1 pr-1">
+                            {a.categoryLabel}: {a.value}
+                            <button
+                              type="button"
+                              className="rounded p-0.5 text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                              onClick={() => void remove(a.id)}
+                              aria-label={`Remove ${a.categoryLabel}: ${a.value}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/** How many records carry each value of a category — "payroll items by Project". */
+export function ReportTab() {
+  const cats = useQuery({ queryKey: ['worktags', 'categories'], queryFn: () => listCategories() });
+  const [categoryKey, setCategoryKey] = useState('');
+  const [entityKind, setEntityKind] = useState<WorktagEntityKind>('PAYROLL_ITEM');
+  const key = categoryKey || cats.data?.categories[0]?.key || '';
+  const report = useQuery({
+    queryKey: ['worktags', 'report', key, entityKind],
+    queryFn: () => worktagsReport(key, entityKind),
+    enabled: Boolean(key),
+  });
+  const rows = report.data?.rows ?? [];
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select aria-label="Category" className="w-auto" value={key} onChange={(e) => setCategoryKey(e.target.value)}>
+          {(cats.data?.categories ?? []).map((c) => (
+            <option key={c.id} value={c.key}>
+              {c.label}
+            </option>
+          ))}
+        </Select>
+        <Select aria-label="Record kind" className="w-auto" value={entityKind} onChange={(e) => setEntityKind(e.target.value as WorktagEntityKind)}>
+          {ENTITY_KINDS.map((k) => (
+            <option key={k.value} value={k.value}>
+              {k.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <Card>
+        <CardContent className="p-3">
+          {cats.isError || report.isError ? (
+            <ErrorBanner>Could not load the report.</ErrorBanner>
+          ) : !key && cats.data ? (
+            <EmptyState icon={BarChart3} title="No categories" description="Create a category to report on it." />
+          ) : (
+            <DataGrid<{ worktagId: string; value: string; count: number }>
+              id="worktags-report"
+              caption="Records by worktag"
+              rows={rows}
+              rowKey={(r) => r.worktagId}
+              loading={report.isLoading}
+              search={false}
+              urlState={false}
+              exportCsv={{ filename: `worktags-${key}-${entityKind.toLowerCase()}` }}
+              empty={{ icon: BarChart3, title: 'Nothing tagged yet', description: "Tag records on the Tag a record tab and they're counted here." }}
+              columns={[
+                { key: 'value', header: 'Value', accessor: (r) => r.value, sortable: true, primary: true, className: 'text-ink' },
+                { key: 'count', header: 'Records', accessor: (r) => r.count, sortable: true, align: 'right', className: 'tabular-nums' },
+              ]}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

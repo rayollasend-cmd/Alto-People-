@@ -25,12 +25,14 @@ import {
   Smartphone,
   X,
 } from 'lucide-react';
-import type {
-  ActiveDashboardEntry,
-  PayPeriod,
-  TimeEntry,
-  TimeEntryStatus,
+import {
+  oldestPendingPeriod,
+  type ActiveDashboardEntry,
+  type PayPeriod,
+  type TimeEntry,
+  type TimeEntryStatus,
 } from '@alto-people/shared';
+import { useMediaQuery } from '@/lib/useViewport';
 import {
   addTimeEntryBreak,
   adminCreateTimeEntry,
@@ -339,6 +341,63 @@ function startOfSaturdayWeek(d: Date): Date {
 }
 
 /**
+ * The queue's filters, as the screen allows: inline on a desktop; on a
+ * phone one "Pending · Oct 10–23 ▾" chip that opens them in a sheet, so
+ * the list is the first screen instead of two screens of controls.
+ */
+function QueueFilterShell({
+  mobile,
+  open,
+  onOpenChange,
+  summary,
+  children,
+}: {
+  mobile: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  summary: string;
+  children: ReactNode;
+}) {
+  if (!mobile) return <>{children}</>;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => onOpenChange(true)}
+        className="inline-flex h-9 items-center gap-1 self-start rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-ink"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        data-testid="queue-filter-chip"
+      >
+        {summary} ▾
+      </button>
+      <Drawer open={open} onOpenChange={onOpenChange}>
+        <DrawerHeader>
+          <DrawerTitle>Filters</DrawerTitle>
+          <DrawerDescription>Narrow the queue, then close to see the list.</DrawerDescription>
+        </DrawerHeader>
+        <DrawerBody>{children}</DrawerBody>
+        <DrawerFooter>
+          <Button variant="primary" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </DrawerFooter>
+      </Drawer>
+    </>
+  );
+}
+
+/** The first local day a quick-range preset covers. */
+function presetFrom(p: 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14'): string {
+  if (p === 'LAST14') return defaultFromYmd();
+  const thisWeekStart = startOfSaturdayWeek(new Date());
+  if (p === 'THIS_WEEK') return ymdLocal(thisWeekStart);
+  const lastStart = new Date(thisWeekStart);
+  lastStart.setDate(lastStart.getDate() - 7);
+  return ymdLocal(lastStart);
+}
+
+/**
  * The pay period the approval queue opens on: the current one — or, in the
  * days between a period closing and its payday (paid the Friday after, a
  * week on), the just-closed one while it still has no payroll run, because
@@ -388,7 +447,7 @@ const RANGE_PRESETS: Array<[RangePreset, string]> = [
 
 // "Jun 22 – Jul 5" — compact label for a pay-period option. Bare YYYY-MM-DD
 // parses as UTC midnight, so format in UTC or the day shifts west of GMT.
-function periodLabel(p: PayPeriod): string {
+function periodLabel(p: { start: string; end: string }): string {
   return `${fmtDateTz(p.start, 'UTC')} – ${fmtDateTz(p.end, 'UTC')}`;
 }
 
@@ -714,6 +773,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   // (right now vs a date range), so one shared value would cross-reset.
   const [shiftFilter, setShiftFilter] = useState('');
   const [liveShiftFilter, setLiveShiftFilter] = useState('');
+  // Below md the queue's filters live in a sheet behind one summary chip.
+  const isDesktop = useMediaQuery('(min-width: 768px)');
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
   // Live-board lenses: longest-elapsed-first surfaces runaway sessions;
   // the off-site lens narrows to geofence violations (also reachable via
   // the Off-site KPI tile).
@@ -892,14 +954,57 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   const pendingQuery = useQuery({
     queryKey: ['time', 'pending-count', { clientId: clientFilter, locationId: locationFilter }],
     queryFn: () =>
-      countAdminTimeEntries('COMPLETED', {
-        ...(clientFilter ? { clientId: clientFilter } : {}),
-        ...(locationFilter ? { locationId: locationFilter } : {}),
-      }),
+      countAdminTimeEntries(
+        'COMPLETED',
+        {
+          ...(clientFilter ? { clientId: clientFilter } : {}),
+          ...(locationFilter ? { locationId: locationFilter } : {}),
+        },
+        { groupBy: 'payPeriod' },
+      ),
     enabled: !liveOnly,
     placeholderData: keepPreviousData,
   });
   const pendingCount: number | null = pendingQuery.data?.count ?? null;
+  // Where the pending rows sit, per pay period — the same predicate and
+  // window the count uses, so the queue can open on the rows the count
+  // counted instead of on a current period with nothing in it.
+  const pendingByPeriod = pendingQuery.data?.byPeriod ?? null;
+  const oldestPendingAt = pendingQuery.data?.oldestPendingAt ?? null;
+  const oldestPending = useMemo(() => (pendingByPeriod ? oldestPendingPeriod(pendingByPeriod) : null), [pendingByPeriod]);
+  const pendingInPeriod = useCallback(
+    (p: { start: string; end: string }) => pendingByPeriod?.find((b) => b.start === p.start && b.end === p.end)?.count ?? 0,
+    [pendingByPeriod],
+  );
+
+  // A deep link that names the status (the shared "N timesheets" link
+  // carries status=COMPLETED) sets the filter once, so the link opens on
+  // the rows it promised rather than on a remembered Approved slice.
+  const statusParam = tabParams.get('status');
+  useEffect(() => {
+    if (statusParam && STATUS_FILTERS.some((f) => f.value === statusParam)) {
+      setFilter(statusParam as TimeEntryStatus | 'ALL');
+    }
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Time & attendance opens on the queue when nobody is clocked in and
+  // something is waiting (role walk ops 19) — an empty Live tab over a
+  // "Pending review 6" tile cost a click every visit. Only when the URL
+  // names no tab; a person who picks Live keeps Live.
+  const autoQueueDone = useRef(false);
+  const liveLoaded = activeQuery.data !== undefined;
+  const liveEmpty = liveLoaded && (activeQuery.data?.entries.length ?? 0) === 0;
+  useEffect(() => {
+    if (autoQueueDone.current || liveOnly || !canManage || tabParam !== null) return;
+    if (!liveEmpty || !pendingCount || pendingCount <= 0) return;
+    autoQueueDone.current = true;
+    const params = new URLSearchParams(tabParams);
+    params.set('tab', 'queue');
+    setTabParams(params, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveEmpty, pendingCount, tabParam, liveOnly, canManage]);
 
   // Pay periods change slowly (a run is finalized, a new period starts) —
   // re-read every few minutes rather than trusting a day-old cache. On
@@ -1189,29 +1294,80 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   };
 
   // First visit to the queue: open on the remembered window once the pay
-  // periods are known (with none, the last 14 days stay).
+  // periods are known (with none, the last 14 days stay) — unless the
+  // remembered window holds nothing pending while an older period does:
+  // then the queue opens on the OLDEST period with pending rows. Three
+  // roles used to land on "Nothing to review" under a tile that said 6
+  // because the six rows sat in an already-paid period (walk ops 1, floor
+  // 1, HR 1). Waits for the pending count only while it is loading.
   useEffect(() => {
     if (rangeReady || payPeriods === null) return;
+    if (!liveOnly && pendingQuery.isPending) return;
     setRangeReady(true);
+    const today = ymdLocal(new Date());
+    const jump = (target: PayPeriod) => {
+      setActivePreset(null);
+      setPeriodKey(`${target.start}|${target.end}`);
+      setFromYmd(target.start);
+      setToYmd(target.end);
+    };
+    const oldestWithPending = (): PayPeriod | null => {
+      if (!oldestPending) return null;
+      return (
+        payPeriods.find((p) => p.start === oldestPending.start && p.end === oldestPending.end) ??
+        // A bucket outside every known period: its own day.
+        { start: oldestPending.start, end: oldestPending.end, current: false, hasRun: oldestPending.hasRun }
+      );
+    };
     if (rangeChoice === 'THIS_WEEK' || rangeChoice === 'LAST_WEEK' || rangeChoice === 'LAST14') {
+      // A preset window with nothing pending inside it while something
+      // older waits: open where the work is.
+      const older = oldestWithPending();
+      if (older && oldestPendingAt && ymdLocal(new Date(oldestPendingAt)) < presetFrom(rangeChoice)) {
+        if (!payPeriods.some((p) => p.start === older.start && p.end === older.end)) {
+          setActivePreset(null);
+          setPeriodKey('');
+          setFromYmd(older.start);
+          setToYmd(ymdLocal(new Date()));
+        } else jump(older);
+        return;
+      }
       applyPreset(rangeChoice);
       return;
     }
-    const today = ymdLocal(new Date());
     const target =
       (rangeChoice === 'CURRENT_PERIOD'
         ? periodContaining(payPeriods, today)
         : rangeChoice === 'LAST_PERIOD'
           ? latestClosedPeriod(payPeriods, today)
           : null) ?? defaultQueuePeriod(payPeriods, today)?.period;
+    const older = oldestWithPending();
+    if (older && (!target || pendingInPeriod(target) === 0)) {
+      if (!payPeriods.some((p) => p.start === older.start && p.end === older.end)) {
+        setActivePreset(null);
+        setPeriodKey('');
+        setFromYmd(older.start);
+        setToYmd(older.end);
+      } else jump(older);
+      return;
+    }
     if (!target) return;
-    setActivePreset(null);
-    setPeriodKey(`${target.start}|${target.end}`);
-    setFromYmd(target.start);
-    setToYmd(target.end);
-    // Runs once, when the periods arrive; the choice is read at that moment.
+    jump(target);
+    // Runs once, when the periods and the count arrive; the choice is read at that moment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeReady, payPeriods]);
+  }, [rangeReady, payPeriods, pendingQuery.isPending]);
+
+  // Widen the window to every pending row: the oldest pending day through
+  // today. The "N pending entries are older than this period" notice.
+  const showAllPending = () => {
+    if (!oldestPendingAt) return;
+    setActivePreset(null);
+    setPeriodKey('');
+    setRangeChoice('AUTO');
+    setFromYmd(ymdLocal(new Date(oldestPendingAt)));
+    setToYmd(ymdLocal(new Date()));
+    if (filter !== 'COMPLETED') setFilter('COMPLETED');
+  };
 
   // Ref-mirrored guard so this callback stays identity-stable across
   // pendingId flips — a stable handler is what lets the memoised queue rows
@@ -1623,11 +1779,17 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     status: (e: TimeEntry) => e.status,
   });
 
+  // Someone else approves your own time: a supervisor with an associate
+  // record never gets Approve on her own rows, and select-all skips them
+  // (the server refuses with own_entry either way).
+  const ownAssociateId = user?.associateId ?? null;
+  const isOwnEntry = useCallback((e: TimeEntry) => ownAssociateId !== null && e.associateId === ownAssociateId, [ownAssociateId]);
+
   const selectableIds = useMemo(() => {
     if (!visibleEntries) return [] as string[];
     // Only COMPLETED rows are bulk-actionable on the Pending review tab.
-    return visibleEntries.filter((e) => e.status === 'COMPLETED').map((e) => e.id);
-  }, [visibleEntries]);
+    return visibleEntries.filter((e) => e.status === 'COMPLETED' && !isOwnEntry(e)).map((e) => e.id);
+  }, [visibleEntries, isOwnEntry]);
 
   // "Select clean only" pool — COMPLETED rows with no anomaly flags, so
   // one click stages the uncontroversial approvals without sweeping in
@@ -1635,9 +1797,22 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   const cleanSelectableIds = useMemo(() => {
     if (!visibleEntries) return [] as string[];
     return visibleEntries
-      .filter((e) => e.status === 'COMPLETED' && (e.anomalies?.length ?? 0) === 0)
+      .filter((e) => e.status === 'COMPLETED' && (e.anomalies?.length ?? 0) === 0 && !isOwnEntry(e))
       .map((e) => e.id);
-  }, [visibleEntries]);
+  }, [visibleEntries, isOwnEntry]);
+
+  // The pay period a row's clock-in falls in, when that period is paid:
+  // approving it now goes on an off-cycle or an adjustment, not a run.
+  const knownPeriods = payPeriodsQuery.data?.periods;
+  const paidPeriodOf = useCallback(
+    (e: TimeEntry): PayPeriod | null => {
+      if (!knownPeriods) return null;
+      const day = ymdLocal(new Date(e.clockInAt));
+      const p = knownPeriods.find((x) => x.start <= day && day <= x.end);
+      return p && p.hasRun ? p : null;
+    },
+    [knownPeriods],
+  );
 
   // Shared selection mechanics; selectableIds carries this page's RULE
   // (only COMPLETED rows). toggleMany is the day-header checkbox in the
@@ -1883,6 +2058,11 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             <div className="flex flex-wrap items-center gap-1.5">
               <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
               <LateChip entry={e} />
+              {e.status === 'COMPLETED' && paidPeriodOf(e) && (
+                <Badge size="sm" variant="pending" title="This pay period has already run — approved time here goes on an off-cycle or an adjustment.">
+                  Paid period
+                </Badge>
+              )}
             </div>
             <AnomalyChips anomalies={e.anomalies} />
             {e.rejectionReason && <div className="mt-1 text-2xs text-alert">{e.rejectionReason}</div>}
@@ -1907,7 +2087,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                 const canApproveAtShiftEnd =
                   (e.status === 'COMPLETED' || e.status === 'REJECTED') &&
                   !!e.shiftEndsAt &&
-                  (e.anomalies ?? []).includes('FORGOT_CLOCKOUT');
+                  (e.anomalies ?? []).includes('FORGOT_CLOCKOUT') &&
+                  !isOwnEntry(e);
                 return (
                   <div className="inline-flex items-center gap-1 transition-opacity can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100">
                     <Button
@@ -1933,7 +2114,12 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                         Approve at sched. end {fmtPunchTime(e.shiftEndsAt!, e.locationTimezone)}
                       </Button>
                     )}
-                    {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+                    {(e.status === 'COMPLETED' || e.status === 'REJECTED') && isOwnEntry(e) && (
+                      <span className="text-2xs text-silver/70" title="Someone else approves your own time.">
+                        Yours — someone else approves it
+                      </span>
+                    )}
+                    {(e.status === 'COMPLETED' || e.status === 'REJECTED') && !isOwnEntry(e) && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -1962,7 +2148,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           ]
         : []),
     ],
-    [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne, term, liveCols.client],
+    [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne, term, liveCols.client, isOwnEntry, paidPeriodOf],
   );
 
   return (
@@ -2371,7 +2557,15 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               </p>
             )}
 
-            {/* Phase 65 — date range + free-text search + export buttons. */}
+            {/* Phase 65 — date range + free-text search + export buttons.
+                On a phone the filters sit behind one summary chip and the
+                list is the first screen (role walk floor 8). */}
+            <QueueFilterShell
+              mobile={!isDesktop}
+              open={filterSheetOpen}
+              onOpenChange={setFilterSheetOpen}
+              summary={`${STATUS_FILTERS.find((f) => f.value === filter)?.label ?? 'All'} · ${periodKey && payPeriods ? periodLabel(payPeriods.find((p) => `${p.start}|${p.end}` === periodKey) ?? { start: fromYmd, end: toYmd, current: false, hasRun: false }) : `${fmtDateTz(fromYmd, 'UTC')} – ${fmtDateTz(toYmd, 'UTC')}`}`}
+            >
             <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
@@ -2419,20 +2613,43 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                   >
                     Pay period
                   </label>
-                  <Select
-                    id="pay-period-picker"
-                    value={periodKey}
-                    onChange={(e) => onPickPeriod(e.target.value)}
-                    className="h-9 text-sm w-52"
-                  >
-                    <option value="">Custom range</option>
-                    {payPeriods.map((p) => (
-                      <option key={`${p.start}|${p.end}`} value={`${p.start}|${p.end}`}>
-                        {periodLabel(p)}
-                        {p === periodContaining(payPeriods, ymdLocal(new Date())) ? ' · current' : p.hasRun ? ' · paid' : ''}
-                      </option>
-                    ))}
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      id="pay-period-picker"
+                      value={periodKey}
+                      onChange={(e) => onPickPeriod(e.target.value)}
+                      className="h-9 text-sm w-56"
+                    >
+                      <option value="">Custom range</option>
+                      {payPeriods.map((p) => {
+                        const n = pendingInPeriod(p);
+                        return (
+                          <option key={`${p.start}|${p.end}`} value={`${p.start}|${p.end}`}>
+                            {periodLabel(p)}
+                            {n > 0 ? ` · ${n} pending` : ''}
+                            {p === periodContaining(payPeriods, ymdLocal(new Date())) ? ' · current' : p.hasRun ? ' · paid' : ''}
+                          </option>
+                        );
+                      })}
+                    </Select>
+                    {/* Where the pending work is — one tap opens that period. */}
+                    {oldestPending && pendingCount !== null && pendingCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const key = `${oldestPending.start}|${oldestPending.end}`;
+                          if (payPeriods.some((p) => `${p.start}|${p.end}` === key)) onPickPeriod(key);
+                          else showAllPending();
+                          if (filter !== 'COMPLETED') setFilter('COMPLETED');
+                        }}
+                        className="h-9 whitespace-nowrap rounded-md border border-warning/60 bg-warning/15 px-2.5 text-xs text-warning transition-colors hover:bg-warning/25"
+                        title="Open the oldest pay period with pending entries"
+                        data-testid="pending-period-chip"
+                      >
+                        {pendingCount} pending · {periodLabel(oldestPending)}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
               <div>
@@ -2547,8 +2764,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
 
               {/* Read-only exports — also for Finance (process:payroll),
                   who pulls the hours sheet for Fieldglass without holding
-                  the manage:time write capability. */}
-              {(canManage || canProcessPayroll) && (
+                  the manage:time write capability. Desktop only: a phone
+                  has nowhere to put a sheet. */}
+              {(canManage || canProcessPayroll) && isDesktop && (
                 <div className="flex gap-2">
                   <Button
                     type="button"
@@ -2626,6 +2844,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               )}
 
             </div>
+            </QueueFilterShell>
 
             {/* Anomaly-TYPE chips — only while the anomalies lens is on.
                 Chip styling matches AnomalyChips; multiple picks OR. */}
@@ -2778,6 +2997,31 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               </div>
             )}
             {!visibleEntries && !error && <SkeletonRows count={6} rowHeight="h-12" />}
+            {/* The window shows nothing while the count says otherwise: the
+                pending rows are older than this period. Say so, with the
+                one tap that shows them, instead of "Nothing to review"
+                under a tile that says 6. */}
+            {visibleEntries &&
+              visibleEntries.length === 0 &&
+              !anomaliesOnly &&
+              !focusAssociate &&
+              filter === 'COMPLETED' &&
+              pendingCount !== null &&
+              pendingCount > 0 &&
+              oldestPendingAt !== null &&
+              ymdLocal(new Date(oldestPendingAt)) < fromYmd && (
+                <div
+                  className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
+                  role="status"
+                >
+                  <span>
+                    {pendingCount} pending {pendingCount === 1 ? 'entry is' : 'entries are'} older than this period.
+                  </span>
+                  <Button size="sm" variant="outline" onClick={showAllPending}>
+                    Show them
+                  </Button>
+                </div>
+              )}
             {visibleEntries && visibleEntries.length === 0 && (
               <EmptyState
                 title={anomaliesOnly ? 'No flagged entries' : 'Nothing to review'}
@@ -2795,6 +3039,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               <FocusTimesheet
                 entries={visibleEntries}
                 canManage={canManage}
+                ownAssociateId={ownAssociateId}
                 showSelect={canManage && filter === 'COMPLETED'}
                 selected={selected}
                 pendingId={pendingId}
@@ -2831,7 +3076,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                   selectable={
                     canManage && filter === 'COMPLETED'
                       ? {
-                          disabled: (e) => e.status !== 'COMPLETED',
+                          disabled: (e) => e.status !== 'COMPLETED' || isOwnEntry(e),
                           selection: { selected, onChange: replaceSelection },
                           selectAllLabel: 'Select all',
                         }
@@ -2955,6 +3200,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
 function FocusTimesheet({
   entries,
   canManage,
+  ownAssociateId = null,
   showSelect,
   selected,
   pendingId,
@@ -2968,6 +3214,8 @@ function FocusTimesheet({
 }: {
   entries: TimeEntry[];
   canManage: boolean;
+  /** The viewer's own associate record — their rows get no Approve. */
+  ownAssociateId?: string | null;
   showSelect: boolean;
   selected: ReadonlySet<string>;
   pendingId: string | null;
@@ -2984,7 +3232,7 @@ function FocusTimesheet({
       entries={entries}
       dayHeaderExtra={(day) => {
         const selectableIds = day.entries
-          .filter((e) => e.status === 'COMPLETED')
+          .filter((e) => e.status === 'COMPLETED' && e.associateId !== ownAssociateId)
           .map((e) => e.id);
         if (!showSelect || selectableIds.length === 0) return null;
         const allDaySelected = selectableIds.every((id) => selected.has(id));
@@ -3002,6 +3250,7 @@ function FocusTimesheet({
         <FocusEntryRow
           entry={e}
           canManage={canManage}
+          isOwn={e.associateId === ownAssociateId}
           showSelect={showSelect}
           isSelected={selected.has(e.id)}
           isPending={pendingId === e.id}
@@ -3020,6 +3269,7 @@ function FocusTimesheet({
 function FocusEntryRow({
   entry: e,
   canManage,
+  isOwn = false,
   showSelect,
   isSelected,
   isPending,
@@ -3032,6 +3282,8 @@ function FocusEntryRow({
 }: {
   entry: TimeEntry;
   canManage: boolean;
+  /** The viewer's own entry — someone else approves it. */
+  isOwn?: boolean;
   showSelect: boolean;
   isSelected: boolean;
   isPending: boolean;
@@ -3042,7 +3294,7 @@ function FocusEntryRow({
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
 }) {
-  const isSelectable = showSelect && e.status === 'COMPLETED';
+  const isSelectable = showSelect && e.status === 'COMPLETED' && !isOwn;
   const net = e.netMinutes ?? e.minutesElapsed;
   const breakMin = Math.max(0, e.minutesElapsed - net);
   const breakCount = e.breaks?.length ?? (breakMin > 0 ? 1 : 0);
@@ -3112,7 +3364,12 @@ function FocusEntryRow({
         </Badge>
         {canManage && (
           <span className="inline-flex items-center gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && isOwn && (
+              <span className="text-2xs text-silver/70" title="Someone else approves your own time.">
+                Yours — someone else approves it
+              </span>
+            )}
+            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && !isOwn && (
               <Button
                 size="sm"
                 variant="outline"

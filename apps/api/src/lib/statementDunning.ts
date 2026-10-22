@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { enqueueAudit } from './audit.js';
+import { HttpError } from '../middleware/error.js';
 import { sendRecorded } from './financialChanges.js';
 import { notifyUser } from './notify.js';
 import { tenantJob } from './tenantJobs.js';
@@ -74,22 +75,114 @@ export interface DunningRunResult {
   skippedPaused: number;
 }
 
+type ReminderCandidate = {
+  id: string;
+  number: number | null;
+  periodStart: Date;
+  periodEnd: Date;
+  dueAt: Date | null;
+  poNumber: string | null;
+  reminderStage: number;
+  snapshot: unknown;
+  clientId: string;
+  client: { name: string; contactEmail: string | null; poNumber: string | null; dunningPausedAt: Date | null };
+};
+
+const candidateSelect = {
+  id: true,
+  number: true,
+  periodStart: true,
+  periodEnd: true,
+  dueAt: true,
+  poNumber: true,
+  reminderStage: true,
+  snapshot: true,
+  clientId: true,
+  client: { select: { name: true, contactEmail: true, poNumber: true, dunningPausedAt: true } },
+} as const;
+
+/**
+ * Send one reminder for one statement at one stage: the client's portal
+ * accounts and billing contact hear it, the send is recorded (once per
+ * stage), and the statement's stage moves forward. The cadence and the
+ * worklist's "Send reminder now" both come here.
+ */
+export async function sendStatementReminder(db: Db, s: ReminderCandidate, stage: number, now: Date, orgName: string): Promise<{ recipients: number }> {
+  const snap = s.snapshot as { totals?: { amount?: number } } | null;
+  const amount = typeof snap?.totals?.amount === 'number' ? snap.totals.amount : 0;
+  const d = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const label = `${s.number !== null ? `Statement No. ${String(s.number).padStart(4, '0')}` : 'Your statement'} (${d(s.periodStart)} – ${d(s.periodEnd)})`;
+  const { subject, body } = copyFor(stage, { label, amount, dueAt: s.dueAt ?? now, poNumber: s.poNumber ?? s.client.poNumber, orgName });
+
+  const portalUsers = await db.user.findMany({
+    where: { clientId: s.clientId, role: 'CLIENT_PORTAL', status: 'ACTIVE', deletedAt: null },
+    select: { id: true, email: true },
+    take: 100,
+  });
+  let recipients = 0;
+  await Promise.all(
+    portalUsers.map(async (u) => {
+      await notifyUser(u.id, { subject, body, category: 'portal.statement_reminder', linkUrl: '/portal' });
+      recipients += 1;
+    }),
+  );
+  const contact = s.client.contactEmail?.trim().toLowerCase() ?? null;
+  if (contact && !portalUsers.some((u) => u.email.toLowerCase() === contact)) {
+    await sendRecorded({ userId: null, email: contact, subject, body, category: 'portal.statement_reminder' });
+    recipients += 1;
+  }
+  try {
+    await db.clientStatementReminder.create({ data: { statementId: s.id, stage, recipients } });
+  } catch {
+    // Already recorded for this stage by a concurrent pass — the
+    // statement's stage below still moves forward.
+  }
+  await db.clientStatement.update({ where: { id: s.id }, data: { reminderStage: Math.max(stage, s.reminderStage), lastReminderAt: now } });
+  enqueueAudit(
+    {
+      actorUserId: null,
+      clientId: s.clientId,
+      action: 'clients.statement_reminder_sent',
+      entityType: 'ClientStatement',
+      entityId: s.id,
+      metadata: { stage, recipients, amount, dueAt: s.dueAt ? ymd(s.dueAt) : null },
+    },
+    'clients.statement_reminder',
+  );
+  return { recipients };
+}
+
+/**
+ * The worklist's "Send reminder now" (finance walk 7): the next stage for
+ * the statement — the one the cadence would send next, or the one it is
+ * already due for — sent today, pause or not (a person asked). 409 once
+ * the final reminder has gone.
+ */
+export async function sendStatementReminderNow(db: Db, statementId: string, now: Date = new Date()): Promise<{ stage: number; recipients: number }> {
+  const s = await db.clientStatement.findFirst({ where: { id: statementId, status: 'FINAL', paidAt: null }, select: candidateSelect });
+  if (!s) throw new HttpError(404, 'statement_not_open', 'That statement is not an open, finalized statement.');
+  const last = DUNNING_STAGES[DUNNING_STAGES.length - 1]!.stage;
+  if (s.reminderStage >= last) throw new HttpError(409, 'reminders_exhausted', 'Every reminder in the cadence has already gone to this client.');
+  const stage = Math.min(last, Math.max(s.dueAt ? stageDue(s.dueAt, now) : 0, s.reminderStage + 1));
+  const org = await db.orgSetting.findFirst({ select: { orgName: true } });
+  const { recipients } = await sendStatementReminder(db, s, stage, now, org?.orgName ?? 'Finance');
+  return { stage, recipients };
+}
+
+/** When the cadence sends next for a statement: the next stage's day, or null once all five have gone. */
+export function nextReminderOn(dueAt: Date | null, reminderStage: number): string | null {
+  if (!dueAt) return null;
+  const next = DUNNING_STAGES.find((st) => st.stage > reminderStage);
+  if (!next) return null;
+  const d = new Date(dueAt.getTime() + next.offsetDays * DAY_MS);
+  return ymd(d);
+}
+
 /** One pass of the cadence. Safe to run as often as you like. */
 export async function runStatementDunning(now: Date = new Date(), db: PrismaClient = defaultPrisma): Promise<DunningRunResult> {
   const candidates = await db.clientStatement.findMany({
     where: { status: 'FINAL', paidAt: null, dueAt: { not: null } },
-    select: {
-      id: true,
-      number: true,
-      periodStart: true,
-      periodEnd: true,
-      dueAt: true,
-      poNumber: true,
-      reminderStage: true,
-      snapshot: true,
-      clientId: true,
-      client: { select: { name: true, contactEmail: true, poNumber: true, dunningPausedAt: true } },
-    },
+    select: candidateSelect,
     take: 2000,
   });
   const org = await db.orgSetting.findFirst({ select: { orgName: true } });
@@ -106,45 +199,7 @@ export async function runStatementDunning(now: Date = new Date(), db: PrismaClie
     const snap = s.snapshot as { totals?: { amount?: number } } | null;
     const amount = typeof snap?.totals?.amount === 'number' ? snap.totals.amount : 0;
     if (amount <= 0) continue;
-    const d = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-    const label = `${s.number !== null ? `Statement No. ${String(s.number).padStart(4, '0')}` : 'Your statement'} (${d(s.periodStart)} – ${d(s.periodEnd)})`;
-    const { subject, body } = copyFor(stage, { label, amount, dueAt: s.dueAt!, poNumber: s.poNumber ?? s.client.poNumber, orgName });
-
-    const portalUsers = await db.user.findMany({
-      where: { clientId: s.clientId, role: 'CLIENT_PORTAL', status: 'ACTIVE', deletedAt: null },
-      select: { id: true, email: true },
-      take: 100,
-    });
-    let recipients = 0;
-    await Promise.all(
-      portalUsers.map(async (u) => {
-        await notifyUser(u.id, { subject, body, category: 'portal.statement_reminder', linkUrl: '/portal' });
-        recipients += 1;
-      }),
-    );
-    const contact = s.client.contactEmail?.trim().toLowerCase() ?? null;
-    if (contact && !portalUsers.some((u) => u.email.toLowerCase() === contact)) {
-      await sendRecorded({ userId: null, email: contact, subject, body, category: 'portal.statement_reminder' });
-      recipients += 1;
-    }
-    try {
-      await db.clientStatementReminder.create({ data: { statementId: s.id, stage, recipients } });
-    } catch {
-      // Already recorded for this stage by a concurrent pass — the
-      // statement's stage below still moves forward.
-    }
-    await db.clientStatement.update({ where: { id: s.id }, data: { reminderStage: stage, lastReminderAt: now } });
-    enqueueAudit(
-      {
-        actorUserId: null,
-        clientId: s.clientId,
-        action: 'clients.statement_reminder_sent',
-        entityType: 'ClientStatement',
-        entityId: s.id,
-        metadata: { stage, recipients, amount, dueAt: ymd(s.dueAt!) },
-      },
-      'clients.statement_reminder',
-    );
+    await sendStatementReminder(db, s, stage, now, orgName);
     sent += 1;
   }
   return { considered: candidates.length, sent, skippedPaused };

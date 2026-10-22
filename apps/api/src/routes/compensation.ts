@@ -8,10 +8,14 @@ import { requireCapability } from '../middleware/auth.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { assertInTenant } from '../lib/sameTenant.js';
 import { loadApprovalPolicy, payChangeNeedsApproval, secondPersonExists } from '../lib/approvalPolicy.js';
-import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
+import { createApprovalRequest, pendingResponse, registerApplyHandler } from '../lib/approvalRequests.js';
 import { applyPayRateChange, currentComp, listPayChanges } from '../lib/payChanges.js';
 import { coveringManagerIds } from '../lib/delegations.js';
-import { assertAssociateInScope, scopeActiveAssociates } from '../lib/scope.js';
+import { assertAssociateInScope, scopeActiveAssociates, scopeWhere } from '../lib/scope.js';
+import { namesOf, payChangeContexts, type ProposedChange } from '../lib/payChangeContext.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -783,4 +787,178 @@ compensationRouter.get('/cycles/:id/calibration', requireCapability('manage:comp
     outliers,
     rows,
   });
+});
+
+
+// ----- Pay change context and the mass pay change (finance walk 13) ----------
+
+/**
+ * GET /comp/associates/:id/pay-change-context?payType&amount&effectiveFrom
+ * What a new rate means before it is saved: current rate, place in band,
+ * bill rate and margin before → after, the period it lands in and the back
+ * pay an already-paid date owes (lib/payChangeContext).
+ */
+compensationRouter.get('/associates/:id/pay-change-context', requireCapability('manage:comp'), async (req, res) => {
+  const associateId = z.string().uuid().parse(req.params.id);
+  await assertAssociateInScope(prisma, req.user!, associateId, { former: false });
+  const q = z
+    .object({
+      payType: z.enum(['HOURLY', 'SALARY']).default('HOURLY'),
+      amount: z.coerce.number().positive(),
+      effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(() => new Date().toISOString().slice(0, 10)),
+    })
+    .parse(req.query);
+  const ctx = (await payChangeContexts(prisma, [{ associateId, ...q }])).get(associateId);
+  if (!ctx) throw new HttpError(404, 'not_found', 'Associate not found.');
+  res.json(ctx);
+});
+
+const BatchFilterSchema = z.object({
+  associateIds: z.array(z.string().uuid()).max(2000).optional(),
+  siteIds: z.array(z.string().uuid()).max(100).optional(),
+  departmentIds: z.array(z.string().uuid()).max(100).optional(),
+  clientIds: z.array(z.string().uuid()).max(50).optional(),
+  payrollScheduleIds: z.array(z.string().uuid()).max(50).optional(),
+  managerIds: z.array(z.string().uuid()).max(100).optional(),
+});
+const BatchSchema = z.object({
+  filter: BatchFilterSchema,
+  /** SET: the new hourly rate · ADD: dollars on top · PCT: percent on top. */
+  mode: z.enum(['SET', 'ADD', 'PCT']),
+  value: z.number().refine((n) => Number.isFinite(n) && n !== 0, 'Enter a change.'),
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  reason: z.enum(['MERIT', 'PROMOTION', 'MARKET_ADJUSTMENT', 'CORRECTION', 'OTHER']),
+  notes: z.string().max(2000).optional().nullable(),
+});
+const BATCH_CAP = 2000;
+
+/** The people the filter names, in the caller's tenant and reach, with their current rate. */
+async function batchRows(user: NonNullable<Express.Request['user']>, input: z.infer<typeof BatchSchema>) {
+  const f = input.filter;
+  if (!Object.values(f).some((v) => v && v.length)) throw new HttpError(400, 'filter_required', 'Pick who the change is for.');
+  const where = scopeWhere<Prisma.AssociateWhereInput>(
+    { tenantId: tenantIdForWrite() },
+    EMPLOYED_WHERE,
+    scopeActiveAssociates(user),
+    !!f.associateIds?.length && { id: { in: f.associateIds } },
+    !!f.departmentIds?.length && { departmentId: { in: f.departmentIds } },
+    !!f.managerIds?.length && { managerId: { in: f.managerIds } },
+    !!f.payrollScheduleIds?.length && { payScheduleAssignments: { some: { scheduleId: { in: f.payrollScheduleIds }, effectiveTo: null } } },
+    !!f.siteIds?.length && { assignments: { some: { endedAt: null, locationId: { in: f.siteIds } } } },
+    !!f.clientIds?.length && { applications: { some: { deletedAt: null, status: 'APPROVED', clientId: { in: f.clientIds } } } },
+  );
+  const matched = await prisma.associate.count({ where });
+  if (matched > BATCH_CAP) throw new HttpError(400, 'too_many', `${matched.toLocaleString()} people match — one pay change covers at most ${BATCH_CAP.toLocaleString()}. Narrow the filter.`);
+  const people = await prisma.associate.findMany({ where, select: { id: true }, take: BATCH_CAP });
+  const changes: ProposedChange[] = [];
+  const skipped: Array<{ associateId: string; name: string; reason: string }> = [];
+  const names = await namesOf(prisma, people.map((p) => p.id));
+  for (const p of people) {
+    const cur = await currentComp(prisma, p.id);
+    const name = names.get(p.id) ?? '';
+    if (!cur) {
+      skipped.push({ associateId: p.id, name, reason: 'No current rate on file — set one on their Pay tab.' });
+      continue;
+    }
+    if (cur.payType === 'SALARY' && input.mode !== 'PCT') {
+      skipped.push({ associateId: p.id, name, reason: 'Salaried — a dollar rate per hour does not apply. Use a percent.' });
+      continue;
+    }
+    const next = input.mode === 'SET' ? input.value : input.mode === 'ADD' ? cur.amount + input.value : cur.amount * (1 + input.value / 100);
+    const amount = Math.round(next * 100) / 100;
+    if (amount <= 0) {
+      skipped.push({ associateId: p.id, name, reason: 'The change would take the rate to zero or below.' });
+      continue;
+    }
+    if (amount === cur.amount) continue;
+    changes.push({ associateId: p.id, payType: cur.payType, amount, effectiveFrom: input.effectiveFrom });
+  }
+  return { matched, changes, skipped, names };
+}
+
+/** POST /comp/batch/preview — each person's rate before → after, with the margin and back pay it means. */
+compensationRouter.post('/batch/preview', requireCapability('manage:comp'), async (req, res) => {
+  const input = BatchSchema.parse(req.body);
+  const { matched, changes, skipped, names } = await batchRows(req.user!, input);
+  const ctx = await payChangeContexts(prisma, changes);
+  const rows = changes.map((c) => {
+    const x = ctx.get(c.associateId)!;
+    return {
+      associateId: c.associateId,
+      name: names.get(c.associateId) ?? '',
+      payType: c.payType,
+      from: x.current?.amount ?? null,
+      to: c.amount,
+      deltaPct: x.deltaPct,
+      billRate: x.billRate,
+      marginBefore: x.marginBefore,
+      marginAfter: x.marginAfter,
+      belowZeroMargin: x.marginAfter != null && x.marginAfter < 0,
+      backPay: x.backPay?.amount ?? 0,
+    };
+  });
+  res.json({
+    matched,
+    willChange: rows.length,
+    rows: rows.slice(0, 500),
+    skipped,
+    totals: {
+      backPay: Math.round(rows.reduce((s, r) => s + r.backPay, 0) * 100) / 100,
+      negativeMargin: rows.filter((r) => r.belowZeroMargin).length,
+    },
+  });
+});
+
+async function applyBatch(db: typeof prisma, p: { changes: ProposedChange[]; reason: string; notes: string | null }, actorUserId: string, approvalRequestId: string | null, requestedByUserId: string | null): Promise<number> {
+  let n = 0;
+  for (const c of p.changes) {
+    await applyPayRateChange(db, {
+      associateId: c.associateId,
+      effectiveFrom: new Date(`${c.effectiveFrom}T00:00:00.000Z`),
+      payType: c.payType,
+      amount: c.amount,
+      reason: p.reason as 'MERIT',
+      notes: p.notes,
+      actorUserId,
+      approvalRequestId,
+      requestedByUserId,
+    });
+    n += 1;
+  }
+  return n;
+}
+
+registerApplyHandler('PAY_RATE_BATCH', async (db, row, decider) => {
+  const p = row.proposed as unknown as { changes: ProposedChange[]; reason: string; notes: string | null };
+  await applyBatch(db as typeof prisma, p, decider.id, row.id, row.requesterUserId);
+});
+
+/**
+ * POST /comp/batch — the mass pay change. With a second manage:comp holder
+ * it goes to them as ONE approval (202 pending); otherwise it applies now
+ * and the audit says no second approver was available.
+ */
+compensationRouter.post('/batch', requireCapability('manage:comp'), async (req, res) => {
+  const input = BatchSchema.parse(req.body);
+  const { changes, skipped } = await batchRows(req.user!, input);
+  if (changes.length === 0) throw new HttpError(400, 'nothing_to_change', 'No one matched with a different rate.');
+  const proposed = { changes, reason: input.reason, notes: input.notes ?? null, effectiveFrom: input.effectiveFrom, mode: input.mode, value: input.value };
+  const describe = input.mode === 'SET' ? `to $${input.value.toFixed(2)}/hr` : input.mode === 'ADD' ? `${input.value > 0 ? '+' : '−'}$${Math.abs(input.value).toFixed(2)}/hr` : `${input.value > 0 ? '+' : ''}${input.value}%`;
+  if (await secondPersonExists(prisma, 'manage:comp', req.user!.id)) {
+    const request = await createApprovalRequest(prisma, {
+      kind: 'PAY_RATE_BATCH',
+      subjectType: 'CompensationBatch',
+      subjectId: req.user!.id,
+      title: `Pay change for ${changes.length} ${changes.length === 1 ? 'person' : 'people'}: ${describe}`,
+      summary: `${input.reason.replace(/_/g, ' ').toLowerCase()}, effective ${input.effectiveFrom}${input.notes ? ` — ${input.notes}` : ''}`,
+      proposed,
+      requesterUserId: req.user!.id,
+      approver: { capability: 'manage:comp' },
+    });
+    res.status(202).json({ ...pendingResponse(request), people: changes.length, skipped });
+    return;
+  }
+  const applied = await applyBatch(prisma, proposed, req.user!.id, null, null);
+  enqueueAudit({ actorUserId: req.user!.id, action: 'pay.rate_batch_applied', entityType: 'CompensationBatch', entityId: req.user!.id, metadata: { people: applied, mode: input.mode, value: input.value, effectiveFrom: input.effectiveFrom, note: 'No second approver was available.' } }, 'compensation');
+  res.status(201).json({ applied, skipped });
 });

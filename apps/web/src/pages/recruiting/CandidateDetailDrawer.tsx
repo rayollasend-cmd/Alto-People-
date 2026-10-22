@@ -1,8 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Building2, CalendarClock, FileText, Link2, Mail, MoreHorizontal, Pencil, Phone, Send, Star, Trash2, Undo2 } from 'lucide-react';
+import { Building2, CalendarClock, ChevronDown, ChevronUp, FileText, Link2, Mail, MoreHorizontal, Pencil, Phone, Send, Star, Trash2, Undo2 } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import {
@@ -36,6 +35,7 @@ import { fmtDate, fmtDateTime } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusLabel } from '@/lib/status';
 import { CandidatePortalPanel } from './CandidatePortalPanel';
+import { NewOfferDrawer } from './OfferDialog';
 import { cn } from '@/lib/cn';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
@@ -207,6 +207,8 @@ export function CandidateDetailDrawer({
   onOpenChange,
   onChanged,
   actions,
+  order,
+  onNavigate,
 }: {
   /** null closes the drawer; the caller owns which candidate is open. */
   candidate: Candidate | null;
@@ -219,6 +221,10 @@ export function CandidateDetailDrawer({
   actions?: ReactNode;
   /** Something on the record changed here — the page should refetch it. */
   onChanged?: () => void;
+  /** The candidates in the order the page shows them, for next/previous (j/k). */
+  order?: string[];
+  /** Open another candidate in place. */
+  onNavigate?: (id: string) => void;
 }) {
   const { can } = useAuth();
   const prompt = usePrompt();
@@ -234,6 +240,8 @@ export function CandidateDetailDrawer({
   const [submitting, setSubmitting] = useState(false);
   const [withdrawing, setWithdrawing] = useState<CandidateSubmittal | null>(null);
   const [withdrawBusy, setWithdrawBusy] = useState(false);
+  // The offer form, open on top of this drawer (HR walk 8).
+  const [offering, setOffering] = useState(false);
   // Bumped by every write made from the drawer, so the timeline reloads.
   const [bump, setBump] = useState(0);
 
@@ -264,6 +272,30 @@ export function CandidateDetailDrawer({
     setInterviews(i.interviews);
     setOffers(o.offers);
   }, [interviewsQuery.data]);
+
+  // Next/previous through the page's own order — the board's arrow keys,
+  // without closing the drawer between candidates.
+  const at = candidateId && order ? order.indexOf(candidateId) : -1;
+  const prevId = at > 0 ? order![at - 1]! : null;
+  const nextId = at >= 0 && order && at < order.length - 1 ? order[at + 1]! : null;
+  const overlayOpen = editing || scheduling || moving !== null || cancelling !== null || scoring !== null || submitting || withdrawing !== null || offering;
+  useEffect(() => {
+    if (!candidateId || !onNavigate || overlayOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (e.key === 'j' && nextId) {
+        e.preventDefault();
+        onNavigate(nextId);
+      } else if (e.key === 'k' && prevId) {
+        e.preventDefault();
+        onNavigate(prevId);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [candidateId, onNavigate, overlayOpen, nextId, prevId]);
 
   if (!candidate) return null;
 
@@ -413,6 +445,30 @@ export function CandidateDetailDrawer({
               )}
             </DrawerDescription>
           </div>
+          {onNavigate && order && order.length > 1 && at >= 0 && (
+            <div className={cn('flex shrink-0 items-center', !canManage && 'mr-10')} aria-label="Move between candidates">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => prevId && onNavigate(prevId)}
+                disabled={!prevId}
+                aria-label="Previous candidate"
+                title="Previous (k)"
+              >
+                <ChevronUp className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => nextId && onNavigate(nextId)}
+                disabled={!nextId}
+                aria-label="Next candidate"
+                title="Next (j)"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
           {canManage && (
             // Clear of the drawer's own close button in the top corner.
             <div className="mr-10 flex shrink-0 items-center gap-1.5">
@@ -609,7 +665,11 @@ export function CandidateDetailDrawer({
                     {i.location ? ` · ${i.location}` : ''}
                     {' · '}
                     {i.kitName ?? 'No kit'}
-                    {i.interviewerEmail ? ` · ${i.interviewerEmail}` : ''}
+                    {i.interviewers?.length
+                      ? ` · ${i.interviewers.map((x) => x.name).join(', ')}`
+                      : i.interviewerEmail
+                        ? ` · ${i.interviewerEmail}`
+                        : ''}
                     {i.completedAt ? ' · scored' : upcoming ? ' · scheduled' : ' · needs a score'}
                   </div>
                   {canManage && upcoming && (
@@ -696,13 +756,9 @@ export function CandidateDetailDrawer({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm text-silver/70">No offers extended.</p>
               {canExtendOffer && (
-                <Button asChild size="sm" variant="outline">
-                  <Link
-                    to={`/recruiting/extras?tab=offers&new=1&candidate=${candidate.id}`}
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    Extend offer
-                  </Link>
+                <Button size="sm" variant="outline" onClick={() => setOffering(true)}>
+                  <Send className="h-3.5 w-3.5" />
+                  Extend offer
                 </Button>
               )}
             </div>
@@ -815,6 +871,17 @@ export function CandidateDetailDrawer({
             onOpenChange={(o) => !o && setScoring(null)}
             onScored={changed}
           />
+          {offering && (
+            <NewOfferDrawer
+              seedCandidateId={candidate.id}
+              oneStep
+              onClose={() => setOffering(false)}
+              onSaved={() => {
+                setOffering(false);
+                changed();
+              }}
+            />
+          )}
         </>
       )}
     </Drawer>

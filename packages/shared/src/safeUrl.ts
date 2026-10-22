@@ -54,5 +54,3 @@ export function httpUrl(maxLength = 2000) {
     .url()
     .refine(isHttpUrl, { message: 'Must be an http:// or https:// URL' });
 }
-
-export const HttpUrlSchema = httpUrl();

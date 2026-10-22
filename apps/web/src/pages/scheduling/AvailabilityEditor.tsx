@@ -17,8 +17,36 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useI18n } from '@/lib/i18n';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * One-tap starting points for a new hire (role walk, floor 11). With no
+ * windows the editor used to say "HR will treat you as fully unavailable"
+ * and nothing happened; a preset fills a week they can then adjust.
+ */
+export type AvailabilityPresetKey = 'weekdays' | 'weekends' | 'nights' | 'any';
+
+export function presetWindows(key: AvailabilityPresetKey): Array<{ dayOfWeek: number; start: string; end: string }> {
+  switch (key) {
+    case 'weekdays':
+      return [1, 2, 3, 4, 5].map((d) => ({ dayOfWeek: d, start: '09:00', end: '17:00' }));
+    case 'weekends':
+      return [6, 0].map((d) => ({ dayOfWeek: d, start: '08:00', end: '20:00' }));
+    case 'nights':
+      return [0, 1, 2, 3, 4, 5, 6].map((d) => ({ dayOfWeek: d, start: '16:00', end: '23:00' }));
+    case 'any':
+      return [0, 1, 2, 3, 4, 5, 6].map((d) => ({ dayOfWeek: d, start: '06:00', end: '23:00' }));
+  }
+}
+
+const PRESETS: Array<{ key: AvailabilityPresetKey; label: 'avail.presetWeekdays' | 'avail.presetWeekends' | 'avail.presetNights' | 'avail.presetAny' }> = [
+  { key: 'weekdays', label: 'avail.presetWeekdays' },
+  { key: 'weekends', label: 'avail.presetWeekends' },
+  { key: 'nights', label: 'avail.presetNights' },
+  { key: 'any', label: 'avail.presetAny' },
+];
 
 interface DraftWindow {
   /**
@@ -61,6 +89,7 @@ const isInvalidRange = (w: DraftWindow) =>
   hhmmToMinutes(w.end) <= hhmmToMinutes(w.start);
 
 export function AvailabilityEditor() {
+  const { t } = useI18n();
   const [drafts, setDrafts] = useState<DraftWindow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [errorLocal, setError] = useState<string | null>(null);
@@ -95,6 +124,11 @@ export function AvailabilityEditor() {
       ...drafts,
       { uid: nextDraftUid(), dayOfWeek: 1, start: '09:00', end: '17:00' },
     ]);
+  };
+
+  const applyPreset = (key: AvailabilityPresetKey) => {
+    setError(null);
+    setDrafts(presetWindows(key).map((w) => ({ uid: nextDraftUid(), ...w })));
   };
 
   const removeWindow = (idx: number) => {
@@ -134,7 +168,7 @@ export function AvailabilityEditor() {
   };
 
   return (
-    <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
+    <section id="availability" className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <div className="flex items-baseline justify-between mb-3">
         <h2 className="text-2xl text-white">My availability</h2>
         <span className="text-xs text-silver/70">
@@ -158,9 +192,23 @@ export function AvailabilityEditor() {
       {!loading && (
         <>
           {drafts.length === 0 && (
-            <p className="text-silver mb-3">
-              No availability windows set. HR will treat you as fully unavailable.
-            </p>
+            <div className="mb-3" data-testid="availability-presets">
+              <p className="text-ink font-medium">{t('avail.pickTitle')}</p>
+              <p className="text-sm text-silver mb-2">{t('avail.pickHint')}</p>
+              <div className="flex flex-wrap gap-2">
+                {PRESETS.map((p) => (
+                  <Button
+                    key={p.key}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyPreset(p.key)}
+                  >
+                    {t(p.label)}
+                  </Button>
+                ))}
+              </div>
+            </div>
           )}
           {drafts.length > 0 && (
             <ul className="space-y-2 mb-3">

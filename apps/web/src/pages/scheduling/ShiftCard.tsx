@@ -24,7 +24,16 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl, ymdLocal } from '@/lib/format';
+import {
+  fmtDateTz,
+  fmtMoneyEst,
+  fmtShiftRangeTz,
+  fmtWeekdayTz,
+  mapsUrl,
+  ymdLocal,
+  displayTimeZone,
+  tzAbbrev,
+} from '@/lib/format';
 import { Link } from 'react-router-dom';
 import { ArrowLeftRight, CalendarOff, Check, ChevronDown, MapPin, Users, X } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
@@ -32,6 +41,12 @@ import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
 import { accentTint, colorForPosition } from '@/lib/positionColor';
 import { statusLabelClass, statusTileClass } from './shiftTile';
+
+/** " CDT" when the shift's store sits in a zone the viewer isn't in — the
+ *  same rule as fmtShiftTz, so a remote reader never misreads the time. */
+function zoneSuffix(timeZone: string | null | undefined, at: string): string {
+  return timeZone && timeZone !== displayTimeZone() ? ` ${tzAbbrev(timeZone, at)}` : '';
+}
 
 export function statusBadge(
   status: Shift['status'],
@@ -324,6 +339,7 @@ export function ShiftCard({
             </div>
             <div className="mt-0.5 text-sm text-silver tabular-nums">
               {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
+              {zoneSuffix(shift.timezone, shift.startsAt)}
               <span className="text-silver/60">
                 {' '}· {fmtDuration(shift.scheduledMinutes)}
               </span>
@@ -368,6 +384,7 @@ export function ShiftCard({
               </>
             )}
             {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
+            {zoneSuffix(shift.timezone, shift.startsAt)}
             {/* Shift length at a glance — associates plan their day around
                 it, and it used to hide behind the expand tap. */}
             <span className="text-silver/60">

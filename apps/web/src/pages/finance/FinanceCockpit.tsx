@@ -277,21 +277,31 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
           </Link>
         </div>
         <p className="mt-1 text-xs text-silver">{t('fin.cashSub')}</p>
+        {cash.opening && (
+          <p className="mt-2 text-sm text-ink tabular-nums">
+            {t('fin.cashToday', { amount: fmtMoney(cash.opening.balance) })}
+            {cash.lowest && (
+              <span className={cn('ml-2 text-xs', cash.lowest.belowMinimum || cash.lowest.balance < 0 ? 'text-alert' : 'text-silver')}>
+                {t('fin.cashLowAt', { amount: fmtMoney(cash.lowest.balance), date: md(cash.lowest.weekStart) })}
+              </span>
+            )}
+          </p>
+        )}
         {cash.weeks.every((w) => w.inflow === 0 && w.outflow === 0) ? (
           <p className="mt-3 text-sm text-silver">{t('fin.cashEmpty')}</p>
         ) : (
           <>
             <div
               role="img"
-              aria-label={`${t('fin.cashTitle')}: ${cash.weeks.map((w) => `${md(w.weekStart)} ${t('fin.cashIn')} ${fmtMoney(w.inflow)}, ${t('fin.cashOut')} ${fmtMoney(w.outflow)}, ${t('fin.cashRunning')} ${fmtMoney(w.cumulative)}`).join('; ')}`}
+              aria-label={`${t('fin.cashTitle')}: ${cash.weeks.map((w) => `${md(w.weekStart)} ${t('fin.cashIn')} ${fmtMoney(w.inflow)}, ${t('fin.cashOut')} ${fmtMoney(w.outflow)}, ${cash.opening ? t('fin.cashBalance') : t('fin.cashRunning')} ${fmtMoney(cash.opening ? (w.balance ?? w.cumulative) : w.cumulative)}`).join('; ')}`}
               className="mt-3 h-40"
             >
-              <CashFlowChart weeks={cash.weeks} compact />
+              <CashFlowChart weeks={cash.weeks} compact withBalance={!!cash.opening} minimumCash={cash.minimumCash ?? null} />
             </div>
             <DetailsTable
               label={t('fin.cashDetails')}
-              columns={[t('fin.cashWeekCol'), t('fin.cashIn'), t('fin.cashOut'), t('fin.cashRunning')]}
-              rows={cash.weeks.map((w) => [md(w.weekStart), fmtMoney(w.inflow), fmtMoney(w.outflow), fmtMoney(w.cumulative)])}
+              columns={[t('fin.cashWeekCol'), t('fin.cashIn'), t('fin.cashOut'), cash.opening ? t('fin.cashBalance') : t('fin.cashRunning')]}
+              rows={cash.weeks.map((w) => [md(w.weekStart), fmtMoney(w.inflow), fmtMoney(w.outflow), fmtMoney(cash.opening ? (w.balance ?? w.cumulative) : w.cumulative)])}
             />
           </>
         )}
@@ -397,12 +407,13 @@ export function financeTasks(
     });
   }
   const aging = data.receivables.aging;
-  const pastDue = aging ? aging.d31 + aging.d61 + aging.d91 : 0;
+  // Past due = everything but "not yet due" (lib/books/aging, the one definition).
+  const pastDue = aging ? aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90 : 0;
   if (statements && pastDue > 0) {
     tasks.push({
       key: 'collect',
       rank: 5,
-      tone: aging && aging.d91 > 0 ? 'alert' : 'warning',
+      tone: aging && aging.over90 > 0 ? 'alert' : 'warning',
       icon: Scale,
       title: t('fin.task.collect', { amount: fmtMoney(pastDue) }),
       sub: data.receivables.oldestDays !== null ? t('fin.arOldest', { days: data.receivables.oldestDays }) : undefined,
@@ -688,13 +699,15 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
 
 export function ReceivablesCard({ receivables }: { receivables: FinanceOverview['receivables'] }) {
   const { t } = useI18n();
-  const aging = receivables.aging ?? { current: receivables.outstandingTotal, d31: 0, d61: 0, d91: 0 };
-  const total = aging.current + aging.d31 + aging.d61 + aging.d91;
-  const buckets: Array<{ key: 'current' | 'd31' | 'd61' | 'd91'; label: string; amount: number; tone: string }> = [
+  const aging = receivables.aging ?? { current: receivables.outstandingTotal, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 };
+  // The total shown is the sum of its buckets — one source (GET /finance/overview reads the Books aging).
+  const total = aging.current + aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90;
+  const buckets: Array<{ key: keyof typeof aging; label: string; amount: number; tone: string }> = [
     { key: 'current', label: t('fin.arCurrent'), amount: aging.current, tone: 'bg-success' },
-    { key: 'd31', label: t('fin.ar31'), amount: aging.d31, tone: 'bg-warning' },
-    { key: 'd61', label: t('fin.ar61'), amount: aging.d61, tone: 'bg-alert/60' },
-    { key: 'd91', label: t('fin.ar91'), amount: aging.d91, tone: 'bg-alert' },
+    { key: 'days1to30', label: t('fin.ar1'), amount: aging.days1to30, tone: 'bg-warning/60' },
+    { key: 'days31to60', label: t('fin.ar31'), amount: aging.days31to60, tone: 'bg-warning' },
+    { key: 'days61to90', label: t('fin.ar61'), amount: aging.days61to90, tone: 'bg-alert/60' },
+    { key: 'over90', label: t('fin.ar91'), amount: aging.over90, tone: 'bg-alert' },
   ];
   return (
     <Card className="h-full animate-enter" style={enterStagger(6)}>
@@ -728,7 +741,7 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
             <div className="mt-3" aria-hidden="true">
               <AgingBar buckets={buckets} />
             </div>
-            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-5">
               {buckets.map((b) => (
                 <div key={b.key}>
                   <dt className="flex items-center gap-1 text-silver/70">

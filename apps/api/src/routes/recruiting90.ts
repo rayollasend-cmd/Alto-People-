@@ -22,7 +22,8 @@ import {
   renderSignedOffer,
 } from '../lib/candidateOffers.js';
 import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
-import { sendInterviewInvites, type InviteContext } from '../lib/interviewInvites.js';
+import { panelOf, sendInterviewInvites, type InviteContext } from '../lib/interviewInvites.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { proposeReferralBonus } from '../lib/marketing.js';
 import { boardKey, buildJobFeed } from '../lib/jobFeed.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
@@ -129,10 +130,18 @@ recruiting90Router.delete('/interview-kits/:id', MANAGE, async (req, res) => {
 
 // ----- Interviews --------------------------------------------------------
 
+/** An interview panel is at most three people (HR walk 9). */
+const PANEL_MAX = 3;
+const PanelSchema = z
+  .array(z.string().uuid())
+  .max(PANEL_MAX, `An interview panel is at most ${PANEL_MAX} people.`);
+
 const InterviewInputSchema = z.object({
   candidateId: z.string().uuid(),
   kitId: z.string().uuid().nullable().optional(),
   interviewerUserId: z.string().uuid().nullable().optional(),
+  /** The panel. When given, interviewerUserId is its first member. */
+  interviewerUserIds: PanelSchema.optional(),
   scheduledFor: z.string().datetime(),
   durationMinutes: z.number().int().min(5).max(480).optional(),
   location: z.string().trim().max(300).nullable().optional(),
@@ -145,8 +154,47 @@ const InterviewUpdateSchema = z.object({
   durationMinutes: z.number().int().min(5).max(480).optional(),
   location: z.string().trim().max(300).nullable().optional(),
   interviewerUserId: z.string().uuid().nullable().optional(),
+  interviewerUserIds: PanelSchema.optional(),
   notify: z.boolean().optional(),
 });
+
+/**
+ * The panel a write names: interviewerUserIds when given, else the single
+ * interviewerUserId (back-compat), else undefined (no change). Every person
+ * must be a live staff login in this tenant — never an associate's own login
+ * and never a disabled account — so an invite never goes to a stranger.
+ */
+async function resolvePanel(input: { interviewerUserIds?: string[]; interviewerUserId?: string | null }): Promise<string[] | undefined> {
+  const ids = input.interviewerUserIds
+    ? [...new Set(input.interviewerUserIds)]
+    : input.interviewerUserId !== undefined
+      ? input.interviewerUserId
+        ? [input.interviewerUserId]
+        : []
+      : undefined;
+  if (!ids || ids.length === 0) return ids;
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids }, tenantId: tenantIdForWrite(), deletedAt: null, status: { not: 'DISABLED' }, role: { not: 'ASSOCIATE' } },
+    select: { id: true },
+  });
+  if (users.length !== ids.length) {
+    throw new HttpError(400, 'invalid_interviewer', 'Pick interviewers from your team — one of them is not a staff login here.');
+  }
+  return ids;
+}
+
+/** The panel as the API answers it. */
+const PANEL_INCLUDE = {
+  panel: {
+    orderBy: { createdAt: 'asc' as const },
+    include: { user: { select: { id: true, email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } } },
+  },
+} as const;
+
+function personName(u: { email: string; displayName?: string | null; associate?: { firstName: string; lastName: string } | null }): string {
+  if (u.associate) return `${u.associate.firstName} ${u.associate.lastName}`;
+  return u.displayName?.trim() || u.email;
+}
 
 const InterviewScoreSchema = z.object({
   // Structured: every kit question rated on one scale, plus a summary.
@@ -165,6 +213,7 @@ async function inviteContextFor(
     include: {
       candidate: { select: { firstName: true, lastName: true, email: true, position: true, deletedAt: true } },
       interviewer: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+      ...PANEL_INCLUDE,
     },
   });
   if (!iv || iv.candidate.deletedAt) return null;
@@ -185,6 +234,7 @@ async function inviteContextFor(
       position: iv.candidate.position,
     },
     interviewer: iv.interviewer ? { name: nameOf(iv.interviewer), email: iv.interviewer.email } : null,
+    panel: iv.panel.map((p) => ({ name: personName(p.user), email: p.user.email })),
     organizer: { name: nameOf(organizer), email: organizer.email },
   };
 }
@@ -208,12 +258,30 @@ const when = (d: Date) => d.toISOString();
 
 recruiting90Router.get('/interviews', VIEW, async (req, res) => {
   const candidateId = z.string().uuid().optional().parse(req.query.candidateId);
+  // ?interviewerUserId&from&to — one person's interviews in a window, for
+  // the scheduler's double-booking warning (anyone on the panel counts).
+  const interviewerUserId = z.string().uuid().optional().parse(req.query.interviewerUserId);
+  const from = z.string().datetime().optional().parse(req.query.from);
+  const to = z.string().datetime().optional().parse(req.query.to);
   const rows = await prisma.interview.findMany({
-    where: { ...(candidateId ? { candidateId } : {}) },
+    where: {
+      AND: [
+        { tenantId: tenantIdForWrite() },
+        candidateId ? { candidateId } : {},
+        interviewerUserId
+          ? { OR: [{ interviewerUserId }, { panel: { some: { userId: interviewerUserId } } }] }
+          : {},
+        from || to
+          ? { scheduledFor: { ...(from ? { gte: new Date(new Date(from).getTime() - 8 * 3_600_000) } : {}), ...(to ? { lt: new Date(to) } : {}) } }
+          : {},
+        { candidate: { deletedAt: null } },
+      ],
+    },
     include: {
       candidate: { select: { firstName: true, lastName: true, email: true } },
       kit: { select: { id: true, name: true } },
       interviewer: { select: { id: true, email: true } },
+      ...PANEL_INCLUDE,
     },
     orderBy: { scheduledFor: 'desc' },
     take: 200,
@@ -227,6 +295,11 @@ recruiting90Router.get('/interviews', VIEW, async (req, res) => {
       kitName: i.kit?.name ?? null,
       interviewerUserId: i.interviewerUserId,
       interviewerEmail: i.interviewer?.email ?? null,
+      interviewers: (i.panel.length > 0
+        ? i.panel.map((p) => ({ userId: p.user.id, email: p.user.email, name: personName(p.user) }))
+        : i.interviewer
+          ? [{ userId: i.interviewer.id, email: i.interviewer.email, name: i.interviewer.email }]
+          : []),
       scheduledFor: i.scheduledFor.toISOString(),
       durationMinutes: i.durationMinutes,
       location: i.location,
@@ -243,12 +316,14 @@ recruiting90Router.post('/interviews', MANAGE, async (req, res) => {
     where: { id: input.candidateId, deletedAt: null },
   });
   if (!candidate) throw new HttpError(404, 'not_found', 'Candidate not found.');
+  const panel = (await resolvePanel(input)) ?? [];
   const created = await prisma.$transaction(async (tx) => {
     const row = await tx.interview.create({
       data: {
         candidateId: input.candidateId,
         kitId: input.kitId ?? null,
-        interviewerUserId: input.interviewerUserId ?? null,
+        interviewerUserId: panel[0] ?? null,
+        ...(panel.length > 0 ? { panel: { create: panel.map((userId) => ({ userId })) } } : {}),
         scheduledFor: new Date(input.scheduledFor),
         durationMinutes: input.durationMinutes ?? 30,
         location: input.location || null,
@@ -266,6 +341,7 @@ recruiting90Router.post('/interviews', MANAGE, async (req, res) => {
   auditRecruiting(req, 'interview_scheduled', 'Interview', created.id, {
     candidateId: created.candidateId,
     scheduledFor: created.scheduledFor.toISOString(),
+    ...(panel.length > 0 ? { interviewers: panel } : {}),
   });
   let invited = { candidate: false, interviewer: false };
   if (input.notify !== false) {
@@ -291,14 +367,25 @@ recruiting90Router.patch('/interviews/:id', MANAGE, async (req, res) => {
     throw new HttpError(409, 'already_scored', 'This interview has been scored; schedule a new one instead.');
   }
   const before = await inviteContextFor(existing.id, req.user!);
+  const panel = await resolvePanel(input);
   const updated = await prisma.$transaction(async (tx) => {
+    if (panel !== undefined) {
+      await tx.interviewInterviewer.deleteMany({ where: { interviewId: existing.id, userId: { notIn: panel } } });
+      for (const userId of panel) {
+        await tx.interviewInterviewer.upsert({
+          where: { interviewId_userId: { interviewId: existing.id, userId } },
+          create: { interviewId: existing.id, userId },
+          update: {},
+        });
+      }
+    }
     const row = await tx.interview.update({
       where: { id: existing.id },
       data: {
         ...(input.scheduledFor ? { scheduledFor: new Date(input.scheduledFor) } : {}),
         ...(input.durationMinutes !== undefined ? { durationMinutes: input.durationMinutes } : {}),
         ...(input.location !== undefined ? { location: input.location || null } : {}),
-        ...(input.interviewerUserId !== undefined ? { interviewerUserId: input.interviewerUserId } : {}),
+        ...(panel !== undefined ? { interviewerUserId: panel[0] ?? null } : {}),
         inviteSequence: { increment: 1 },
       },
     });
@@ -320,16 +407,17 @@ recruiting90Router.patch('/interviews/:id', MANAGE, async (req, res) => {
   if (input.notify !== false) {
     const ctx = await inviteContextFor(updated.id, req.user!);
     if (ctx) invited = sendInterviewInvites(ctx, 'REQUEST', { rescheduled: true });
-    // The interviewer who was swapped out: their slot is gone.
-    if (
-      before?.interviewer &&
-      updated.interviewerUserId !== existing.interviewerUserId
-    ) {
-      sendInterviewInvites(
-        { ...before, interview: { ...before.interview, inviteSequence: updated.inviteSequence } },
-        'CANCEL',
-        { only: 'interviewer' },
-      );
+    // Whoever came off the panel: their slot is gone.
+    if (before && ctx) {
+      const staying = new Set(panelOf(ctx).map((p) => p.email.toLowerCase()));
+      const removed = panelOf(before).filter((p) => !staying.has(p.email.toLowerCase())).map((p) => p.email);
+      if (removed.length > 0) {
+        sendInterviewInvites(
+          { ...before, interview: { ...before.interview, inviteSequence: updated.inviteSequence } },
+          'CANCEL',
+          { only: 'interviewer', interviewerEmails: removed },
+        );
+      }
     }
   }
   res.json({ ok: true, invited });

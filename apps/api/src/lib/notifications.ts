@@ -1,9 +1,51 @@
-import type { NotificationChannel } from '@alto-people/shared';
+import type { NotificationChannel, NotificationStatus } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { getBrandingSync } from './branding.js';
 import { mintUnsubscribeToken } from './emailUnsubscribe.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { SmsNotConfiguredError, SmsOptedOutError, sendSms } from './sms.js';
+import { pushConfigured, sendPushToUser } from './webPush.js';
+import { apnsConfigured, fcmConfigured } from './nativePush.js';
+
+/**
+ * Thrown by send() for a PUSH row when no push transport (VAPID, APNs or
+ * FCM) is configured. Recorded as NOT_CONFIGURED, never SENT.
+ */
+export class PushNotConfiguredError extends Error {
+  readonly code = 'push_not_configured';
+  constructor() {
+    super('Push isn’t set up — set VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY (web) or the APNs / FCM keys (phones) on the API.');
+    this.name = 'PushNotConfiguredError';
+  }
+}
+
+/** A WHATSAPP send reaching the generic sender: WhatsApp only goes out through lib/whatsapp's templates. */
+export class WhatsAppNotRoutedError extends Error {
+  readonly code = 'whatsapp_not_routed';
+  constructor() {
+    super('WhatsApp messages go out through the WhatsApp templates (Communications › WhatsApp), not as one-off sends.');
+    this.name = 'WhatsAppNotRoutedError';
+  }
+}
+
+/** True when at least one push transport can reach a device. */
+export function anyPushConfigured(): boolean {
+  return pushConfigured() || apnsConfigured() || fcmConfigured();
+}
+
+/**
+ * The Notification status that tells the truth about a failed send():
+ * a do-not-email address or a STOP'd number is SUPPRESSED, a channel with
+ * no provider behind it is NOT_CONFIGURED, anything else FAILED. Every
+ * caller that owns its Notification row maps through here, so no path can
+ * write SENT for a message that did not leave.
+ */
+export function statusForSendError(err: unknown): Extract<NotificationStatus, 'SUPPRESSED' | 'NOT_CONFIGURED' | 'FAILED'> {
+  if (err instanceof EmailSuppressedError || err instanceof SmsOptedOutError) return 'SUPPRESSED';
+  if (err instanceof SmsNotConfiguredError || err instanceof PushNotConfiguredError || err instanceof WhatsAppNotRoutedError) return 'NOT_CONFIGURED';
+  return 'FAILED';
+}
 
 /**
  * Thrown by send() when the recipient is on the EmailSuppression
@@ -117,13 +159,17 @@ function effectiveFrom(): string | undefined {
 }
 
 /**
- * Notification sender. SMS / PUSH stay stubbed. EMAIL goes through Resend
- * if RESEND_API_KEY + RESEND_FROM are set; otherwise it logs the body to
- * the API console (with the magic link visible) and returns a synthetic
- * STUB-EMAIL-... ref so the UI flow continues working.
+ * Notification sender.
  *
- * IN_APP doesn't need an external service — the Notification row IS the
- * delivery; the inbox endpoint reads it.
+ *   SMS    Twilio Messages API when TWILIO_* is configured (lib/sms);
+ *          otherwise SmsNotConfiguredError → NOT_CONFIGURED. A number that
+ *          texted STOP → SmsOptedOutError → SUPPRESSED. Never a stub ref.
+ *   PUSH   every device of the recipient user (web push + APNs/FCM) when a
+ *          transport is configured; otherwise PushNotConfiguredError.
+ *   EMAIL  Resend if RESEND_API_KEY + RESEND_FROM are set; otherwise it logs
+ *          the body to the API console (with the magic link visible) and
+ *          returns a synthetic STUB-EMAIL-... ref so the dev flow continues.
+ *   IN_APP no external service — the Notification row IS the delivery.
  */
 export interface SendAttachment {
   filename: string;
@@ -203,9 +249,10 @@ async function recordFailedSend(input: SendInput, err: unknown): Promise<void> {
     await prisma.notification.create({
       data: {
         channel: input.channel,
-        status: err instanceof EmailSuppressedError ? 'SUPPRESSED' : 'FAILED',
+        status: statusForSendError(err),
         recipientUserId: input.recipient.userId,
         recipientEmail: input.recipient.email,
+        recipientPhone: input.recipient.phone,
         subject: input.subject,
         // Bodies can be long (and carry a magic link); keep the row small
         // and the link out of it — this is an audit trail, not a copy.
@@ -239,24 +286,33 @@ async function dispatch(input: SendInput): Promise<SendResult> {
   await new Promise((r) => setTimeout(r, 1));
 
   switch (input.channel) {
-    case 'SMS':
-      return {
-        externalRef: `STUB-SMS-${Math.random().toString(36).slice(2, 10)}`,
-        providerMessageId: null,
-      };
-    case 'PUSH':
-      return {
-        externalRef: `STUB-PUSH-${Math.random().toString(36).slice(2, 10)}`,
-        providerMessageId: null,
-      };
+    case 'SMS': {
+      if (!input.recipient.phone) throw new Error('No phone number to text.');
+      const r = await sendSms({
+        to: input.recipient.phone,
+        body: input.subject ? `${input.subject}\n${input.body}` : input.body,
+      });
+      return { externalRef: r.sid, providerMessageId: r.sid };
+    }
+    case 'PUSH': {
+      if (!input.recipient.userId) throw new Error('Push needs a signed-in recipient.');
+      if (!anyPushConfigured()) throw new PushNotConfiguredError();
+      await sendPushToUser(input.recipient.userId, {
+        title: input.subject ?? getBrandingSync().orgName,
+        body: input.body,
+      });
+      return { externalRef: null, providerMessageId: null };
+    }
     case 'EMAIL':
       return sendEmail(input);
     case 'IN_APP':
       return { externalRef: null, providerMessageId: null };
     case 'WHATSAPP':
-      // Real WhatsApp sends go through lib/whatsapp (templates, receipts);
-      // a WHATSAPP row reaching this generic sender is recorded as a stub.
-      return { externalRef: `STUB-WA-${Math.random().toString(36).slice(2, 10)}`, providerMessageId: null };
+      // Real WhatsApp sends go through lib/whatsapp (registered templates,
+      // receipts, the 24-hour window); this generic sender cannot honour
+      // those rules, so it refuses — recorded NOT_CONFIGURED, never a stub
+      // reference written down as SENT.
+      throw new WhatsAppNotRoutedError();
   }
 }
 

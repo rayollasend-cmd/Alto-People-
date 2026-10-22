@@ -45,6 +45,12 @@ export interface CloseCheckItem {
   link: string | null;
 }
 
+/** A step done from the checklist itself (finance walk 16): one click, no page change. */
+export interface CloseTaskAction {
+  kind: 'finalize_statements' | 'post_history';
+  label: string;
+}
+
 export interface CloseTaskView {
   key: string;
   title: string;
@@ -60,6 +66,8 @@ export interface CloseTaskView {
   items: CloseCheckItem[];
   /** Where the whole task is done. */
   link: string | null;
+  /** The step's own button, when it can be done right here. */
+  action?: CloseTaskAction | null;
   note: string | null;
   doneAt: string | null;
   doneByName: string | null;
@@ -423,5 +431,6 @@ export interface DepreciationRunResult {
   late: number;
   assets: number;
 }
+
 
 export const BOOKS_PERIOD_KEY = PeriodKey;

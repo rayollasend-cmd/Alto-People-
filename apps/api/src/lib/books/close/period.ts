@@ -92,6 +92,7 @@ function taskViews(
         summary: check?.summary ?? null,
         items: check?.items ?? [],
         link: tpl?.link(periodKey) ?? null,
+        action: status === 'OPEN' ? (check?.action ?? null) : null,
         note: r.note,
         doneAt: iso(r.doneAt),
         doneByName: r.doneById ? (who.get(r.doneById) ?? null) : null,
@@ -175,6 +176,23 @@ export async function closeDetail(db: Db, periodKey: string, actor: Actor, now: 
   };
 }
 
+/**
+ * How far a month's close is, counted exactly as the close page counts it
+ * (auto steps by their live check, hand steps by their stored status, a
+ * skip standing) — the Books home reads this, so "0 of 10" there and
+ * "5 of 10" on the checklist can't disagree (finance walk 3).
+ */
+export async function closeProgress(db: Db, periodKey: string): Promise<{ status: ClosePeriodStatus; tasksDone: number; tasksTotal: number; closedAt: string | null }> {
+  const tenantId = tenantIdForWrite();
+  const p = await db.fiscalPeriod.findUnique({ where: { tenantId_periodKey: { tenantId, periodKey } }, include: { closeTasks: true } });
+  const status = statusOf(p);
+  if (status === 'CLOSED') return { status, tasksDone: CLOSE_TASKS.length, tasksTotal: CLOSE_TASKS.length, closedAt: iso(p?.closedAt) };
+  const checks = await runChecks(db, periodKey);
+  const stored = new Map((p?.closeTasks ?? []).map((r) => [r.key, r.status]));
+  const done = CLOSE_TASKS.filter((t) => stored.get(t.key) === 'SKIPPED' || (t.auto ? checks.get(t.key)?.passing : stored.get(t.key) === 'DONE')).length;
+  return { status, tasksDone: done, tasksTotal: CLOSE_TASKS.length, closedAt: iso(p?.closedAt) };
+}
+
 export async function closeList(db: Db, now: Date = new Date()): Promise<CloseListResponse> {
   const tenantId = tenantIdForWrite();
   const current = periodKeyOf(now);
@@ -188,14 +206,7 @@ export async function closeList(db: Db, now: Date = new Date()): Promise<CloseLi
   for (const key of keys) {
     const p = byKey.get(key) ?? null;
     const status = statusOf(p);
-    let done: number;
-    if (status === 'CLOSED') done = CLOSE_TASKS.length;
-    else {
-      const checks = await runChecks(db, key);
-      const rows = p?.closeTasks ?? [];
-      const stored = new Map(rows.map((r) => [r.key, r.status]));
-      done = CLOSE_TASKS.filter((t) => stored.get(t.key) === 'SKIPPED' || (t.auto ? checks.get(t.key)?.passing : stored.get(t.key) === 'DONE')).length;
-    }
+    const done = (await closeProgress(db, key)).tasksDone;
     months.push({
       periodKey: key,
       label: monthLabel(key),

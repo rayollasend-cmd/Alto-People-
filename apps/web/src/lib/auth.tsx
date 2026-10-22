@@ -38,6 +38,30 @@ import { startWebVitals } from './webVitals';
  */
 export const OFFLINE_GRACE_MS = 1500;
 
+/**
+ * The session probe's retry schedule when the server is silent: 2s, 4s,
+ * 8s, 16s, then every 30s. Mutable so a test can run the schedule in
+ * milliseconds instead of waiting it out.
+ */
+export const PROBE_RETRY = { baseMs: 2_000, maxMs: 30_000 };
+
+/** Retries the splash stays up for when nothing is remembered (≈30s). */
+export const PROBE_SPLASH_ATTEMPTS = 4;
+
+export function probeRetryDelayMs(attempt: number): number {
+  return Math.min(PROBE_RETRY.maxMs, PROBE_RETRY.baseMs * 2 ** Math.max(0, attempt - 1));
+}
+
+/**
+ * "The server did not answer": no network, a timeout, or a 5xx (a deploy,
+ * a gateway, a crashed process). None of these says anything about the
+ * session, so none of them may end it. Exported for tests.
+ */
+export function isServerSilence(err: unknown): boolean {
+  if (err instanceof NetworkError || err instanceof TimeoutError) return true;
+  return err instanceof ApiError && (err.status >= 500 || err.status === 0);
+}
+
 /** Toast id — pinning it makes "exactly one session-ended toast" cheap. */
 const SESSION_ENDED_TOAST_ID = 'auth-session-ended';
 
@@ -191,53 +215,88 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Initial /auth/me probe. Under React.StrictMode (dev) this effect mounts,
   // unmounts, and remounts — we let the second run complete naturally and
   // unconditionally clear isInitializing so the splash never gets stuck.
+  //
+  // Only a 401 is an answer about the session. Everything else — no
+  // network, a timeout, a 5xx from a deploy or a gateway — is the server
+  // not answering, and the session is kept: the remembered identity comes
+  // back, the "Reconnecting…" pill shows, and the probe retries with
+  // backoff until it gets a real answer. Before this, a 502 during a
+  // deploy signed out every tablet on the floor (role walk floor 2, ops 3,
+  // HR 24; audit Tier 1 #7).
   useEffect(() => {
     const ac = new AbortController();
     let cancelled = false;
+    let retryTimer: number | null = null;
     (async () => {
-      try {
-        // eslint-disable-next-line no-restricted-syntax -- the session probe itself: it decides whether the query layer may run and which cache to restore, so it cannot live inside it
-        const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
-        if (cancelled) return;
-        setUser(me.user);
-        setTenant(me.tenant ?? DEFAULT_TENANT);
-        saveOfflineSession(me.user);
-        setIsOffline(false);
-      } catch (err) {
-        if (cancelled || ac.signal.aborted) return;
-        if (err instanceof ApiError && err.status === 401) {
-          // Cookie was present but stale. Server cleared it; we clear local
-          // state — including the offline copy, so a dead session can't be
-          // resurrected by pulling the network cable.
-          clearOfflineSession();
-          void clearPersistedQueries();
-          setUser(null);
-        } else if (err instanceof NetworkError || err instanceof TimeoutError) {
-          // Offline OR a cold-backend timeout — keep the user's session and
-          // show the "reconnecting" affordance. Critically, do NOT fall to the
-          // else branch, which clears the user and bounces them to login: a
-          // slow cold start must never look like a logout.
-          //
-          // On a COLD start there is no session in memory to keep, though —
-          // `user` is still null and RequireAuth would bounce to /login. So
-          // restore the last known identity, which unlocks the shell and the
-          // persisted cache. It is not a credential: every call still needs
-          // the httpOnly cookie, and the moment we reach the server again a
-          // dead session logs out as usual.
-          const remembered = readOfflineSession();
-          if (remembered) setUser(remembered);
-          setIsOffline(true);
-        } else {
-          setUser(null);
+      let attempt = 0;
+      // With no remembered identity there is nothing to show behind the
+      // splash, so it stays up through the first retries (about 30s) and
+      // only then gives way to the sign-in page. With one, the shell opens
+      // at once and the retries go on in the background.
+      let splashHeld = false;
+      for (;;) {
+        try {
+          // eslint-disable-next-line no-restricted-syntax -- the session probe itself: it decides whether the query layer may run and which cache to restore, so it cannot live inside it
+          const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
+          if (cancelled) return;
+          setUser(me.user);
+          setTenant(me.tenant ?? DEFAULT_TENANT);
+          saveOfflineSession(me.user);
+          setIsOffline(false);
+          return;
+        } catch (err) {
+          if (cancelled || ac.signal.aborted) return;
+          if (err instanceof ApiError && err.status === 401) {
+            // Cookie was present but stale. Server cleared it; we clear local
+            // state — including the offline copy, so a dead session can't be
+            // resurrected by pulling the network cable.
+            clearOfflineSession();
+            void clearPersistedQueries();
+            setUser(null);
+            return;
+          }
+          if (!isServerSilence(err)) {
+            // A 4xx other than 401 (a bad request shape, a forbidden probe)
+            // is an answer, not silence: nothing to keep.
+            setUser(null);
+            return;
+          }
+          // Offline, a cold-backend timeout, or a 5xx — keep the user's
+          // session and show the "reconnecting" affordance. On a COLD start
+          // there is no session in memory to keep, though — `user` is still
+          // null and RequireAuth would bounce to /login. So restore the last
+          // known identity, which unlocks the shell and the persisted cache.
+          // It is not a credential: every call still needs the httpOnly
+          // cookie, and the moment we reach the server again a dead session
+          // logs out as usual.
+          if (attempt === 0) {
+            const remembered = readOfflineSession();
+            if (remembered) setUser(remembered);
+            else splashHeld = true;
+            setIsOffline(true);
+          }
+          if (splashHeld && attempt >= PROBE_SPLASH_ATTEMPTS) {
+            // Nothing remembered and the server still silent: the sign-in
+            // page is the honest screen now. The retries go on; a success
+            // from here lands the person back in their session.
+            splashHeld = false;
+            setIsInitializing(false);
+          }
+          attempt += 1;
+          await new Promise<void>((resolve) => {
+            retryTimer = window.setTimeout(resolve, probeRetryDelayMs(attempt));
+          });
+          if (cancelled) return;
+        } finally {
+          if (!cancelled && !splashHeld) setIsInitializing(false);
         }
-      } finally {
-        if (!cancelled) setIsInitializing(false);
       }
     })();
 
     return () => {
       cancelled = true;
       ac.abort();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
   }, [setUser]);
 

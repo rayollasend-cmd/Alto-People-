@@ -50,7 +50,8 @@ export type ExceptionKind =
   | 'APPRENTICE_RATIO'
   | 'WAGE_STATEMENT_INCOMPLETE'
   | 'ROTH_CATCH_UP'
-  | 'DEFERRAL_LIMIT';
+  | 'DEFERRAL_LIMIT'
+  | 'LATE_APPROVED_TIME';
 
 export type ExceptionSeverity = 'BLOCKING' | 'WARNING' | 'INFO';
 
@@ -81,6 +82,7 @@ const SEVERITY: Record<ExceptionKind, ExceptionSeverity> = {
   ROTH_CATCH_UP: 'WARNING',
   DEFERRAL_LIMIT: 'INFO',
   UNASSIGNED_SCHEDULE: 'WARNING',
+  LATE_APPROVED_TIME: 'WARNING',
 };
 
 export interface ExceptionsResult {
@@ -169,6 +171,21 @@ export async function computePayrollExceptions(
         severity: SEVERITY.UNASSIGNED_SCHEDULE,
         message: 'Has approved time in this period but is on no pay schedule — not paid in this run. Add them to a schedule.',
         detail: {},
+      });
+    }
+    // Approved time from an earlier period whose payday passed with no
+    // paystub for it (the period ledger, finance walk 1): this run does
+    // not pay it either — an off-cycle run from the ledger does.
+    const { lateApprovedTime } = await import('./payrollPeriodLedger.js');
+    for (const late of await lateApprovedTime(tx, input.payrollScheduleId, from)) {
+      const oldest = late.periods[0]!;
+      scheduleWarnings.push({
+        associateId: late.associateId,
+        associateName: late.name,
+        kind: 'LATE_APPROVED_TIME',
+        severity: SEVERITY.LATE_APPROVED_TIME,
+        message: `${late.hours.toFixed(1)}h approved for ${oldest.periodStart} – ${late.periods[late.periods.length - 1]!.periodEnd} (payday ${oldest.payDate}) are on no paystub — this run does not pay them. Pay them off-cycle from the payroll home.`,
+        detail: { hours: late.hours, periods: late.periods },
       });
     }
   }

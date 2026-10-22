@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { activeHeadcount } from '../lib/activeDefinition.js';
+import { ageStatements } from '../lib/books/aging.js';
+import { statementBalances } from '../lib/books/posting/receivables.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { isInternallyScoped } from '../lib/scope.js';
@@ -18,6 +20,7 @@ import { portalEngagementOverview } from '../lib/portalEngagement.js';
 import { computeAgentRoi } from '../lib/agentRoi.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { env } from '../config/env.js';
+import { executiveMoney } from '../lib/executiveMoney.js';
 
 /**
  * Executive surfaces — the chairman's read-only layer.
@@ -284,13 +287,23 @@ executiveRouter.post('/decisions/action', EXEC, async (req: Request, res: Respon
   res.json({ ok: true });
 });
 
+/* ===== The money band (finance walk 17) ================================== */
+
+// Real money, not estimates: cash today from the books, the 13-week low
+// point from the cash forecast, month-to-date profit against the budget,
+// days to collect by month, and what each payroll run cost
+// (lib/executiveMoney). Whole company, like every route here.
+executiveRouter.get('/money', EXEC, async (_req: Request, res: Response) => {
+  res.json(await executiveMoney(prisma, new Date()));
+});
+
 /* ===== Receivables — the cash view ======================================= */
 //
 // Staffing economics 101: payroll goes out weekly, client cash arrives in
-// 30-60 days. This view ages every FINAL statement from finalizedAt until
-// payment is recorded (POST .../mark-paid in clients.ts) and reports the
-// effective days-to-pay so the working-capital gap is a number, not a
-// feeling.
+// 30-60 days. This view ages every open FINAL statement by days past its
+// due date (lib/books/aging — the same definition the finance home and
+// Books use) and reports the effective days-to-pay so the working-capital
+// gap is a number, not a feeling.
 
 executiveRouter.get(
   '/receivables',
@@ -305,6 +318,7 @@ executiveRouter.get(
         periodStart: true,
         periodEnd: true,
         finalizedAt: true,
+        dueAt: true,
         paidAt: true,
         paymentRef: true,
         snapshot: true,
@@ -313,14 +327,20 @@ executiveRouter.get(
       orderBy: { finalizedAt: 'asc' },
       take: 500,
     });
-    const now = Date.now();
     const totalOf = (snapshot: unknown): number => {
       const t = (snapshot as { totals?: { amount?: number } } | null)?.totals?.amount;
       return typeof t === 'number' ? t : 0;
     };
-    const outstanding = finals
-      .filter((s) => !s.paidAt)
-      .map((s) => ({
+    // One aging definition (lib/books/aging): ageDays is days past DUE, and the
+    // buckets are the Books buckets; each statement counts what is still OPEN on it
+    // (net of partial payments, lib/books/posting/receivables) — the same numbers the
+    // finance home and Books show.
+    const unpaid = finals.filter((s) => !s.paidAt);
+    const balances = unpaid.length ? await statementBalances(prisma, { id: { in: unpaid.map((s) => s.id) } }) : [];
+    const openOf = new Map(balances.map((b) => [b.statementId, b.open / 100]));
+    const aged = ageStatements(unpaid.map((s) => ({ ...s, amount: openOf.get(s.id) ?? totalOf(s.snapshot) })).filter((s) => s.amount > 0));
+    const outstanding = aged.statements
+      .map(({ row: s, daysPastDue, dueOn }) => ({
         id: s.id,
         clientId: s.clientId,
         clientName: s.client.name,
@@ -328,10 +348,9 @@ executiveRouter.get(
         periodStart: s.periodStart.toISOString().slice(0, 10),
         periodEnd: s.periodEnd.toISOString().slice(0, 10),
         finalizedAt: s.finalizedAt?.toISOString() ?? null,
-        amount: totalOf(s.snapshot),
-        ageDays: s.finalizedAt
-          ? Math.floor((now - s.finalizedAt.getTime()) / 86_400_000)
-          : 0,
+        dueOn,
+        amount: s.amount,
+        ageDays: daysPastDue,
       }))
       .sort((a, b) => b.ageDays - a.ageDays);
     const paid = finals.filter((s) => s.paidAt && s.finalizedAt);
@@ -344,20 +363,18 @@ executiveRouter.get(
             ) / paid.length,
           )
         : null;
-    const bucket = (lo: number, hi: number | null) =>
-      outstanding
-        .filter((s) => s.ageDays >= lo && (hi === null || s.ageDays < hi))
-        .reduce((n, s) => n + s.amount, 0);
+    const r2 = (n: number) => Math.round(n * 100) / 100;
     res.json({
       outstanding,
       totals: {
-        outstandingAmount: Math.round(outstanding.reduce((n, s) => n + s.amount, 0) * 100) / 100,
+        outstandingAmount: r2(aged.total),
         outstandingCount: outstanding.length,
         aging: {
-          current: Math.round(bucket(0, 30) * 100) / 100,
-          days30: Math.round(bucket(30, 45) * 100) / 100,
-          days45: Math.round(bucket(45, 60) * 100) / 100,
-          days60plus: Math.round(bucket(60, null) * 100) / 100,
+          current: r2(aged.buckets.current),
+          days1to30: r2(aged.buckets.days1to30),
+          days31to60: r2(aged.buckets.days31to60),
+          days61to90: r2(aged.buckets.days61to90),
+          over90: r2(aged.buckets.over90),
         },
         avgDaysToPay,
         paidCount: paid.length,

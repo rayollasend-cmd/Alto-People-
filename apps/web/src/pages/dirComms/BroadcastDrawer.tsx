@@ -107,7 +107,11 @@ export function useSendBroadcast() {
     if (!ok) return false;
     try {
       const r = await sendBroadcast(b.id);
-      toast.success(`Sent — ${plural(r.recipientCount, 'inbox', 'inboxes')}.`);
+      // A chosen channel with no provider behind it sent nothing — say so
+      // here, not just in the log.
+      const off = Object.values(r.notConfigured ?? {});
+      if (off.length > 0) toast.warning(`Sent to ${plural(r.recipientCount, 'inbox', 'inboxes')} — but not every channel: ${off.join(' ')}`);
+      else toast.success(`Sent — ${plural(r.recipientCount, 'inbox', 'inboxes')}${b.channels.includes('SMS') && r.phoneCount !== undefined ? ` and ${plural(r.phoneCount, 'text', 'texts')}` : ''}.`);
       void qc.invalidateQueries({ queryKey: ['dirComms', 'broadcasts'] });
       return true;
     } catch (err) {

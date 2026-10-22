@@ -137,7 +137,7 @@ export function FinanceDashboard() {
   const lastWeek = data.margin?.weeks.filter((w) => !w.inProgress).at(-1) ?? null;
   const atRisk = (data.billing?.money.atRisk ?? 0) + (data.billing?.rejectedOpen.amount ?? 0);
   const aging = data.receivables.aging;
-  const pastDue = aging ? aging.d31 + aging.d61 + aging.d91 : 0;
+  const pastDue = aging ? aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90 : 0;
   const tasksToday = financeTasks(data, t, Date.now()).length;
   // The doors the day needs (plus the payroll case desk below): statements
   // only when the tenant bills clients.
@@ -232,7 +232,8 @@ export function FinanceDashboard() {
       </div>
 
       {/* ---- Getting paid: last week in Fieldglass, and the margin ----- */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* items-start: a long Billing card no longer stretches the margin card beside it (finance walk 14). */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
         <BillingWeekCard billing={data.billing} />
         <MarginTrendCard margin={data.margin} />
       </div>
@@ -300,7 +301,7 @@ export function FinanceDashboard() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
         {/* ---- The chase list, as bars -------------------------------- */}
         {chaseHot && (
           <Card className="animate-enter border-warning/30" style={enterStagger(5)}>
@@ -358,7 +359,8 @@ export function FinanceDashboard() {
       </div>
 
       {/* ---- The actions the day needs -------------------------------- */}
-      <div className={cn('grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3', doors.length + 1 === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4')}>
+      {/* Each door is at least 10rem wide and its label wraps to two lines, never cut off ("Run pay…"). */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-2 md:gap-3">
         {doors.map(([to, key, Icon]) => (
           <Link
             key={to}
@@ -369,7 +371,7 @@ export function FinanceDashboard() {
               className="h-4 w-4 text-silver transition-colors group-hover:text-gold"
               aria-hidden="true"
             />
-            <span className="flex-1 truncate">{t(key)}</span>
+            <span className="min-w-0 flex-1 break-words leading-tight">{t(key)}</span>
             <ArrowRight
               className="h-3.5 w-3.5 text-silver/70 transition-colors group-hover:text-gold"
               aria-hidden="true"
@@ -386,7 +388,7 @@ export function FinanceDashboard() {
             className="h-4 w-4 text-silver transition-colors group-hover:text-gold"
             aria-hidden="true"
           />
-          <span className="flex-1 truncate">{t('fin.goCases')}</span>
+          <span className="min-w-0 flex-1 break-words leading-tight">{t('fin.goCases')}</span>
           {data.payrollCases.open > 0 && (
             <span
               className={cn(

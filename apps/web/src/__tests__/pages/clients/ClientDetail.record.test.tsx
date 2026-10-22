@@ -20,7 +20,6 @@ vi.mock('@/pages/clients/RateDefaultsSection', () => ({ RateDefaultsSection: () 
 vi.mock('@/pages/clients/StatementsSection', () => ({ StatementsSection: () => null }));
 vi.mock('@/pages/clients/LocationsSection', () => ({ LocationsSection: () => null }));
 vi.mock('@/pages/clients/BenefitsPlansSection', () => ({ BenefitsPlansSection: () => null }));
-vi.mock('@/pages/clients/QuickbooksSection', () => ({ QuickbooksSection: () => null }));
 vi.mock('@/pages/clients/PortalAccessSection', () => ({ PortalAccessSection: () => null }));
 
 import { getClient } from '@/lib/clientsApi';

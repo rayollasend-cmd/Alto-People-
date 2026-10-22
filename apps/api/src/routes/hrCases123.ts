@@ -16,6 +16,7 @@ import {
 import { CATEGORIES, PRIORITIES, clockDataFor, dueAtFor, slaTargets, slaView, targetHoursFor } from '../lib/hrCaseSla.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { hrCaseInReach, hrCaseReach } from '../lib/hrCaseScope.js';
+import { scopeAssociatesIncludingFormer } from '../lib/scope.js';
 
 /**
  * Phase 123 — HR cases (ticketing) — now the company's internal case desk.
@@ -110,6 +111,71 @@ hrCases123Router.post('/hr-cases', requireAuth, async (req, res) => {
   res.status(201).json({ id: created.id });
 });
 
+// ----- File on someone's behalf (HR desk) --------------------------------
+//
+// HR walk 13: a complaint by phone, at the window or by email had no way
+// into the system — only an associate could file, and only for themselves.
+// The desk (manage:onboarding) files it for the person, says how it came
+// in, and the person is told a case is open for them.
+
+const OnBehalfInputSchema = FileInputSchema.extend({
+  associateId: z.string().uuid(),
+  channel: z.enum(['PHONE', 'WALK_IN', 'EMAIL']),
+});
+
+const CHANNEL_WORDS: Record<'PHONE' | 'WALK_IN' | 'EMAIL', string> = {
+  PHONE: 'by phone',
+  WALK_IN: 'in person',
+  EMAIL: 'by email',
+};
+
+hrCases123Router.post('/hr-cases/on-behalf', requireAuth, async (req, res) => {
+  if (deskScope(req.user!.role) !== 'all') {
+    throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
+  }
+  const input = OnBehalfInputSchema.parse(req.body);
+  // Only someone inside the caller's reach: a site-scoped HR lead files for
+  // their own sites' people, and a stranger's id answers as not found.
+  const person = await prisma.associate.findFirst({
+    where: { AND: [{ id: input.associateId }, scopeAssociatesIncludingFormer(req.user!), { tenantId: tenantIdForWrite() }] },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  if (!person) throw new HttpError(404, 'associate_not_found', 'Associate not found.');
+  const now = new Date();
+  const dueAt = dueAtFor(now, await targetHoursFor(input.category, input.priority));
+  const created = await prisma.hrCase.create({
+    data: {
+      associateId: person.id,
+      category: input.category,
+      subject: input.subject,
+      description: input.description,
+      priority: input.priority,
+      dueAt,
+      channel: input.channel,
+      filedByUserId: req.user!.id,
+    },
+  });
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'hr_case.filed_on_behalf',
+      entityType: 'HrCase',
+      entityId: created.id,
+      metadata: { associateId: person.id, channel: input.channel, category: input.category },
+    },
+    'hr_case.filed_on_behalf',
+  );
+  void notifyAssociate(person.id, {
+    subject: 'HR opened a case for you',
+    body: `HR opened a case for what you raised ${CHANNEL_WORDS[input.channel]}: "${input.subject}". You can follow it and reply here.`,
+    category: 'hr-cases',
+    linkUrl: `/hr-cases?case=${created.id}`,
+    // No login yet (a phone call from someone mid-onboarding): email them.
+    emailFallback: true,
+  });
+  res.status(201).json({ id: created.id });
+});
+
 // ----- My cases (associate self-serve) ------------------------------------
 
 hrCases123Router.get('/my/hr-cases', requireAuth, async (req, res) => {
@@ -185,6 +251,7 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
         select: { id: true, firstName: true, lastName: true, email: true },
       },
       assignedTo: { select: { email: true } },
+      filedBy: { select: { email: true } },
       _count: { select: { comments: true } },
     },
     orderBy: [
@@ -214,6 +281,8 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
       sla: slaView(c),
+      channel: c.channel,
+      filedByEmail: c.filedBy?.email ?? null,
     })),
   });
 });
@@ -229,6 +298,7 @@ hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
         select: { id: true, firstName: true, lastName: true, email: true },
       },
       assignedTo: { select: { id: true, email: true } },
+      filedBy: { select: { email: true } },
       comments: {
         include: {
           authorUser: {
@@ -278,6 +348,8 @@ hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
     sla: slaView(c),
+    channel: c.channel,
+    filedByEmail: c.filedBy?.email ?? null,
     comments: c.comments
       .filter((cm) => canManage || !cm.internalNote)
       .map((cm) => ({

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { KIOSK_PIN_LENGTH } from '@alto-people/shared';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
@@ -1723,7 +1724,7 @@ function PinPad({
   error?: string | null;
   submitting?: boolean;
 }) {
-  // Auto-advance once 4 digits are entered — but not while a previous
+  // Auto-advance once every digit is entered — but not while a previous
   // verify is still in flight, so we never fire two punches.
   //
   // Fired AT MOST ONCE per (pin, intent) combination, tracked in a ref.
@@ -1739,7 +1740,7 @@ function PinPad({
   const firedForRef = useRef<string | null>(null);
   const submitKey = `${pin}|${intent ?? ''}`;
   useEffect(() => {
-    if (pin.length < 4) {
+    if (pin.length < KIOSK_PIN_LENGTH) {
       firedForRef.current = null;
       return;
     }
@@ -1787,7 +1788,7 @@ function PinPad({
       } else if (e.key === 'Escape') {
         e.preventDefault();
         onCancel();
-      } else if (e.key === 'Enter' && error && pin.length === 4 && !submitting) {
+      } else if (e.key === 'Enter' && error && pin.length === KIOSK_PIN_LENGTH && !submitting) {
         e.preventDefault();
         onSubmit();
       }
@@ -1855,7 +1856,7 @@ function PinPad({
             not-clocked-in) need an explicit retry — auto-advance fires
             once per PIN on purpose, and there's no other submit
             affordance on the pad. */}
-        {error && pin.length === 4 && !submitting ? (
+        {error && pin.length === KIOSK_PIN_LENGTH && !submitting ? (
           <Button onClick={onSubmit} size="lg" className="rounded-full">
             {t.tryAgain}
           </Button>

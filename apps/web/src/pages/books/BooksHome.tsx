@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowRight, CalendarCheck, CheckCircle2, CircleAlert, Fi
 import type { BooksOverview } from '@alto-people/shared';
 import { useAuth, useTenant } from '@/lib/auth';
 import { getBooksOverview } from '@/lib/books/ledgerApi';
-import { fmtDateTime, fmtMoney, fmtMoneyCompact, fmtMonthShortYear } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney, fmtMoneyCompact, fmtMonthShortYear } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -12,6 +12,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartTooltipContent, LegendKey, PALETTE, TICK } from '@/components/ui/charts';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard, type MetricTrend } from '@/components/ui/MetricCard';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
@@ -67,8 +68,9 @@ export function BooksHome() {
       summary={
         o ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="Cash" value={fmtMoney(o.cash.total)} hint={`${o.cash.accounts.length} bank and card ${o.cash.accounts.length === 1 ? 'account' : 'accounts'}`} href="/books/bank" />
-            <MetricCard label={`${who.Many} owe`} value={fmtMoney(o.receivables.total)} hint={o.receivables.aging.over90 > 0 ? `${fmtMoney(o.receivables.aging.over90)} over 90 days` : 'nothing over 90 days'} accent={o.receivables.aging.over90 > 0} href="/books/receivables" />
+            <MetricCard label="Cash" value={fmtMoney(o.cash.total)} hint={cashHint(o)} href="/books/bank" />
+            {/* The same number as the aging card below (the open statements); when the ledger holds a different AR balance, the hint says so. */}
+            <MetricCard label={`${who.Many} owe`} value={fmtMoney(o.receivables.openOnStatements)} hint={receivablesHint(o)} accent={o.receivables.aging.over90 > 0 || Math.abs(o.receivables.openOnStatements - o.receivables.total) >= 0.01} href="/books/receivables" />
             <MetricCard label="You owe" value={fmtMoney(o.payables.total)} hint={o.payables.overdue > 0 ? `${fmtMoney(o.payables.overdue)} past due` : `${fmtMoney(o.payables.dueIn7Days)} due this week`} accent={o.payables.overdue > 0} href="/books/bills" />
             <MetricCard label="Profit this month" value={fmtMoney(o.profit.month.netIncome)} hint={`${fmtMoney(o.profit.yearToDate.netIncome)} this year`} href="/books/reports" trend={profitTrend(o)} />
           </div>
@@ -157,6 +159,7 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
   const rows = o.profit.trend.map((t) => ({ month: t.label, income: t.income, netIncome: t.netIncome }));
   const best = [...o.profit.trend].sort((x, y) => y.netIncome - x.netIncome)[0];
   const losing = o.profit.trend.filter((t) => t.netIncome < 0).length;
+  const nothingPosted = o.profit.trend.every((t) => !t.income && !t.netIncome);
   const summary = o.profit.trend.length
     ? `Income and net income, the last ${o.profit.trend.length === 1 ? 'month' : `${o.profit.trend.length} months`}. Best: ${best!.label}, ${fmtMoney(best!.netIncome)} kept${losing ? `; ${losing} ${losing === 1 ? 'month' : 'months'} at a loss` : ''}.`
     : 'No months to show yet.';
@@ -181,6 +184,10 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
       csvName="profit-by-month"
       height={220}
     >
+      {nothingPosted ? (
+        // No income or expense in six months: a $0–$4 axis says nothing — say so in words.
+        <EmptyState size="sm" icon={FileSpreadsheet} title="Nothing to chart yet" description="Nothing has posted to income or expenses in the last six months." />
+      ) : (
       <div className="flex h-full w-full flex-col">
         <div className="min-h-0 flex-1">
           <ResponsiveContainer width="100%" height="100%">
@@ -208,14 +215,27 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
           <LegendKey items={[{ name: 'Income', color: PALETTE.primary }, { name: 'Net income', color: PALETTE.tertiary }, ...(losing ? [{ name: 'Net loss', color: PALETTE.bad }] : [])]} />
         </div>
       </div>
+      )}
     </ChartFrame>
   );
+}
+
+/** The Cash card's hint: how many bank and card accounts are actually connected (the Bank page's list), not the ledger's. */
+function cashHint(o: BooksOverview): string {
+  const n = o.cash.connectedAccounts;
+  return n > 0 ? `${n} ${n === 1 ? 'account' : 'accounts'} connected to the bank` : 'From the ledger — no bank connected yet';
+}
+
+function receivablesHint(o: BooksOverview): string {
+  const r = o.receivables;
+  if (Math.abs(r.openOnStatements - r.total) >= 0.01) return `${fmtMoney(r.total)} in the ledger — post history to match`;
+  return r.aging.over90 > 0 ? `${fmtMoney(r.aging.over90)} over 90 days` : 'nothing over 90 days';
 }
 
 /** The profit card's sparkline: net income by month; the change is last month against the one before (this month is still going). */
 function profitTrend(o: BooksOverview): MetricTrend | undefined {
   const series = o.profit.trend.map((t) => t.netIncome);
-  if (series.length < 3) return undefined;
+  if (series.length < 3 || !series.every((v) => Number.isFinite(v)) || series.every((v) => v === 0)) return undefined;
   return { series, delta: series[series.length - 2]! - series[series.length - 3]!, deltaLabel: 'last month', format: (n) => fmtMoneyCompact(n), unit: 'month' };
 }
 
@@ -267,7 +287,7 @@ function Receivables({ o }: { o: BooksOverview }) {
                     <Link to={`/clients/${c.clientId}?tab=statements`} className="min-w-0 truncate text-ink hover:text-accent">
                       {c.name}
                     </Link>
-                    <span className="text-2xs text-ink-muted">{c.oldestDueAt ? `oldest due ${c.oldestDueAt}` : ''}</span>
+                    <span className="text-2xs text-ink-muted">{c.oldestDueAt ? `oldest due ${fmtDate(c.oldestDueAt)}` : ''}</span>
                     <Amount value={c.open} />
                   </li>
                 ))}
@@ -293,6 +313,15 @@ function CashCard({ o }: { o: BooksOverview }) {
             </Link>
           }
         />
+        {o.cash.connectedAccounts === 0 && (
+          <p className="mt-2 text-xs text-ink-muted">
+            Balances from the ledger. No bank is connected yet —{' '}
+            <Link to="/books/bank" className="text-accent hover:underline">
+              connect one
+            </Link>{' '}
+            to match its transactions.
+          </p>
+        )}
         <ul className="mt-2 divide-y divide-line text-sm">
           {o.cash.accounts.map((a) => (
             <li key={a.id} className="flex items-center justify-between gap-2 py-2">

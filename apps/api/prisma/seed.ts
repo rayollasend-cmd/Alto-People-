@@ -532,10 +532,64 @@ async function main() {
     });
   }
 
+  // ---- A second tenant: a hotel (DIRECT_EMPLOYER) ------------------------
+  // Tenant profiles (system audit 2026-10-21): the product's words and the
+  // module gates are proven against a real second tenant — a direct
+  // employer with no clients, no vans, no bill rates — not Alto HR's own
+  // profile flipped and restored. Idempotent like everything above; the
+  // Alto HR tenant (…0001) is the migration's row and is not touched.
+  const HOTEL_TENANT_ID = '00000000-0000-4000-8000-000000000002';
+  await prisma.tenant.upsert({
+    where: { id: HOTEL_TENANT_ID },
+    create: { id: HOTEL_TENANT_ID, slug: 'grand-hotel', name: 'The Grand Hotel', businessModel: 'DIRECT_EMPLOYER', modules: {}, terminology: {} },
+    update: { businessModel: 'DIRECT_EMPLOYER' },
+  });
+  await prisma.orgSetting.upsert({
+    where: { tenantId: HOTEL_TENANT_ID },
+    create: { id: 'grand-hotel', tenantId: HOTEL_TENANT_ID, orgName: 'The Grand Hotel' },
+    update: {},
+  });
+  if (!(await prisma.employerOrganization.findFirst({ where: { tenantId: HOTEL_TENANT_ID, isDefault: true } }))) {
+    await prisma.employerOrganization.create({
+      data: { tenantId: HOTEL_TENANT_ID, kind: 'TENANT', legalName: 'The Grand Hotel LLC', isDefault: true, addressLine1: '1 Harbor Way', city: 'Panama City', state: 'FL', zip: '32401' },
+    });
+  }
+  const hotelSite =
+    (await prisma.site.findFirst({ where: { tenantId: HOTEL_TENANT_ID, name: 'The Grand Hotel' } })) ??
+    (await prisma.site.create({
+      data: { tenantId: HOTEL_TENANT_ID, clientId: null, name: 'The Grand Hotel', type: 'PROPERTY', addressLine1: '1 Harbor Way', city: 'Panama City', state: 'FL', zip: '32401', timezone: 'America/Chicago' },
+    }));
+  const HOTEL_MANAGER_EMAIL = 'manager@grandhotel.example';
+  await prisma.user.upsert({
+    where: { email: HOTEL_MANAGER_EMAIL },
+    create: { email: HOTEL_MANAGER_EMAIL, passwordHash: await hashPassword(ADMIN_DEV_PASSWORD), role: 'HR_ADMINISTRATOR', status: 'ACTIVE', tenantId: HOTEL_TENANT_ID },
+    update: { tenantId: HOTEL_TENANT_ID, role: 'HR_ADMINISTRATOR', status: 'ACTIVE' },
+  });
+  const HOTEL_TEAM = [
+    { firstName: 'Nadia', lastName: 'Brooks', email: 'nadia.brooks@grandhotel.example' },
+    { firstName: 'Luis', lastName: 'Ortega', email: 'luis.ortega@grandhotel.example' },
+  ];
+  for (const p of HOTEL_TEAM) {
+    const person = await prisma.associate.upsert({
+      where: { email: p.email },
+      create: { ...p, tenantId: HOTEL_TENANT_ID, city: 'Panama City', state: 'FL', zip: '32401' },
+      update: { tenantId: HOTEL_TENANT_ID },
+    });
+    if (!(await prisma.associateAssignment.findFirst({ where: { associateId: person.id, locationId: hotelSite.id } }))) {
+      await prisma.associateAssignment.create({ data: { tenantId: HOTEL_TENANT_ID, associateId: person.id, locationId: hotelSite.id, startedAt: new Date('2026-01-05') } });
+    }
+    await prisma.user.upsert({
+      where: { email: p.email },
+      create: { email: p.email, passwordHash: await hashPassword(ASSOCIATE_DEV_PASSWORD), role: 'ASSOCIATE', status: 'ACTIVE', associateId: person.id, tenantId: HOTEL_TENANT_ID },
+      update: { tenantId: HOTEL_TENANT_ID, associateId: person.id, status: 'ACTIVE' },
+    });
+  }
+
   console.log('[seed] complete');
   console.log(`[seed]   admin user: ${adminUser.email} / ${ADMIN_DEV_PASSWORD}`);
   console.log(`[seed]   associate user: ${associateUser.email} / ${ASSOCIATE_DEV_PASSWORD}`);
   console.log(`[seed]   portal user: ${portalUser.email} / ${PORTAL_DEV_PASSWORD}`);
+  console.log(`[seed]   hotel tenant (DIRECT_EMPLOYER): The Grand Hotel — ${HOTEL_MANAGER_EMAIL} / ${ADMIN_DEV_PASSWORD}; team ${HOTEL_TEAM.map((p) => p.email).join(', ')} / ${ASSOCIATE_DEV_PASSWORD}`);
   for (const m of [...MANAGEMENT_USERS, ...TRANSPORT_USERS]) {
     console.log(`[seed]   ${m.label}: ${m.email} / ${m.password}`);
   }

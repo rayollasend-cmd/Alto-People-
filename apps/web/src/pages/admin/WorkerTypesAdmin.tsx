@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookUser, Bot, Plus, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -18,6 +18,7 @@ import { useConfirm } from '@/lib/confirm';
 import { fmtDate } from '@/lib/format';
 import { associatePhotoUrl, userPhotoUrl } from '@/lib/photoUrl';
 import { listAdminUsers } from '@/lib/usersAdminApi';
+import { getAgentScorecard } from '@/lib/agentsApi';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
 import {
   assignWorkerSite,
@@ -166,6 +167,13 @@ export function WorkerTypesAdmin() {
   const counts = totals.data?.counts;
   const peopleMissing = totals.data?.associatesWithoutWorker ?? 0;
   const rows = workers.data?.workers ?? [];
+  // UX upgrade §5.6: the roster carries each agent's scorecard (the last seven days)
+  // the way its record does. Agents are few; one small read each.
+  const agentRows = rows.filter((w) => w.type === 'AGENT' && w.status !== 'OFFBOARDED');
+  const scorecards = useQueries({
+    queries: agentRows.map((w) => ({ queryKey: ['agents', 'scorecard', w.id, 7], queryFn: () => getAgentScorecard(w.id, 7), staleTime: 60_000 })),
+  });
+  const scorecardById = new Map(agentRows.map((w, i) => [w.id, scorecards[i]?.data ?? null]));
   const editing = editingId ? (rows.find((w) => w.id === editingId) ?? totals.data?.workers.find((w) => w.id === editingId) ?? null) : null;
 
   const refetchAll = () => qc.invalidateQueries({ queryKey: ['workers'] });
@@ -282,9 +290,34 @@ export function WorkerTypesAdmin() {
         },
       },
       { key: 'upcoming', header: 'Upcoming shifts', accessor: (w) => w.upcomingShifts, sortable: true, align: 'right' },
+      {
+        key: 'scorecard',
+        header: 'Scorecard (7 days)',
+        accessor: (w) => scorecardById.get(w.id)?.tasksCompleted ?? -1,
+        sortable: true,
+        align: 'right',
+        csv: (w) => {
+          const s = scorecardById.get(w.id);
+          return s ? `${s.tasksCompleted} tasks, ${s.errors} errors, ${s.exceptionsEscalated} escalated` : '';
+        },
+        cell: (w) => {
+          if (w.type !== 'AGENT') return <span className="text-silver/60">—</span>;
+          const s = scorecardById.get(w.id);
+          if (!s) return <span className="text-silver/60">…</span>;
+          return (
+            <Link to={`/agents/${w.id}?tab=scorecard`} className="inline-flex items-center gap-1.5 tabular-nums hover:text-accent" onClick={(e) => e.stopPropagation()} title={`${s.tasksCompleted} tasks, ${s.errors} errors, ${s.exceptionsEscalated} escalated`}>
+              <span>{s.tasksCompleted} tasks</span>
+              <Badge variant={s.errorRatePct == null ? 'outline' : s.errorRatePct > 10 ? 'destructive' : 'success'} size="sm">
+                {s.errorRatePct == null ? 'no errors measured' : `${s.errorRatePct}% errors`}
+              </Badge>
+            </Link>
+          );
+        },
+      },
       { key: 'created', header: 'Created', accessor: (w) => w.createdAt, sortable: true, cell: (w) => fmtDate(w.createdAt) },
     ],
-    [typeFilter, term, hasClients],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [typeFilter, term, hasClients, scorecards.map((q) => q.dataUpdatedAt).join(',')],
   );
 
   // Where a row sits when grouped: its first current site (or "not placed"), or its type.

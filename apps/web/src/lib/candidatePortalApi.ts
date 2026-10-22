@@ -1,3 +1,4 @@
+import type { EeoSelfIdInput } from '@alto-people/shared';
 import { apiFetch } from './api';
 
 /**
@@ -27,6 +28,8 @@ export interface PortalLinkResult {
   ok: true;
   emailed: boolean;
   texted: boolean;
+  /** Why no text went out (no SMS provider, STOP, no number) — null when it did. */
+  textReason: string | null;
   expiresAt: string;
   /** Present only when email isn't configured, so the recruiter can send it themselves. */
   link?: string;
@@ -41,7 +44,7 @@ export const listDocumentRequests = (candidateId: string) =>
   );
 
 export const createDocumentRequest = (candidateId: string, input: { label: string; note?: string | null; notify?: boolean }) =>
-  apiFetch<{ request: DocumentRequest; emailed: boolean; texted: boolean; link?: string }>(
+  apiFetch<{ request: DocumentRequest; emailed: boolean; texted: boolean; textReason: string | null; link?: string }>(
     `/recruiting/candidates/${candidateId}/document-requests`,
     { method: 'POST', body: input },
   );
@@ -66,6 +69,8 @@ export interface CandidatePortal {
   stageLabel: string;
   stageDetail: string;
   expiresAt: string;
+  /** Whether they answered the voluntary EEO form — never the answers. */
+  eeoAnswered?: boolean;
   interviews: Array<{
     id: string;
     scheduledFor: string;
@@ -87,6 +92,10 @@ export interface CandidatePortal {
 }
 
 export const getCandidatePortal = (token: string) => apiFetch<CandidatePortal>(`/candidate-portal/${encodeURIComponent(token)}`);
+
+/** The applicant's voluntary EEO self-identification — stored apart, read only in aggregate. */
+export const submitPortalEeo = (token: string, input: EeoSelfIdInput) =>
+  apiFetch<{ ok: true }>(`/candidate-portal/${encodeURIComponent(token)}/eeo`, { method: 'POST', body: input });
 
 export const confirmPortalInterview = (token: string, interviewId: string) =>
   apiFetch<{ ok: true; confirmedAt: string }>(`/candidate-portal/${encodeURIComponent(token)}/interviews/${interviewId}/confirm`, { method: 'POST' });

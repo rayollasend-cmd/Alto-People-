@@ -22,6 +22,7 @@ import { z } from 'zod';
  *   GET    /books/bills/:id/attachment               → the invoice file
  *   GET    /books/bill-payments?vendorId             → { payments: BooksBillPayment[] }
  *   POST   /books/bill-payments                      BooksBillPaymentInput → { payment }
+ *   POST   /books/bill-payments/batch                BooksBillPaymentBatchInput → { payments, cashAfter } (finance walk 8)
  *   POST   /books/bill-payments/:id/void             { reason } → { payment }
  *   GET    /books/bank-sources                       → { accounts: BooksPayFromAccount[], ownAch: boolean }
  *   GET    /books/payables/options                   → BooksPayablesOptions (the forms' pickers)
@@ -195,6 +196,30 @@ export const BooksBillPaymentInputSchema = z.object({
 });
 export type BooksBillPaymentInput = z.infer<typeof BooksBillPaymentInputSchema>;
 
+/**
+ * Finance walk 8 — pay several vendors in one run: the same date, method and
+ * account for all, each vendor's bills applied in full or in part. One
+ * transaction: every vendor's payment lands, or none does.
+ */
+export const BooksBillPaymentBatchInputSchema = z.object({
+  paidOn: Ymd,
+  method: BooksVendorPaymentMethodSchema,
+  bankAccountId: z.string().uuid(),
+  sendAch: z.boolean().optional(),
+  vendors: z
+    .array(
+      z.object({
+        vendorId: z.string().uuid(),
+        reference: z.string().trim().max(80).nullable().optional(),
+        checkNumber: z.number().int().positive().nullable().optional(),
+        applications: z.array(z.object({ billId: z.string().uuid(), amount: z.number().positive() })).min(1).max(200),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+export type BooksBillPaymentBatchInput = z.infer<typeof BooksBillPaymentBatchInputSchema>;
+
 export const BooksBillPaymentSchema = z.object({
   id: z.string(),
   vendorId: z.string(),
@@ -300,5 +325,7 @@ export const BooksPayablesOptionsSchema = z.object({
   clients: z.array(z.object({ id: z.string(), name: z.string() })),
   sites: z.array(z.object({ id: z.string(), name: z.string(), clientId: z.string().nullable() })),
   ownAch: z.boolean(),
+  /** The Books cash position today (bank balances less cards); null when the books hold no bank account yet. */
+  cashOnHand: z.number().nullable().optional(),
 });
 export type BooksPayablesOptions = z.infer<typeof BooksPayablesOptionsSchema>;

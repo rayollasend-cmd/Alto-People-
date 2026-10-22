@@ -51,11 +51,13 @@ export function BackgroundCheckTask() {
     setError(null);
     setSubmitting(true);
     try {
-      await authorizeBackgroundCheck(applicationId, {
+      const r = await authorizeBackgroundCheck(applicationId, {
         typedName: typedName.trim(),
         authorize: true,
       });
-      toast.success(t('ob.bg.authorizedToast'));
+      // Honest: with no screening provider connected the consent is on file
+      // but the check itself has not run (audit 2026-10-21 #3).
+      toast.success(t('ob.bg.authorizedToast'), r.status === 'NOT_RUN' ? { description: t('ob.bg.notRunNote') } : undefined);
       navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;

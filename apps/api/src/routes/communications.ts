@@ -19,8 +19,9 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
-import { EmailSuppressedError, send } from '../lib/notifications.js';
+import { anyPushConfigured, send, statusForSendError } from '../lib/notifications.js';
 import { pushConfigured } from '../lib/webPush.js';
+import { smsAvailability } from '../lib/sms.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -363,10 +364,11 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
       res.status(201).json(toNotif(sent));
     } catch (sendErr) {
       const reason = sendErr instanceof Error ? sendErr.message : 'unknown error';
-      // A suppressed address is not a provider failure � surface it as its
-      // own status so the admin sees WHY nothing went out (and where to
-      // fix it: the Suppressed emails list below).
-      const status = sendErr instanceof EmailSuppressedError ? 'SUPPRESSED' : 'FAILED';
+      // A suppressed address (or a number that texted STOP) is not a
+      // provider failure, and a channel with no provider behind it is not
+      // either — each gets its own status so the admin sees WHY nothing
+      // went out, and the row is never SENT.
+      const status = statusForSendError(sendErr);
       const failed = await prisma.notification.update({
         where: { id: created.id },
         data: { status, failureReason: reason },
@@ -396,13 +398,11 @@ communicationsRouter.get('/admin/channels', MANAGE, (_req, res) => {
         available: emailReady,
         reason: emailReady ? null : 'No email provider connected — set one up in Settings › Communications.',
       },
-      { channel: 'SMS', available: false, reason: 'One-off texts aren’t connected yet — crew texts go out from the floor tools.' },
+      { channel: 'SMS', ...smsAvailability() },
       {
         channel: 'PUSH',
-        available: false,
-        reason: pushConfigured()
-          ? 'Push goes out with every in-app message to people who turned it on — choose In-app.'
-          : 'Push isn’t set up for this organization.',
+        available: anyPushConfigured(),
+        reason: anyPushConfigured() ? null : 'Push isn’t set up for this organization — set the VAPID (web) or APNs / FCM (phone) keys on the API.',
       },
     ],
   });

@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
-import { FileText, Lock, ReceiptText } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useSearchParams } from 'react-router-dom';
+import { CalendarX2, FileText, HandCoins, Lock, ReceiptText } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ClientStatement } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { useConfirm } from '@/lib/confirm';
+import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
+import { cn } from '@/lib/cn';
 import { useSelection } from '@/lib/useSelection';
 import {
   clientStatementPdfUrl,
   finalizeClientStatement,
   generateDueStatements,
-  listClients,
-  listClientStatements,
+  getStatementsRollup,
   markClientStatementPaid,
+  type StatementRollupRow,
 } from '@/lib/clientsApi';
+import { RECEIVABLES_KEY, getReceivablesAging } from '@/lib/books/receivablesApi';
+import { PaymentDialog } from '@/pages/books/receivables/receivablesKit';
 import {
   Badge,
   Button,
@@ -32,17 +35,38 @@ import { ListTemplate } from '@/components/templates';
 import { downloadStatementFile, MarkPaidDialog } from './statementsShared';
 
 /**
- * The weekly-close roll-up: every client's recent statements in one table.
- * Previously closing the week meant opening each client's detail page and
- * finalizing statements one by one (~22 clicks across 4 page loads); here
- * it's generate → select drafts → finalize, with one confirm.
+ * The weekly-close roll-up: every client's recent statements in one table,
+ * with what deciding needs (finance walk 6): when each falls due and how
+ * late it is, the change in hours and dollars against the client's last
+ * statement (over 20% is flagged), and the weeks with billable time no
+ * statement covers. Generate → finalize (in bulk, or the row's own
+ * button) → record the payment in the Books payment dialog, from the row.
  *
  * Same audience as ClientDetail's StatementsSection: executives read
- * (list + PDF), drafting/finalizing/marking-paid stay with payroll.
+ * (list + PDF), drafting/finalizing/recording payments stay with payroll.
  */
 
-/** A statement plus the client name the per-client API response omits. */
-type RollupRow = ClientStatement & { clientName: string };
+type RollupRow = StatementRollupRow;
+
+/** The change against the previous statement, and whether it is big enough to look at (over 20%). */
+export function deltaOf(cur: number, prev: number | null | undefined): { diff: number; pct: number | null; flag: boolean } | null {
+  if (prev === null || prev === undefined) return null;
+  const diff = Math.round((cur - prev) * 100) / 100;
+  const pct = prev !== 0 ? diff / prev : null;
+  return { diff, pct, flag: pct === null ? diff !== 0 : Math.abs(pct) > 0.2 };
+}
+
+function Delta({ d, format }: { d: ReturnType<typeof deltaOf>; format: (n: number) => string }) {
+  if (!d || d.diff === 0) return null;
+  const sign = d.diff > 0 ? '+' : '−';
+  return (
+    <span className={cn('block text-2xs', d.flag ? 'font-medium text-warning' : 'text-silver')} title={d.flag ? 'More than 20% off the last statement' : undefined}>
+      {sign}
+      {format(Math.abs(d.diff))}
+      {d.pct !== null ? ` (${sign}${Math.round(Math.abs(d.pct) * 100)}%)` : ''}
+    </span>
+  );
+}
 
 type StatusFilter = 'ALL' | 'DRAFT' | 'UNPAID' | 'PAID';
 
@@ -53,48 +77,31 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'PAID', label: 'Paid' },
 ];
 
-/** Most recent periods per client — the weekly close never needs deep
- *  history, and an unbounded table would bury this week's drafts. */
-const PERIODS_PER_CLIENT = 12;
-
 /** Deep-link flash ring — matches the approvals queue treatment. */
 const FLASH_ROW_CLASS = 'ring-2 ring-gold bg-gold/10';
 
 export function ClientStatementsRollup() {
   const { can } = useAuth();
   const canFinalize = can('process:payroll');
+  // Recording a payment goes through the books (manage:books); without it the old "Mark paid".
+  const canRecord = can('manage:books');
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [recording, setRecording] = useState<RollupRow | null>(null);
+  const agingForPay = useQuery({ queryKey: [...RECEIVABLES_KEY, 'aging'], queryFn: () => getReceivablesAging(), enabled: !!recording });
 
   const [busy, setBusy] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('ALL');
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [payTarget, setPayTarget] = useState<RollupRow | null>(null);
 
-  // One query does the fan-out. No cross-client statements endpoint
-  // exists, so the per-client lists are fetched and settled together; a
-  // broken client is reported by name rather than blanking the close.
+  // One call: every client in reach, its last statements, and the weeks no statement covers.
   const rollupQuery = useQuery({
     queryKey: ['clients', 'statements', 'rollup'],
-    queryFn: async () => {
-      const clients = (await listClients()).clients;
-      const settled = await Promise.allSettled(clients.map((c) => listClientStatements(c.id)));
-      const collected: RollupRow[] = [];
-      const failures: string[] = [];
-      settled.forEach((r, i) => {
-        if (r.status === 'fulfilled') {
-          const recent = [...r.value.statements]
-            .sort((x, y) => y.periodStart.localeCompare(x.periodStart))
-            .slice(0, PERIODS_PER_CLIENT);
-          for (const st of recent) collected.push({ ...st, clientName: clients[i].name });
-        } else {
-          failures.push(clients[i].name);
-        }
-      });
-      collected.sort((x, y) => y.periodStart.localeCompare(x.periodStart) || x.clientName.localeCompare(y.clientName));
-      return { rows: collected, failures };
-    },
+    queryFn: getStatementsRollup,
   });
-  const rows = rollupQuery.data?.rows ?? null;
-  const loadFailures = rollupQuery.data?.failures ?? [];
+  const rows = rollupQuery.data?.statements ?? null;
+  const missingWeeks = rollupQuery.data?.missingWeeks ?? [];
   const error = rollupQuery.error
     ? rollupQuery.error instanceof ApiError
       ? rollupQuery.error.message
@@ -202,6 +209,26 @@ export function ClientStatementsRollup() {
     await load();
   };
 
+  // The row's own Finalize: one draft, one confirm.
+  const finalizeOne = async (row: RollupRow) => {
+    const ok = await confirm({
+      title: `Finalize ${row.clientName}, ${fmtDate(row.periodStart)} – ${fmtDate(row.periodEnd)}?`,
+      description: 'It takes the next statement number, falls due on the client’s terms, and its figures never change again.',
+      confirmLabel: 'Finalize',
+    });
+    if (!ok) return;
+    setBusy(`final-${row.id}`);
+    try {
+      const st = await finalizeClientStatement(row.clientId, row.id);
+      toast.success(`${row.clientName} finalized — No. ${String(st.number).padStart(4, '0')}, due ${st.dueAt ? fmtDate(st.dueAt) : 'on receipt'}.`);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not finalize.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const markPaid = async (row: RollupRow, ref: string | undefined) => {
     setBusy(`paid-${row.id}`);
     try {
@@ -254,11 +281,24 @@ export function ClientStatementsRollup() {
           {error}
         </ErrorBanner>
       )}
-      {loadFailures.length > 0 && (
-        <ErrorBanner className="mb-4">
-          Statements could not be loaded for: {loadFailures.join(', ')}. The
-          table below is missing those clients.
-        </ErrorBanner>
+      {missingWeeks.length > 0 && (
+        <div className="mb-4 rounded-lg border border-warning/30 bg-warning/[0.06] px-3 py-2 text-sm text-ink" role="status">
+          <p className="flex items-center gap-2 font-medium">
+            <CalendarX2 className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+            Missing weeks: {missingWeeks.length} {missingWeeks.length === 1 ? 'week has' : 'weeks have'} approved time on no statement
+          </p>
+          <ul className="mt-1 space-y-0.5 pl-6 text-xs text-silver">
+            {missingWeeks.slice(0, 6).map((m) => (
+              <li key={`${m.clientId}-${m.weekStart}`}>
+                <Link to={`/clients/${m.clientId}?tab=statements`} className="text-ink hover:text-gold hover:underline">
+                  {m.clientName}
+                </Link>{' '}
+                · week of {fmtDate(m.weekStart)} · {fmtHours(m.hours)}
+              </li>
+            ))}
+            {missingWeeks.length > 6 && <li>and {missingWeeks.length - 6} more</li>}
+          </ul>
+        </div>
       )}
 
       <FilterBar className="mb-4">
@@ -340,8 +380,49 @@ export function ClientStatementsRollup() {
                     </span>
                   ),
                 },
-                { key: 'hours', header: 'Hours', accessor: (st) => st.snapshot.totals.hours, csv: (st) => st.snapshot.totals.hours.toFixed(1), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver', cell: (st) => st.snapshot.totals.hours.toFixed(1) },
-                { key: 'amount', header: 'Amount', accessor: (st) => st.snapshot.totals.amount, csv: (st) => fmtMoney(st.snapshot.totals.amount), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-white', cell: (st) => fmtMoney(st.snapshot.totals.amount) },
+                {
+                  key: 'hours',
+                  header: 'Hours',
+                  accessor: (st) => st.snapshot.totals.hours,
+                  csv: (st) => st.snapshot.totals.hours.toFixed(1),
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  className: 'tabular-nums text-silver',
+                  cell: (st) => (
+                    <>
+                      {st.snapshot.totals.hours.toFixed(1)}
+                      <Delta d={deltaOf(st.snapshot.totals.hours, st.previous?.hours)} format={(n) => `${n.toFixed(1)}h`} />
+                    </>
+                  ),
+                },
+                {
+                  key: 'amount',
+                  header: 'Amount',
+                  accessor: (st) => st.snapshot.totals.amount,
+                  csv: (st) => fmtMoney(st.snapshot.totals.amount),
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  cardMeta: true,
+                  className: 'tabular-nums text-white',
+                  cell: (st) => (
+                    <>
+                      {fmtMoney(st.snapshot.totals.amount)}
+                      <Delta d={deltaOf(st.snapshot.totals.amount, st.previous?.amount)} format={(n) => fmtMoney(n)} />
+                    </>
+                  ),
+                },
+                { key: 'due', header: 'Due', accessor: (st) => st.dueOn ?? '', csv: (st) => (st.dueOn ? fmtDate(st.dueOn) : ''), sortable: true, searchable: false, className: 'whitespace-nowrap text-silver', cell: (st) => (st.dueOn ? fmtDate(st.dueOn) : '—') },
+                {
+                  key: 'late',
+                  header: 'Days late',
+                  accessor: (st) => st.daysLate,
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  cell: (st) => (st.daysLate > 0 ? <Badge variant={st.daysLate > 60 ? 'destructive' : 'pending'}>{st.daysLate}</Badge> : <span className="text-silver">—</span>),
+                },
                 {
                   key: 'actions',
                   header: 'Actions',
@@ -357,9 +438,16 @@ export function ClientStatementsRollup() {
                         <FileText className="h-3.5 w-3.5" />
                         PDF
                       </Button>
+                      {canFinalize && st.status === 'DRAFT' && (
+                        <Button size="sm" variant="outline" onClick={() => void finalizeOne(st)} loading={busy === `final-${st.id}`} disabled={busy !== null}>
+                          <Lock className="h-3.5 w-3.5" />
+                          Finalize
+                        </Button>
+                      )}
                       {canFinalize && st.status === 'FINAL' && !st.paidAt && (
-                        <Button size="sm" variant="outline" onClick={() => setPayTarget(st)} loading={busy === `paid-${st.id}`} disabled={busy !== null}>
-                          Mark paid
+                        <Button size="sm" variant="outline" onClick={() => (canRecord ? setRecording(st) : setPayTarget(st))} loading={busy === `paid-${st.id}`} disabled={busy !== null}>
+                          <HandCoins className="h-3.5 w-3.5" />
+                          {canRecord ? 'Record payment' : 'Mark paid'}
                         </Button>
                       )}
                     </>
@@ -400,6 +488,23 @@ export function ClientStatementsRollup() {
         busy={busy === 'finalize'}
         onConfirm={finalizeSelected}
       />
+
+      {recording && agingForPay.data && (
+        <PaymentDialog
+          open
+          onOpenChange={(o) => {
+            if (!o) {
+              setRecording(null);
+              void load();
+              void qc.invalidateQueries({ queryKey: ['books'] });
+            }
+          }}
+          initialClientId={recording.clientId}
+          initialStatementId={recording.id}
+          rows={agingForPay.data.rows}
+          statements={agingForPay.data.statements}
+        />
+      )}
 
       <MarkPaidDialog
         open={payTarget !== null}

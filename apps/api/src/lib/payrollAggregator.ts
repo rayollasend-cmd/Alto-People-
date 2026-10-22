@@ -49,6 +49,7 @@ import { computeCheckDeductions, loadDeferralContexts, type DeferralRecord } fro
 import { calculateTaxes, inHouseEngine, type TaxEngineProvider, type TaxLine } from './taxEngine/index.js';
 import { LOCAL_TAX_STATES, taxableWages, type TaxabilityContext, type TaxableWages } from './deductionTaxability.js';
 import { buildDeductionLines, reconcile, type DeductionLine } from './deductionLines.js';
+import { groupTermLifeImputed } from './groupTermLife.js';
 import type { PlanDeduction } from './retirementDeferrals.js';
 import { inWindows, workDayOf } from './payrollSchedule.js';
 
@@ -145,7 +146,7 @@ const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
 
 export interface ProjectedEarning {
   /** DAILY_SETTLED: the (negative) line for what daily pay already paid (lib/dailyPay). */
-  kind: 'REGULAR' | 'OVERTIME' | 'DOUBLE_TIME' | 'RETRO' | 'PREMIUM' | 'DAILY_SETTLED' | AddOnKind;
+  kind: 'REGULAR' | 'OVERTIME' | 'DOUBLE_TIME' | 'RETRO' | 'PREMIUM' | 'DAILY_SETTLED' | 'IMPUTED_INCOME' | AddOnKind;
   /** Null for flat-amount earnings (salary, bonus, commission…). */
   hours: number | null;
   rate: number | null;
@@ -367,6 +368,7 @@ export async function aggregatePayrollProjection(
           lastName: true,
           state: true,
           employmentType: true,
+          dob: true,
           payrollSchedule: { select: { frequency: true } },
           jobProfile: { select: { tippedOccupationCode: true, isExempt: true } },
           localTaxRule: { select: { rate: true, isActive: true, name: true } },
@@ -564,6 +566,7 @@ export async function aggregatePayrollProjection(
     lastName: true,
     state: true,
     employmentType: true,
+    dob: true,
     payrollSchedule: { select: { frequency: true } },
     jobProfile: { select: { tippedOccupationCode: true, isExempt: true } },
     localTaxRule: { select: { rate: true, isActive: true, name: true } },
@@ -682,6 +685,7 @@ export async function aggregatePayrollProjection(
         rothElection: true,
         electedPercent: true,
         rothPercent: true,
+        lifeCoverageCents: true,
         plan: { select: { kind: true, allowsDeemedRoth: true, employerContributionCentsPerPeriod: true } },
       },
     }));
@@ -1042,7 +1046,7 @@ export async function aggregatePayrollProjection(
     const retroCands = retroByAssociate.get(associateId) ?? [];
     const retroPay = retroCands.length > 0 ? summarizeRetro(retroCands).amount : 0;
 
-    const grossPay = round2(
+    const cashGross = round2(
       regularPay +
         overtimePay +
         doubleTimePay +
@@ -1054,6 +1058,20 @@ export async function aggregatePayrollProjection(
         regularAddOnGross +
         retroPay,
     );
+    // Group-term life over $50,000 (IRS Pub 15-B Table I, lib/groupTermLife):
+    // non-cash income, taxed on this check and reported in W-2 Box 12 C,
+    // never paid out — it raises gross and comes back off net below.
+    let imputedIncome = 0;
+    if (meta.employmentType === 'W2_EMPLOYEE' && cashGross > 0) {
+      for (const e of (enrollmentsByAssociate.get(associateId) ?? []) as Array<EnrollmentRow & { lifeCoverageCents?: number | null }>) {
+        if (e.plan.kind !== 'LIFE_INSURANCE' || !e.lifeCoverageCents) continue;
+        imputedIncome = round2(
+          imputedIncome +
+            groupTermLifeImputed({ coverageCents: e.lifeCoverageCents, dob: meta.dob ?? null, taxYear: periodStart.getUTCFullYear(), periodsPerYear: PERIODS_PER_YEAR[payFrequency] }).imputedIncome,
+        );
+      }
+    }
+    const grossPay = round2(cashGross + imputedIncome);
 
     // Gap 8 — live YTD aggregation. Excludes CANCELLED (voided) runs and
     // non-DISBURSED items; AMENDMENT items contribute signed deltas so
@@ -1341,7 +1359,9 @@ export async function aggregatePayrollProjection(
               breakdown.stateIncomeTax -
               localIncomeTax -
               // Amounts required by law to be withheld (CCPA): state disability and paid leave too.
-              stateProgramTax
+              stateProgramTax -
+              // Non-cash income is nothing to garnish.
+              imputedIncome
           )
         : 0;
 
@@ -1405,7 +1425,7 @@ export async function aggregatePayrollProjection(
     const reimbursementIds = settledReimbursements.map((r) => r.id);
 
     const finalNetPay = round2(
-      breakdown.netPay - postTaxDeductions + reimbursementsTotal
+      breakdown.netPay - postTaxDeductions + reimbursementsTotal - imputedIncome
     );
 
     const earnings: ProjectedEarning[] = [];
@@ -1477,6 +1497,16 @@ export async function aggregatePayrollProjection(
         amount: retroPay,
         isTaxable: true,
         note: summarizeRetro(retroCands).note,
+      });
+    }
+    if (imputedIncome > 0) {
+      earnings.push({
+        kind: 'IMPUTED_INCOME',
+        hours: null,
+        rate: null,
+        amount: imputedIncome,
+        isTaxable: true,
+        note: 'Group-term life insurance over $50,000 — taxable value (IRS Table I), not paid out',
       });
     }
 

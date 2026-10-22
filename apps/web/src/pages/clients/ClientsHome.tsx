@@ -180,10 +180,7 @@ export function ClientsHome() {
     if (clientsQuery.hasNextPage && !clientsQuery.isFetchingNextPage) void clientsQuery.fetchNextPage();
   };
 
-  // Surface "?qbo_error=..." set by the QuickBooks OAuth callback when state
-  // validation failed before we knew which client to bounce to. Clear the
-  // param so a refresh doesn't re-fire the toast.
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [, setSearchParams] = useSearchParams();
 
   // Mirror filter + debounced search into the URL. Replace-mode so
   // filter clicks don't pile up history entries — Back still leaves the
@@ -201,19 +198,6 @@ export function ClientsHome() {
       { replace: true },
     );
   }, [statusFilter, appliedQuery, setSearchParams]);
-  useEffect(() => {
-    const code = searchParams.get('qbo_error');
-    if (!code) return;
-    toast.error('QuickBooks connection failed.', {
-      description:
-        code === 'invalid_state'
-          ? 'Connection request expired or was tampered with. Try connecting again from the client page.'
-          : 'Try connecting again from the client page.',
-    });
-    const next = new URLSearchParams(searchParams);
-    next.delete('qbo_error');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.

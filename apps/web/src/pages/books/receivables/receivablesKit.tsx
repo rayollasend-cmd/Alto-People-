@@ -56,6 +56,7 @@ export function PaymentDialog({
   statements,
   deposit: fromDeposit,
   extraClient,
+  initialStatementId,
   onRecorded,
 }: {
   open: boolean;
@@ -66,6 +67,8 @@ export function PaymentDialog({
   deposit?: DepositSeed;
   /** Someone to offer even with nothing owed (a deposit's likely payer): their payment is held as credit. */
   extraClient?: { id: string; name: string } | null;
+  /** Start on one statement (the statement week close's "Record payment"): its open balance, applied to it. */
+  initialStatementId?: string | null;
   onRecorded?: (r: { payment: ClientPaymentRow; bankTransaction?: BankTxnView | null; depositMatched?: boolean }) => void;
 }) {
   const who = useWho();
@@ -78,13 +81,14 @@ export function PaymentDialog({
     () => (extraClient && !rows.some((r) => r.clientId === extraClient.id) ? [...rows.map((r) => ({ id: r.clientId, name: r.clientName, open: r.open })), { id: extraClient.id, name: extraClient.name, open: 0 }] : rows.map((r) => ({ id: r.clientId, name: r.clientName, open: r.open }))),
     [rows, extraClient],
   );
-  const [amount, setAmount] = useState(seed ? seed.amount.toFixed(2) : '');
+  const startOn = initialStatementId ? statements.find((s) => s.statementId === initialStatementId) : undefined;
+  const [amount, setAmount] = useState(seed ? seed.amount.toFixed(2) : startOn ? startOn.open.toFixed(2) : '');
   const [receivedOn, setReceivedOn] = useState(seed?.postedOn ?? ymdLocal());
   const [method, setMethod] = useState<ClientPaymentMethodKind>('ACH');
   const [reference, setReference] = useState(seed?.reference ?? '');
   const [depositId, setDepositId] = useState('');
-  const [applied, setApplied] = useState<Record<string, number>>({});
-  const [touched, setTouched] = useState(false);
+  const [applied, setApplied] = useState<Record<string, number>>(startOn ? { [startOn.statementId]: cents(startOn.open) } : {});
+  const [touched, setTouched] = useState(!!startOn);
   const open$ = useMemo(() => statements.filter((s) => s.clientId === clientId).sort((a, b) => a.dueOn.localeCompare(b.dueOn)), [statements, clientId]);
   const amountCents = cents(Number(amount) || 0);
 

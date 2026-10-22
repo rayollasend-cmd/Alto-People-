@@ -167,6 +167,9 @@ function ActiveEmergency({ emergency, canManage }: { emergency: EmergencySummary
                 {emergency.allSites ? 'every site' : emergency.sites.map((s) => s.name).join(', ')} · {emergency.shiftsSuspended} shifts
                 suspended · {emergency.associatesNotified} associates told
                 {emergency.pickupAt ? ` · vans around ${fmtDateTime(emergency.pickupAt)}${emergency.destination ? ` to ${emergency.destination.name}` : ''}` : ''}
+                {emergency.texts && !emergency.texts.available && (
+                  <span className="block text-warning">Texts are not connected — people were told in the app, by email and by push only.</span>
+                )}
               </CardDescription>
             </div>
             {canManage && (
@@ -344,7 +347,13 @@ function DeclareDialog({ onClose }: { onClose: () => void }) {
   const declare = useMutation({
     mutationFn: (body: EmergencyDeclareInput) => declareEmergency(body),
     onSuccess: async (e) => {
-      toast.success(`Declared. ${e.shiftsSuspended} shifts suspended, ${e.associatesNotified} associates told.`);
+      // Texts are said as they happened: none claimed when no provider is connected.
+      const texts = e.texts
+        ? !e.texts.available
+          ? ' No texts went out — texting isn’t connected.'
+          : ` ${e.texts.sent ?? 0} texted${e.texts.notSent ? `, ${e.texts.notSent} not` : ''}.`
+        : '';
+      toast.success(`Declared. ${e.shiftsSuspended} shifts suspended, ${e.associatesNotified} associates told.${texts}`);
       await qc.invalidateQueries({ queryKey: ['emergency'] });
       onClose();
     },

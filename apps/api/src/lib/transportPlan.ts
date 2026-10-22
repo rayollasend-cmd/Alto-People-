@@ -4,7 +4,7 @@ import type { GeoPoint } from './geocode.js';
 import { DWELL_S, driveSeconds, haversineM, homePoint, storePoint } from './transportLive.js';
 import { actsAsAny } from './roleScope.js';
 import { legDurations, optimizeOrder, routingAvailable } from './mapboxRouting.js';
-import { dayBounds, driverCredentialStatus, driverShiftsBetween, driverUsersByAssociate } from './transportDrivers.js';
+import { credentialsEnforced, dayBounds, driverCredentialStatus, driverShiftsBetween, driverUsersByAssociate, runBusyWindow } from './transportDrivers.js';
 
 /**
  * Dispatch, planned — the command center's click-saver.
@@ -15,10 +15,12 @@ import { dayBounds, driverCredentialStatus, driverShiftsBetween, driverUsersByAs
  *                 the same drive-time estimate the live map uses. Riders
  *                 at the same stop share a pickup time.
  *   planDay       every booking still waiting on a van that day, grouped by
- *                 way / store / half hour (the board's groups), filled into
- *                 the free vans (largest first) with a free driver each.
- *                 Nothing is saved — the director reviews, changes, then
- *                 dispatches.
+ *                 way / store / half hour (the board's groups). A run that
+ *                 already exists for that store, way and slot with seats
+ *                 free is TOPPED UP first (transport walk 3); only then is
+ *                 a new van opened — the free vans (largest first) with a
+ *                 free driver each. Nothing is saved — the director
+ *                 reviews, changes, then dispatches.
  */
 
 /** At the store this long before the earliest arrive-by. */
@@ -174,19 +176,25 @@ export async function orderAndTime(
 
 export interface Proposal {
   key: string;
+  /** new: a run to create. topUp: riders added to a run that already exists (runId). */
+  kind: 'new' | 'topUp';
+  runId: string | null;
   direction: 'TO_WORK' | 'FROM_WORK';
   serviceDate: string;
-  store: { id: string; name: string; timezone: string };
+  store: { id: string; name: string; timezone: string; point: GeoPoint | null };
   vanId: string | null;
   driverUserId: string | null;
   departAt: string;
   arriveAt: string | null;
-  rides: Array<{ rideId: string; name: string; place: string; pickupAt: string; point: GeoPoint | null }>;
+  /** A top-up lists the run's riders too, `existing` true — the whole run, re-timed. */
+  rides: Array<{ rideId: string; name: string; place: string; pickupAt: string; point: GeoPoint | null; existing?: boolean }>;
+  /** Seats after this proposal: taken (existing + added) over the van's capacity. */
+  seats: { taken: number; capacity: number | null; added: number };
   warnings: string[];
 }
 
 export async function planDay(date: string): Promise<{ proposals: Proposal[]; unplaced: Array<{ rideId: string; name: string; reason: string }> }> {
-  const [waiting, runs, vans, drivers] = await Promise.all([
+  const [waiting, runs, vans, drivers, enforced] = await Promise.all([
     prisma.ride.findMany({
       where: { serviceDate: date, status: 'REQUESTED', runId: null },
       orderBy: { targetAt: 'asc' },
@@ -194,7 +202,18 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
     }),
     prisma.rideRun.findMany({
       where: { serviceDate: date, status: { in: ['PLANNED', 'ACTIVE'] } },
-      select: { vanId: true, driverUserId: true, departAt: true },
+      select: {
+        id: true,
+        vanId: true,
+        driverUserId: true,
+        direction: true,
+        departAt: true,
+        startedAt: true,
+        endedAt: true,
+        status: true,
+        van: { select: { capacity: true } },
+        rides: { where: { status: { in: ['SCHEDULED', 'BOARDED'] } }, select: planRideSelect },
+      },
     }),
     // A van out of service (lib/transportDrivers' fleet record) is not planned.
     prisma.van.findMany({ where: { isActive: true, outOfServiceAt: null }, orderBy: [{ capacity: 'desc' }, { name: 'asc' }] }),
@@ -202,12 +221,14 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
       where: { ...actsAsAny(['DRIVER', 'TRANSPORTATION_DIRECTOR']), status: 'ACTIVE', deletedAt: null },
       select: { id: true, role: true, additionalRoles: true, driverProfile: { select: { licenceExpiresAt: true, dotMedicalRequired: true, dotMedicalExpiresAt: true, trainingExpiresAt: true } } },
     }),
+    credentialsEnforced(),
   ]);
   // Drivers first; the director only when no driver is free. A driver
-  // whose licence or DOT card has lapsed is not offered at all.
+  // whose licence or DOT card has lapsed is not offered at all — nor, once
+  // the desk records credentials, one with no licence on file (walk 2).
   const drivesByTrade = (u: { role: string; additionalRoles?: string[] }) =>
     u.role === 'DRIVER' || (u.additionalRoles ?? []).includes('DRIVER') ? 0 : 1;
-  const fit = drivers.filter((d) => !d.driverProfile || driverCredentialStatus(d.driverProfile).ok);
+  const fit = drivers.filter((d) => (d.driverProfile ? driverCredentialStatus(d.driverProfile).ok : !enforced));
   fit.sort((a, b) => drivesByTrade(a) - drivesByTrade(b));
   // When the day schedules drivers at all, only drivers on shift when a
   // run leaves are offered for it.
@@ -228,9 +249,13 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
   const busy: Array<{ vanId: string | null; driverUserId: string | null; from: number; to: number }> = runs.map((r) => ({
     vanId: r.vanId,
     driverUserId: r.driverUserId,
-    from: r.departAt.getTime() - 15 * 60_000,
-    to: r.departAt.getTime() + RUN_SPAN_MS,
+    ...runBusyWindow(r),
   }));
+  // Runs that haven't left, with seats free: topped up before a new van opens.
+  const openRuns = runs
+    .filter((r) => r.status === 'PLANNED' && r.rides.length > 0 && r.rides.length < r.van.capacity)
+    .map((r) => ({ ...r, taken: r.rides.length, added: [] as PlanRide[] }));
+  const slotOf = (at: Date) => Math.floor(at.getTime() / HALF_HOUR);
   const free = (from: number, to: number, key: 'vanId' | 'driverUserId', id: string) =>
     !busy.some((b) => b[key] === id && b.from < to && b.to > from);
 
@@ -245,6 +270,7 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
   for (const [gKey, rides] of groups) {
     const store = rides[0]!.location;
     const storeAt = await storePoint(store);
+    const storeView = { id: store.id, name: store.name, timezone: store.timezone, point: storeAt };
     // Farthest pickups first, so each van load is one neighbourhood.
     const withDist = await Promise.all(
       rides.map(async (r) => {
@@ -254,6 +280,52 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
     );
     let left = withDist.sort((a, b) => b.d - a.d).map((x) => x.r);
     let n = 0;
+    // Transport walk 3: a run already going this way, to this store, in
+    // this half hour, with seats to spare takes these riders first.
+    const slot = slotOf(rides[0]!.targetAt);
+    for (const run of openRuns) {
+      if (left.length === 0) break;
+      const free = run.van.capacity - run.taken;
+      if (free <= 0 || run.direction !== rides[0]!.direction) continue;
+      if (!run.rides.every((r) => r.location.id === store.id) || slotOf(run.rides[0]!.targetAt) !== slot) continue;
+      const take = left.slice(0, free);
+      left = left.slice(free);
+      run.taken += take.length;
+      run.added.push(...take);
+      const timed = await orderAndTime([...run.rides, ...run.added]);
+      const addedIds = new Set(run.added.map((r) => r.id));
+      const noPoint = timed.order.filter((x) => !x.point).length;
+      const warnings: string[] = [];
+      if (noPoint) warnings.push(`${noPoint} pickup${noPoint === 1 ? ' has' : 's have'} no map location — the time is an estimate.`);
+      // The run keeps its driver; if their licence is missing or lapsed, say so before it leaves.
+      if (!fit.some((d) => d.id === run.driverUserId)) warnings.push("This run's driver can't drive it now (licence not on file or lapsed) — change the driver before it leaves.");
+      // One proposal per run: a second group topping the same run replaces its earlier line.
+      const idx = proposals.findIndex((p) => p.kind === 'topUp' && p.runId === run.id);
+      const proposal: Proposal = {
+        key: `topUp|${run.id}`,
+        kind: 'topUp',
+        runId: run.id,
+        direction: run.direction,
+        serviceDate: date,
+        store: storeView,
+        vanId: run.vanId,
+        driverUserId: run.driverUserId,
+        departAt: timed.departAt.toISOString(),
+        arriveAt: timed.arriveAt?.toISOString() ?? null,
+        rides: timed.order.map((x) => ({
+          rideId: x.ride.id,
+          name: name(x.ride),
+          place: place(x.ride),
+          pickupAt: x.pickupAt.toISOString(),
+          point: x.point,
+          existing: !addedIds.has(x.ride.id),
+        })),
+        seats: { taken: run.taken, capacity: run.van.capacity, added: run.added.length },
+        warnings,
+      };
+      if (idx >= 0) proposals[idx] = proposal;
+      else proposals.push(proposal);
+    }
     while (left.length > 0) {
       // Time the whole remaining group first to know when this van leaves.
       const probe = await orderAndTime(left);
@@ -278,9 +350,11 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
       if (noPoint) warnings.push(`${noPoint} pickup${noPoint === 1 ? ' has' : 's have'} no map location — the time is an estimate.`);
       proposals.push({
         key: `${gKey}|${n++}`,
+        kind: 'new',
+        runId: null,
         direction: load[0]!.direction,
         serviceDate: date,
-        store: { id: store.id, name: store.name, timezone: store.timezone },
+        store: storeView,
         vanId: van?.id ?? null,
         driverUserId: driver?.id ?? null,
         departAt: timed.departAt.toISOString(),
@@ -292,6 +366,7 @@ export async function planDay(date: string): Promise<{ proposals: Proposal[]; un
           pickupAt: x.pickupAt.toISOString(),
           point: x.point,
         })),
+        seats: { taken: load.length, capacity: van?.capacity ?? null, added: load.length },
         warnings,
       });
     }

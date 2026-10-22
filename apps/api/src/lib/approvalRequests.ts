@@ -93,6 +93,7 @@ const KIND_LINK: Record<ApprovalRequestKind, (r: ApprovalRequest) => string> = {
   BILL_APPROVAL: (r) => `/books/bills/${r.subjectId}`,
   VENDOR_BANK: (r) => `/books/vendors/${r.subjectId}`,
   PERIOD_REOPEN: (r) => `/books/close/${(r.proposed as { periodKey?: string } | null)?.periodKey ?? ''}`,
+  PAY_RATE_BATCH: () => '/people/mass-update',
 };
 
 /** The link a decider opens to see the subject. */

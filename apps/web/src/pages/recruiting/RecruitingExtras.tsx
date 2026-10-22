@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Briefcase, ClipboardList, Copy, Download, Gift, Plus, Rss, Send, UserPlus, X } from 'lucide-react';
-import type { Candidate } from '@alto-people/shared';
+import { Briefcase, ClipboardList, Copy, Download, Gift, Plus, Rss, Send, UserPlus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   approveOffer,
@@ -10,7 +9,6 @@ import {
   convertReferral,
   createInterviewKit,
   createJobPosting,
-  createOffer,
   createReferral,
   decideOffer,
   declineOfferApproval,
@@ -18,7 +16,6 @@ import {
   deleteJobPosting,
   listInterviewKits,
   listJobPostings,
-  listOfferLetterTemplates,
   listOffers,
   listReferrals,
   markReferralBonusPaid,
@@ -28,7 +25,6 @@ import {
   jobFeedUrl,
   SCHEDULE_LABEL,
   type JobPostingSchedule,
-  previewOfferLetter,
   sendOffer,
   signedOfferUrl,
   setReferralStatus,
@@ -40,10 +36,8 @@ import {
   type ReferralRecord,
   type ReferralStatus,
 } from '@/lib/recruiting90Api';
-import { getCandidate, listCandidates } from '@/lib/recruitingApi';
 import { listClients } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
-import { usePersistentState } from '@/lib/usePersistentState';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -74,8 +68,11 @@ import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { toast } from 'sonner';
+import { postingSeedFrom, type PostingSeed } from './postingSeed';
+import { NewOfferDrawer } from './OfferDialog';
 
 type Tab = 'kits' | 'offers' | 'referrals' | 'postings';
+
 
 const TABS: readonly Tab[] = ['kits', 'offers', 'referrals', 'postings'];
 
@@ -127,122 +124,6 @@ function useClients() {
   return { clients, error, reload };
 }
 
-interface PickedCandidate {
-  id: string;
-  name: string;
-}
-
-/**
- * Candidate typeahead that resolves to {id, name} — same UX as
- * AssociatePicker, searched on the server as you type (it used to load
- * the newest 200 candidates and filter those, so anyone older couldn't be
- * found). Replaces the raw-UUID input on the offer drawer.
- */
-function CandidatePicker({
-  value,
-  onChange,
-  placeholder = 'Search candidate by name or email…',
-}: {
-  value: PickedCandidate | null;
-  onChange: (v: PickedCandidate | null) => void;
-  placeholder?: string;
-}) {
-  const [term, setTerm] = useState('');
-  const [debounced, setDebounced] = useState('');
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(term.trim()), 250);
-    return () => clearTimeout(t);
-  }, [term]);
-
-  const searching = !value && debounced.length >= 2;
-  const candidatesQuery = useQuery({
-    queryKey: ['recruiting', 'candidate-search', debounced],
-    queryFn: () => listCandidates({ q: debounced, sort: 'name' }, { limit: 8 }),
-    enabled: searching,
-    staleTime: 30_000,
-  });
-  const results: Array<PickedCandidate & { email: string }> = searching
-    ? (candidatesQuery.data?.candidates ?? []).map((c: Candidate) => ({
-        id: c.id,
-        name: `${c.firstName} ${c.lastName}`.trim(),
-        email: c.email,
-      }))
-    : [];
-  const loadError = candidatesQuery.error
-    ? errMessage(candidatesQuery.error, 'Failed to search candidates.')
-    : null;
-  const { refetch: refetchCandidates } = candidatesQuery;
-  const load = useCallback(() => {
-    void refetchCandidates();
-  }, [refetchCandidates]);
-  useEffect(() => {
-    if (searching && candidatesQuery.data) setOpen(true);
-  }, [searching, candidatesQuery.data]);
-
-  if (value) {
-    return (
-      <div className="flex items-center justify-between rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm">
-        <span className="text-white">{value.name}</span>
-        <button
-          type="button"
-          onClick={() => {
-            onChange(null);
-            setTerm('');
-          }}
-          className="text-silver/60 hover:text-white"
-          aria-label="Clear candidate"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <ErrorBanner
-        action={
-          <Button size="sm" variant="secondary" onClick={load}>
-            Retry
-          </Button>
-        }
-      >
-        {loadError}
-      </ErrorBanner>
-    );
-  }
-
-  return (
-    <div className="relative">
-      <Input
-        placeholder={placeholder}
-        value={term}
-        onChange={(e) => setTerm(e.target.value)}
-        onFocus={() => results.length > 0 && setOpen(true)}
-      />
-      {open && results.length > 0 && (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">
-          {results.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              className="block w-full px-3 py-2 text-left text-sm text-silver hover:bg-navy-secondary hover:text-white"
-              onClick={() => {
-                onChange({ id: r.id, name: r.name });
-                setOpen(false);
-              }}
-            >
-              <span className="block text-white">{r.name}</span>
-              <span className="block text-xs text-silver/70">{r.email}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function RecruitingExtras() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
@@ -270,16 +151,19 @@ export function RecruitingExtras() {
   const [offerSeed, setOfferSeed] = useState<{ candidateId: string | null } | null>(
     () => {
       const sp = new URLSearchParams(window.location.search);
-      return sp.get('new') === '1' ? { candidateId: sp.get('candidate') } : null;
+      return sp.get('new') === '1' && sp.get('tab') !== 'postings' ? { candidateId: sp.get('candidate') } : null;
     },
   );
+  // ?tab=postings&new=1&clientId=&title=&location=&openings=&schedule= — a
+  // staffing gap handed over from the headcount plan (or the recruiter
+  // home) opens the new-posting drawer already filled in. Consumed once.
+  const [postingSeed, setPostingSeed] = useState<PostingSeed | null>(() => postingSeedFrom(window.location.search));
   useEffect(() => {
-    if (!offerSeed) return;
+    if (!offerSeed && !postingSeed) return;
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        next.delete('new');
-        next.delete('candidate');
+        for (const k of ['new', 'candidate', 'clientId', 'title', 'location', 'openings', 'schedule']) next.delete(k);
         return next;
       },
       { replace: true },
@@ -319,7 +203,13 @@ export function RecruitingExtras() {
           />
         </TabsContent>
         <TabsContent value="referrals"><ReferralsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="postings"><PostingsTab canManage={canManage} /></TabsContent>
+        <TabsContent value="postings">
+          <PostingsTab
+            canManage={canManage}
+            seed={canManage ? postingSeed : null}
+            onSeedConsumed={() => setPostingSeed(null)}
+          />
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -902,284 +792,6 @@ function OffersTab({
   );
 }
 
-function NewOfferDrawer({
-  seedCandidateId,
-  onClose,
-  onSaved,
-}: {
-  /** Pre-fill this candidate (and their position) instead of the picker. */
-  seedCandidateId?: string | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [candidate, setCandidate] = useState<PickedCandidate | null>(null);
-  // Offers cluster on the same client week after week — remember the last
-  // pick so most drafts start with the client already right.
-  const [lastClientId, setLastClientId] = usePersistentState<string>(
-    'alto:recruiting.offers.lastClientId.v1',
-    '',
-  );
-  const [clientId, setClientId] = useState(lastClientId);
-  const [jobTitle, setJobTitle] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [salary, setSalary] = useState('');
-  const [hourlyRate, setHourlyRate] = useState('');
-  const [letterBody, setLetterBody] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [templateId, setTemplateId] = useState('');
-  const [writing, setWriting] = useState(false);
-  const [unresolved, setUnresolved] = useState<string[]>([]);
-  const { clients, error: clientsError, reload: reloadClients } = useClients();
-  // The client's published offer-letter templates, its own first.
-  const templatesQuery = useQuery({
-    queryKey: ['recruiting', 'offer-letter-templates', clientId],
-    queryFn: () => listOfferLetterTemplates(clientId || undefined),
-  });
-  const templates = templatesQuery.data?.templates ?? [];
-
-  const writeFromTemplate = async () => {
-    if (!candidate || !clientId || !jobTitle.trim() || !startDate || (!salary && !hourlyRate)) {
-      toast.error('Fill in the candidate, client, title, start date and pay first — the letter uses them.');
-      return;
-    }
-    setWriting(true);
-    try {
-      const r = await previewOfferLetter({
-        candidateId: candidate.id,
-        clientId,
-        jobTitle: jobTitle.trim(),
-        startDate,
-        salary: salary ? Number(salary) : null,
-        hourlyRate: hourlyRate ? Number(hourlyRate) : null,
-        ...(templateId ? { templateId } : {}),
-      });
-      setLetterBody(r.body);
-      setUnresolved(r.unresolvedTokens);
-      toast.success(`Letter written from “${r.templateName}” — edit it as you need.`);
-    } catch (err) {
-      toast.error(errMessage(err, 'Could not write the letter.'));
-    } finally {
-      setWriting(false);
-    }
-  };
-
-  // A remembered client that has since been archived would sit invisibly
-  // selected (no matching <option>) — drop it once the list is in hand.
-  useEffect(() => {
-    if (clients && clientId && !clients.some((c) => c.id === clientId)) {
-      setClientId('');
-    }
-  }, [clients, clientId]);
-
-  // Resolve the seeded candidate to {id, name} + default the job title to
-  // their applied-for position. Failure just leaves the picker for manual
-  // selection — the drawer must not block on it.
-  const seededQuery = useQuery({
-    queryKey: ['recruiting', 'candidate', seedCandidateId],
-    queryFn: () => getCandidate(seedCandidateId!),
-    enabled: Boolean(seedCandidateId),
-  });
-  useEffect(() => {
-    const c = seededQuery.data;
-    if (!seedCandidateId || !c) return;
-    setCandidate({ id: c.id, name: `${c.firstName} ${c.lastName}`.trim() });
-    if (c.position) setJobTitle((prev) => prev || c.position!);
-  }, [seedCandidateId, seededQuery.data]);
-  useEffect(() => {
-    if (seedCandidateId && seededQuery.isError) {
-      toast.error('Could not load the candidate — pick them manually.');
-    }
-  }, [seedCandidateId, seededQuery.isError]);
-
-  const onSubmit = async () => {
-    if (!candidate || !clientId || !jobTitle || !startDate) {
-      toast.error('Candidate, client, title, and start date are required.');
-      return;
-    }
-    if (!salary && !hourlyRate) {
-      toast.error('Either a salary or an hourly rate is required.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const created = await createOffer({
-        candidateId: candidate.id,
-        clientId,
-        jobTitle: jobTitle.trim(),
-        startDate,
-        salary: salary ? Number(salary) : null,
-        hourlyRate: hourlyRate ? Number(hourlyRate) : null,
-        letterBody: letterBody.trim() || null,
-      });
-      setLastClientId(clientId);
-      if (created.status === 'PENDING_APPROVAL') {
-        toast.warning('Drafted — and held for approval before it can be sent.', {
-          description: created.approvalNote ?? undefined,
-        });
-      } else {
-        toast.success('Offer drafted.');
-      }
-      onSaved();
-    } catch (err) {
-      toast.error(errMessage(err, 'Could not create the offer.'));
-    } finally {
-      setSaving(false);
-    }
-  };
-  // clientId is deliberately excluded — it's remembered from the last
-  // offer, not typed for this one.
-  const dirty =
-    candidate !== null ||
-    jobTitle.trim() !== '' ||
-    startDate !== '' ||
-    salary !== '' ||
-    hourlyRate !== '' ||
-    letterBody.trim() !== '';
-
-  return (
-    <Drawer
-      open={true}
-      onOpenChange={(o) => !o && onClose()}
-      width="max-w-2xl"
-      confirmDiscard={() => dirty}
-    >
-      <DrawerHeader>
-        <DrawerTitle>New offer</DrawerTitle>
-      </DrawerHeader>
-      <DrawerBody className="space-y-4">
-        <div>
-          <Label>Candidate</Label>
-          <div className="mt-1">
-            <CandidatePicker value={candidate} onChange={setCandidate} />
-          </div>
-        </div>
-        <div>
-          <Label>Client</Label>
-          {clientsError ? (
-            <ErrorBanner
-              className="mt-1"
-              action={
-                <Button size="sm" variant="secondary" onClick={reloadClients}>
-                  Retry
-                </Button>
-              }
-            >
-              {clientsError}
-            </ErrorBanner>
-          ) : (
-            <Select
-              className="mt-1"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              disabled={clients === null}
-            >
-              <option value="">
-                {clients === null ? 'Loading clients…' : 'Select a client…'}
-              </option>
-              {clients?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          )}
-        </div>
-        <div>
-          <Label>Job title</Label>
-          <Input
-            className="mt-1"
-            value={jobTitle}
-            onChange={(e) => setJobTitle(e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Start date</Label>
-          <Input
-            type="date"
-            className="mt-1"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Annual salary (USD)</Label>
-            <Input
-              type="number"
-              className="mt-1"
-              value={salary}
-              onChange={(e) => setSalary(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Hourly rate (USD)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              className="mt-1"
-              value={hourlyRate}
-              onChange={(e) => setHourlyRate(e.target.value)}
-            />
-          </div>
-        </div>
-        <div>
-          <Label>Offer letter</Label>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <Select
-              aria-label="Letter template"
-              className="min-w-0 flex-1"
-              value={templateId}
-              onChange={(e) => setTemplateId(e.target.value)}
-              disabled={templates.length === 0}
-            >
-              <option value="">
-                {templates.length === 0 ? 'No offer-letter templates published yet' : "The client's template"}
-              </option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                  {t.clientName ? ` · ${t.clientName}` : ' · all clients'}
-                </option>
-              ))}
-            </Select>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void writeFromTemplate()}
-              loading={writing}
-              disabled={writing || templates.length === 0}
-            >
-              Write from template
-            </Button>
-          </div>
-          {unresolved.length > 0 && (
-            <p className="mt-1 text-xs text-warning">
-              The template asks for {unresolved.map((t) => `{{${t}}}`).join(', ')}, which the offer doesn't have — those
-              spots are blank. Fill them in below.
-            </p>
-          )}
-          <Textarea
-            aria-label="Offer letter body"
-            className="mt-2 min-h-32 font-mono text-xs"
-            value={letterBody}
-            onChange={(e) => setLetterBody(e.target.value)}
-            placeholder="Write it from a template above, or type the letter here. The candidate reads and signs this."
-          />
-        </div>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Create draft'}
-        </Button>
-      </DrawerFooter>
-    </Drawer>
-  );
-}
-
 // ----- Referrals --------------------------------------------------------
 
 const REF_STATUSES: ReferralStatus[] = ['OPEN', 'INTERVIEWING', 'HIRED', 'REJECTED'];
@@ -1463,10 +1075,25 @@ function NewReferralDrawer({
 // DRAFT is the canonical "default" chip; CLOSED is a settled, de-emphasised
 // terminal state, so it reads as an outline rather than a warning.
 
-function PostingsTab({ canManage }: { canManage: boolean }) {
+function PostingsTab({
+  canManage,
+  seed = null,
+  onSeedConsumed,
+}: {
+  canManage: boolean;
+  seed?: PostingSeed | null;
+  onSeedConsumed?: () => void;
+}) {
   const confirm = useConfirm();
   const prompt = usePrompt();
-  const [showNew, setShowNew] = useState(false);
+  const [showNew, setShowNew] = useState(() => seed !== null);
+  // Held for the drawer's lifetime; the parent's copy is dropped at once so
+  // a tab switch or Back doesn't re-open it.
+  const [drawerSeed] = useState<PostingSeed | null>(seed);
+  useEffect(() => {
+    if (seed) onSeedConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const postingsQuery = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings() });
   const postings: JobPostingRecord[] | null = postingsQuery.data?.postings ?? null;
@@ -1693,6 +1320,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
       </Card>
       {showNew && (
         <NewPostingDrawer
+          seed={drawerSeed}
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
@@ -1782,31 +1410,35 @@ function slugify(s: string): string {
     .slice(0, 200);
 }
 
-function NewPostingDrawer({
+export function NewPostingDrawer({
+  seed = null,
   onClose,
   onSaved,
 }: {
+  /** Filled in from a staffing gap: client, title, store, openings, schedule. */
+  seed?: PostingSeed | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [title, setTitle] = useState('');
-  const [slug, setSlug] = useState('');
+  const [title, setTitle] = useState(seed?.title ?? '');
+  const [slug, setSlug] = useState(seed?.title ? slugify(seed.title) : '');
   // Once the user types in the slug field themselves, blurring the title
   // stops overwriting it — auto-fill must never clobber a manual edit.
   const [slugEdited, setSlugEdited] = useState(false);
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = useState(seed?.clientId ?? '');
   const [description, setDescription] = useState('');
-  const [location, setLocation] = useState('');
+  const [location, setLocation] = useState(seed?.location ?? '');
   const [minSalary, setMinSalary] = useState('');
   const [maxSalary, setMaxSalary] = useState('');
-  const [openings, setOpenings] = useState('1');
-  const [schedule, setSchedule] = useState<JobPostingSchedule | ''>('');
+  const [openings, setOpenings] = useState(String(seed?.openings ?? 1));
+  const [schedule, setSchedule] = useState<JobPostingSchedule | ''>(seed?.schedule ?? '');
   const [payUnit, setPayUnit] = useState<'HOUR' | 'YEAR' | ''>('HOUR');
   const [syndicate, setSyndicate] = useState(true);
   const [saving, setSaving] = useState(false);
   const { clients, error: clientsError, reload: reloadClients } = useClients();
 
-  const onSubmit = async () => {
+  // Save & open is the usual intent: a posting nobody can see fills nothing.
+  const onSubmit = async (open: boolean) => {
     const headcount = Number(openings);
     if (!Number.isInteger(headcount) || headcount < 1 || headcount > 500) {
       toast.error('Openings must be a whole number from 1 to 500.');
@@ -1822,7 +1454,7 @@ function NewPostingDrawer({
     }
     setSaving(true);
     try {
-      await createJobPosting({
+      const created = await createJobPosting({
         title: title.trim(),
         slug: slug.trim(),
         clientId: clientId || null,
@@ -1835,7 +1467,17 @@ function NewPostingDrawer({
         payUnit: minSalary || maxSalary ? payUnit || null : null,
         syndicate,
       });
-      toast.success('Posting drafted.');
+      if (open) {
+        try {
+          await openJobPosting(created.id);
+          toast.success('Posting is live on the careers page.');
+        } catch (err) {
+          // The draft exists; say exactly what didn't happen.
+          toast.error(errMessage(err, 'Saved as a draft, but it could not be opened.'));
+        }
+      } else {
+        toast.success('Posting drafted.');
+      }
       onSaved();
     } catch (err) {
       toast.error(errMessage(err, 'Could not create the posting.'));
@@ -1963,6 +1605,11 @@ function NewPostingDrawer({
             ))}
           </Select>
         </div>
+        {seed && (
+          <p className="text-xs text-ink-muted">
+            Filled in from the staffing gap. Pay is left for you: set what the client agreed for this store.
+          </p>
+        )}
         <div className="grid grid-cols-[1fr_1fr_8rem] gap-3">
           <div>
             <Label>Min pay</Label>
@@ -2007,8 +1654,11 @@ function NewPostingDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Save draft'}
+        <Button variant="outline" onClick={() => void onSubmit(false)} disabled={saving}>
+          Save draft
+        </Button>
+        <Button onClick={() => void onSubmit(true)} loading={saving} disabled={saving}>
+          Save &amp; open
         </Button>
       </DrawerFooter>
     </Drawer>

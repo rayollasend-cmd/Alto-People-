@@ -44,10 +44,6 @@ export function listPrograms(filters: ProgramFilters = {}): Promise<ProgramListR
   );
 }
 
-export function getProgram(id: string): Promise<ProgramSummary> {
-  return apiFetch<ProgramSummary>(`/programs/${id}`);
-}
-
 export function createProgram(body: ProgramInput): Promise<ProgramSummary> {
   return apiFetch<ProgramSummary>('/programs', { method: 'POST', body });
 }
@@ -58,10 +54,6 @@ export function updateProgram(id: string, body: ProgramUpdate): Promise<ProgramS
 
 export function getAssociateProgram(associateId: string): Promise<{ program: ProgramSummary | null }> {
   return apiFetch<{ program: ProgramSummary | null }>(`/programs/associate/${associateId}`);
-}
-
-export function listProgramAlerts(): Promise<ProgramAlertsResponse> {
-  return apiFetch<ProgramAlertsResponse>('/programs/alerts');
 }
 
 /** A supervisor's floor only; admins get everything. */

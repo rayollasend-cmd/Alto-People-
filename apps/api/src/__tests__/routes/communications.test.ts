@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { setSmsTransportForTests } from '../../lib/sms.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -60,17 +61,45 @@ describe('POST /communications/admin/send', () => {
     expect(inbox.body.notifications[0].readAt).toBeNull();
   });
 
-  it('SMS to a phone number → SENT with stub externalRef', async () => {
+  it('SMS with no provider configured → 202 NOT_CONFIGURED, never SENT, and the channel list says why', async () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
     const res = await a.post('/communications/admin/send').send({
       channel: 'SMS',
-      recipientPhone: '+1-555-0100',
+      recipientPhone: '+1-555-010-0100',
       body: 'Your shift starts in 30 minutes.',
     });
-    expect(res.status).toBe(201);
-    expect(res.body.status).toBe('SENT');
-    expect(res.body.externalRef).toMatch(/^STUB-SMS-/);
+    expect(res.status).toBe(202);
+    expect(res.body.status).toBe('NOT_CONFIGURED');
+    expect(res.body.sentAt).toBeNull();
+    expect(res.body.externalRef).toBeNull();
+    expect(res.body.failureReason).toMatch(/Texting isn’t connected/);
+    const channels = await a.get('/communications/admin/channels');
+    expect(channels.body.channels.find((c: { channel: string }) => c.channel === 'SMS')).toMatchObject({ available: false, reason: expect.stringMatching(/TWILIO/) });
+  });
+
+  it('SMS with a provider → the Twilio message SID is the external ref and the row is SENT', async () => {
+    const calls: Array<{ to: string; body: string }> = [];
+    setSmsTransportForTests(async (m) => {
+      calls.push(m);
+      return { sid: 'SM123', status: 'queued' };
+    });
+    try {
+      const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+      const a = await loginAs(hr.email);
+      const res = await a.post('/communications/admin/send').send({
+        channel: 'SMS',
+        recipientPhone: '(555) 010-0100',
+        body: 'Your shift starts in 30 minutes.',
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe('SENT');
+      expect(res.body.externalRef).toBe('SM123');
+      expect(calls).toEqual([{ to: '+15550100100', body: 'Your shift starts in 30 minutes.' }]);
+      expect((await a.get('/communications/admin/channels')).body.channels.find((c: { channel: string }) => c.channel === 'SMS')).toMatchObject({ available: true });
+    } finally {
+      setSmsTransportForTests(null);
+    }
   });
 
   it('IN_APP requires recipientUserId → 400', async () => {

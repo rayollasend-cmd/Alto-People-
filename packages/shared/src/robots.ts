@@ -170,6 +170,8 @@ export interface RobotIncidentSummary {
   sampleCount: number;
   eventCount: number;
   retainUntil: string;
+  /** Set once the retention sweep removed the hour's samples, events and people on shift (past retainUntil). */
+  evidencePurgedAt: string | null;
 }
 
 export interface RobotIncidentDetail extends RobotIncidentSummary {
@@ -306,3 +308,18 @@ export const RobotIncidentInputSchema = /* @__PURE__ */ (() =>
 export type RobotIncidentInput = z.infer<typeof RobotIncidentInputSchema>;
 
 export const RobotStopInputSchema = /* @__PURE__ */ (() => z.object({ note: z.string().trim().max(500).nullable().optional() }))();
+
+/* ---------------------------------------------------------- severity ---- */
+
+export type OshaSeverity = 'FIRST_AID' | 'MEDICAL_TREATMENT' | 'RESTRICTED_DUTY' | 'DAYS_AWAY' | 'FATAL';
+
+/** The OSHA severities an injury report can carry, in order; everything above first aid is recordable. */
+export const OSHA_SEVERITIES: readonly OshaSeverity[] = ['FIRST_AID', 'MEDICAL_TREATMENT', 'RESTRICTED_DUTY', 'DAYS_AWAY', 'FATAL'];
+
+export const OSHA_SEVERITY_LABELS: Record<OshaSeverity, string> = {
+  FIRST_AID: 'First aid only',
+  MEDICAL_TREATMENT: 'Medical treatment beyond first aid',
+  RESTRICTED_DUTY: 'Restricted duty or job transfer',
+  DAYS_AWAY: 'Days away from work',
+  FATAL: 'Fatality',
+};

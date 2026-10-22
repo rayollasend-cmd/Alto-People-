@@ -106,6 +106,9 @@ export interface Ride {
   cancelReason: string | null;
   /** The driver tapped "Arrived" at this pickup. */
   vanArrivedAt: string | null;
+  /** Floor walk 17: how far the driver's phone was from the stop at Arrived / No-show (metres), when it sent a fix. */
+  arrivedDistanceM?: number | null;
+  noShowDistanceM?: number | null;
   /** The rider's word to the driver. */
   riderSignal: { kind: RiderSignal; at: string } | null;
   /** A driver (or the director) put the seat on a van. */
@@ -157,6 +160,10 @@ export interface RideRun {
   preTrip?: { passed: boolean; at: string } | null;
   /** The safety toolkit's stamps. Older answers omit it. */
   safety?: RunSafety;
+  /** Left ACTIVE hours past its last stop (transport walk 4): not late — close it. */
+  stuck?: boolean;
+  /** The sweep closed it; riders never marked stayed SCHEDULED for review. */
+  autoClosedAt?: string | null;
 }
 
 export interface RunSafety {
@@ -401,6 +408,8 @@ export interface RunMap {
   driver: { userId: string; name: string };
   position: VanPosition | null;
   stale: boolean;
+  /** Left ACTIVE hours past its last stop: "Not closed — Close run", not lateness (transport walk 4). */
+  stuck?: boolean;
   /** The safety toolkit's stamps. Older answers omit it. */
   safety?: RunSafety;
   /** Where the van has been — [lng, lat] pairs. */
@@ -420,6 +429,18 @@ export interface RunMap {
     dropEtaAt: string | null;
   }>;
 }
+
+/** The desk's map for Dispatch and Plan runs: the day's open seats by store and way, as stops (transport walk 5). */
+export interface PlanMapTrip {
+  locationId: string;
+  direction: RideDirection;
+  store: { name: string; timezone: string; address: string; point: GeoPoint | null };
+  riders: number;
+  requested: number;
+  clusters: RideCluster[];
+  unmapped: number;
+}
+export const getPlanMap = (date: string) => apiFetch<{ date: string; trips: PlanMapTrip[] }>(`/transport/plan-map?date=${date}`);
 
 export const getLiveBoard = (date?: string) =>
   apiFetch<{ date: string; generatedAt: string; runs: RunMap[] }>(`/transport/live${date ? `?date=${date}` : ''}`);
@@ -491,7 +512,13 @@ export const reportTransportIssue = (body: {
   body: string;
   rideId?: string;
   runId?: string;
-}) => apiFetch<{ id: string }>('/transport/issues', { method: 'POST', body });
+  /** Floor walk 16 — a driver's report: photos, where the phone was, and whether the van comes off the road. */
+  photoKeys?: string[];
+  lat?: number | null;
+  lng?: number | null;
+  vanId?: string;
+  vanOutOfService?: boolean;
+}) => apiFetch<{ id: string; vanParked?: boolean; runs?: { moved: string[]; flagged: string[] } | null }>('/transport/issues', { method: 'POST', body });
 
 /* ----- The driver --------------------------------------------------------- */
 
@@ -500,21 +527,55 @@ export const getDriverRuns = () => apiFetch<{ today: string; runs: RideRun[] }>(
 export const startDriverRun = (id: string) =>
   apiFetch<{ run: RideRun }>(`/transport/driver/runs/${id}/start`, { method: 'POST' });
 
-export const completeDriverRun = (id: string) =>
-  apiFetch<{ run: RideRun }>(`/transport/driver/runs/${id}/complete`, { method: 'POST' });
+/**
+ * What a driver's tap carries (floor walk 5 and 17): where the phone was,
+ * and — on a replay from the offline queue — that it is a replay, so a
+ * mark that already landed answers 200 instead of a refusal.
+ */
+export interface MarkOptions {
+  lat?: number | null;
+  lng?: number | null;
+  accuracy?: number | null;
+  idempotencyKey?: string;
+  replay?: boolean;
+}
+/** The server's word on the fix: how far from the stop, and whether that is far (150 m). */
+export interface MarkEvidence {
+  distanceM: number | null;
+  far: boolean;
+}
 
-export const markBoarded = (rideId: string) =>
-  apiFetch<{ ride: Ride }>(`/transport/driver/rides/${rideId}/board`, { method: 'POST' });
+export const completeDriverRun = (id: string, opts: MarkOptions = {}) =>
+  apiFetch<{ run: RideRun; replayed?: boolean }>(`/transport/driver/runs/${id}/complete`, { method: 'POST', body: opts });
 
-export const markNoShow = (rideId: string) =>
-  apiFetch<{ ride: Ride }>(`/transport/driver/rides/${rideId}/no-show`, { method: 'POST' });
+export const markBoarded = (rideId: string, opts: MarkOptions = {}) =>
+  apiFetch<{ ride: Ride; replayed?: boolean }>(`/transport/driver/rides/${rideId}/board`, { method: 'POST', body: opts });
+
+export const markNoShow = (rideId: string, opts: MarkOptions = {}) =>
+  apiFetch<{ ride: Ride; evidence: MarkEvidence | null; replayed?: boolean }>(`/transport/driver/rides/${rideId}/no-show`, { method: 'POST', body: opts });
 
 /** "Arrived" at a pickup — the riders there hear the van is here. */
-export const driverArrived = (runId: string, rideIds: string[]) =>
-  apiFetch<{ run: RideRun }>(`/transport/driver/runs/${runId}/arrived`, { method: 'POST', body: { rideIds } });
+export const driverArrived = (runId: string, rideIds: string[], opts: MarkOptions = {}) =>
+  apiFetch<{ run: RideRun; evidence: MarkEvidence | null }>(`/transport/driver/runs/${runId}/arrived`, { method: 'POST', body: { rideIds, ...opts } });
 
-export const undoRideMark = (rideId: string) =>
-  apiFetch<{ ride: Ride }>(`/transport/driver/rides/${rideId}/undo`, { method: 'POST' });
+/** Everyone still waiting at a stop, on board in one request (floor walk 18). */
+export const boardAll = (runId: string, rideIds: string[], opts: MarkOptions = {}) =>
+  apiFetch<{ run: RideRun; boarded: string[]; already: string[] }>(`/transport/driver/runs/${runId}/board-all`, { method: 'POST', body: { rideIds, ...opts } });
+
+export const undoRideMark = (rideId: string, opts: MarkOptions = {}) =>
+  apiFetch<{ ride: Ride; replayed?: boolean }>(`/transport/driver/rides/${rideId}/undo`, { method: 'POST', body: opts });
+
+/**
+ * "I'm here" to the rider, in their language, through the SMS channel.
+ * Honest when SMS isn't connected: `sent` false with the reason, the
+ * words, and an sms: link to send it from the phone instead.
+ */
+export const textRiderHere = (rideId: string) =>
+  apiFetch<{ sent: boolean; reason: 'sms_not_configured' | 'no_phone' | null; body: string; smsHref: string | null }>(`/transport/driver/rides/${rideId}/text-here`, { method: 'POST' });
+
+/** Fuel at the pump, by the driver, on their van (transport walk 9). */
+export const logFuel = (vanId: string, body: { gallons?: number | null; costCents: number; odometerMiles?: number | null; photoKey?: string | null }) =>
+  apiFetch<{ entry: { id: string; kind: 'FUEL'; occurredAt: string; odometerMiles: number | null; costCents: number; notes: string | null } }>(`/transport/driver/vans/${vanId}/fuel`, { method: 'POST', body });
 
 /* ----- The command center ------------------------------------------------- */
 
@@ -544,7 +605,14 @@ export interface TransportBoard {
      *  hold. The transportation director drives only in a pinch. */
     drivesByTrade: boolean;
     phone: string | null;
+    /** A driver record exists for them (transport walk 2). */
+    licenceOnFile?: boolean;
+    /** Dispatch would refuse them — no record once records are kept, or a lapsed credential. */
+    canDrive?: boolean;
+    credentialProblem?: string | null;
   }>;
+  /** Once any driver has a record, a driver without one can't be dispatched. */
+  credentialsEnforced?: boolean;
 }
 
 export const getTransportBoard = (date?: string) =>
@@ -687,6 +755,8 @@ export interface FleetVan extends Van {
     daily: Array<{ date: string; cents: number }>;
   };
   now: { onTheRoad: boolean; driver: string; lastSeenAt: string | null; position: GeoPoint | null } | null;
+  /** The next service by miles — the last oil change plus the interval against the odometer (transport walk 9). */
+  serviceDue?: { atMiles: number; milesLeft: number; overdue: boolean; due: boolean } | null;
 }
 
 export const getFleet = (from: string, to: string) =>
@@ -826,8 +896,18 @@ export interface RiderProfile {
   rides: number;
   noShows: number;
   cancelled: number;
+  // The desk's record (transport walk 7) — a view:transport caller only.
+  userId?: string | null;
+  noShowRate?: number | null;
+  owedCents?: number;
+  heldCents?: number;
+  takenCents?: number;
+  waivedCents?: number;
+  notAuthorizedCents?: number;
+  authorization?: { current: boolean; signedAt: string | null; reason: string | null; withdrawnAt: string | null };
+  openIssues?: number;
 }
-export const getRiderProfile = (associateId: string) => apiFetch<{ rider: RiderProfile }>(`/transport/riders/${associateId}`);
+export const getRiderProfile = (associateId: string) => apiFetch<{ rider: RiderProfile; recent?: Ride[] }>(`/transport/riders/${associateId}`);
 
 export interface TransportStop {
   id: string;

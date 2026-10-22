@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 import { acknowledgeFloorFlag, listFloorFlags, type FloorFlag } from '@/lib/floorApi';
 import { fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { SectionTitle } from '@/components/ui/SectionTitle';
@@ -17,10 +18,11 @@ import { Card, CardContent } from '@/components/ui/Card';
  * to the Inbox count.
  */
 
-const KIND_LABEL: Record<FloorFlag['kind'], string> = { NO_SHOW: 'No-show', HAZARD: 'Hazard', OTHER: 'Flag' };
+const KIND_LABEL: Record<FloorFlag['kind'], MessageKey> = { NO_SHOW: 'floorUi.kindNoShow', HAZARD: 'floorUi.kindHazard', OTHER: 'floorUi.kindFlag' };
 const KIND_TONE: Record<FloorFlag['kind'], 'pending' | 'destructive' | 'default'> = { NO_SHOW: 'pending', HAZARD: 'destructive', OTHER: 'default' };
 
 export function FloorFlagsCard({ className }: { className?: string }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const q = useQuery({ queryKey: ['floor', 'flags'], queryFn: () => listFloorFlags('open'), refetchInterval: 60_000 });
@@ -34,7 +36,7 @@ export function FloorFlagsCard({ className }: { className?: string }) {
       await qc.invalidateQueries({ queryKey: ['floor', 'flags'] });
       void qc.invalidateQueries({ queryKey: ['inbox'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not acknowledge it.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.ackFailed'));
     } finally {
       setBusy(null);
     }
@@ -43,12 +45,12 @@ export function FloorFlagsCard({ className }: { className?: string }) {
   return (
     <Card id="floor-flags" className={cn('animate-enter border-warning/40', className)} data-testid="floor-flags">
       <CardContent className="p-5">
-        <SectionTitle icon={Flag} title="From the floor" trailing={<span className="text-xs tabular-nums text-ink-muted">{flags.length}</span>} />
+        <SectionTitle icon={Flag} title={t('floorUi.fromTheFloor')} trailing={<span className="text-xs tabular-nums text-ink-muted">{flags.length}</span>} />
         <ul className="divide-y divide-navy-secondary/60">
           {flags.map((f) => (
             <li key={f.id} className="flex items-start gap-3 py-2.5">
               <Badge variant={KIND_TONE[f.kind]} size="sm">
-                {KIND_LABEL[f.kind]}
+                {t(KIND_LABEL[f.kind])}
               </Badge>
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-ink">
@@ -60,7 +62,7 @@ export function FloorFlagsCard({ className }: { className?: string }) {
                 </div>
               </div>
               <Button size="sm" variant="outline" loading={busy === f.id} onClick={() => void ack(f.id)}>
-                Got it
+                {t('common.gotIt')}
               </Button>
             </li>
           ))}

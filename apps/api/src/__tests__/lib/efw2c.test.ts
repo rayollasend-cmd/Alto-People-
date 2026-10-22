@@ -143,6 +143,21 @@ describe('EFW2C generator — structural invariants', () => {
     expect(parseInt(dBox1.slice(1), 10)).toBe(10000);
   });
 
+  it('RCS positions 4-5 carry the SSA numeric state code, as the RS record does', () => {
+    const withState: Efw2cFile = {
+      ...sampleInput,
+      employees: [
+        {
+          ...sampleInput.employees[0],
+          previous: { ...sampleInput.employees[0].previous, stateLines: [{ state: 'FL', stateWages: 1000, stateIncomeTax: 0 }] },
+          corrected: { ...sampleInput.employees[0].corrected, stateLines: [{ state: 'FL', stateWages: 1100, stateIncomeTax: 0 }] },
+        },
+      ],
+    };
+    const rcs = buildEfw2cFile(withState).split('\r\n').find((l) => l.startsWith('RCS'))!;
+    expect(rcs.slice(3, 5)).toBe('12');
+  });
+
   it('RCF carries the same RCW count as RCT', () => {
     const rcf = lines.find((l) => l.startsWith('RCF'))!;
     // RCF position 9-17 holds the count, padded to 9 digits.

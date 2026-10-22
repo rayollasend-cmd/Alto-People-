@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
 import { netWorkedMinutes, utcInstantOfLocalMidnight, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
+import { ageStatements, type AgingBuckets } from './books/aging.js';
 import { buildTimesheetWeek, saturdayWeek, toUsDate } from './timesheetWeek.js';
 import { fieldglassDueAt, fieldglassHours } from './fieldglassDesk.js';
 import { getNextPayday, getPeriodAfter } from './payrollSchedule.js';
@@ -312,40 +313,34 @@ export async function marginTrend(
 }
 
 export interface ReceivablesAging {
-  aging: { current: number; d31: number; d61: number; d91: number };
+  /** The one aging definition (lib/books/aging): by days past DUE — current (not yet due), 1–30, 31–60, 61–90, over 90. */
+  aging: AgingBuckets;
   byClient: Array<{ clientId: string | null; clientName: string; amount: number; oldestDays: number }>;
+  /** The oldest open statement's days past due; null with nothing open. */
+  oldestDays: number | null;
 }
 
-/** Unpaid statements by age past DUE (their terms), else since finalized; the five clients owing most. */
+/** Open statements aged by the shared definition; the five clients owing most, each with its oldest days past due. */
 export function receivablesAging(
-  unpaid: Array<{ clientId: string | null; clientName: string | null; finalizedAt: Date | null; dueAt?: Date | null; amount: number }>,
+  unpaid: Array<{ clientId: string | null; clientName: string | null; finalizedAt: Date | null; dueAt?: Date | null; periodEnd?: Date | null; amount: number }>,
   now: Date = new Date(),
 ): ReceivablesAging {
-  const aging = { current: 0, d31: 0, d61: 0, d91: 0 };
+  const aged = ageStatements(unpaid, now);
   const byClient = new Map<string, { clientId: string | null; clientName: string; amount: number; oldestDays: number }>();
-  for (const s of unpaid) {
-    // With terms, "current" is anything not yet due; the buckets count
-    // days past the due date. Without, the old rule: days since finalized.
-    const days = s.dueAt
-      ? Math.max(0, Math.floor((now.getTime() - s.dueAt.getTime()) / DAY_MS))
-      : s.finalizedAt
-        ? Math.floor((now.getTime() - s.finalizedAt.getTime()) / DAY_MS)
-        : 0;
-    if (days > 90) aging.d91 += s.amount;
-    else if (days > 60) aging.d61 += s.amount;
-    else if (days > 30) aging.d31 += s.amount;
-    else aging.current += s.amount;
-    const key = s.clientId ?? 'none';
-    const c = byClient.get(key) ?? { clientId: s.clientId, clientName: s.clientName ?? 'Unassigned', amount: 0, oldestDays: 0 };
-    c.amount += s.amount;
-    c.oldestDays = Math.max(c.oldestDays, days);
+  for (const a of aged.statements) {
+    const key = a.row.clientId ?? 'none';
+    const c = byClient.get(key) ?? { clientId: a.row.clientId, clientName: a.row.clientName ?? 'Unassigned', amount: 0, oldestDays: 0 };
+    c.amount += a.row.amount;
+    c.oldestDays = Math.max(c.oldestDays, a.daysPastDue);
     byClient.set(key, c);
   }
+  const aging = Object.fromEntries(Object.entries(aged.buckets).map(([k, v]) => [k, round2(v)])) as AgingBuckets;
   return {
-    aging: { current: round2(aging.current), d31: round2(aging.d31), d61: round2(aging.d61), d91: round2(aging.d91) },
+    aging,
     byClient: [...byClient.values()]
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5)
       .map((c) => ({ ...c, amount: round2(c.amount) })),
+    oldestDays: aged.oldestDaysPastDue,
   };
 }

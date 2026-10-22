@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
-import type { I9DocumentList, I9Verification } from '@alto-people/shared';
+import { DeadlineStrip, matchesDeadlineDay } from './DeadlineStrip';
+import type { I9DocumentList, I9ListResponse, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import {
   listI9Documents,
@@ -16,7 +17,7 @@ import {
   minDocsForSection2List,
   sanitizeReturnPath,
 } from './section2Verification';
-import { ApiError } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
 import { DocumentViewer } from '@/components/DocumentViewer';
 import {
   downloadAllDocumentsUrl,
@@ -25,7 +26,7 @@ import {
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { associatePhotoUrl } from '@/lib/photoUrl';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
 import { toast } from 'sonner';
@@ -78,6 +79,18 @@ function section2DueDate(startDate: string | null | undefined): Date | null {
   return addBusinessDays(parseLocalDate(startDate), 3);
 }
 
+/** The open federal clocks on one I-9: Section 2 while it is pending, and
+ *  reverification when the work authorization runs out. */
+function i9DueDates(r: I9Verification): string[] {
+  const out: string[] = [];
+  if (!r.section2CompletedAt) {
+    const due = section2DueDate(r.startDate);
+    if (due) out.push(ymdLocal(due));
+  }
+  if (r.reverifyDueAt) out.push(r.reverifyDueAt.slice(0, 10));
+  return out;
+}
+
 /** Whole days from local-today to `d` (negative = in the past). */
 function daysFromToday(d: Date): number {
   const now = new Date();
@@ -102,6 +115,9 @@ const I9_FILTERS = [
   { value: 'complete', label: 'Complete' },
   { value: 'all', label: 'All' },
   { value: 'work_auth', label: 'Work auth expiring' },
+  // Separated people whose I-9 is past its retention date (the later of
+  // three years from hire or one year from separation): safe to purge.
+  { value: 'retention', label: 'Past retention' },
 ] as const;
 
 // Start-date window — "the newest hires' I-9s" without scanning the list.
@@ -142,12 +158,19 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   // Consume the param: tab switches copy the current search params, so a
   // lingering ?return= would follow the user around the Compliance page
   // (and re-arm on refresh). replace: true keeps Back-button history sane.
+  // ?status= — the Inbox's link names the view its count came from
+  // (reverification due, past retention). One visit, consumed below.
+  const [deepLinkStatus] = useState<I9Filter | null>(() => {
+    const v = deepLinkParams.get('status');
+    return I9_FILTERS.some((f) => f.value === v) ? (v as I9Filter) : null;
+  });
   const returnConsumed = useRef(false);
   useEffect(() => {
-    if (returnConsumed.current || !deepLinkParams.has('return')) return;
+    if (returnConsumed.current || (!deepLinkParams.has('return') && !deepLinkParams.has('status'))) return;
     returnConsumed.current = true;
     const params = new URLSearchParams(deepLinkParams);
     params.delete('return');
+    params.delete('status');
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
   const [storedFilter, setStoredFilter] = usePersistentState<I9Filter>(
@@ -158,13 +181,15 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   // A deep link lands on ALL for this visit only — a checklist click must
   // not overwrite the chip the user deliberately saved.
   const [filterOverride, setFilterOverride] = useState<I9Filter | null>(
-    deepLinkAssociateId ? 'all' : null,
+    deepLinkStatus ?? (deepLinkAssociateId ? 'all' : null),
   );
   const filter = filterOverride ?? storedFilter;
   const setFilter = (f: I9Filter) => {
     setFilterOverride(null);
     setStoredFilter(f);
   };
+  // A day picked on the deadline strip — this visit only.
+  const [dueDay, setDueDay] = useState<string | null>(null);
   const [started, setStarted] = useState<StartedFilter>('any');
   // '' = all clients; 'none' = rows with no client attribution.
   const [clientFilter, setClientFilter] = usePersistentState<string>(
@@ -201,6 +226,16 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     queryFn: () => listI9s('all'),
   });
   const rows: I9Verification[] | null = rowsQuery.data?.i9s ?? null;
+  // Past retention lives outside the working list: those people have left,
+  // so the server answers them on their own (?status=retention).
+  const retentionQuery = useQuery({
+    queryKey: ['I9Tab', 'retention'],
+    queryFn: () => apiFetch<I9ListResponse>('/compliance/i9?status=retention'),
+    retry: false,
+  });
+  const retentionRows: I9Verification[] = (retentionQuery.data?.i9s ?? []).filter(
+    (r) => !!r.retainUntil && r.retainUntil < ymdLocal(),
+  );
   const error = rowsQuery.error
     ? rowsQuery.error instanceof ApiError
       ? rowsQuery.error.message
@@ -270,7 +305,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   // rows last).
   const displayRows = useMemo(() => {
     if (!rows) return null;
-    let list = rows;
+    let list = filter === 'retention' ? retentionRows : rows;
+    if (dueDay) list = list.filter((r) => i9DueDates(r).some((d) => matchesDeadlineDay(d, dueDay)));
     if (filter === 'pending') list = list.filter((r) => !r.section2CompletedAt);
     if (filter === 'complete') list = list.filter((r) => !!r.section2CompletedAt);
     if (filter === 'overdue') {
@@ -313,7 +349,9 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       const [gb, kb] = rank(b);
       return ga - gb || ka - kb;
     });
-  }, [rows, filter, started, clientFilter, search]);
+    // retentionRows is derived from the retention query each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, filter, started, clientFilter, search, dueDay, retentionQuery.data]);
 
   // Distinct clients present in the list, for the dropdown — derived from
   // the rows themselves so no extra fetch (and no /clients dependency).
@@ -346,6 +384,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       ).length,
     };
   }, [rows]);
+  const deadlineDates = useMemo(() => (rows ?? []).flatMap(i9DueDates), [rows]);
 
   return (
     <section>
@@ -357,7 +396,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
 
       {rows && rows.length > 0 && (
         <KpiStrip>
-          <Kpi label="Associates" value={kpi.total} />
+          {/* The numbers that have a view are that view's filter. */}
+          <Kpi label="Associates" value={kpi.total} onClick={() => setFilter('all')} active={filter === 'all'} />
           <Kpi
             label="Section 1 pending"
             value={kpi.pendingS1}
@@ -367,19 +407,42 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             label="Section 2 pending"
             value={kpi.pendingS2}
             tone={kpi.pendingS2 > 0 ? 'text-warning' : undefined}
+            onClick={() => setFilter('pending')}
+            active={filter === 'pending'}
           />
           <Kpi
             label="Overdue"
             value={kpi.overdue}
             tone={kpi.overdue > 0 ? 'text-alert' : undefined}
+            onClick={() => setFilter('overdue')}
+            active={filter === 'overdue'}
           />
-          <Kpi label="Complete" value={kpi.complete} tone="text-success" />
+          <Kpi label="Complete" value={kpi.complete} tone="text-success" onClick={() => setFilter('complete')} active={filter === 'complete'} />
           <Kpi
-            label={`Work auth ≤ ${WORK_AUTH_WINDOW_DAYS}d`}
+            label={`Reverify ≤ ${WORK_AUTH_WINDOW_DAYS}d`}
             value={kpi.workAuth}
             tone={kpi.workAuth > 0 ? 'text-alert' : undefined}
+            onClick={() => setFilter('work_auth')}
+            active={filter === 'work_auth'}
+          />
+          <Kpi
+            label="Past retention"
+            value={retentionRows.length}
+            tone={retentionRows.length > 0 ? 'text-warning' : undefined}
+            onClick={() => setFilter('retention')}
+            active={filter === 'retention'}
           />
         </KpiStrip>
+      )}
+
+      {rows && (
+        <DeadlineStrip
+          title="I-9 deadlines"
+          what="Section 2 and reverification deadlines"
+          dueDates={deadlineDates}
+          selectedDay={dueDay}
+          onSelectDay={setDueDay}
+        />
       )}
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -491,20 +554,35 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                             </Badge>
                           )}
                         </div>
-                        {r.workAuthExpiresAt && (
+                        {(r.reverifyDueAt ?? r.workAuthExpiresAt) && (
                           <div className="text-right">
                             <div className="text-2xs uppercase tracking-widest text-silver/80">
-                              Work auth
+                              Reverify by
                             </div>
                             <div
                               className={cn(
                                 'text-xs tabular-nums',
                                 toneForDays(
-                                  daysFromToday(parseLocalDate(r.workAuthExpiresAt)),
+                                  daysFromToday(parseLocalDate((r.reverifyDueAt ?? r.workAuthExpiresAt)!.slice(0, 10))),
                                 ),
                               )}
                             >
-                              {fmtDate(parseLocalDate(r.workAuthExpiresAt))}
+                              {fmtDate(parseLocalDate((r.reverifyDueAt ?? r.workAuthExpiresAt)!.slice(0, 10)))}
+                            </div>
+                          </div>
+                        )}
+                        {r.retainUntil && (
+                          <div className="text-right">
+                            <div className="text-2xs uppercase tracking-widest text-silver/80">
+                              Retain until
+                            </div>
+                            <div
+                              className={cn(
+                                'text-xs tabular-nums',
+                                r.retainUntil < ymdLocal() ? 'text-warning' : 'text-silver',
+                              )}
+                            >
+                              {fmtDate(parseLocalDate(r.retainUntil.slice(0, 10)))}
                             </div>
                           </div>
                         )}

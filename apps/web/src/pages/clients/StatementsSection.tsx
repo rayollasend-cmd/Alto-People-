@@ -528,18 +528,27 @@ function BillingTermsBar({ clientId, canEdit }: { clientId: string; canEdit: boo
   const [editing, setEditing] = useState(false);
   const [po, setPo] = useState('');
   const [days, setDays] = useState('30');
+  // Sales tax on this client's statements (audit 2026-10-21 #17): taxable, at what rate.
+  const [taxable, setTaxable] = useState(false);
+  const [rate, setRate] = useState('');
   const [busy, setBusy] = useState(false);
   const d = q.data;
   if (!d) return null;
   const startEdit = () => {
     setPo(d.poNumber ?? '');
     setDays(String(d.paymentTermsDays));
+    setTaxable(!!d.salesTaxable);
+    setRate(d.salesTaxRatePct != null ? String(d.salesTaxRatePct) : '');
     setEditing(true);
   };
   const save = async () => {
+    if (taxable && !(Number(rate) > 0)) {
+      toast.error('A taxable client needs a sales tax rate above zero.');
+      return;
+    }
     setBusy(true);
     try {
-      await updateClientBillingTerms(clientId, { poNumber: po.trim() || null, paymentTermsDays: Number(days) });
+      await updateClientBillingTerms(clientId, { poNumber: po.trim() || null, paymentTermsDays: Number(days), salesTaxable: taxable, salesTaxRatePct: taxable ? Number(rate) : null });
       toast.success('Billing terms saved.');
       setEditing(false);
       await q.refetch();
@@ -594,6 +603,16 @@ function BillingTermsBar({ clientId, canEdit }: { clientId: string; canEdit: boo
             Net days
             <Input className="mt-1 h-8 w-20" type="number" min="0" max="365" value={days} onChange={(e) => setDays(e.target.value)} />
           </label>
+          <label className="flex items-center gap-1.5 self-center pt-4">
+            <input type="checkbox" className="h-4 w-4 accent-gold" checked={taxable} onChange={(e) => setTaxable(e.target.checked)} />
+            Charge sales tax
+          </label>
+          {taxable && (
+            <label>
+              Rate %
+              <Input className="mt-1 h-8 w-24" type="number" min="0" max="100" step="0.001" value={rate} onChange={(e) => setRate(e.target.value)} />
+            </label>
+          )}
           <Button size="sm" type="submit" loading={busy}>
             Save
           </Button>
@@ -608,6 +627,9 @@ function BillingTermsBar({ clientId, canEdit }: { clientId: string; canEdit: boo
           </span>
           <span>
             PO <span className="font-medium text-ink">{d.poNumber ?? 'none on file'}</span>
+          </span>
+          <span>
+            Sales tax <span className="font-medium text-ink">{d.salesTaxable && d.salesTaxRatePct ? `${d.salesTaxRatePct}%` : 'none'}</span>
           </span>
           <span>
             Reminders{' '}

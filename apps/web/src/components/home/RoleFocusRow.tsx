@@ -1,11 +1,9 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Briefcase, CalendarCheck, ClipboardList, Clock, Megaphone, ShieldAlert, Timer, Users, type LucideIcon } from 'lucide-react';
+import { Briefcase, CalendarCheck, ClipboardList, Clock, ShieldAlert, Timer, Users, type LucideIcon } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
-import { getCaseSummary } from '@/lib/hrCases123Api';
-import { listPolicyCampaigns } from '@/lib/policyCampaignsApi';
 import { getHeadcount } from '@/lib/positionsApi';
 import { laborCosts } from '@/lib/schedulingApi';
 import { ymdLocal } from '@/lib/format';
@@ -20,8 +18,9 @@ const INT = new Intl.NumberFormat('en-US');
  * The first row of the shared admin home, by role (HR pack 2026-10). Three
  * roles used to land on the same page with the same tiles:
  *
- *   HR administrator — the people desk: cases against their SLA, policy
- *     campaigns still out, credentials expiring, applications to review.
+ *   HR administrator — the people desk, legal clocks first: leave notices,
+ *     claims to answer, E-Verify mismatches, and onboarding gone quiet —
+ *     the same counts (and filtered links) the Inbox carries.
  *   Operations manager — the floor: coverage today, fill rate this week,
  *     worked hours against scheduled, seats still open.
  *
@@ -82,51 +81,59 @@ function Row({ title, icon, tiles, loading }: { title: string; icon: LucideIcon;
 function HrRow() {
   const term = useTerm();
   const inbox = useInbox();
-  const cases = useQuery({ queryKey: ['hrCases', 'summary'], queryFn: () => getCaseSummary() });
-  const campaigns = useQuery({ queryKey: ['policy-campaigns'], queryFn: listPolicyCampaigns });
-  const count = (key: string) => inbox.data?.sources.find((s) => s.key === key)?.count ?? null;
-  const active = (campaigns.data?.campaigns ?? []).filter((c) => c.status === 'ACTIVE');
-  const pendingSignatures = active.reduce((sum, c) => sum + c.completion.pending, 0);
-  const breached = cases.data?.sla?.breached ?? 0;
+  const source = (key: string) => inbox.data?.sources.find((s) => s.key === key) ?? null;
+  const count = (key: string) => (inbox.data ? (source(key)?.count ?? 0) : null);
+  // A queue's own link: the Inbox builds the filtered one (E-Verify opens on
+  // the mismatches, and on the person when there is exactly one).
+  const pathOf = (key: string, fallback: string) => source(key)?.path ?? fallback;
+  const legalTone = (n: number | null): Tile['tone'] => ((n ?? 0) > 0 ? 'urgent' : 'calm');
+  const leave = count('leave-desk');
+  const ui = count('ui-claims');
+  const wc = count('wc-claims');
+  const claims = ui === null && wc === null ? null : (ui ?? 0) + (wc ?? 0);
+  const everify = count('everify-mismatches');
+  const stuck = count('onboarding-stuck');
+  // Legal clocks first (HR walk 2): leave notices, claim responses and the
+  // federal E-Verify deadline run whether or not anyone opens the Inbox.
   const tiles: Tile[] = [
     {
-      key: 'cases',
-      label: 'HR cases open',
-      value: cases.data?.openTotal ?? null,
-      hint: cases.data ? (breached > 0 ? `${breached} past SLA · ${cases.data.sla?.atRisk ?? 0} due within 4h` : `${cases.data.sla?.atRisk ?? 0} due within 4 hours`) : undefined,
-      to: breached > 0 ? '/hr-cases?sla=breached' : '/hr-cases',
-      icon: ClipboardList,
-      tone: breached > 0 ? 'urgent' : (cases.data?.sla?.atRisk ?? 0) > 0 ? 'attention' : 'calm',
+      key: 'leave',
+      label: 'Leave notices due',
+      value: leave,
+      hint: 'Notices owed, certifications due in 3 days, returns this week',
+      to: pathOf('leave-desk', '/leave'),
+      icon: CalendarCheck,
+      tone: legalTone(leave),
     },
     {
-      key: 'campaigns',
-      label: 'Policy signatures out',
-      value: campaigns.data ? pendingSignatures : null,
-      hint: campaigns.data ? `${active.length} active ${active.length === 1 ? 'campaign' : 'campaigns'}` : undefined,
-      to: '/policy-campaigns',
-      icon: Megaphone,
-      tone: pendingSignatures > 0 ? 'attention' : 'calm',
-    },
-    {
-      key: 'expiring',
-      label: 'Credentials expiring',
-      value: count('expirations'),
-      hint: 'Expired or due within 30 days',
-      to: '/expirations',
+      key: 'claims',
+      label: 'Claims to answer',
+      value: claims,
+      hint: inbox.data ? `${ui ?? 0} unemployment · ${wc ?? 0} workers’ comp` : undefined,
+      to: (ui ?? 0) === 0 && (wc ?? 0) > 0 ? pathOf('wc-claims', '/claims/workers-comp') : pathOf('ui-claims', '/claims/unemployment'),
       icon: ShieldAlert,
-      tone: (count('expirations') ?? 0) > 0 ? 'attention' : 'calm',
+      tone: legalTone(claims),
     },
     {
-      key: 'onboarding',
-      label: 'Applications to review',
-      value: count('onboarding-review'),
-      hint: `New ${term('workers').toLowerCase()} waiting on HR`,
-      to: '/onboarding?status=TO_REVIEW',
+      key: 'everify',
+      label: 'E-Verify mismatches',
+      value: everify,
+      hint: 'Give the notice and record their choice — a federal clock',
+      to: pathOf('everify-mismatches', '/compliance?tab=everify&status=issue'),
+      icon: ClipboardList,
+      tone: legalTone(everify),
+    },
+    {
+      key: 'stuck',
+      label: 'Stuck onboarding',
+      value: stuck,
+      hint: `New ${term('workers').toLowerCase()} idle more than 7 days`,
+      to: pathOf('onboarding-stuck', '/onboarding'),
       icon: Users,
-      tone: (count('onboarding-review') ?? 0) > 10 ? 'urgent' : (count('onboarding-review') ?? 0) > 0 ? 'attention' : 'calm',
+      tone: (stuck ?? 0) > 0 ? 'attention' : 'calm',
     },
   ];
-  return <Row title="Your people desk" icon={ClipboardList} tiles={tiles} loading={cases.isLoading && inbox.isLoading} />;
+  return <Row title="Your people desk" icon={ClipboardList} tiles={tiles} loading={inbox.isLoading} />;
 }
 
 interface OverviewSlice {

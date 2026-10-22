@@ -58,6 +58,7 @@ import { useTerm } from '@/lib/auth';
 import { pickOne } from '@/lib/validationCopy';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
+import { getEeoApplicantReport } from '@/lib/complianceApi';
 import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 
 type Tab = 'osha' | 'wc' | 'eeo';
@@ -108,6 +109,7 @@ export function OshaWcEeoHome() {
         </TabsContent>
         <TabsContent value="wc"><WcTab /></TabsContent>
         <TabsContent value="eeo">
+          <ApplicantSelfIdCard />
           {clientId && <EeoTab clientId={clientId} />}
         </TabsContent>
       </Tabs>
@@ -1136,6 +1138,95 @@ function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
             {saving ? 'Saving…' : 'Save record'}
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============ Applicant self-identification (aggregate) ============
+
+const APPLICANT_LABELS: Record<string, string> = {
+  FEMALE: 'Women',
+  MALE: 'Men',
+  NONBINARY: 'Nonbinary',
+  HISPANIC_OR_LATINO: 'Hispanic or Latino',
+  WHITE: 'White',
+  BLACK_OR_AFRICAN_AMERICAN: 'Black or African American',
+  NATIVE_HAWAIIAN_OR_PACIFIC_ISLANDER: 'Native Hawaiian or Pacific Islander',
+  ASIAN: 'Asian',
+  AMERICAN_INDIAN_OR_ALASKA_NATIVE: 'American Indian or Alaska Native',
+  TWO_OR_MORE_RACES: 'Two or more races',
+  PROTECTED: 'Protected veteran',
+  NOT_PROTECTED: 'Not a protected veteran',
+  YES: 'Disability',
+  NO: 'No disability',
+  DECLINE: 'Preferred not to say',
+  NO_ANSWER: 'Left blank',
+};
+
+/**
+ * What applicants and new hires chose to tell us on the voluntary form
+ * (audit 2026-10-21 #14) — counts only, last 12 months. Any group under
+ * five reads "<5", so no one can be picked out.
+ */
+function ApplicantSelfIdCard() {
+  const q = useQuery({ queryKey: ['compliance', 'eeo', 'applicants'], queryFn: () => getEeoApplicantReport() });
+  const r = q.data;
+  const groups: Array<[string, Record<string, number | '<5'>]> = r
+    ? [
+        ['Gender', r.gender],
+        ['Race or ethnicity', r.ethnicity],
+        ['Veteran status', r.veteranStatus],
+        ['Disability', r.disabilityStatus],
+      ]
+    : [];
+  return (
+    <Card className="mb-4">
+      <CardContent className="space-y-3">
+        <div>
+          <div className="text-sm font-medium text-ink">Applicant self-identification (aggregate)</div>
+          <p className="text-xs text-ink-muted">
+            Voluntary answers from applicants and new hires, kept apart from their applications. Counts only; any group under five reads “&lt;5”.
+          </p>
+        </div>
+        {q.isError ? (
+          <ErrorBanner>{q.error instanceof ApiError ? q.error.message : 'Could not load the applicant report.'}</ErrorBanner>
+        ) : !r ? (
+          <SkeletonRows count={2} />
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-4 text-sm text-ink">
+              <span>
+                <span className="tabular-nums">{r.applicants}</span> <span className="text-ink-muted">applicants {fmtDate(r.from)} to {fmtDate(r.to)}</span>
+              </span>
+              <span>
+                <span className="tabular-nums">{r.responses}</span> <span className="text-ink-muted">answered</span>
+              </span>
+              <span>
+                <span className="tabular-nums">{r.declined}</span> <span className="text-ink-muted">declined the form</span>
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {groups.map(([title, counts]) => (
+                <div key={title}>
+                  <div className="mb-1 text-xs uppercase tracking-wider text-ink-muted">{title}</div>
+                  {Object.keys(counts).length === 0 ? (
+                    <div className="text-xs text-ink-muted">—</div>
+                  ) : (
+                    <ul className="space-y-0.5 text-sm">
+                      {Object.entries(counts).map(([k, v]) => (
+                        <li key={k} className="flex justify-between gap-2">
+                          <span className="text-ink-muted">{APPLICANT_LABELS[k] ?? k}</span>
+                          <span className="tabular-nums text-ink">{v}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

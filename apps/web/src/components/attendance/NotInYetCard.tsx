@@ -106,13 +106,19 @@ export function NotInYetCard({
     const byClient = new Map<string, string[]>();
     for (const p of textable) byClient.set(p.clientId!, [...(byClient.get(p.clientId!) ?? []), p.shiftId]);
     let sent = 0;
+    let failed = 0;
+    let optedOut = 0;
+    let notConfigured: string | null = null;
     const noPhone: string[] = [];
     for (const [clientId, shiftIds] of byClient) {
       const r = await textCrew({ clientId, shiftIds, body });
       sent += r.sent;
+      failed += r.failed;
+      optedOut += r.optedOut;
+      notConfigured = notConfigured ?? r.notConfigured;
       noPhone.push(...r.noPhone);
     }
-    return { sent, noPhone };
+    return { sent, failed, optedOut, noPhone, notConfigured };
   };
 
   return (

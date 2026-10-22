@@ -3,6 +3,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import {
   BooksBillInputSchema,
+  BooksBillPaymentBatchInputSchema,
   BooksBillPaymentInputSchema,
   BooksBillsApproveInputSchema,
   type BooksBillsApproveResult,
@@ -23,7 +24,8 @@ import { tenantIdForWrite } from '../../lib/tenant.js';
 import { enqueueAudit } from '../../lib/audit.js';
 import { createVendor, shapeVendors, updateVendor, vendorInReach } from '../../lib/books/payables/vendors.js';
 import { billInReach, billTabWhere, createBill, reopenBill, shapeBills, submitBill, updateBill, voidBill, withdrawBill } from '../../lib/books/payables/bills.js';
-import { payBills, payFromAccounts, paymentInReach, shapePayments, voidPayment } from '../../lib/books/payables/payments.js';
+import { payBills, payBillsBatch, payFromAccounts, paymentInReach, shapePayments, voidPayment } from '../../lib/books/payables/payments.js';
+import { cashOnHand } from '../../lib/books/ledger.js';
 import { createRecurring, shapeRecurring, updateRecurring } from '../../lib/books/payables/recurring.js';
 import { apAging, vendor1099 } from '../../lib/books/payables/reports.js';
 import { deciderFrom } from '../approvalRequests.js';
@@ -225,7 +227,8 @@ booksPayablesRouter.get('/bills/:id/attachment', async (req, res) => {
 
 booksPayablesRouter.get('/bank-sources', async (_req, res) => {
   const profile = await bankingProfile(prisma);
-  res.json({ accounts: await payFromAccounts(prisma), ownAch: usesOurAch(profile) });
+  const cash = await cashOnHand(prisma, new Date().toISOString().slice(0, 10));
+  res.json({ accounts: await payFromAccounts(prisma), ownAch: usesOurAch(profile), cashOnHand: cash.accounts ? cash.total : null });
 });
 
 /** Everything the bill and payment forms pick from, in one call. */
@@ -242,7 +245,8 @@ booksPayablesRouter.get('/payables/options', async (_req, res) => {
     prisma.site.findMany({ where: { tenantId, deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true, clientId: true }, take: 5000 }),
     bankingProfile(prisma),
   ]);
-  res.json({ accounts, payFrom, clients, sites, ownAch: usesOurAch(profile) });
+  const cash = await cashOnHand(prisma, new Date().toISOString().slice(0, 10));
+  res.json({ accounts, payFrom, clients, sites, ownAch: usesOurAch(profile), cashOnHand: cash.accounts ? cash.total : null });
 });
 
 booksPayablesRouter.get('/bill-payments', async (req, res) => {
@@ -260,6 +264,14 @@ booksPayablesRouter.post('/bill-payments', MANAGE, async (req, res) => {
   const input = BooksBillPaymentInputSchema.parse(req.body);
   const payment = await payBills(prisma, input, req.user!.id);
   res.status(201).json({ payment: (await shapePayments(prisma, [payment]))[0] });
+});
+
+/** Finance walk 8 — one bill run across vendors, in one go; answers with every payment it made and the cash left afterwards. */
+booksPayablesRouter.post('/bill-payments/batch', MANAGE, async (req, res) => {
+  const input = BooksBillPaymentBatchInputSchema.parse(req.body);
+  const payments = await payBillsBatch(prisma, input, req.user!.id);
+  const cash = await cashOnHand(prisma, input.paidOn);
+  res.status(201).json({ payments: await shapePayments(prisma, payments), cashAfter: cash.accounts ? cash.total : null });
 });
 
 booksPayablesRouter.post('/bill-payments/:id/void', MANAGE, async (req, res) => {

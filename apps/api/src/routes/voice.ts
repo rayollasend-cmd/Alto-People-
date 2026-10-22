@@ -2,6 +2,7 @@ import express, { Router, type Request, type Response } from 'express';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { resolveTenantFrom } from '../lib/tenant.js';
+import { handleSmsKeyword } from '../lib/sms.js';
 import {
   CALL_OUT_TEXT,
   CallOutError,
@@ -122,6 +123,11 @@ voiceRouter.post('/recording', async (req, res) => {
 
 voiceRouter.post('/sms', async (req, res) => {
   if (!guard(req, res)) return;
+  // STOP / START first, for any number — a candidate who never became an
+  // associate can still opt out, and the opt-out is kept here so our own
+  // sender never tries the number again (Twilio blocks it on its side too).
+  const keyword = await handleSmsKeyword({ from: field(req, 'From'), text: field(req, 'Body').slice(0, 100), source: 'twilio_sms' });
+  if (keyword) return send(res, twiml.doc(twiml.message(keyword)));
   const caller = await associateByPhone(field(req, 'From'));
   if (!caller) return send(res, twiml.doc());
   if (caller.tenantId) await resolveTenantFrom(async () => caller.tenantId);

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
+import { noteDecision } from '@/lib/productEvents';
 import { useAuth, useTerm } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
 import { fmtMoney, ymdLocal } from '@/lib/format';
@@ -185,6 +186,7 @@ export function RoleDecisionQueue({
         method: 'POST',
         body: decline ? { key: item.key, decline: true, ...(reason ? { reason } : {}) } : { key: item.key },
       });
+      noteDecision();
       toast.success(r.summary);
       load();
     } catch (err) {

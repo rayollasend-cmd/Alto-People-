@@ -7,6 +7,7 @@ import { coverShift, type CoverStep } from '@/lib/floorApi';
 import { listShifts } from '@/lib/schedulingApi';
 import { fmtShiftRangeTz, fmtRelativeDayTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -18,10 +19,11 @@ import { Card, CardContent } from '@/components/ui/Card';
  * store; each tap shows the three steps as they land.
  */
 
-const STEP_LABEL: Record<CoverStep['key'], string> = { post: 'Posted', bench: 'Bench asked', agent: 'Agent' };
+const STEP_LABEL: Record<CoverStep['key'], MessageKey> = { post: 'floorUi.stepPosted', bench: 'floorUi.benchAsked', agent: 'floorUi.stepAgent' };
 const DAY_MS = 86_400_000;
 
 export function CoverShiftCard({ className }: { className?: string }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<Record<string, CoverStep[]>>({});
@@ -41,10 +43,10 @@ export function CoverShiftCard({ className }: { className?: string }) {
     try {
       const r = await coverShift(shiftId);
       setSteps((prev) => ({ ...prev, [shiftId]: r.steps }));
-      toast.success('Covering — the bench is asked and the shift is posted.');
+      toast.success(t('floorUi.coveringToast'));
       void qc.invalidateQueries({ queryKey: ['inbox'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not start the cover.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.coverFailed'));
     } finally {
       setBusy(null);
     }
@@ -53,7 +55,7 @@ export function CoverShiftCard({ className }: { className?: string }) {
   return (
     <Card className={cn('animate-enter border-warning/30', className)} data-testid="cover-shift">
       <CardContent className="p-5">
-        <SectionTitle icon={CalendarPlus} title="Open in the next two days" trailing={<span className="text-xs tabular-nums text-ink-muted">{open.length}</span>} />
+        <SectionTitle icon={CalendarPlus} title={t('floorUi.openNextTwoDays')} trailing={<span className="text-xs tabular-nums text-ink-muted">{open.length}</span>} />
         <ul className="divide-y divide-navy-secondary/60">
           {open.map((s) => {
             const done = steps[s.id];
@@ -70,20 +72,20 @@ export function CoverShiftCard({ className }: { className?: string }) {
                     </div>
                   </div>
                   {done ? (
-                    <span className="text-xs text-success">Covering</span>
+                    <span className="text-xs text-success">{t('floorUi.covering')}</span>
                   ) : (
                     <Button size="sm" loading={busy === s.id} disabled={busy !== null} onClick={() => void cover(s.id)}>
-                      Cover this shift
+                      {t('floorUi.coverThisShift')}
                     </Button>
                   )}
                 </div>
                 {done && (
-                  <ol className="mt-2 grid grid-cols-3 gap-2" aria-label="Cover progress">
+                  <ol className="mt-2 grid grid-cols-3 gap-2" aria-label={t('floorUi.coverProgress')}>
                     {done.map((st) => (
                       <li key={st.key} className="rounded-md border border-navy-secondary/60 bg-navy-secondary/20 px-2 py-1.5">
                         <div className={cn('flex items-center gap-1 text-xs font-medium', st.status === 'done' ? 'text-success' : st.status === 'waiting' ? 'text-gold' : 'text-silver/70')}>
                           {st.status === 'done' ? <Check className="h-3 w-3" aria-hidden="true" /> : st.status === 'waiting' ? <Clock className="h-3 w-3" aria-hidden="true" /> : <Minus className="h-3 w-3" aria-hidden="true" />}
-                          {STEP_LABEL[st.key]}
+                          {t(STEP_LABEL[st.key])}
                         </div>
                         <div className="mt-0.5 text-2xs text-silver/80">{st.detail}</div>
                       </li>

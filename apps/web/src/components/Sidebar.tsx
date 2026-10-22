@@ -70,6 +70,8 @@ import { RoleSwitcher } from './RoleSwitcher';
  */
 
 const SECTIONS_KEY = 'alto.sidebar.collapsedGroups';
+/** In the collapsed-sections set: the folded doors' group is open (it starts closed). */
+const FOLD_OPEN = '__fold:open';
 const OPEN_DOORS_KEY = 'alto.sidebar.openDoors';
 const RAIL_COLLAPSED_KEY = 'alto.sidebar.collapsed';
 
@@ -252,7 +254,7 @@ export function Sidebar() {
     >
       <SidebarBrand railCollapsed={railCollapsed} onToggleRail={toggleRail} />
 
-      <nav className="flex-1 overflow-y-auto overscroll-contain py-2" aria-label="Primary navigation" data-tour="nav">
+      <nav className="flex-1 overflow-y-auto overscroll-contain py-2" aria-label={tr('nav.primaryAria')} data-tour="nav">
         <SidebarLink
           to={DASHBOARD_NAV.path}
           active={activePath === DASHBOARD_NAV.path}
@@ -275,7 +277,7 @@ export function Sidebar() {
 
         {pinnedModules.length > 0 && (
           <SidebarSection
-            label="Pinned"
+            label={tr('nav.pinned')}
             collapsed={collapsedSections.has('__pinned')}
             onToggle={() => toggleSection('__pinned')}
             railCollapsed={railCollapsed}
@@ -296,7 +298,7 @@ export function Sidebar() {
 
         {recentModules.length > 0 && (
           <SidebarSection
-            label="Recent"
+            label={tr('nav.recent')}
             collapsed={collapsedSections.has('__recent')}
             onToggle={() => toggleSection('__recent')}
             railCollapsed={railCollapsed}
@@ -334,6 +336,33 @@ export function Sidebar() {
             ))}
           </div>
         )}
+
+        {/* A manager's company-wide doors, kept whole but folded (ops 21):
+            closed until opened, or until the page in view is behind one. */}
+        {shape.folded && (
+          <SidebarSection
+            label={shape.folded.label}
+            collapsed={!collapsedSections.has(FOLD_OPEN) && !shape.folded.doors.some((d) => d.key === activeDoor)}
+            onToggle={() => toggleSection(FOLD_OPEN)}
+            railCollapsed={railCollapsed}
+          >
+            {shape.folded.doors.map((door) => (
+              <DoorRow
+                key={door.key}
+                door={door}
+                open={openDoors.has(door.key)}
+                active={activeDoor === door.key}
+                activePath={activePath}
+                railCollapsed={railCollapsed}
+                badgeFor={badgeFor}
+                isPinned={isPinned}
+                onTogglePin={togglePin}
+                onToggle={() => toggleDoor(door.key)}
+                onOpen={() => openDoor(door.key)}
+              />
+            ))}
+          </SidebarSection>
+        )}
       </nav>
 
       <SidebarAccount railCollapsed={railCollapsed} />
@@ -347,6 +376,7 @@ interface SidebarBrandProps {
 }
 
 function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
+  const { t } = useI18n();
   return (
     <div
       className={cn(
@@ -356,7 +386,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
     >
       {!railCollapsed && (
         <>
-          <Logo size="sm" alt="Company logo" />
+          <Logo size="sm" alt={t('top.logo')} />
           <span className="text-lg text-ink leading-none tracking-tight truncate">
             Alto <span className="text-gold">People</span>
           </span>
@@ -498,17 +528,22 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
         </Tooltip>
         <DropdownMenuContent side="right" align="start" className="min-w-[14rem]">
           <DropdownMenuLabel>{door.label}</DropdownMenuLabel>
-          {items.map((m) => {
-            const n = badgeFor(m);
-            return (
-              <DropdownMenuItem key={m.key} asChild>
-                <Link to={m.path} onMouseEnter={() => prefetchRoute(m.path)} onFocus={() => prefetchRoute(m.path)}>
-                  <span className="flex-1 truncate">{m.key === door.target.key && door.target.key !== door.children[0]?.key ? `${m.label} — overview` : m.label}</span>
-                  {!!n && <span className="ml-2 text-2xs text-gold tabular-nums">{n > 99 ? '99+' : n}</span>}
-                </Link>
-              </DropdownMenuItem>
-            );
-          })}
+          {(door.groups ?? [{ key: 'all', label: '', children: items }]).map((g) => (
+            <div key={g.key}>
+              {g.label && <DropdownMenuLabel className="pt-2 text-2xs font-semibold uppercase tracking-widest text-silver/70">{g.label}</DropdownMenuLabel>}
+              {g.children.map((m) => {
+                const n = badgeFor(m);
+                return (
+                  <DropdownMenuItem key={m.key} asChild>
+                    <Link to={m.path} onMouseEnter={() => prefetchRoute(m.path)} onFocus={() => prefetchRoute(m.path)}>
+                      <span className="flex-1 truncate">{m.key === door.target.key && door.target.key !== door.children[0]?.key ? `${m.label} — overview` : m.label}</span>
+                      {!!n && <span className="ml-2 text-2xs text-gold tabular-nums">{n > 99 ? '99+' : n}</span>}
+                    </Link>
+                  </DropdownMenuItem>
+                );
+              })}
+            </div>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
     );
@@ -556,17 +591,24 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
       </div>
       {open && (
         <div className="mb-1">
-          {door.children.map((m) => (
-            <PinnableRow
-              key={m.key}
-              module={m}
-              indent
-              active={activePath === m.path}
-              railCollapsed={false}
-              badge={badgeFor(m)}
-              pinned={isPinned(m.key)}
-              onTogglePin={onTogglePin}
-            />
+          {(door.groups ?? [{ key: 'all', label: '', children: door.children }]).map((g) => (
+            <div key={g.key} role={g.label ? 'group' : undefined} aria-label={g.label || undefined}>
+              {g.label && (
+                <div className="ml-9 mr-2 mt-2 mb-0.5 text-2xs font-semibold uppercase tracking-widest text-silver/60">{g.label}</div>
+              )}
+              {g.children.map((m) => (
+                <PinnableRow
+                  key={m.key}
+                  module={m}
+                  indent
+                  active={activePath === m.path}
+                  railCollapsed={false}
+                  badge={badgeFor(m)}
+                  pinned={isPinned(m.key)}
+                  onTogglePin={onTogglePin}
+                />
+              ))}
+            </div>
           ))}
         </div>
       )}
@@ -719,6 +761,7 @@ interface SidebarAccountProps {
 }
 
 function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
+  const { t } = useI18n();
   const roleLabel = useRoleLabel();
   const { user, signOut } = useAuth();
   const { preference, theme, setTheme } = useTheme();
@@ -766,7 +809,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
           <button
             type="button"
             className="grid place-items-center h-9 w-9 mx-auto rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-            aria-label="Account menu"
+            aria-label={t('top.account')}
           >
             {avatar}
           </button>
@@ -779,7 +822,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
       <button
         type="button"
         className="w-full flex items-center gap-2.5 px-2 py-2 rounded-md hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-        aria-label="Account menu"
+        aria-label={t('top.account')}
       >
         {avatar}
         <div className="min-w-0 flex-1 text-left leading-tight">

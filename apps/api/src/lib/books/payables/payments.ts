@@ -1,5 +1,5 @@
 import { Prisma, type BillPayment, type BillPaymentApplication, type PrismaClient } from '@prisma/client';
-import type { BooksBillPayment, BooksBillPaymentInput, BooksPayFromAccount } from '@alto-people/shared';
+import type { BooksBillPayment, BooksBillPaymentBatchInput, BooksBillPaymentInput, BooksPayFromAccount } from '@alto-people/shared';
 import { HttpError } from '../../../middleware/error.js';
 import { enqueueAudit } from '../../audit.js';
 import { bankingProfile, originate, usesOurAch } from '../../banking/ach.js';
@@ -149,6 +149,58 @@ export async function payBills(db: PrismaClient, input: BooksBillPaymentInput, a
   emitBooksChange({ localType: 'BillPayment', localId: payment.id, op: 'UPSERT' });
   for (const b of bills) emitBooksChange({ localType: 'Bill', localId: b.id, op: 'UPSERT' });
   return updated;
+}
+
+/**
+ * Finance walk 8 — pay several vendors in one run. Every vendor's payment
+ * is checked first (the bills, the balances, the account, the ACH rail);
+ * then each posts through payBills in turn. A failure part-way voids what
+ * already posted, so the run lands whole or not at all.
+ */
+export async function payBillsBatch(db: PrismaClient, input: BooksBillPaymentBatchInput, actorUserId: string, now: Date = new Date()): Promise<PaymentWithApps[]> {
+  const tenantId = tenantIdForWrite();
+  const from = await db.ledgerAccount.findFirst({ where: { id: input.bankAccountId, tenantId } });
+  if (!from || (from.subtype !== 'BANK' && from.subtype !== 'CREDIT_CARD')) throw new HttpError(400, 'not_a_bank_account', 'Pay from a bank or credit card account.');
+  if (!from.isActive) throw new HttpError(400, 'inactive_account', `${from.code} ${from.name} is inactive.`);
+  const seen = new Set<string>();
+  for (const v of input.vendors) {
+    if (seen.has(v.vendorId)) throw new HttpError(400, 'vendor_repeated', 'Each vendor once per run.');
+    seen.add(v.vendorId);
+    const vendor = await vendorInReach(db, v.vendorId);
+    const want = new Map<string, number>();
+    for (const a of v.applications) want.set(a.billId, (want.get(a.billId) ?? 0) + cents(a.amount));
+    const bills = await db.bill.findMany({ where: { tenantId, id: { in: [...want.keys()] } } });
+    if (bills.length !== want.size) throw new HttpError(404, 'bill_not_found', `One of ${vendor.name}’s bills was not found.`);
+    for (const b of bills) {
+      if (b.vendorId !== vendor.id) throw new HttpError(400, 'bill_other_vendor', `Bill ${b.billNumber ?? b.id.slice(0, 8)} is not ${vendor.name}’s.`);
+      if (b.status !== 'APPROVED' && b.status !== 'PARTIALLY_PAID') throw new HttpError(409, 'bill_not_payable', `Bill ${b.billNumber ?? b.id.slice(0, 8)} is ${b.status.toLowerCase().replace(/_/g, ' ')} — only approved bills are paid.`);
+      if (want.get(b.id)! > cents(b.balance)) throw new HttpError(400, 'overpayment', `Bill ${b.billNumber ?? b.id.slice(0, 8)} has ${money(dollars(cents(b.balance)))} left to pay.`);
+    }
+    if (input.sendAch && !vendorBank(vendor)) throw new HttpError(409, 'vendor_no_bank', `${vendor.name} has no bank details on file — take ACH off, or pay them from the bank.`);
+  }
+  if (input.sendAch) {
+    const profile = await bankingProfile(db);
+    if (!usesOurAch(profile)) throw new HttpError(409, 'own_ach_off', 'Payroll banking isn’t sending its own ACH, so this run can only be recorded, not sent.');
+  }
+  const posted: PaymentWithApps[] = [];
+  for (const v of input.vendors) {
+    try {
+      posted.push(
+        await payBills(
+          db,
+          { vendorId: v.vendorId, paidOn: input.paidOn, method: input.method, bankAccountId: input.bankAccountId, reference: v.reference ?? null, checkNumber: v.checkNumber ?? null, sendAch: input.sendAch ?? false, applications: v.applications },
+          actorUserId,
+          now,
+        ),
+      );
+    } catch (err) {
+      // All or nothing: take back what this run already posted.
+      for (const p of posted.reverse()) await voidPayment(db, p, 'A later payment in the same run failed', actorUserId).catch(() => undefined);
+      throw err;
+    }
+  }
+  enqueueAudit({ actorUserId, clientId: null, action: 'books.bill_run', entityType: 'BillPayment', entityId: posted[0]?.id ?? 'none', metadata: { vendors: posted.length, total: dollars(posted.reduce((s, p) => s + cents(p.amount), 0)), method: input.method, paidOn: input.paidOn } }, 'books.payables');
+  return posted;
 }
 
 /** Take a payment back: its entry voided (or reversed, its month closed) and the bills owed again. */

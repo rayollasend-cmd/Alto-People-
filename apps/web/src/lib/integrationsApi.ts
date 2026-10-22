@@ -24,5 +24,4 @@ export const testIntegrationConnection = (id: string) =>
   apiFetch<{ results: Array<{ capability: IntegrationCapability; runId: string | null; status: string; total: number; succeeded: number; failed: number }> }>(`/integration-connections/${id}/test`, { method: 'POST' });
 export const syncIntegrationConnection = (id: string, body: IntegrationSyncRequestInput) =>
   apiFetch<{ run: { runId: string; status: string; total: number; succeeded: number; failed: number } }>(`/integration-connections/${id}/sync`, { method: 'POST', body });
-export const listIntegrationRuns = (id: string) => apiFetch<{ runs: IntegrationSyncRunSummary[] }>(`/integration-connections/${id}/runs`);
 export const listIntegrationRunErrors = (runId: string) => apiFetch<{ errors: IntegrationSyncErrorRow[] }>(`/integration-connections/runs/${runId}/errors`);

@@ -47,7 +47,7 @@ function overview(over: Partial<FinanceOverview> = {}): FinanceOverview {
       oldestDays: 41,
       avgDaysToPay: 26,
       draftStatements: 1,
-      aging: { current: 2880, d31: 2880, d61: 0, d91: 0 },
+      aging: { current: 2880, days1to30: 0, days31to60: 2880, days61to90: 0, over90: 0 },
       byClient: [{ clientId: 'c1', clientName: 'Coastal Resort', amount: 5760, oldestDays: 41 }],
     },
     billing: {
@@ -142,7 +142,7 @@ describe('the finance cockpit', () => {
     expect(items[0]).toHaveAttribute('href', expect.stringContaining('/time-attendance/timesheets?week='));
     expect(within(today).getByRole('link', { name: /Rejected timesheets to fix and resubmit: 2/ })).toBeInTheDocument();
     expect(within(today).getByRole('link', { name: /Fieldglass setup: 4 waiting/ })).toHaveAttribute('href', '/fieldglass');
-    expect(within(today).getByRole('link', { name: /Past 30 days, to collect: \$2,880\.00/ })).toBeInTheDocument();
+    expect(within(today).getByRole('link', { name: /Past due, to collect: \$2,880\.00/ })).toBeInTheDocument();
     expect(within(today).getByRole('link', { name: /Client statements to finalize: 1/ })).toBeInTheDocument();
   });
 
@@ -159,6 +159,10 @@ describe('the finance cockpit', () => {
     expect(screen.getByRole('img', { name: /^Revenue, wages & margin:/ })).toBeInTheDocument();
     expect(screen.getByText('1 paid at the $15.00 fallback — no hourly pay on file')).toBeInTheDocument();
     expect(screen.getByText('31–60 days')).toBeInTheDocument();
+    // One aging definition: the five buckets add up to the total the card shows.
+    const card = screen.getByText('Receivables').closest('div.h-full, [class*="h-full"]') as HTMLElement;
+    expect(within(card).getByText('Not yet due')).toBeInTheDocument();
+    expect(within(card).getAllByText('$5,760.00').length).toBeGreaterThan(0);
   });
 
   it('all clear says so', async () => {
@@ -168,7 +172,7 @@ describe('the finance cockpit', () => {
         payCycle: null,
         close: { pendingEntries: 0, pendingHours: 0, oldestDay: null, byClient: [] },
         fieldglassQueueTotal: 0,
-        receivables: { outstandingTotal: 0, outstandingCount: 0, oldestDays: null, avgDaysToPay: null, draftStatements: 0, aging: { current: 0, d31: 0, d61: 0, d91: 0 }, byClient: [] },
+        receivables: { outstandingTotal: 0, outstandingCount: 0, oldestDays: null, avgDaysToPay: null, draftStatements: 0, aging: { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 }, byClient: [] },
       }),
     );
     expect(await screen.findByText('All clear — nothing is waiting on finance.')).toBeInTheDocument();

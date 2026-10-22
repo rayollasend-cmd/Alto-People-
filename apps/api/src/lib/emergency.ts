@@ -20,8 +20,10 @@ import {
   standDownSubject,
 } from './emergencyContent.js';
 import { geocode } from './geocode.js';
-import { send } from './notifications.js';
+import { send, statusForSendError } from './notifications.js';
+import { smsAvailability } from './sms.js';
 import { notifyAssociate, notifyClientSupervisors, notifyUser } from './notify.js';
+import { moduleOn } from './tenantProfile.js';
 import { repairSoon } from './scheduleRepair.js';
 import { dateKeyInZone } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
@@ -230,6 +232,7 @@ export function summarize(e: EmergencyRow, checkIns: EmergencySummary['checkIns'
     associatesNotified: e.associatesNotified,
     shiftsRestored: e.shiftsRestored,
     checkIns,
+    texts: smsAvailability(),
   };
 }
 
@@ -269,12 +272,14 @@ export async function emergencySites(db: Db = defaultPrisma, opts: { tenantId?: 
   return rows.flatMap((r) => (r.clientId && r.client ? [{ id: r.id, name: r.name, clientId: r.clientId, clientName: r.client.name }] : []));
 }
 
-/** Tell one associate, in their language, on every channel we have. */
+type TextOutcome = 'sent' | 'not_sent' | 'no_phone';
+
+/** Tell one associate, in their language, on every channel we have. Returns what the text did. */
 async function tellAssociate(
   db: Db,
   a: ScopedAssociate,
   words: { title: string; subject: (l: EmailLang) => string; body: (l: EmailLang) => string; line: (l: EmailLang) => string },
-): Promise<void> {
+): Promise<TextOutcome> {
   const user = await db.user.findFirst({
     where: { associateId: a.id, status: 'ACTIVE', deletedAt: null },
     select: { id: true, language: true },
@@ -298,17 +303,26 @@ async function tellAssociate(
       emailFallback: true,
     });
   }
-  // SMS rides the shared sender: a stub until a provider is configured,
-  // and a real text the day one is — the call site does not change.
-  if (a.phone) {
-    await send({
-      channel: 'SMS',
-      recipient: { userId: user?.id ?? null, phone: a.phone, email: null },
-      subject: null,
-      body: `${words.line(lang)}\n\n${words.body(lang)}`.slice(0, 1500),
-      category: EMERGENCY_CATEGORY,
-    }).catch(() => undefined);
+  // SMS rides the shared sender (lib/sms): a real text when a provider is
+  // connected; otherwise the row says NOT_CONFIGURED and the board says
+  // texts are off. Every attempt is its own row on the communications log.
+  if (!a.phone) return 'no_phone';
+  const body = `${words.line(lang)}\n\n${words.body(lang)}`.slice(0, 1500);
+  const row = await db.notification.create({
+    data: { channel: 'SMS', status: 'QUEUED', recipientUserId: user?.id ?? null, recipientPhone: a.phone, subject: null, body, category: EMERGENCY_CATEGORY },
+  });
+  try {
+    const { externalRef } = await send({ channel: 'SMS', recipient: { userId: user?.id ?? null, phone: a.phone, email: null }, subject: null, body, category: EMERGENCY_CATEGORY, audit: false });
+    await db.notification.update({ where: { id: row.id }, data: { status: 'SENT', sentAt: new Date(), externalRef } });
+    return 'sent';
+  } catch (err) {
+    await db.notification.update({ where: { id: row.id }, data: { status: statusForSendError(err), failureReason: (err instanceof Error ? err.message : String(err)).slice(0, 500) } });
+    return 'not_sent';
   }
+}
+
+function tallyTexts(outcomes: TextOutcome[]): { sent: number; notSent: number } {
+  return { sent: outcomes.filter((o) => o === 'sent').length, notSent: outcomes.filter((o) => o === 'not_sent').length };
 }
 
 /** Supervisors of the clients in scope and the store managers' portal accounts. */
@@ -431,7 +445,9 @@ export async function declareEmergency(
       emergencyDeclaredBody(l, { title: e.title, message: messageFor(e, l), startsAt: e.startsAt, pickupAt: e.pickupAt }),
     line: (l: EmailLang) => emergencyPushLine(l, e.title),
   };
-  for (const a of people) await tellAssociate(db, a, words);
+  const outcomes: TextOutcome[] = [];
+  for (const a of people) outcomes.push(await tellAssociate(db, a, words));
+  const texts = tallyTexts(outcomes);
   const scopeLine = e.allSites ? 'every site' : e.sites.map((s) => s.location.name).join(', ');
   await tellLeadership(
     db,
@@ -458,6 +474,8 @@ export async function declareEmergency(
         pickupAt: e.pickupAt?.toISOString() ?? null,
         shiftsSuspended: created.targets.length,
         associatesNotified: people.length,
+        textsSent: texts.sent,
+        textsNotSent: texts.notSent,
         escalationMinutes: e.escalationMinutes,
       },
     },
@@ -469,7 +487,8 @@ export async function declareEmergency(
     data: { associatesNotified: people.length },
     include: EMERGENCY_INCLUDE,
   });
-  return summarize(final, await checkInCounts(db, final));
+  const out = summarize(final, await checkInCounts(db, final));
+  return { ...out, texts: { ...out.texts!, ...texts } };
 }
 
 export async function standDownEmergency(
@@ -530,7 +549,9 @@ export async function standDownEmergency(
     body: (l: EmailLang) => standDownBody(l, e.title, now),
     line: (l: EmailLang) => standDownSubject(l, e.title),
   };
-  for (const a of people) await tellAssociate(db, a, words);
+  const outcomes: TextOutcome[] = [];
+  for (const a of people) outcomes.push(await tellAssociate(db, a, words));
+  const texts = tallyTexts(outcomes);
   await tellLeadership(
     db,
     e,
@@ -550,12 +571,15 @@ export async function standDownEmergency(
         title: e.title,
         shiftsRestored: restored.length,
         associatesNotified: people.length,
+        textsSent: texts.sent,
+        textsNotSent: texts.notSent,
         stoodDownAt: now.toISOString(),
       },
     },
     'standDownEmergency',
   );
-  return summarize(e, await checkInCounts(db, e));
+  const out = summarize(e, await checkInCounts(db, e));
+  return { ...out, texts: { ...out.texts!, ...texts } };
 }
 
 /** The active emergency the associate is in, if any, in their language. */
@@ -582,7 +606,8 @@ export async function myEmergency(
         startsAt: e.startsAt.toISOString(),
         pickupAt: e.pickupAt?.toISOString() ?? null,
         declaredAt: e.declaredAt.toISOString(),
-        rideOffered: e.pickupAt !== null && e.pickupAt.getTime() > now.getTime() - 6 * 3_600_000,
+        // The evacuation seat is the transportation module's half of an emergency: a tenant without vans is never offered one.
+        rideOffered: e.pickupAt !== null && e.pickupAt.getTime() > now.getTime() - 6 * 3_600_000 && (await moduleOn('transportation')),
       },
       checkIn: checkIn
         ? {
@@ -665,10 +690,12 @@ export async function checkIn(
     where: { emergencyId_associateId: { emergencyId, associateId: me.id } },
     include: { ride: { select: { id: true, status: true } } },
   });
+  // Without the transportation module there is no van to book: the answer is kept, the seat is not.
+  const needsRide = input.needsRide && (await moduleOn('transportation'));
   let rideId = existing?.rideId ?? null;
-  if (input.needsRide && !existing?.ride) {
+  if (needsRide && !existing?.ride) {
     rideId = await bookEvacuationRide(db, e, me, user.id, now);
-  } else if (!input.needsRide && existing?.ride && existing.ride.status === 'REQUESTED') {
+  } else if (!needsRide && existing?.ride && existing.ride.status === 'REQUESTED') {
     await db.ride.update({
       where: { id: existing.ride.id },
       data: { status: 'CANCELLED', cancelledAt: now, cancelledById: user.id, cancelReason: 'Rider no longer needs the evacuation seat' },
@@ -677,8 +704,8 @@ export async function checkIn(
   }
   await db.emergencyCheckIn.upsert({
     where: { emergencyId_associateId: { emergencyId, associateId: me.id } },
-    create: { emergencyId, associateId: me.id, status: input.status, needsRide: input.needsRide, note: input.note ?? null, rideId, respondedAt: now },
-    update: { status: input.status, needsRide: input.needsRide, note: input.note ?? null, rideId, respondedAt: now },
+    create: { emergencyId, associateId: me.id, status: input.status, needsRide, note: input.note ?? null, rideId, respondedAt: now },
+    update: { status: input.status, needsRide, note: input.note ?? null, rideId, respondedAt: now },
   });
   enqueueAudit(
     {
@@ -687,7 +714,7 @@ export async function checkIn(
       action: 'emergency.check_in',
       entityType: 'Emergency',
       entityId: emergencyId,
-      metadata: { associateId: me.id, status: input.status, needsRide: input.needsRide, rideId },
+      metadata: { associateId: me.id, status: input.status, needsRide, rideId },
     },
     'emergencyCheckIn',
   );

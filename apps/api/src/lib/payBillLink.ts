@@ -1,5 +1,6 @@
 import type { BillingAdjustment, Prisma, PrismaClient } from '@prisma/client';
 import { enqueueAudit } from './audit.js';
+import { totalsWithTax } from './clientStatement.js';
 import { cardOn, loadRateCards, type RateCard } from './rateCards.js';
 import { createApprovalRequest, registerApplyHandler } from './approvalRequests.js';
 import { netWorkedMinutes } from './timeAnomalies.js';
@@ -559,7 +560,7 @@ export async function readyAdjustments(db: Db, clientId: string): Promise<Snapsh
  * ones still READY (another statement may have finalized them first) — and
  * return the snapshot with exactly what was claimed, totals adjusted.
  */
-export async function claimAdjustmentsForStatement<T extends { adjustments?: SnapshotAdjustment[]; totals: { amount: number; adjustmentsAmount?: number; hoursAmount?: number } }>(
+export async function claimAdjustmentsForStatement<T extends { adjustments?: SnapshotAdjustment[]; totals: { amount: number; adjustmentsAmount?: number; hoursAmount?: number; subtotal?: number; salesTaxRatePct?: number; salesTax?: number } }>(
   tx: Db,
   statementId: string,
   snapshot: T,
@@ -575,9 +576,11 @@ export async function claimAdjustmentsForStatement<T extends { adjustments?: Sna
     (await tx.billingAdjustment.findMany({ where: { id: { in: listed.map((a) => a.id) }, billedStatementId: statementId }, select: { id: true } })).map((r) => r.id),
   );
   const kept = listed.filter((a) => claimed.has(a.id));
-  const hoursAmount = snapshot.totals.hoursAmount ?? round2(snapshot.totals.amount - (snapshot.totals.adjustmentsAmount ?? 0));
+  const subtotalBefore = snapshot.totals.subtotal ?? snapshot.totals.amount;
+  const hoursAmount = snapshot.totals.hoursAmount ?? round2(subtotalBefore - (snapshot.totals.adjustmentsAmount ?? 0));
   const adjustmentsAmount = round2(kept.reduce((s, a) => s + a.amount, 0));
-  return { ...snapshot, adjustments: kept, totals: { ...snapshot.totals, hoursAmount, adjustmentsAmount, amount: round2(hoursAmount + adjustmentsAmount) } };
+  // The tax rides on the recomputed subtotal (lib/clientStatement.totalsWithTax) — never dropped by the claim.
+  return { ...snapshot, adjustments: kept, totals: { ...snapshot.totals, ...totalsWithTax({ hoursAmount, adjustmentsAmount, salesTaxRatePct: snapshot.totals.salesTaxRatePct ?? null }) } };
 }
 
 /* ----- Finance's decision on a REVIEW rebill ------------------------------- */

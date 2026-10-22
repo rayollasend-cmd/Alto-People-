@@ -79,7 +79,17 @@ export function getFloorWeek(): Promise<{ today: string; timezone: string; days:
   return apiFetch('/floor/week');
 }
 
-export function textCrew(input: { shiftIds: string[]; body: string; clientId?: string | null }): Promise<{ sent: number; noPhone: string[] }> {
+export interface CrewTextResult {
+  sent: number;
+  failed: number;
+  /** Numbers that texted STOP — never texted again until they text START. */
+  optedOut: number;
+  noPhone: string[];
+  /** Set when no SMS provider is configured: nothing was sent, and this says why. */
+  notConfigured: string | null;
+}
+
+export function textCrew(input: { shiftIds: string[]; body: string; clientId?: string | null }): Promise<CrewTextResult> {
   return apiFetch('/floor/crew-text', { method: 'POST', body: input });
 }
 

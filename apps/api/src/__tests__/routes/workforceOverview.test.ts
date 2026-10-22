@@ -132,6 +132,30 @@ describe('GET /workforce/overview', () => {
     expect(res.body.dispatch.openNext48h).toBeGreaterThanOrEqual(1);
   });
 
+  it('dispatch rows carry the store’s zone and name the store for a company’s own shift (ops walk 2)', async () => {
+    const now = new Date();
+    const client = await createClient('Lakeside Group');
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    await prisma.site.update({ where: { id: store.id }, data: { timezone: 'America/Chicago', name: 'Lakeside 12' } });
+    await prisma.shift.create({
+      data: {
+        clientId: null,
+        locationId: store.id,
+        position: 'Housekeeper',
+        startsAt: new Date(now.getTime() + 2 * HOUR),
+        endsAt: new Date(now.getTime() + 6 * HOUR),
+        status: 'OPEN',
+        publishedAt: now,
+      },
+    });
+    const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const res = await (await loginAs(user.email)).get('/workforce/overview');
+    expect(res.status).toBe(200);
+    const row = res.body.dispatch.upcoming.find((u: { position: string }) => u.position === 'Housekeeper');
+    expect(row.timezone).toBe('America/Chicago');
+    expect(row.clientName).toBe('Lakeside 12');
+  });
+
   it('lists the supervisor corps with contact facts from the linked associate', async () => {
     const client = await createClient('Front Beach 218');
     const supAssoc = await createAssociate({ firstName: 'Rae', lastName: 'Lead' });

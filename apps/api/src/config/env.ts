@@ -5,6 +5,17 @@ import { z } from 'zod';
 // test worker) unless told not to; the values are read by the schema below.
 loadDotenv({ quiet: true });
 
+/** A whole-number knob with a floor of 1: blank, missing or non-numeric keeps the default. */
+const positiveIntOr = (fallback: number) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+  }, z.number().int().positive().default(fallback));
+
+/** An optional string where an empty value in the environment means "unset". */
+const blankAsUnset = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((v) => (v === '' ? undefined : v), schema);
+
 const EnvSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -257,6 +268,15 @@ const EnvSchema = z.object({
   // The public base URL Twilio calls (e.g. https://api.example.com) — the
   // signature covers the exact URL. Unset: rebuilt from the request.
   TWILIO_WEBHOOK_BASE_URL: z.string().url().optional(),
+  // Outbound texts (lib/sms, the SMS channel of lib/notifications): the
+  // Twilio Messages API sends from a Messaging Service (preferred: pooled
+  // numbers, carrier STOP handling) or one long-code number in E.164. With
+  // the account SID + auth token + one of these two set, texts go out for
+  // real; with any missing, every SMS is recorded NOT_CONFIGURED — never
+  // SENT — and the composer, the crew-text dialog and the broadcast log
+  // say so. Replies and STOP land on POST /voice/sms.
+  TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
+  TWILIO_FROM_NUMBER: z.string().regex(/^\+[1-9]\d{6,14}$/, 'TWILIO_FROM_NUMBER must be E.164 (+15551234567)').optional(),
   // Signs the assistant's proposed actions (lib/assistantActions). Unset:
   // derived from SESSION_SECRET/JWT secret.
   ASSISTANT_ACTION_SECRET: z.string().min(16).optional(),
@@ -268,10 +288,12 @@ const EnvSchema = z.object({
   // how often we CHECK for today's row — one row/day/scope regardless. 0
   // disables (and with it the scorecard trend + week-delta features).
   COMPLIANCE_SNAPSHOT_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
-  // Day-before shift reminder cron. 0 (default) disables; production should
-  // set 1800-3600. Each assigned+published shift starting within the next
-  // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a
-  // guarded update, so overlapping sweeps/replicas can't double-send.
+  // Day-before shift reminder cron. Default 1800 (every 30 minutes) — the
+  // audit of 2026-10-21 found it defaulting to 0 and set nowhere, so no
+  // reminder ever went out. 0 disables. Each assigned+published shift
+  // starting within the next 24h is reminded exactly once —
+  // Shift.reminderSentAt is claimed with a guarded update, so overlapping
+  // sweeps/replicas can't double-send.
   // Who may bulk-export SSN and bank data — the payroll census, the
   // new-hire report, the external payroll sheet, the audit packet — as
   // comma-separated emails. The capability export:payroll-pii still
@@ -283,30 +305,43 @@ const EnvSchema = z.object({
   // must never be able to stop payday. Every export taken that way says
   // so in the log and carries `exportAuthority: 'unset'` on its audit row.
   PII_BULK_EXPORT_USERS: z.string().optional(),
-  SHIFT_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  SHIFT_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(1800),
   // Daily schedule digest to admins (Sling-style morning summary: every
   // shift today, who's on it, fill/unconfirmed counts). The sweep runs
   // every N seconds but sends at most once per local day, after
-  // SCHEDULE_DIGEST_HOUR in the deployment timezone. 0 (default)
-  // disables; production should set 900 so the digest lands within
-  // ~15 min of the hour.
-  SCHEDULE_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // SCHEDULE_DIGEST_HOUR in the deployment timezone. Default 900 so the
+  // digest lands within ~15 min of the hour; 0 disables.
+  SCHEDULE_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(900),
   // Local hour (0-23, deployment timezone) after which the daily digest
   // may send. Default 6 → admins have it before the first shift.
   SCHEDULE_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(6),
   // Associate week-ahead digest: the evening before each CLIENT's week
   // start (Client.weekStartsOn — some clients run Sun–Sat weeks, others
   // Wed–Tue), every associate scheduled that week gets their shift list.
-  // Sweep cadence in seconds; 0 (default) disables. Production: 1800.
-  WEEK_AHEAD_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Sweep cadence in seconds; default 1800 (every 30 minutes); 0 disables.
+  WEEK_AHEAD_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(1800),
   // Local hour (deployment timezone) after which the "evening before"
   // send may fire. Default 17 (5 PM).
   WEEK_AHEAD_SEND_HOUR: z.coerce.number().int().min(0).max(23).default(17),
+  // Robot incident evidence retention (lib/robotIncidentRetention): once a
+  // day per tenant with robotics on, the hour's samples, events and the
+  // people on shift are removed from incidents past their five-year
+  // retainUntil; the report itself stays. 0 turns the sweep off.
+  ROBOT_INCIDENT_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Kiosk maintenance cron: auto-closes forgotten clock-outs and purges
-  // selfies past their retention window. 0 (default) disables; production
-  // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie
-  // retention) are hard-coded in lib/kioskMaintenance.ts.
-  KIOSK_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // selfies past their retention window. Default 3600 (hourly); 0
+  // disables. Thresholds (18h forgotten-shift, 90d selfie retention) are
+  // hard-coded in lib/kioskMaintenance.ts.
+  KIOSK_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  // Nightly audit hash-chain verification (lib/auditChain
+  // runAuditChainChecks): every tenant's chain recomputed and recorded as
+  // an AuditChainCheck; a break raises an AUDIT_CHAIN security alert to the
+  // security contact and the operator's org admins. Default daily; 0 off.
+  AUDIT_CHAIN_CHECK_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // SOC 2 decision 7: kiosk selfies and face templates written before the
+  // seal are encrypted in place, in batches, by a job that runs at boot and
+  // then at this cadence until no plaintext row is left. 0 turns it off.
+  BIOMETRIC_SEAL_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
   // Outbound webhook delivery worker (Phase 93 follow-up). Sweeps due
   // PENDING/RETRYING WebhookDelivery rows and POSTs them with the HMAC
   // X-Alto-Signature. On by default (60s) — subscriptions already exist
@@ -420,11 +455,11 @@ const EnvSchema = z.object({
     .string()
     .min(32, 'SCIM_TOKEN must be at least 32 chars — generate with `openssl rand -base64 32`')
     .optional(),
-  // Phase 44 — QuickBooks Online (Intuit). When both client id and secret
-  // are set, OAuth is wired and JournalEntry POSTs hit Intuit's v3 API.
-  // Otherwise the integration runs in stub mode: connect/disconnect work
-  // for the UI flow but actual posting just logs the would-be JE payload
-  // to the API console (and stamps a STUB-QBO-... id on the run).
+  // QuickBooks Online (Intuit) — the books' company-level two-way sync
+  // (lib/books/qbo, /books/quickbooks; the Phase-44 per-client integration
+  // was retired 2026-10-21). With client id and secret set, OAuth and the
+  // outbox talk to Intuit's v3 API; without them the books run the QBO
+  // fake (lib/books/qbo/fake.ts) and say so on the QuickBooks page.
   // Sandbox vs production routing is controlled by INTUIT_ENV; sandbox
   // hits the apidev URL, production hits the prod URL. The OAuth redirect
   // URI must be registered in the Intuit developer dashboard and equal to
@@ -597,6 +632,31 @@ const EnvSchema = z.object({
   // Brief 2-5 step 7: CI posts the dependency scan (and later backups) as evidence with this bearer.
   EVIDENCE_INGEST_TOKEN: z.string().min(32).optional(),
   WHATSAPP_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v21.0'),
+  // Request throttles (middleware/rateLimit): sign-ins per minute per IP
+  // and per email on /auth/login, whole-roster PII exports per actor per
+  // hour, and requests per minute per signed-in user across the API. The
+  // overrides exist for test stacks (the E2E runner signs every persona in
+  // from one address; the load test plays thousands of people a minute);
+  // production never sets them. A blank or non-numeric value keeps the default.
+  LOGIN_IP_LIMIT: positiveIntOr(20),
+  LOGIN_EMAIL_LIMIT: positiveIntOr(5),
+  BULK_PII_EXPORTS_PER_HOUR: positiveIntOr(5),
+  DEFAULT_API_LIMIT: positiveIntOr(600),
+  // Robots (lib/fleet): the fleet the platform talks to. SIMULATED needs no
+  // keys; BEAR and PUDU need both FLEET_API_BASE and FLEET_API_KEY and fall
+  // back to the simulated fleet without them. Any other value is SIMULATED.
+  FLEET_PROVIDER: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() ? v.trim().toUpperCase() : 'SIMULATED'),
+    z.enum(['SIMULATED', 'BEAR', 'PUDU']).catch('SIMULATED'),
+  ),
+  FLEET_API_BASE: blankAsUnset(z.string().min(1).optional()),
+  FLEET_API_KEY: blankAsUnset(z.string().min(1).optional()),
+  // Paper checks (lib/checkPrintPdf): the path to a licensed E-13B MICR
+  // font. Without one the MICR line prints as a placeholder (lib/paperChecks).
+  MICR_FONT_PATH: blankAsUnset(z.string().min(1).optional()),
+  // Railway injects the deploy's git SHA; GET /health/version serves it so a
+  // wall-mounted kiosk reloads once per deploy. Unset: the process start time.
+  RAILWAY_GIT_COMMIT_SHA: blankAsUnset(z.string().min(1).optional()),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -772,6 +832,39 @@ if (
         '/api/resend/webhook and set its signing secret (whsec_...) as ' +
         'RESEND_WEBHOOK_SECRET. Email sending works normally in the meantime.',
     );
+  }
+}
+
+// Brief 2-5 / SOC 2 audit 2026-10-21: a keyring the app cannot use must stop
+// the boot here, with the fix in the message — not at the first person's
+// read. FIELD_KEYS entries are "<id 1-255>:<base64 32 bytes>" and
+// FIELD_KEY_ACTIVE must name key 0 (PAYOUT_ENCRYPTION_KEY) or one of them.
+// lib/crypto repeats the check and throws KeyringError for the same reason,
+// so a test or a script that imports env with a bad ring fails loudly too.
+{
+  const ids = new Set<number>([0]);
+  const problems: string[] = [];
+  for (const part of (parsed.data.FIELD_KEYS ?? '').split(',').map((p) => p.trim()).filter(Boolean)) {
+    const m = /^(\d{1,3}):(.+)$/.exec(part);
+    const id = m ? Number(m[1]) : NaN;
+    if (!m || !Number.isInteger(id) || id < 1 || id > 255) {
+      problems.push(`FIELD_KEYS entry "${part.slice(0, 12)}…" is not "<id 1-255>:<base64 key>"`);
+      continue;
+    }
+    if (Buffer.from(m[2]!, 'base64').length !== 32) problems.push(`FIELD_KEYS key ${id} must decode to 32 bytes (openssl rand -base64 32)`);
+    ids.add(id);
+  }
+  const active = parsed.data.FIELD_KEY_ACTIVE;
+  if (active !== undefined && !ids.has(active)) {
+    problems.push(
+      `FIELD_KEY_ACTIVE=${active} names a key that is not in the ring (keys on file: ${[...ids].sort((a, b) => a - b).join(', ')}). ` +
+        'Add it to FIELD_KEYS as "<id>:<base64>" or set FIELD_KEY_ACTIVE to a key that exists.',
+    );
+  }
+  if (problems.length > 0) {
+    console.error('FATAL: the field-encryption keyring is misconfigured; refusing to start.');
+    for (const p of problems) console.error(`  - ${p}`);
+    process.exit(1);
   }
 }
 

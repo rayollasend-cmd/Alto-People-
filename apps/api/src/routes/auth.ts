@@ -8,6 +8,7 @@ import {
   ChangePasswordInputSchema,
   ConfirmEmailChangeInputSchema,
   HUMAN_ROLES,
+  MFA_TOTP_DIGITS,
   RoleSchema,
   effectiveRoleOf,
   rolesAvailableTo,
@@ -1449,12 +1450,11 @@ authRouter.get('/me/data-export', requireAuth, async (req, res, next) => {
   }
 });
 
-/* ===== TOTP MFA enrollment (settings audit row #3, PR 1) ================
+/* ===== TOTP MFA enrollment (settings audit row #3) =======================
  *
- * Three endpoints. Login enforcement (the actual challenge step) ships in
- * a follow-up PR — for now, enrolling does not gate sign-in. That's
- * deliberate: rolling out enrollment first lets HR / curious users opt in
- * and shake out the UI before the second factor is required to sign in.
+ * Three endpoints. Login enforcement is live: /auth/login answers
+ * mfaRequired for an enrolled account (and mfaEnrollmentRequired when the
+ * org's policy demands enrollment), and /auth/mfa-challenge completes it.
  *
  * State machine on User:
  *   - mfaSecretEncrypted = NULL,    mfaEnabledAt = NULL  → not enrolled
@@ -1477,10 +1477,6 @@ authRouter.get('/me/data-export', requireAuth, async (req, res, next) => {
  * will only become active on /enroll/confirm. Until then, the previous
  * (still-enabled) configuration keeps working — we don't tear down a
  * working setup until the user proves they've migrated.
- *
- * Note: PR 1 doesn't enforce MFA at login, so currently "enrolled" only
- * affects the Settings card. The state machine is built right so PR 2 can
- * just flip the enforcement switch.
  */
 // allowMfaEnrollToken: org-enforced enrollment arrives here WITHOUT a
 // session — the short-lived mfa_enroll cookie from /auth/login stands in
@@ -1556,7 +1552,7 @@ authRouter.post('/me/mfa/enroll/confirm', allowMfaEnrollToken, requireAuth, mfaE
   try {
     const parsed = MfaEnrollConfirmInputSchema.safeParse(req.body);
     if (!parsed.success) {
-      throw new HttpError(400, 'invalid_body', 'Code must be 6 digits', parsed.error.flatten());
+      throw new HttpError(400, 'invalid_body', `Code must be ${MFA_TOTP_DIGITS} digits`, parsed.error.flatten());
     }
     const userId = req.user!.id;
 

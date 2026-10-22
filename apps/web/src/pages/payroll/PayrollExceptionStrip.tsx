@@ -93,6 +93,8 @@ export function fixHref(ex: PayrollException, period?: ExceptionPeriod | null): 
       return '/payroll/certified';
     case 'UNASSIGNED_SCHEDULE':
       return '/payroll/schedules';
+    case 'LATE_APPROVED_TIME':
+      return '/payroll?ledger=missed';
     case 'TERMINATED_IN_RUN':
       return person('employment');
     case 'MISSING_W4':

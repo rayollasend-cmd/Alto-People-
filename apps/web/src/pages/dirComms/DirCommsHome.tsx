@@ -16,12 +16,14 @@ import {
 } from 'lucide-react';
 import { BroadcastDrawer, channelPhrase, useSendBroadcast } from './BroadcastDrawer';
 import { ApiError } from '@/lib/api';
+import { cn } from '@/lib/cn';
 import {
   addSurveyQuestion,
   closeSurvey,
   createSurvey,
   getSurveyAggregate,
   deleteBroadcast,
+  deliveryLines,
   duplicateBroadcast,
   listBroadcasts,
   listBroadcastTemplates,
@@ -419,7 +421,23 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                     </>
                   ),
                 },
-                { key: 'channels', header: 'Channels', accessor: (b) => channelPhrase(b.channels), sortable: true },
+                {
+                  key: 'channels',
+                  header: 'Channels',
+                  accessor: (b) => channelPhrase(b.channels),
+                  sortable: true,
+                  cell: (b) => (
+                    <span className="block min-w-0">
+                      <span>{channelPhrase(b.channels)}</span>
+                      {b.status === 'SENT' &&
+                        deliveryLines(b.delivery).map((l) => (
+                          <span key={l.channel} className={cn('block text-2xs', l.problem ? 'text-warning' : 'text-ink-muted')}>
+                            {l.text}
+                          </span>
+                        ))}
+                    </span>
+                  ),
+                },
                 { key: 'recipients', header: 'Recipients', accessor: (b) => b.receiptCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
                 { key: 'sent', header: 'Sent', accessor: (b) => b.sentAt, sortable: true, searchable: false, cardMeta: true, cell: (b) => (b.sentAt ? fmtDateTime(b.sentAt) : '—') },
                 {

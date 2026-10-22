@@ -32,6 +32,7 @@ const EARNING_LABEL: Record<string, string> = {
   RETRO: 'Back pay from a raise dated earlier',
   PREMIUM: 'Premium (a labor-law payment, like a missed meal break)',
   DAILY_SETTLED: 'Already paid to you day by day (daily pay)',
+  IMPUTED_INCOME: 'Taxable value of group-term life insurance over $50,000 (not paid to you; it raises your taxable wages)',
 };
 
 /** The latest paystub, line by line, as facts for the model. Exported for tests. */

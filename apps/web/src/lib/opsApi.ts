@@ -513,19 +513,6 @@ export function getOpsStores(): Promise<{
   return apiFetch('/ops/stores');
 }
 
-export function listOpsShifts(params?: {
-  clientId?: string;
-  status?: 'ACTIVE' | 'CLOSED';
-  dateKey?: string;
-}): Promise<{ shifts: (OpsShiftHeader & { clientName: string; openedByEmail: string })[] }> {
-  const q = new URLSearchParams();
-  if (params?.clientId) q.set('clientId', params.clientId);
-  if (params?.status) q.set('status', params.status);
-  if (params?.dateKey) q.set('dateKey', params.dateKey);
-  const qs = q.toString();
-  return apiFetch(`/ops/shifts${qs ? `?${qs}` : ''}`);
-}
-
 export function getOpsBoard(
   filters: { locationId?: string; period?: string; department?: string } = {},
 ): Promise<{

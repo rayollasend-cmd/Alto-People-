@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -10,9 +10,12 @@ import {
   ChevronRight,
   Download,
   Check,
+  ChevronDown,
   Home,
   MapPin,
+  MapPinOff,
   MessageSquare,
+  MoreHorizontal,
   Phone,
   Plus,
   Send,
@@ -26,7 +29,9 @@ import { cn } from '@/lib/cn';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { STUCK_RUN_MINUTES, fmtDateTime, fmtMinutes, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
-import { workweekStart } from '@/lib/workweek';
+import { useMinWidth } from '@/lib/useViewport';
+import { useChargesRange } from '@/lib/transportRange';
+import { useTransportKeyboard } from '@/lib/transportKeyboard';
 import { Sparkline } from '@/components/ui/charts';
 import {
   cancelRide,
@@ -42,7 +47,10 @@ import {
   revokeDriverAccess,
   type DriverAccessRow,
   getLiveBoard,
+  getPlanMap,
   getTransportBoard,
+  listVans,
+  transportChargesCsvUrl,
   getRideAuthorizations,
   listUnsignedRiders,
   remindUnsignedRiders,
@@ -76,10 +84,14 @@ import {
   type Van,
 } from '@/lib/transportApi';
 import { onLiveEvent } from '@/lib/liveEvents';
-import { messageRun, planDay, routeRides } from '@/lib/transportDispatchApi';
+import { dispatchBatch, messageRun, planDay, routeRides, type BatchRefusal, type RunProposal } from '@/lib/transportDispatchApi';
 import { rideAlert, useNewKeys } from '@/lib/rideAlerts';
 import { SoundToggle } from '@/components/transport/SoundToggle';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
+import { DispatchMap } from '@/components/transport/DispatchMap';
+import { RiderDrawer } from '@/components/transport/RiderDrawer';
+import { VanDayTimeline, firstFreeVan, timelineBars } from '@/components/transport/VanDayTimeline';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { Avatar } from '@/components/ui/Avatar';
 import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
 import { Badge } from '@/components/ui/Badge';
@@ -237,10 +249,22 @@ function PickBox({
   );
 }
 
+/** Below `sm` the tab strip keeps the first four; the rest sit behind "More". */
+const TABS_ON_PHONE = 4;
+
 export function TransportHome() {
   const { can } = useAuth();
   const manage = can('manage:transport');
   const [params, setParams] = useSearchParams();
+  const wide = useMinWidth(640);
+  // Transport walk 7: the rider's record, from a link (?rider=…).
+  const riderId = params.get('rider');
+  const setRider = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set('rider', id);
+    else next.delete('rider');
+    setParams(next, { replace: true });
+  };
   const tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'today';
   const setTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -283,7 +307,10 @@ export function TransportHome() {
         secondaryActions={<SoundToggle onLabel="Sounds on — tap to mute" offLabel="Sounds off — tap to turn on" />}
         primaryAction={
           tab === 'today' ? (
-            <div className="flex items-center gap-1">
+            // Transport walk 11: on a phone the day controls are one row —
+            // ‹ date › and a Today / Tomorrow segmented control — not a
+            // strip that clips to "Tomor".
+            <div className={cn('flex items-center gap-1', !wide && 'w-full flex-wrap')}>
               <Button variant="ghost" size="icon-sm" aria-label="Previous day" onClick={() => setDate(shiftDay(date, -1))}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -292,28 +319,40 @@ export function TransportHome() {
                 aria-label="Day"
                 value={date}
                 onChange={(e) => e.target.value && setDate(e.target.value)}
-                className="w-40"
+                className={wide ? 'w-40' : 'min-w-0 flex-1'}
               />
               <Button variant="ghost" size="icon-sm" aria-label="Next day" onClick={() => setDate(shiftDay(date, 1))}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
-              <div className="ml-1 flex items-center gap-1" role="group" aria-label="Jump to">
-                {[
-                  { day: today, label: 'Today' },
-                  { day: tomorrow, label: 'Tomorrow' },
-                ].map((c) => (
-                  <Button key={c.label} variant={date === c.day ? 'primary' : 'secondary'} size="sm" aria-pressed={date === c.day} onClick={() => setDate(c.day)}>
-                    {c.label}
-                  </Button>
-                ))}
-              </div>
+              {wide ? (
+                <div className="ml-1 flex items-center gap-1" role="group" aria-label="Jump to">
+                  {[
+                    { day: today, label: 'Today' },
+                    { day: tomorrow, label: 'Tomorrow' },
+                  ].map((c) => (
+                    <Button key={c.label} variant={date === c.day ? 'primary' : 'secondary'} size="sm" aria-pressed={date === c.day} onClick={() => setDate(c.day)}>
+                      {c.label}
+                    </Button>
+                  ))}
+                </div>
+              ) : (
+                <SegmentedControl
+                  ariaLabel="Jump to"
+                  value={date === today ? 'today' : date === tomorrow ? 'tomorrow' : 'other'}
+                  onChange={(v) => setDate(v === 'tomorrow' ? tomorrow : today)}
+                  options={[
+                    { value: 'today', label: 'Today' },
+                    { value: 'tomorrow', label: 'Tomorrow' },
+                  ]}
+                />
+              )}
             </div>
           ) : undefined
         }
     >
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
-          {TABS.map((k) => (
+          {(wide ? TABS : TABS.slice(0, TABS_ON_PHONE)).map((k) => (
             <TabsTrigger key={k} value={k}>
               {TAB_LABEL[k]}
               {k === 'issues' && openIssues > 0 && (
@@ -321,6 +360,25 @@ export function TransportHome() {
               )}
             </TabsTrigger>
           ))}
+          {!wide && (
+            // Transport walk 11: the tabs past the fourth as a menu, not a
+            // strip that runs off the screen with nothing to say so.
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant={TABS.indexOf(tab) >= TABS_ON_PHONE ? 'primary' : 'ghost'} size="sm" aria-label="More tabs">
+                  <MoreHorizontal className="h-4 w-4" />
+                  {TABS.indexOf(tab) >= TABS_ON_PHONE ? TAB_LABEL[tab] : 'More'}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {TABS.slice(TABS_ON_PHONE).map((k) => (
+                  <DropdownMenuItem key={k} onSelect={() => setTab(k)}>
+                    {TAB_LABEL[k]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </TabsList>
         <TabsContent value="today">
           {board.isLoading ? (
@@ -330,7 +388,13 @@ export function TransportHome() {
           ) : board.data ? (
             <div className="space-y-5">
               <TransportNeedsYou />
-              <TodayBoard board={board.data} manage={manage} />
+              <TodayBoard
+                board={board.data}
+                manage={manage}
+                compact={!wide}
+                onRider={setRider}
+                nav={{ prev: () => setDate(shiftDay(date, -1)), next: () => setDate(shiftDay(date, 1)), today: () => setDate(today), tomorrow: () => setDate(tomorrow) }}
+              />
               <TransportTrends />
             </div>
           ) : null}
@@ -339,12 +403,12 @@ export function TransportHome() {
           <LiveTab />
         </TabsContent>
         <TabsContent value="rides">
-          <RidesTab manage={manage} />
+          <RidesTab manage={manage} onRider={setRider} />
         </TabsContent>
         <TabsContent value="issues">
           <div className="space-y-8">
             <IncidentsSection manage={manage} />
-            <IssuesTab manage={manage} />
+            <IssuesTab manage={manage} onRider={setRider} />
             <FeedbackSection />
           </div>
         </TabsContent>
@@ -359,7 +423,7 @@ export function TransportHome() {
         </TabsContent>
         <TabsContent value="charges">
           <div className="space-y-8">
-            <ChargesTab />
+            <ChargesTab onRider={setRider} />
             <CostsSection />
           </div>
         </TabsContent>
@@ -367,6 +431,7 @@ export function TransportHome() {
           <SettingsTab manage={manage} />
         </TabsContent>
       </Tabs>
+      <RiderDrawer associateId={riderId} manage={manage} onClose={() => setRider(null)} onIssues={() => { setRider(null); setTab('issues'); }} />
     </ListTemplate>
   );
 }
@@ -506,7 +571,26 @@ interface Attention {
   actions: Array<{ label: string; onClick?: () => void; href?: string }>;
 }
 
-function NeedsAttention({ items }: { items: Attention[] }) {
+function NeedsAttention({ items, compact = false }: { items: Attention[]; compact?: boolean }) {
+  // Transport walk 11: on a phone the list is one line — "4 need you" —
+  // until it's opened; four cards filled the first screen.
+  const [open, setOpen] = useState(false);
+  if (compact && items.length > 0 && !open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-expanded={false}
+        className="flex w-full items-center gap-2 rounded-lg border border-warning/40 bg-warning/[0.05] px-4 py-3 text-left text-sm text-ink"
+      >
+        <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">
+          <span className="font-semibold">{items.length}</span> need you · {items[0]!.title}
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+      </button>
+    );
+  }
   if (items.length === 0) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/[0.06] px-4 py-3 text-sm text-success">
@@ -634,9 +718,22 @@ function useMessageRun() {
   };
 }
 
-function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean }) {
+function TodayBoard({
+  board,
+  manage,
+  compact = false,
+  onRider,
+  nav,
+}: {
+  board: TransportBoard;
+  manage: boolean;
+  compact?: boolean;
+  onRider?: (associateId: string) => void;
+  /** The day controls, for the keyboard (transport walk 12). */
+  nav?: { prev: () => void; next: () => void; today: () => void; tomorrow: () => void };
+}) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [dispatch, setDispatch] = useState<{ rides: Ride[] } | { run: RideRun } | null>(null);
+  const [dispatch, setDispatch] = useState<{ rides: Ride[]; vanId?: string | null } | { run: RideRun } | null>(null);
   const [planning, setPlanning] = useState(false);
   const [, setParams] = useSearchParams();
   const actions = useRideActions();
@@ -644,6 +741,14 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
   const message = useMessageRun();
   const closeRun = useCloseRun();
   const queryClient = useQueryClient();
+  const remindUnsigned = useMutation({
+    mutationFn: (ids: string[]) => remindUnsignedRiders(ids),
+    onSuccess: (r) => toast.success(r.sent ? `Asked ${r.sent} ${r.sent === 1 ? 'rider' : 'riders'} to sign.` : 'Everyone here was reminded in the last day.'),
+    onError: (err) => toast.error(errMsg(err)),
+  });
+  // Transport walk 12: j/k walk the waiting groups, x picks one, d
+  // dispatches what's picked, p plans; [ ] t m move the day.
+  const [cursor, setCursor] = useState<string | null>(null);
   const live = useQuery({ queryKey: ['transport', 'live'], queryFn: () => getLiveBoard(), refetchInterval: 15_000 });
   useEffect(
     () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport'] })),
@@ -655,6 +760,30 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
   const pickedRides = waiting.filter((r) => picked.has(r.id));
   const mixed = new Set(pickedRides.map((r) => r.direction)).size > 1;
   const now = Date.now();
+  const cursorAt = cursor ? groups.findIndex((g) => g.key === cursor) : -1;
+  useTransportKeyboard(
+    {
+      prevDay: () => nav?.prev(),
+      nextDay: () => nav?.next(),
+      today: () => nav?.today(),
+      tomorrow: () => nav?.tomorrow(),
+      down: () => setCursor(groups[Math.min(groups.length - 1, cursorAt + 1)]?.key ?? null),
+      up: () => setCursor(groups[Math.max(0, cursorAt - 1)]?.key ?? null),
+      pick: () => {
+        const g = groups[cursorAt];
+        if (!g || !manage) return;
+        const all = g.rides.every((r) => picked.has(r.id));
+        toggle(g.rides.map((r) => r.id), !all);
+      },
+      dispatch: () => {
+        if (manage && pickedRides.length > 0 && !mixed) setDispatch({ rides: pickedRides });
+      },
+      plan: () => {
+        if (manage && waiting.length > 0) setPlanning(true);
+      },
+    },
+    !dispatch && !planning,
+  );
 
   const toggle = (ids: string[], on: boolean) =>
     setPicked((prev) => {
@@ -702,7 +831,9 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
     // numbers, burying the runs that are genuinely a few minutes behind.
     // Different problem, different words, different action: you don't
     // apologise to riders who went home hours ago, you close the run.
-    if (late >= STUCK_RUN_MINUTES) {
+    // The server's own stuck flag (lib/transportStuckRuns) is the same rule.
+    const stuck = r.stuck || late >= STUCK_RUN_MINUTES;
+    if (stuck) {
       attention.push({
         key: `stuck-${r.runId}`,
         tone: 'warning',
@@ -725,7 +856,9 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
         ],
       });
     }
-    if (r.stale) {
+    // A stuck run's phone went quiet hours ago — that's the same problem,
+    // not a second alert (transport walk 4).
+    if (r.stale && !stuck) {
       const phone = driverPhone(r.driver.userId);
       attention.push({
         key: `stale-${r.runId}`,
@@ -786,6 +919,19 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
       actions: manage ? [{ label: 'Plan runs', onClick: () => setPlanning(true) }] : [],
     });
   }
+  // Transport walk 8: riders on this day who haven't signed ride uncharged.
+  const dayRides = new Map([...board.rides, ...board.runs.flatMap((r) => r.rides)].map((r) => [r.id, r]));
+  const unsignedToday = [...dayRides.values()].filter((r) => (r.status === 'REQUESTED' || r.status === 'SCHEDULED') && r.signatureNeeded);
+  const unsignedIds = [...new Set(unsignedToday.map((r) => r.rider.associateId))];
+  if (unsignedIds.length > 0) {
+    attention.push({
+      key: 'unsigned',
+      tone: 'warning',
+      title: `${unsignedIds.length} ${unsignedIds.length === 1 ? 'rider' : 'riders'} ${fmtRelativeDayTz(`${board.date}T12:00:00Z`, 'UTC').toLowerCase()} won’t be charged — not signed`,
+      body: `${unsignedToday.slice(0, 3).map((r) => r.rider.name.split(' ')[0]).join(', ')}${unsignedToday.length > 3 ? ` and ${unsignedToday.length - 3} more` : ''} · a ride taken is never waived: it’s held until they sign`,
+      actions: manage ? [{ label: `Ask ${unsignedIds.length === 1 ? 'them' : `all ${unsignedIds.length}`} to sign`, onClick: () => remindUnsigned.mutate(unsignedIds) }] : [],
+    });
+  }
   if (board.kpis.openIssues > 0) {
     attention.push({
       key: 'issues',
@@ -803,8 +949,16 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
 
   return (
     <div className="space-y-5">
-      <NeedsAttention items={attention} />
+      <NeedsAttention items={attention} compact={compact} />
       <KpiStrip k={board.kpis} />
+      {/* Transport walk 6: which van is free at 5:30, at a glance. */}
+      {!compact && (
+        <VanDayTimeline
+          board={board}
+          onDispatch={manage ? (rides, vanId) => setDispatch({ rides, vanId }) : undefined}
+          onRun={manage ? (run) => { if (run.status === 'PLANNED') setDispatch({ run }); } : undefined}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {/* Waiting on a van */}
@@ -844,7 +998,7 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
               {groups.map((g) => {
                 const all = g.rides.every((r) => picked.has(r.id));
                 return (
-                  <Card key={g.key}>
+                  <Card key={g.key} className={cn(cursor === g.key && 'ring-1 ring-gold')} data-kb-cursor={cursor === g.key ? 'true' : undefined} aria-selected={cursor === g.key}>
                     <CardContent>
                       <div className="flex items-center gap-2">
                         {manage && (
@@ -881,7 +1035,12 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                             <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-x-2 text-sm text-white">
-                                {r.rider.name}
+                                <RiderName ride={r} onRider={onRider} />
+                                {r.signatureNeeded && (
+                                  <Badge size="sm" variant="pending" title={r.signatureNeeded}>
+                                    Unsigned
+                                  </Badge>
+                                )}
                                 {r.windowLabel && <span className="text-xs text-silver">{r.windowLabel} shift</span>}
                                 {r.waitlist && (
                                   <Badge size="sm" variant="pending">
@@ -938,6 +1097,8 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                   live={liveById.get(run.id) ?? null}
                   driverPhone={driverPhone(run.driver.userId)}
                   manage={manage}
+                  onRider={onRider}
+                  onCloseStuck={() => void closeRun(run.id, run.van.name)}
                   onEdit={() => setDispatch({ run })}
                   onCallOff={() => void callOff(run)}
                   onMessage={() => void message(run)}
@@ -966,11 +1127,23 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
   );
 }
 
+/** A rider's name, as the door into their record (transport walk 7). */
+function RiderName({ ride, onRider, className }: { ride: Pick<Ride, 'rider'>; onRider?: (associateId: string) => void; className?: string }) {
+  if (!onRider) return <span className={className}>{ride.rider.name}</span>;
+  return (
+    <button type="button" onClick={() => onRider(ride.rider.associateId)} className={cn('rounded text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright', className)}>
+      {ride.rider.name}
+    </button>
+  );
+}
+
 function RunPanel({
   run,
   live,
   driverPhone,
   manage,
+  onRider,
+  onCloseStuck,
   onEdit,
   onCallOff,
   onMessage,
@@ -982,6 +1155,8 @@ function RunPanel({
   live: RunMap | null;
   driverPhone: string | null;
   manage: boolean;
+  onRider?: (associateId: string) => void;
+  onCloseStuck?: () => void;
   onEdit: () => void;
   onCallOff: () => void;
   onMessage: () => void;
@@ -995,11 +1170,12 @@ function RunPanel({
   const full = run.seats.taken >= run.seats.capacity;
   const active = run.status === 'ACTIVE';
   const late = live ? Math.max(0, ...live.late.map((l) => l.minutes)) : 0;
+  const stuck = active && (run.stuck || live?.stuck || late >= STUCK_RUN_MINUTES);
   const next = live?.waypoints.find((w) => w.etaAt);
   const riderLive = new Map((live?.riders ?? []).map((x) => [x.rideId, x]));
   const now = Date.now();
   return (
-    <Card className={cn(active && (late >= 5 ? 'border-alert/50' : 'border-success/40'))}>
+    <Card className={cn(active && (stuck ? 'border-warning/50' : late >= 5 ? 'border-alert/50' : 'border-success/40'))}>
       <CardContent>
         <div className="flex flex-wrap items-center gap-2">
           <Bus className={cn('h-4 w-4', active ? 'text-success' : 'text-gold')} aria-hidden="true" />
@@ -1013,20 +1189,32 @@ function RunPanel({
             <span className={cn('text-xs tabular-nums', full ? 'text-warning' : 'text-silver')}>
               {run.seats.taken}/{run.seats.capacity} seats
             </span>
-            {active && late >= 5 ? (
+            {stuck ? (
+              <Badge variant="pending">Not closed</Badge>
+            ) : active && late >= 5 ? (
               <Badge variant="destructive">~{fmtMinutes(late)} late</Badge>
             ) : (
               <Badge variant={active ? 'success' : run.status === 'COMPLETED' ? 'default' : 'accent'}>
-                {run.status === 'PLANNED' ? 'Planned' : active ? 'On the road' : run.status === 'COMPLETED' ? 'Finished' : 'Called off'}
+                {run.status === 'PLANNED' ? 'Planned' : active ? 'On the road' : run.status === 'COMPLETED' ? (run.autoClosedAt ? 'Closed automatically' : 'Finished') : 'Called off'}
               </Badge>
             )}
           </span>
         </div>
+        {stuck && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
+            <span>The driver never completed this run — it still counts as on the road.</span>
+            {manage && onCloseStuck && (
+              <Button size="xs" variant="secondary" onClick={onCloseStuck}>
+                Close run
+              </Button>
+            )}
+          </div>
+        )}
         <div className="mt-0.5 text-xs text-silver">
           {run.direction === 'TO_WORK' ? 'To work' : 'Home from work'}
           {run.notes ? ` · ${run.notes}` : ''}
         </div>
-        {active && live && (
+        {active && live && !stuck && (
           <div className={cn('mt-2 rounded-md px-2.5 py-1.5 text-xs', live.stale ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success')}>
             {next ? (
               <>
@@ -1049,7 +1237,12 @@ function RunPanel({
                 <Avatar src={associatePhotoUrl(r.rider.associateId)} name={r.rider.name} size="sm" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-white">
-                    {r.rider.name}
+                    <RiderName ride={r} onRider={onRider} />
+                    {r.signatureNeeded && r.status === 'SCHEDULED' && (
+                      <Badge size="sm" variant="pending" title={r.signatureNeeded}>
+                        Unsigned
+                      </Badge>
+                    )}
                     {r.riderSignal && (
                       <Badge size="sm" variant={r.riderSignal.kind === 'OUTSIDE' ? 'success' : 'pending'}>
                         {r.riderSignal.kind === 'OUTSIDE' ? 'Outside' : 'Running late'}
@@ -1131,36 +1324,58 @@ function RunPanel({
 
 /* ----- Plan runs: the whole day's waiting bookings, in one go ---------------- */
 
+type PlanOutcome =
+  | { ok: true; created: number; updated: number }
+  | { ok: false; errors: BatchRefusal[] };
+
 function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const wide = useMinWidth(1024);
   const plan = useQuery({ queryKey: ['transport', 'plan', board.date], queryFn: () => planDay(board.date), staleTime: 0 });
   const [edits, setEdits] = useState<Record<string, { vanId?: string; driverUserId?: string; skip?: boolean }>>({});
   const [busy, setBusy] = useState(false);
-  const proposals = (plan.data?.proposals ?? []).map((p) => ({ ...p, ...edits[p.key] }));
+  const [outcome, setOutcome] = useState<PlanOutcome | null>(null);
+  const proposals: Array<RunProposal & { skip?: boolean }> = (plan.data?.proposals ?? []).map((p) => ({ ...p, ...edits[p.key] }));
   const ready = proposals.filter((p) => !p.skip && p.vanId && p.driverUserId);
+  const runById = new Map(board.runs.map((r) => [r.id, r]));
+  const errorFor = (key: string) => (outcome && !outcome.ok ? outcome.errors.find((e) => e.key === key) : undefined);
 
+  // Transport walk 10: one request, all or nothing. A refusal names each
+  // proposal that can't go and nothing was written; fix those and send again.
   const dispatchAll = async () => {
     setBusy(true);
-    let made = 0;
+    setOutcome(null);
     try {
-      for (const p of ready) {
-        await createRun({
-          vanId: p.vanId!,
-          driverUserId: p.driverUserId!,
-          direction: p.direction,
-          serviceDate: p.serviceDate,
-          departAt: p.departAt,
-          rides: p.rides.map((r) => ({ rideId: r.rideId, pickupAt: r.pickupAt })),
-        });
-        made += 1;
-      }
-      toast.success(`${made} ${made === 1 ? 'run' : 'runs'} dispatched — every rider has their van and pickup time`);
+      const res = await dispatchBatch({
+        runs: ready
+          .filter((p) => p.kind !== 'topUp')
+          .map((p) => ({
+            key: p.key,
+            vanId: p.vanId!,
+            driverUserId: p.driverUserId!,
+            direction: p.direction,
+            serviceDate: p.serviceDate,
+            departAt: p.departAt,
+            rides: p.rides.map((r) => ({ rideId: r.rideId, pickupAt: r.pickupAt })),
+          })),
+        topUps: ready
+          .filter((p) => p.kind === 'topUp' && p.runId)
+          .map((p) => ({ key: p.key, runId: p.runId!, rides: p.rides.map((r) => ({ rideId: r.rideId, pickupAt: r.pickupAt })) })),
+      });
+      setOutcome({ ok: true, created: res.created.length, updated: res.updated.length });
+      toast.success(
+        `${res.created.length} ${res.created.length === 1 ? 'run' : 'runs'} dispatched${res.updated.length ? `, ${res.updated.length} topped up` : ''} — every rider has their van and pickup time`,
+      );
+      await queryClient.invalidateQueries({ queryKey: ['transport'] });
       onClose();
     } catch (err) {
-      toast.error(`${made} dispatched, then: ${errMsg(err)}`);
+      const refusal = err instanceof ApiError && err.status === 409 && Array.isArray((err.details as { errors?: BatchRefusal[] } | undefined)?.errors)
+        ? (err.details as { errors: BatchRefusal[] }).errors
+        : null;
+      if (refusal) setOutcome({ ok: false, errors: refusal });
+      else toast.error(errMsg(err));
     } finally {
       setBusy(false);
-      await queryClient.invalidateQueries({ queryKey: ['transport'] });
     }
   };
 
@@ -1170,14 +1385,33 @@ function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => 
           viewport minus the notch and home-indicator insets and scrolls
           inside. A plain `max-h-[90dvh]` merges over that cap and pushes the
           sheet's grab handle up under the status bar on a notched phone. */}
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className="sm:max-w-3xl lg:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Plan runs</DialogTitle>
           <DialogDescription>
-            Every booking still waiting on a van, grouped by way, store and time, filled into free vans and drivers,
-            pickups in the shortest order with times worked back from the arrive-by. Change anything, then dispatch.
+            Every booking still waiting on a van, grouped by way, store and time. Seats on a run that already exists are filled
+            first; the rest go into free vans and drivers, pickups in the shortest order with times worked back from the arrive-by.
+            Change anything, then dispatch — all at once, or not at all.
           </DialogDescription>
         </DialogHeader>
+        {outcome && !outcome.ok && (
+          <div role="alert" className="rounded-md border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
+            <p className="font-medium">
+              {outcome.errors.length} of {ready.length} can’t go — nothing was dispatched.
+            </p>
+            <ul className="mt-1 list-disc pl-5 text-xs">
+              {outcome.errors.map((e) => {
+                const p = proposals.find((x) => x.key === e.key);
+                return (
+                  <li key={e.key}>
+                    {p ? `${p.direction === 'TO_WORK' ? 'To' : 'Home from'} ${p.store.name} ${fmtTimeTz(p.departAt, p.store.timezone)}: ` : ''}
+                    {e.message}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
         {plan.isLoading ? (
           <Skeleton className="h-48" />
         ) : plan.isError ? (
@@ -1189,8 +1423,12 @@ function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => 
             {proposals.map((p) => {
               const tz = p.store.timezone;
               const van = board.vans.find((v) => v.id === p.vanId);
+              const topUp = p.kind === 'topUp';
+              const existing = topUp ? runById.get(p.runId ?? '') : undefined;
+              const err = errorFor(p.key);
+              const added = p.seats?.added ?? p.rides.length;
               return (
-                <div key={p.key} className={cn('rounded-lg border p-3', p.skip ? 'border-navy-secondary opacity-60' : 'border-gold/40')}>
+                <div key={p.key} className={cn('rounded-lg border p-3', p.skip ? 'border-navy-secondary opacity-60' : err ? 'border-alert/60' : topUp ? 'border-success/40' : 'border-gold/40')}>
                   <div className="flex flex-wrap items-center gap-2">
                     <PickBox
                       label={`Include ${p.store.name} ${fmtTimeTz(p.departAt, tz)}`}
@@ -1198,53 +1436,93 @@ function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => 
                       onChange={(on) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], skip: !on } }))}
                     />
                     <span className="text-sm font-semibold text-white">
-                      {p.direction === 'TO_WORK' ? 'To' : 'Home from'} {p.store.name}
+                      {topUp
+                        ? `Add ${added} to ${existing?.van.name ?? van?.name ?? 'the run'} (${(p.seats?.taken ?? 0) - added}→${p.seats?.taken ?? p.rides.length}/${p.seats?.capacity ?? van?.capacity ?? '—'})`
+                        : `${p.direction === 'TO_WORK' ? 'To' : 'Home from'} ${p.store.name}`}
                     </span>
+                    {topUp && (
+                      <Badge size="sm" variant="success">
+                        Existing run
+                      </Badge>
+                    )}
                     <span className="text-xs tabular-nums text-silver">
-                      · leaves {fmtTimeTz(p.departAt, tz)}
-                      {p.arriveAt && ` · there ${fmtTimeTz(p.arriveAt, tz)}`} · {p.rides.length}/{van?.capacity ?? '—'} seats
+                      {topUp && `${p.direction === 'TO_WORK' ? 'to' : 'home from'} ${p.store.name} `}· leaves {fmtTimeTz(p.departAt, tz)}
+                      {p.arriveAt && ` · there ${fmtTimeTz(p.arriveAt, tz)}`}
+                      {!topUp && ` · ${p.rides.length}/${van?.capacity ?? '—'} seats`}
                     </span>
+                    {err && (
+                      <Badge size="sm" variant="destructive" className="ml-auto">
+                        Can’t go
+                      </Badge>
+                    )}
                   </div>
-                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <Select
-                      size="sm"
-                      aria-label="Van"
-                      value={p.vanId ?? ''}
-                      onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], vanId: e.target.value } }))}
-                    >
-                      <option value="">Pick a van</option>
-                      {board.vans.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.name} · {v.capacity} seats
-                        </option>
-                      ))}
-                    </Select>
-                    <Select
-                      size="sm"
-                      aria-label="Driver"
-                      value={p.driverUserId ?? ''}
-                      onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], driverUserId: e.target.value } }))}
-                    >
-                      <option value="">Pick a driver</option>
-                      {board.drivers.map((d) => (
-                        <option key={d.userId} value={d.userId}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </Select>
+                  <div className={cn('mt-2 grid grid-cols-1 gap-3', wide && 'lg:grid-cols-[1fr_240px]')}>
+                    <div>
+                      {topUp ? (
+                        <p className="text-xs text-silver">
+                          {existing ? `${existing.driver.name} · ` : ''}the run keeps its van and driver; everyone on it hears the new pickup time.
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <Select
+                            size="sm"
+                            aria-label="Van"
+                            value={p.vanId ?? ''}
+                            onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], vanId: e.target.value } }))}
+                          >
+                            <option value="">Pick a van</option>
+                            {board.vans.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.name} · {v.capacity} seats
+                              </option>
+                            ))}
+                          </Select>
+                          <Select
+                            size="sm"
+                            aria-label="Driver"
+                            value={p.driverUserId ?? ''}
+                            onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], driverUserId: e.target.value } }))}
+                          >
+                            <option value="">Pick a driver</option>
+                            {board.drivers.map((d) => (
+                              <option key={d.userId} value={d.userId} disabled={d.canDrive === false}>
+                                {d.name}
+                                {d.canDrive === false ? ` (${d.credentialProblem ?? 'can’t drive'})` : ''}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                      )}
+                      <ol className="mt-2 space-y-1 text-xs">
+                        {p.rides.map((r, i) => (
+                          <li key={r.rideId} className="flex items-center gap-2">
+                            <span className="w-4 text-right tabular-nums text-silver">{i + 1}</span>
+                            <span className="tabular-nums text-white">{fmtTimeTz(r.pickupAt, tz)}</span>
+                            <span className={cn('min-w-0 flex-1 truncate', r.existing ? 'text-silver/70' : 'text-silver')}>
+                              {r.name} · {r.place}
+                              {r.existing ? ' · already on it' : ''}
+                            </span>
+                            {!r.point && (
+                              <span className="inline-flex items-center gap-1 text-2xs text-warning" title="No map location">
+                                <MapPinOff className="h-3 w-3" aria-hidden="true" />
+                                no map location
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                      {p.warnings.length > 0 && <p className="mt-2 text-xs text-warning">{p.warnings.join(' ')}</p>}
+                    </div>
+                    {wide && (
+                      <DispatchMap
+                        direction={p.direction}
+                        store={{ name: p.store.name, point: p.store.point ?? null }}
+                        stops={p.rides.map((r) => ({ id: r.rideId, label: r.name, point: r.point }))}
+                        className="h-44 w-full rounded-md"
+                        interactive={false}
+                      />
+                    )}
                   </div>
-                  <ol className="mt-2 space-y-1 text-xs">
-                    {p.rides.map((r, i) => (
-                      <li key={r.rideId} className="flex items-center gap-2">
-                        <span className="w-4 text-right tabular-nums text-silver">{i + 1}</span>
-                        <span className="tabular-nums text-white">{fmtTimeTz(r.pickupAt, tz)}</span>
-                        <span className="min-w-0 flex-1 truncate text-silver">
-                          {r.name} · {r.place}
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                  {p.warnings.length > 0 && <p className="mt-2 text-xs text-warning">{p.warnings.join(' ')}</p>}
                 </div>
               );
             })}
@@ -1289,16 +1567,40 @@ function planPickups(direction: RideDirection, depart: string, n: number): strin
   return Array.from({ length: n }, (_, i) => (direction === 'TO_WORK' ? addMinutes(depart, STOP_GAP_MIN * (i + 1)) : depart));
 }
 
+/** Who is on another run inside this departure's window — the dialog's "(on 5:09 run)" marks (transport walk 1). */
+function busyAt(board: TransportBoard, departIso: string | null, excludeRunId: string | null) {
+  const bars = timelineBars(board.runs.filter((r) => r.id !== excludeRunId));
+  const at = departIso ? Date.parse(departIso) : NaN;
+  const window = Number.isNaN(at) ? null : { from: at - 15 * 60_000, to: at + 2 * 3_600_000 };
+  const tz = board.rides[0]?.store.timezone;
+  const label = (runId: string) => {
+    const run = board.runs.find((r) => r.id === runId);
+    return run ? `on ${fmtTimeTz(run.departAt, tz)} run` : 'on a run';
+  };
+  const hit = (key: 'vanId' | 'driverUserId', id: string) => (window ? bars.find((b) => b[key] === id && b.from < window.to && b.to > window.from) : undefined);
+  return {
+    van: (id: string) => {
+      const b = hit('vanId', id);
+      return b ? label(b.runId) : null;
+    },
+    driver: (id: string) => {
+      const b = hit('driverUserId', id);
+      return b ? label(b.runId) : null;
+    },
+  };
+}
+
 function DispatchDialog({
   board,
   initial,
   onClose,
 }: {
   board: TransportBoard;
-  initial: { rides: Ride[] } | { run: RideRun };
+  initial: { rides: Ride[]; vanId?: string | null } | { run: RideRun };
   onClose: (done: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const wide = useMinWidth(1024);
   const editing = 'run' in initial ? initial.run : null;
   const startRides = editing ? editing.rides.filter((r) => r.status === 'SCHEDULED') : (initial as { rides: Ride[] }).rides;
   const direction: RideDirection = editing ? editing.direction : startRides[0]!.direction;
@@ -1314,33 +1616,78 @@ function DispatchDialog({
       ? addMinutes(wall(sortedStart[0]!.targetAt, tz), -(STOP_GAP_MIN * sortedStart.length + 20))
       : wall(sortedStart[sortedStart.length - 1]!.targetAt, tz);
 
-  const firstVan = editing?.van.id ?? board.vans.find((v) => v.capacity >= startRides.length)?.id ?? board.vans[0]?.id ?? '';
+  // Transport walk 1: the default is a van and a driver who are FREE at
+  // the computed departure — never the pair already leaving three minutes
+  // earlier. A driver dispatch would refuse (no licence on file, lapsed)
+  // is never the default either (walk 2).
+  const defaultDepartIso = localInputToUtcIso(`${serviceDate}T${defaultDepart}`, tz);
+  const bars0 = timelineBars(board.runs.filter((r) => r.id !== editing?.id));
+  const presetVan = 'rides' in initial ? initial.vanId ?? null : null;
+  const firstVan =
+    editing?.van.id ??
+    presetVan ??
+    // firstFreeVan judges around a target time; a run leaving now keeps its van until two hours on.
+    firstFreeVan(board.vans, bars0, Date.parse(defaultDepartIso) + 2 * 3_600_000, startRides.length) ??
+    board.vans.find((v) => v.capacity >= startRides.length)?.id ??
+    board.vans[0]?.id ??
+    '';
   const [vanId, setVanIdState] = useState(firstVan);
-  // Each van's own driver by default.
-  const [driverUserId, setDriverUserId] = useState(
-    editing?.driver.userId ??
-      board.vans.find((v) => v.id === firstVan)?.driverUserId ??
-      // Someone whose trade is driving — which includes the shift
-      // supervisor who also drives, not just accounts filed as DRIVER.
-      board.drivers.find((d) => d.drivesByTrade)?.userId ??
-      '',
-  );
+  const freeDriver = (id: string | null | undefined, departIso: string) => {
+    if (!id) return false;
+    const d = board.drivers.find((x) => x.userId === id);
+    if (!d || d.canDrive === false) return false;
+    const at = Date.parse(departIso);
+    return !bars0.some((b) => b.driverUserId === id && b.from < at + 2 * 3_600_000 && b.to > at - 15 * 60_000);
+  };
+  const defaultDriverFor = (van: string, departIso: string) => {
+    const own = board.vans.find((v) => v.id === van)?.driverUserId;
+    if (freeDriver(own, departIso)) return own!;
+    // Someone whose trade is driving — which includes the shift
+    // supervisor who also drives, not just accounts filed as DRIVER.
+    return board.drivers.find((d) => d.drivesByTrade && freeDriver(d.userId, departIso))?.userId ?? board.drivers.find((d) => freeDriver(d.userId, departIso))?.userId ?? '';
+  };
+  const [driverUserId, setDriverUserId] = useState(editing?.driver.userId ?? defaultDriverFor(firstVan, defaultDepartIso));
+  const [depart, setDepart] = useState(defaultDepart);
+  const departIso = localInputToUtcIso(`${serviceDate}T${depart}`, tz);
+  const busy = busyAt(board, departIso, editing?.id ?? null);
   const setVanId = (id: string) => {
     setVanIdState(id);
     const own = board.vans.find((v) => v.id === id)?.driverUserId;
-    if (own) setDriverUserId(own);
+    if (own && freeDriver(own, departIso)) setDriverUserId(own);
   };
-  const [depart, setDepart] = useState(defaultDepart);
+  // Transport walk 5: the store's pin for the map beside the list.
+  const planMap = useQuery({ queryKey: ['transport', 'plan-map', serviceDate], queryFn: () => getPlanMap(serviceDate), enabled: wide, staleTime: 60_000 });
+  const storeId = startRides[0]?.store.id;
+  const storeTrip = planMap.data?.trips.find((t) => t.locationId === storeId && t.direction === direction) ?? planMap.data?.trips.find((t) => t.locationId === storeId);
+  const [seq, setSeq] = useState<string[]>([]);
   const [notes, setNotes] = useState(editing?.notes ?? '');
   const [order, setOrder] = useState<Array<{ ride: Ride; pickup: string }>>(() => {
     const times = planPickups(direction, defaultDepart, sortedStart.length);
     return sortedStart.map((ride, i) => ({ ride, pickup: editing && ride.pickupAt ? wall(ride.pickupAt, tz) : times[i]! }));
   });
-  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const van = board.vans.find((v) => v.id === vanId);
   const over = !!van && order.length > van.capacity;
+  const vanBusy = vanId ? busy.van(vanId) : null;
+  const driverBusy = driverUserId ? busy.driver(driverUserId) : null;
+  const driverPick = board.drivers.find((d) => d.userId === driverUserId);
+  // Tap pins in sequence: the order is applied once every placed pickup has been tapped.
+  const tapStop = (id: string) => {
+    if (seq.includes(id)) return;
+    const next = [...seq, id];
+    const placed = order.filter((o) => o.ride.point).map((o) => o.ride.id);
+    if (next.length >= placed.length) {
+      setOrder((prev) => {
+        const byId = new Map(prev.map((o) => [o.ride.id, o]));
+        const first = next.map((x) => byId.get(x)!).filter(Boolean);
+        const rest = prev.filter((o) => !next.includes(o.ride.id));
+        return [...first, ...rest];
+      });
+      setSeq([]);
+    } else setSeq(next);
+  };
   const addable = board.rides.filter(
     (r) => r.status === 'REQUESTED' && r.direction === direction && r.serviceDate === serviceDate && !order.some((o) => o.ride.id === r.id),
   );
@@ -1397,7 +1744,7 @@ function DispatchDialog({
   const submit = async () => {
     if (!vanId || !driverUserId) return setError('Pick a van and a driver.');
     if (order.length === 0) return setError('A run needs at least one rider.');
-    setBusy(true);
+    setSaving(true);
     setError(null);
     const rides = order.map((o) => ({ rideId: o.ride.id, pickupAt: toIso(o.pickup) }));
     const departAt = localInputToUtcIso(`${serviceDate}T${depart}`, tz);
@@ -1414,14 +1761,14 @@ function DispatchDialog({
     } catch (err) {
       setError(errMsg(err));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose(false)}>
       {/* See PlanDialog — the primitive owns the height cap and the scroll. */}
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl lg:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{editing ? `Edit ${editing.van.name}` : 'Dispatch a van'}</DialogTitle>
           <DialogDescription>
@@ -1435,29 +1782,42 @@ function DispatchDialog({
             {board.drivers.length === 0 ? 'Add a driver — a user with the Driver role — in Users.' : ''}
           </p>
         ) : (
+          <div className={cn('grid grid-cols-1 gap-4', wide && 'lg:grid-cols-[1fr_240px]')}>
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Field label="Van" required>
+              <Field label="Van" required hint={vanBusy ? `${van?.name ?? 'This van'} is ${vanBusy} — dispatch will refuse it.` : undefined}>
                 {(p) => (
                   <Select {...p} value={vanId} onChange={(e) => setVanId(e.target.value)}>
-                    {board.vans.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name} · {v.capacity} seats{v.plate ? ` · ${v.plate}` : ''}
-                      </option>
-                    ))}
+                    {board.vans.map((v) => {
+                      const on = busy.van(v.id);
+                      return (
+                        <option key={v.id} value={v.id}>
+                          {v.name} · {v.capacity} seats{v.plate ? ` · ${v.plate}` : ''}
+                          {on ? ` (${on})` : ''}
+                        </option>
+                      );
+                    })}
                   </Select>
                 )}
               </Field>
-              <Field label="Driver" required>
+              <Field
+                label="Driver"
+                required
+                hint={driverBusy ? `${driverPick?.name ?? 'This driver'} is ${driverBusy} — dispatch will refuse it.` : driverPick?.canDrive === false ? `${driverPick.credentialProblem ?? 'Can’t drive'} — dispatch will refuse it.` : undefined}
+              >
                 {(p) => (
                   <Select {...p} value={driverUserId} onChange={(e) => setDriverUserId(e.target.value)}>
                     <option value="">Pick a driver</option>
-                    {board.drivers.map((d) => (
-                      <option key={d.userId} value={d.userId}>
-                        {d.name}
-                        {d.role === 'TRANSPORTATION_DIRECTOR' ? ' (director)' : ''}
-                      </option>
-                    ))}
+                    {board.drivers.map((d) => {
+                      const on = busy.driver(d.userId);
+                      return (
+                        <option key={d.userId} value={d.userId}>
+                          {d.name}
+                          {d.role === 'TRANSPORTATION_DIRECTOR' ? ' (director)' : ''}
+                          {on ? ` (${on})` : d.canDrive === false ? ` (${(d.credentialProblem ?? 'can’t drive').toLowerCase()})` : ''}
+                        </option>
+                      );
+                    })}
                   </Select>
                 )}
               </Field>
@@ -1492,7 +1852,20 @@ function DispatchDialog({
                   <li key={o.ride.id} className="flex flex-wrap items-center gap-2 px-3 py-2 sm:flex-nowrap">
                     <span className="w-5 shrink-0 text-right text-xs tabular-nums text-silver">{i + 1}</span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm text-white">{o.ride.rider.name}</div>
+                      <div className="flex flex-wrap items-center gap-x-2 text-sm text-white">
+                        {o.ride.rider.name}
+                        {o.ride.signatureNeeded && (
+                          <Badge size="sm" variant="pending" title={o.ride.signatureNeeded}>
+                            Unsigned
+                          </Badge>
+                        )}
+                        {!o.ride.point && (
+                          <span className="inline-flex items-center gap-1 text-2xs text-warning" title="No map location — the time is an estimate">
+                            <MapPinOff className="h-3 w-3" aria-hidden="true" />
+                            no map location
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1 truncate text-xs text-silver">
                         {direction === 'TO_WORK' ? (
                           <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -1572,12 +1945,32 @@ function DispatchDialog({
               </p>
             )}
           </div>
+          {wide && (
+            <div className="space-y-1.5">
+              <DispatchMap
+                direction={direction}
+                store={storeTrip ? { name: storeTrip.store.name, point: storeTrip.store.point } : startRides[0] ? { name: startRides[0].store.name, point: null } : null}
+                stops={order.map((o) => ({ id: o.ride.id, label: o.ride.rider.name, point: o.ride.point }))}
+                onStopClick={tapStop}
+                className="h-72 w-full rounded-md"
+              />
+              <p className="text-2xs text-silver">
+                {seq.length > 0 ? `Tap pins in order: ${seq.length} of ${order.filter((o) => o.ride.point).length}` : 'Tap the pins in the order to drive them.'}
+                {seq.length > 0 && (
+                  <button type="button" className="ml-2 underline" onClick={() => setSeq([])}>
+                    Clear
+                  </button>
+                )}
+              </p>
+            </div>
+          )}
+          </div>
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onClose(false)}>
             Close
           </Button>
-          <Button onClick={() => void submit()} loading={busy} disabled={busy || over || order.length === 0 || !vanId || !driverUserId}>
+          <Button onClick={() => void submit()} loading={saving} disabled={saving || over || order.length === 0 || !vanId || !driverUserId}>
             <Send className="h-4 w-4" />
             {editing ? 'Save run' : `Dispatch ${order.length}`}
           </Button>
@@ -1597,6 +1990,7 @@ function ago(iso: string, now: number): string {
 function LiveTab() {
   const queryClient = useQueryClient();
   const { can } = useAuth();
+  const closeRun = useCloseRun();
   const live = useQuery({ queryKey: ['transport', 'live'], queryFn: () => getLiveBoard(), refetchInterval: 10_000 });
   useEffect(
     () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport', 'live'] })),
@@ -1664,7 +2058,7 @@ function LiveTab() {
         </h2>
         {onRoad.length === 0 && <EmptyState size="sm" title={"Nothing on the road right now."} />}
         {onRoad.map((r) => (
-          <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} />
+          <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} onClose={can('manage:transport') ? () => void closeRun(r.runId, r.van.name) : undefined} />
         ))}
         {planned.length > 0 && (
           <>
@@ -1682,14 +2076,23 @@ function LiveTab() {
   );
 }
 
-function LiveRunRow({ run, now, selected, onPick }: { run: RunMap; now: number; selected: boolean; onPick: () => void }) {
+function LiveRunRow({ run, now, selected, onPick, onClose }: { run: RunMap; now: number; selected: boolean; onPick: () => void; onClose?: () => void }) {
   const late = Math.max(0, ...run.late.map((l) => l.minutes));
   const next = run.waypoints.find((w) => w.etaAt) ?? run.waypoints[0];
   const active = run.status === 'ACTIVE';
+  // Transport walk 4: the same stuck rule as the board — "Not closed", not "~32d late".
+  const stuck = active && (run.stuck || late >= STUCK_RUN_MINUTES);
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onPick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPick();
+        }
+      }}
       aria-pressed={selected}
       className={cn(
         'w-full rounded-lg border p-3 text-left transition-colors',
@@ -1705,6 +2108,8 @@ function LiveRunRow({ run, now, selected, onPick }: { run: RunMap; now: number; 
             <Badge variant="destructive">SOS</Badge>
           ) : run.safety?.escalatedAt ? (
             <Badge variant="pending">No answer</Badge>
+          ) : stuck ? (
+            <Badge variant="pending">Not closed</Badge>
           ) : active ? (
             late >= 5 ? (
               <Badge variant="pending">~{fmtMinutes(late)} late</Badge>
@@ -1720,24 +2125,44 @@ function LiveRunRow({ run, now, selected, onPick }: { run: RunMap; now: number; 
         {run.direction === 'TO_WORK' ? 'To work' : 'Home from work'} · {run.riders.filter((r) => r.status === 'BOARDED').length} on board ·{' '}
         {run.riders.filter((r) => r.status === 'SCHEDULED').length} to pick up
       </div>
-      {active && next && (
-        <div className="mt-1 text-sm text-white">
-          Next: {next.label}
-          {next.etaAt && <span className="text-silver"> · about {Math.max(1, Math.round((Date.parse(next.etaAt) - now) / 60_000))} min</span>}
+      {stuck ? (
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-warning">
+          <span>Not closed — the driver never completed this run.</span>
+          {onClose && (
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+            >
+              Close run
+            </Button>
+          )}
         </div>
+      ) : (
+        <>
+          {active && next && (
+            <div className="mt-1 text-sm text-white">
+              Next: {next.label}
+              {next.etaAt && <span className="text-silver"> · about {Math.max(1, Math.round((Date.parse(next.etaAt) - now) / 60_000))} min</span>}
+            </div>
+          )}
+          {active && (
+            <div className={cn('mt-1 text-xs', run.stale ? 'text-warning' : 'text-silver')}>
+              {run.position ? (run.stale ? `No signal since ${ago(run.position.at, now)}` : `Updated ${ago(run.position.at, now)}`) : 'Waiting for the driver’s phone'}
+            </div>
+          )}
+        </>
       )}
-      {active && (
-        <div className={cn('mt-1 text-xs', run.stale ? 'text-warning' : 'text-silver')}>
-          {run.position ? (run.stale ? `No signal since ${ago(run.position.at, now)}` : `Updated ${ago(run.position.at, now)}`) : 'Waiting for the driver’s phone'}
-        </div>
-      )}
-    </button>
+    </div>
   );
 }
 
 /* ===== Rides ================================================================ */
 
-function RidesTab({ manage }: { manage: boolean }) {
+function RidesTab({ manage, onRider }: { manage: boolean; onRider?: (associateId: string) => void }) {
   const today = ymdLocal();
   const [from, setFrom] = useState(shiftDay(today, -7));
   const [to, setTo] = useState(shiftDay(today, 14));
@@ -1899,7 +2324,7 @@ function RidesTab({ manage }: { manage: boolean }) {
             }
             columns={[
               { key: 'when', header: 'When', accessor: (r) => r.targetAt, csv: (r) => `${fmtRelativeDayTz(r.targetAt, r.store.timezone)} ${fmtTimeTz(r.targetAt, r.store.timezone)}`, sortable: true, searchable: false, cardMeta: true, className: 'whitespace-nowrap tabular-nums', cell: (r) => `${fmtRelativeDayTz(r.targetAt, r.store.timezone)} ${fmtTimeTz(r.targetAt, r.store.timezone)}` },
-              { key: 'rider', header: 'Rider', accessor: (r) => r.rider.name, sortable: true, primary: true },
+              { key: 'rider', header: 'Rider', accessor: (r) => r.rider.name, sortable: true, primary: true, cell: (r) => <RiderName ride={r} onRider={onRider} /> },
               { key: 'way', header: 'Way', accessor: (r) => `${r.direction === 'TO_WORK' ? 'To' : 'From'} ${r.store.name}`, sortable: true, cardMeta: true, className: 'whitespace-nowrap' },
               { key: 'end', header: 'Pickup / drop', accessor: (r) => homeEnd(r), className: 'max-w-56 truncate' },
               { key: 'status', header: 'Status', accessor: (r) => STATUS_LABEL[r.status], sortable: true, cardMeta: true, cell: (r) => <Badge size="sm" variant={statusVariant(r.status)}>{STATUS_LABEL[r.status]}</Badge> },
@@ -2001,7 +2426,7 @@ function RidesTab({ manage }: { manage: boolean }) {
 
 /* ===== Issues =============================================================== */
 
-function IssuesTab({ manage }: { manage: boolean }) {
+function IssuesTab({ manage, onRider }: { manage: boolean; onRider?: (associateId: string) => void }) {
   const [view, setView] = useState<'open' | 'resolved'>('open');
   const issues = useQuery({
     queryKey: ['transport', 'issues', view],
@@ -2077,7 +2502,7 @@ function IssuesTab({ manage }: { manage: boolean }) {
                 <p className="mt-2 whitespace-pre-wrap text-sm text-white">{i.body}</p>
                 {i.ride && (
                   <p className="mt-2 text-xs text-silver">
-                    Ride: {fmtRelativeDayTz(i.ride.targetAt, i.ride.store.timezone)} {fmtTimeTz(i.ride.targetAt, i.ride.store.timezone)} ·{' '}
+                    <RiderName ride={i.ride} onRider={onRider} className="text-ink" /> · Ride: {fmtRelativeDayTz(i.ride.targetAt, i.ride.store.timezone)} {fmtTimeTz(i.ride.targetAt, i.ride.store.timezone)} ·{' '}
                     {i.ride.direction === 'TO_WORK' ? 'to' : 'from'} {i.ride.store.name} · {STATUS_LABEL[i.ride.status]}
                     {i.ride.run ? ` · ${i.ride.run.van.name}, ${i.ride.run.driver.name}` : ''}
                     {i.ride.owedCents > 0 ? ` · ${cents(i.ride.owedCents)} owed` : ''}
@@ -2239,6 +2664,11 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                             {d.label} {d.expired ? 'lapsed' : 'due'}
                           </Badge>
                         ))}
+                        {v.serviceDue?.due && (
+                          <Badge size="sm" variant={v.serviceDue.overdue ? 'destructive' : 'pending'} title={`Service at ${v.serviceDue.atMiles.toLocaleString()} mi`}>
+                            {v.serviceDue.overdue ? `Service ${Math.abs(v.serviceDue.milesLeft).toLocaleString()} mi overdue` : `Service in ${v.serviceDue.milesLeft.toLocaleString()} mi`}
+                          </Badge>
+                        )}
                       </div>
                       <div className="truncate text-xs text-silver">
                         {v.look || 'Add make, model and color'} · {v.capacity} seats
@@ -2343,9 +2773,82 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
         Earned is fares and no-show fees charged in the period, less waivers. Seat fill is riders carried over seats run. Miles come from each van’s
         trail. Drivers are people with the Driver role — invite them from Users.
       </p>
+      <VansRoster manage={manage} onRecord={setRecord} onEdit={setEditing} />
       {editing && <VanDialog van={editing === 'new' ? null : editing} drivers={drivers} onClose={() => setEditing(null)} />}
       {record && <VanRecordDrawer vanId={record} manage={manage} onClose={() => setRecord(null)} />}
     </div>
+  );
+}
+
+/**
+ * Audit Tier 3: the fleet's plain roster — every van, retired ones too
+ * (the cards above are the period's numbers for the live fleet), one line
+ * each, from /transport/vans. The record and the edit are one click.
+ */
+function VansRoster({ manage, onRecord, onEdit }: { manage: boolean; onRecord: (id: string) => void; onEdit: (v: Van) => void }) {
+  const q = useQuery({ queryKey: ['transport', 'vans'], queryFn: listVans, staleTime: 60_000 });
+  const vans = q.data?.vans ?? [];
+  if (q.isError) return <QueryError what="the van list" query={q} />;
+  if (q.isLoading) return <Skeleton className="h-24" />;
+  if (vans.length === 0) return null;
+  return (
+    <section aria-label="All vans" className="space-y-2">
+      <h3 className="text-sm font-semibold uppercase tracking-wider text-silver">
+        All vans <span className="text-ink">{vans.length}</span>
+      </h3>
+      <div className="overflow-x-auto">
+        <DataGrid<Van>
+          id="transport-vans"
+          caption="Every van on file"
+          rows={vans}
+          rowKey={(v) => v.id}
+          search={{ placeholder: 'Van…' }}
+          urlState={false}
+          exportCsv={{ filename: 'vans' }}
+          columns={[
+            { key: 'name', header: 'Van', accessor: (v) => v.name, sortable: true, primary: true },
+            { key: 'plate', header: 'Plate', accessor: (v) => v.plate ?? '', sortable: true, cardMeta: true, className: 'font-mono' },
+            { key: 'look', header: 'Make / model', accessor: (v) => v.look, searchable: true },
+            { key: 'capacity', header: 'Seats', accessor: (v) => v.capacity, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+            { key: 'driver', header: 'Driver', accessor: (v) => v.driver?.name ?? '', sortable: true, cell: (v) => v.driver?.name ?? '—' },
+            {
+              key: 'status',
+              header: 'Status',
+              accessor: (v) => (!v.isActive ? 'Retired' : v.outOfService ? 'Out of service' : 'In service'),
+              sortable: true,
+              searchable: false,
+              cardMeta: true,
+              cell: (v) => (
+                <Badge size="sm" variant={!v.isActive ? 'default' : v.outOfService ? 'destructive' : 'success'}>
+                  {!v.isActive ? 'Retired' : v.outOfService ? `Out of service${v.outOfService.reason ? ` · ${v.outOfService.reason}` : ''}` : 'In service'}
+                </Badge>
+              ),
+            },
+            {
+              key: 'actions',
+              header: '',
+              accessor: () => '',
+              searchable: false,
+              csv: () => '',
+              align: 'right',
+              stopRowClick: true,
+              cell: (v) => (
+                <div className="flex items-center justify-end gap-1">
+                  <Button size="xs" variant="ghost" onClick={() => onRecord(v.id)}>
+                    Record
+                  </Button>
+                  {manage && (
+                    <Button size="xs" variant="ghost" onClick={() => onEdit(v)}>
+                      Edit
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -2730,20 +3233,14 @@ function StopDialog({ stop, onClose }: { stop: TransportStop | null; onClose: ()
 
 /* ===== Charges ============================================================== */
 
-function ChargesTab() {
-  // Default: the last two Sat→Fri workweeks — a biweekly period's shape.
-  const initial = useMemo(() => {
-    const start = workweekStart();
-    start.setDate(start.getDate() - 7);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 13);
-    return { from: ymdLocal(start), to: ymdLocal(end) };
-  }, []);
-  const [from, setFrom] = useState(initial.from);
-  const [to, setTo] = useState(initial.to);
+function ChargesTab({ onRider }: { onRider?: (associateId: string) => void }) {
+  // Transport walk 13: one range, in the URL, shared with cost per seat below.
+  const { from, to, setFrom, setTo } = useChargesRange();
   const charges = useQuery({ queryKey: ['transport', 'charges', from, to], queryFn: () => getTransportCharges(from, to) });
   const rows = charges.data?.rows ?? [];
   const totals = charges.data?.totals;
+  // Who's costing us seats: two or more no-shows in the range.
+  const repeat = rows.filter((r) => r.noShows >= 2).sort((a, b) => b.noShows - a.noShows);
   const exportCsv = () =>
     downloadCsv(`ride-charges-${from}-to-${to}.csv`, [
       ['Associate', 'Rides', 'No-shows', 'Still owed', 'Taken from pay', 'Deferred (minimum-wage guard)', 'Not authorized (not deducted)', 'Waived', 'Authorization'],
@@ -2769,7 +3266,33 @@ function ChargesTab() {
           <Download className="h-3.5 w-3.5" />
           CSV
         </Button>
+        <Button size="sm" variant="ghost" asChild>
+          <a href={transportChargesCsvUrl(from, to)} download title="The server's CSV of the same report, with a totals line">
+            <Download className="h-3.5 w-3.5" />
+            Server CSV
+          </a>
+        </Button>
       </div>
+      {repeat.length > 0 && (
+        <Card className="border-warning/40">
+          <CardContent>
+            <p className="text-sm font-medium text-ink">
+              Repeat no-shows · {repeat.length} {repeat.length === 1 ? 'rider' : 'riders'} with 2 or more in these dates
+            </p>
+            <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-silver">
+              {repeat.slice(0, 12).map((r) => (
+                <li key={r.associateId}>
+                  <button type="button" className="text-ink hover:underline" onClick={() => onRider?.(r.associateId)}>
+                    {r.name}
+                  </button>{' '}
+                  · {r.noShows} no-shows · {r.rides} rides
+                </li>
+              ))}
+              {repeat.length > 12 && <li>and {repeat.length - 12} more</li>}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
       {totals && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <MetricCard label="Rides" value={totals.rides} />
@@ -2811,7 +3334,7 @@ function ChargesTab() {
             urlState={false}
             exportCsv={{ filename: 'ride-charges' }}
             columns={[
-              { key: 'associate', header: 'Associate', accessor: (r) => r.name, sortable: true, primary: true },
+              { key: 'associate', header: 'Associate', accessor: (r) => r.name, sortable: true, primary: true, cell: (r) => <RiderName ride={{ rider: { associateId: r.associateId, name: r.name, phone: null } }} onRider={onRider} /> },
               { key: 'rides', header: 'Rides', accessor: (r) => r.rides, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
               { key: 'noShows', header: 'No-shows', accessor: (r) => r.noShows, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
               { key: 'owed', header: 'Still owed', accessor: (r) => r.owedCents, csv: (r) => cents(r.owedCents), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => cents(r.owedCents) },
@@ -2899,8 +3422,15 @@ function AuthorizationsSection({ manage }: { manage: boolean }) {
   const q = useQuery({ queryKey: ['transport', 'authorizations'], queryFn: getRideAuthorizations });
   const rows = q.data?.rows ?? [];
   const signed = rows.filter((r) => r.status === 'current').length;
-  const mustSign = rows.filter((r) => r.status === 'none' || r.status === 'legacy' || r.status === 'outdated').length;
+  const unsigned = rows.filter((r) => r.status === 'none' || r.status === 'legacy' || r.status === 'outdated');
+  const mustSign = unsigned.length;
   const withdrawn = rows.filter((r) => r.status === 'withdrawn').length;
+  // Transport walk 8: the table can nudge — everyone who must sign, or one row.
+  const ask = useMutation({
+    mutationFn: (ids: string[]) => remindUnsignedRiders(ids),
+    onSuccess: (r) => toast.success(r.sent ? `Asked ${r.sent} ${r.sent === 1 ? 'rider' : 'riders'} to sign${r.skipped ? ` (${r.skipped} reminded in the last day or not reachable)` : ''}.` : 'Everyone here was reminded in the last day, or has no login to reach.'),
+    onError: (err) => toast.error(errMsg(err)),
+  });
   return (
     <section className="space-y-3">
       <div>
@@ -2919,10 +3449,17 @@ function AuthorizationsSection({ manage }: { manage: boolean }) {
         <EmptyState icon={Bus} title="No riders yet" />
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-3 sm:max-w-md">
-            <MetricCard label="Signed" value={signed} />
-            <MetricCard label="Must sign" value={mustSign} hint={mustSign > 0 ? 'cannot book or be charged' : undefined} />
-            <MetricCard label="Withdrawn" value={withdrawn} />
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="grid flex-1 grid-cols-3 gap-3 sm:max-w-md">
+              <MetricCard label="Signed" value={signed} />
+              <MetricCard label="Must sign" value={mustSign} hint={mustSign > 0 ? 'cannot book or be charged' : undefined} />
+              <MetricCard label="Withdrawn" value={withdrawn} />
+            </div>
+            {manage && mustSign > 0 && (
+              <Button size="sm" loading={ask.isPending} disabled={ask.isPending} onClick={() => ask.mutate(unsigned.map((r) => r.associateId))}>
+                Ask all {mustSign} to sign
+              </Button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <DataGrid<RideAuthorizationRow>
@@ -2939,6 +3476,25 @@ function AuthorizationsSection({ manage }: { manage: boolean }) {
                 { key: 'signedAt', header: 'Signed', accessor: (r) => r.signedAt ?? '', sortable: true, searchable: false, cell: (r) => (r.signedAt ? `${fmtDateTime(r.signedAt)} as ${r.signedName ?? ''}` : '—') },
                 { key: 'rate', header: 'Rate signed', accessor: (r) => r.fareCents ?? 0, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => (r.fareCents === null ? '—' : `${cents(r.fareCents)} · ${cents(r.noShowFeeCents ?? 0)}`) },
                 { key: 'reason', header: 'Note', accessor: (r) => r.reason ?? '', searchable: false, cell: (r) => <span className="text-silver">{r.status === 'current' ? '' : (r.reason ?? '')}</span> },
+                ...(manage
+                  ? [
+                      {
+                        key: 'ask',
+                        header: '',
+                        accessor: () => '',
+                        searchable: false,
+                        csv: () => '',
+                        align: 'right' as const,
+                        stopRowClick: true,
+                        cell: (r: RideAuthorizationRow) =>
+                          r.status === 'current' || r.status === 'withdrawn' ? null : (
+                            <Button size="xs" variant="ghost" disabled={ask.isPending} onClick={() => ask.mutate([r.associateId])}>
+                              Ask
+                            </Button>
+                          ),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </div>

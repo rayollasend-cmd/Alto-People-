@@ -40,6 +40,15 @@ describe('useSettingsRail', () => {
     expect(rail.find((i) => i.to === '/agents')).toBeUndefined();
   });
 
+  it('Roles & permissions is its own entry, beside Users & access — not a tab inside it (audit Tier 3)', () => {
+    const rail = railFor('HR_ADMINISTRATOR');
+    const roles = rail.find((i) => i.key === 'roles');
+    expect(roles).toMatchObject({ label: 'Roles & permissions', to: '/admin/roles', section: 'Access & trust' });
+    const keys = rail.map((i) => i.key);
+    expect(keys.indexOf('roles')).toBe(keys.indexOf('users') + 1);
+    expect(railFor('ASSOCIATE').find((i) => i.key === 'roles')).toBeUndefined();
+  });
+
   it('is hidden from a role without view:org', () => {
     const rail = railFor('ASSOCIATE');
     expect(rail.find((i) => i.key === 'agents')).toBeUndefined();

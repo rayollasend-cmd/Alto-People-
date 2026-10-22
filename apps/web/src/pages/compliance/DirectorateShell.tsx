@@ -56,18 +56,37 @@ export function Kpi({
   label,
   value,
   tone,
+  onClick,
+  active,
 }: {
   label: string;
   value: number;
   tone?: string;
+  /** Makes the number a filter: clicking shows the rows it counts. */
+  onClick?: () => void;
+  /** The filter this number stands for is the one applied. */
+  active?: boolean;
 }) {
-  return (
-    <div>
+  const body = (
+    <>
       <div className="text-2xs uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('text-xl tabular-nums', tone ?? 'text-white')}>
-        {value}
-      </div>
-    </div>
+      <div className={cn('text-xl tabular-nums', tone ?? 'text-ink')}>{value}</div>
+    </>
+  );
+  if (!onClick) return <div>{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active ?? false}
+      title={`Show ${label.toLowerCase()}`}
+      className={cn(
+        '-m-1.5 rounded-md p-1.5 text-left transition-colors hover:bg-navy-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+        active && 'bg-navy-secondary/50 ring-1 ring-gold/40',
+      )}
+    >
+      {body}
+    </button>
   );
 }
 

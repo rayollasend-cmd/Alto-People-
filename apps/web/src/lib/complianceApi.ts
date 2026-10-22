@@ -1,4 +1,6 @@
 import type {
+  AdverseActionListResponse,
+  EeoApplicantReport,
   BackgroundBulkInitiateInput,
   BackgroundBulkInitiateResponse,
   BackgroundCheck,
@@ -122,6 +124,41 @@ export function updateBackgroundCheck(
     method: 'POST',
     body,
   });
+}
+
+/* ----- FCRA adverse action (audit 2026-10-21 #14) ----------------------- */
+
+/** The worklist: final notices due, reports to decide, notices waiting out their period, recent ones. */
+export function listAdverseActions(): Promise<AdverseActionListResponse> {
+  return apiFetch<AdverseActionListResponse>('/compliance/adverse-actions');
+}
+
+/** Pre-adverse notice with the report on file attached; starts the waiting period. */
+export function sendPreAdverse(id: string, waitDays?: number): Promise<BackgroundCheck> {
+  return apiFetch<BackgroundCheck>(`/compliance/background/${id}/pre-adverse`, {
+    method: 'POST',
+    body: waitDays ? { waitDays } : {},
+  });
+}
+
+/** The final adverse action notice — only after the waiting period. */
+export function sendFinalAdverse(id: string): Promise<BackgroundCheck> {
+  return apiFetch<BackgroundCheck>(`/compliance/background/${id}/final-adverse`, { method: 'POST', body: {} });
+}
+
+/** The person answered: withdraw the pending adverse action and clear the check. */
+export function withdrawAdverse(id: string): Promise<BackgroundCheck> {
+  return apiFetch<BackgroundCheck>(`/compliance/background/${id}/withdraw-adverse`, { method: 'POST', body: {} });
+}
+
+/* ----- Applicant EEO self-identification (aggregate only) --------------- */
+
+export function getEeoApplicantReport(range: { from?: string; to?: string } = {}): Promise<EeoApplicantReport> {
+  const qs = new URLSearchParams();
+  if (range.from) qs.set('from', range.from);
+  if (range.to) qs.set('to', range.to);
+  const q = qs.toString();
+  return apiFetch<EeoApplicantReport>(`/compliance/eeo/applicant-report${q ? `?${q}` : ''}`);
 }
 
 /* ----- Drug tests -------------------------------------------------------- */

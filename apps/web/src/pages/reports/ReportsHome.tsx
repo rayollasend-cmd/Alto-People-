@@ -62,6 +62,9 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
+import { REPORT_TEMPLATES, templateText, type ReportTemplate } from './reportTemplates';
+import { useTenant, useTerm } from '@/lib/auth';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 
 const ENTITIES: ReportEntity[] = [
   'ASSOCIATE',
@@ -71,6 +74,10 @@ const ENTITIES: ReportEntity[] = [
   'APPLICATION',
   'EXPENSE',
   'CANDIDATE',
+  'SEPARATION',
+  'LEAVE_CASE',
+  'HR_CASE',
+  'OFFER',
 ];
 
 /** Human labels for the entity enum — never show ASSOCIATE/TIME_ENTRY raw. */
@@ -82,6 +89,10 @@ const ENTITY_LABELS: Record<ReportEntity, string> = {
   APPLICATION: 'Application',
   EXPENSE: 'Expense',
   CANDIDATE: 'Candidate',
+  SEPARATION: 'Separation',
+  LEAVE_CASE: 'Leave case',
+  HR_CASE: 'HR case',
+  OFFER: 'Offer',
 };
 
 /**
@@ -95,7 +106,13 @@ const ENTITY_LABELS: Record<ReportEntity, string> = {
  *     served, so no Select can be built) → free-text input
  */
 const isDateColumn = (c: string) =>
-  /At$/.test(c) || c === 'periodStart' || c === 'periodEnd' || c === 'clockIn' || c === 'clockOut';
+  /At$/.test(c) ||
+  /Date$/.test(c) ||
+  c === 'periodStart' ||
+  c === 'periodEnd' ||
+  c === 'clockIn' ||
+  c === 'clockOut' ||
+  c === 'lastDayWorked';
 
 const isAssociateColumn = (c: string) => c === 'associateId';
 
@@ -104,6 +121,7 @@ const NUMERIC_COLUMNS: Partial<Record<ReportEntity, readonly string[]>> = {
   PAYROLL_ITEM: ['grossAmount', 'netAmount'],
   PAYROLL_RUN: ['totalGross', 'totalNet'],
   EXPENSE: ['amount'],
+  OFFER: ['hourlyRate', 'salary'],
 };
 
 const AGGREGATE_FNS: { value: AggregateFn; label: string }[] = [
@@ -301,6 +319,27 @@ export function ReportsHome() {
           </Button>
         </div>
       </div>
+      {/* The builder no longer starts blank (HR walk 17): the reports HR
+          builds every month, ready to run or adjust. Nothing is saved
+          until the person saves it. */}
+      <TemplateGallery
+        onPick={(tpl) =>
+          setBuilder({
+            seed: {
+              mode: 'draft',
+              report: {
+                id: '',
+                name: tpl.name,
+                description: tpl.hint,
+                entity: tpl.entity,
+                spec: tpl.spec,
+                isPublic: false,
+                createdAt: new Date().toISOString(),
+              },
+            },
+          })
+        }
+      />
       <Card>
         <CardContent className="p-0">
           {loadError ? (
@@ -476,6 +515,37 @@ function specToFilterRows(spec: ReportSpec): FilterRow[] {
 }
 
 const NO_COLUMNS: string[] = [];
+
+function TemplateGallery({ onPick }: { onPick: (t: ReportTemplate) => void }) {
+  const term = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const words = { client: term('label.client').toLowerCase(), store: term('label.store').toLowerCase() };
+  const templates = REPORT_TEMPLATES.filter((t) => hasClients || !t.needsClients).map((t) => ({
+    ...t,
+    name: templateText(t.name, words),
+    hint: templateText(t.hint, words),
+  }));
+  return (
+    <section aria-label="Start from a template" className="space-y-3">
+      <SectionTitle title="Start from a template" description="Opens in the builder, ready to run. Change anything before you save." />
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        {templates.map((tpl) => (
+          <li key={tpl.key}>
+            <button
+              type="button"
+              onClick={() => onPick(tpl)}
+              className="flex h-full w-full flex-col rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <span className="text-sm font-medium text-ink">{tpl.name}</span>
+              <span className="mt-0.5 text-2xs uppercase tracking-wider text-ink-muted">{ENTITY_LABELS[tpl.entity]}</span>
+              <span className="mt-1 text-xs text-ink-muted">{tpl.hint}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 function ReportBuilder({
   seed,

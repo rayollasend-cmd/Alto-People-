@@ -32,8 +32,23 @@ export interface InviteContext {
   interview: InviteInterview;
   candidate: InvitePerson & { position: string | null };
   interviewer: InvitePerson | null;
+  /** The whole panel (HR walk 9) — everyone doing the interview. When
+   *  absent, the panel is the single interviewer above. */
+  panel?: InvitePerson[];
   /** Who scheduled it — the invite's ORGANIZER, where replies go. */
   organizer: InvitePerson;
+}
+
+/** Everyone interviewing, each once (by email). */
+export function panelOf(ctx: Pick<InviteContext, 'interviewer' | 'panel'>): InvitePerson[] {
+  const all = ctx.panel && ctx.panel.length > 0 ? ctx.panel : ctx.interviewer ? [ctx.interviewer] : [];
+  const seen = new Set<string>();
+  return all.filter((p) => {
+    const k = p.email.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 function uidOf(interviewId: string): string {
@@ -66,7 +81,7 @@ export function buildInterviewIcs(
   method: 'REQUEST' | 'CANCEL',
   now: Date = new Date(),
 ): string {
-  const { interview, candidate, interviewer, organizer } = ctx;
+  const { interview, candidate, organizer } = ctx;
   const ends = new Date(interview.scheduledFor.getTime() + interview.durationMinutes * 60_000);
   const title = `Interview: ${candidate.name}${candidate.position ? ` (${candidate.position})` : ''} — Alto`;
   const lines = [
@@ -85,7 +100,7 @@ export function buildInterviewIcs(
     ...(interview.location ? [fold(`LOCATION:${escapeText(interview.location)}`)] : []),
     fold(`ORGANIZER;CN=${escapeText(organizer.name)}:mailto:${organizer.email}`),
     attendee(candidate),
-    ...(interviewer ? [attendee(interviewer)] : []),
+    ...panelOf(ctx).map(attendee),
     `STATUS:${method === 'CANCEL' ? 'CANCELLED' : 'CONFIRMED'}`,
     'END:VEVENT',
     'END:VCALENDAR',
@@ -103,7 +118,13 @@ export function buildInterviewIcs(
 export function sendInterviewInvites(
   ctx: InviteContext,
   method: 'REQUEST' | 'CANCEL',
-  opts: { rescheduled?: boolean; only?: 'interviewer' } = {},
+  opts: {
+    rescheduled?: boolean;
+    only?: 'interviewer';
+    /** Interviewers to write to, by email — the ones taken off a panel get
+     *  the cancellation, the ones who stay get nothing extra. */
+    interviewerEmails?: string[];
+  } = {},
 ): { candidate: boolean; interviewer: boolean } {
   const ics = Buffer.from(buildInterviewIcs(ctx, method), 'utf8');
   const attachment = {
@@ -149,9 +170,11 @@ export function sendInterviewInvites(
       ],
     );
   }
-  if (ctx.interviewer) {
+  const wanted = opts.interviewerEmails ? new Set(opts.interviewerEmails.map((e) => e.toLowerCase())) : null;
+  const panel = panelOf(ctx).filter((p) => !wanted || wanted.has(p.email.toLowerCase()));
+  for (const person of panel) {
     mail(
-      ctx.interviewer.email,
+      person.email,
       `${verb === 'cancelled' ? 'Cancelled: ' : verb === 'moved' ? 'Moved: ' : ''}Interview with ${ctx.candidate.name} — ${when}`,
       [
         verb === 'cancelled'
@@ -161,5 +184,5 @@ export function sendInterviewInvites(
       ],
     );
   }
-  return { candidate: toCandidate, interviewer: Boolean(ctx.interviewer) };
+  return { candidate: toCandidate, interviewer: panel.length > 0 };
 }

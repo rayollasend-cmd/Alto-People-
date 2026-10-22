@@ -16,6 +16,7 @@ import {
   fmtDate,
   fmtShiftRangeTz,
   fmtTime,
+  fmtWeekday,
   parseYmd,
   ymdLocal,
   zonedDayKey,
@@ -119,10 +120,11 @@ interface ApprovalsCount {
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 const DAY_MS = 86_400_000;
 
-const WEEKDAY = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
+/** The day's short name in the reader's language (fmtWeekday follows the chosen language). */
 function weekdayShort(ymd: string): string {
   const d = parseYmd(ymd);
-  return d ? WEEKDAY.format(d) : '';
+  // Noon, so a display zone a few hours off the device's can't move the day.
+  return d ? fmtWeekday(new Date(d.getTime() + 12 * 3_600_000)) : '';
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -361,7 +363,7 @@ export function SupervisorDashboard() {
     <Button size="sm" asChild>
       <Link to="/scheduling">
         <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-        Open schedule
+        {t('sup.openSchedule')}
       </Link>
     </Button>
   );
@@ -371,7 +373,7 @@ export function SupervisorDashboard() {
       <Button size="sm" variant="outline" asChild>
         <Link to="/time-attendance">
           <Timer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          Live board
+          {t('tabs.liveBoard')}
         </Link>
       </Button>
       {!watchOnly && (
@@ -390,7 +392,7 @@ export function SupervisorDashboard() {
       </Button>
       {!watchOnly && (
         <Button size="sm" variant="outline" asChild>
-          <Link to="/approvals">Approvals</Link>
+          <Link to="/approvals">{t('tabs.approvals')}</Link>
         </Button>
       )}
     </div>
@@ -534,7 +536,7 @@ export function SupervisorDashboard() {
           </div>
           {!watchOnly && (
             <Button variant="secondary" onClick={() => void clock.clockOutNow()} loading={clock.busy}>
-              Clock out
+              {t('sup.clockOut')}
             </Button>
           )}
         </div>
@@ -549,8 +551,8 @@ export function SupervisorDashboard() {
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-white">
               {coveringToday
-                ? `You're running ${coveringToday.leadName.split(' ')[0]}'s shift today`
-                : "You're off the clock"}
+                ? t('sup.runningShiftToday', { name: coveringToday.leadName.split(' ')[0] ?? coveringToday.leadName })
+                : t('sup.offClock')}
             </div>
             <div className="mt-0.5 text-xs text-silver">
               {/* Floor supervisors punch at the store tablet only (the API
@@ -564,7 +566,7 @@ export function SupervisorDashboard() {
           </div>
           {!watchOnly && (
             <Button onClick={() => void clock.clockInNow()} loading={clock.busy}>
-              Clock in
+              {t('sup.clockIn')}
             </Button>
           )}
         </div>
@@ -575,10 +577,10 @@ export function SupervisorDashboard() {
           <ClipboardCheck className="h-6 w-6 shrink-0 text-silver" aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-white">
-              {leadFirst ? `${leadFirst}'s SOP opens when ${leadFirst} clocks in` : "Your shift's SOP isn't open yet"}
+              {leadFirst ? t('sup.sopOpensWhen', { name: leadFirst }) : t('sup.sopNotOpen')}
             </div>
             <div className="mt-0.5 text-xs text-silver">
-              You help on it. If no shift supervisor is on the clock 30 minutes into the shift, it moves to you.
+              {t('sup.sopHelpBody')}
             </div>
           </div>
         </div>
@@ -785,7 +787,7 @@ export function SupervisorDashboard() {
               sub={openToday === 0 ? t('floor.everySlotFilled') : t('floor.openSlots')}
             />
             <StatTile
-              label="Tomorrow · confirmed"
+              label={t('sup.tomorrowConfirmed')}
               value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
               unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
               meter={
@@ -812,11 +814,11 @@ export function SupervisorDashboard() {
                 sub={
                   shiftSop
                     ? shiftSop.mine
-                      ? 'Yours to submit'
-                      : `${shiftSop.runBy} is running it`
+                      ? t('sup.yoursToSubmit')
+                      : t('sup.runningIt', { name: shiftSop.runBy })
                     : leadFirst
-                      ? `Opens when ${leadFirst} clocks in`
-                      : 'Not open yet'
+                      ? t('sup.opensWhen', { name: leadFirst })
+                      : t('sup.notOpenYet')
                 }
               />
             </TileLink>
@@ -824,7 +826,7 @@ export function SupervisorDashboard() {
         ) : (
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-enter" style={enterStagger(1)}>
             <StatTile
-              label="Fill rate · this week"
+              label={t('sup.fillRateWeek')}
               value={k && weekBase > 0 ? `${k.fillRatePercent}%` : '—'}
               delta={fillDelta !== null ? `${fillDelta > 0 ? '+' : ''}${fillDelta} ${t('portal.kpiPts')}` : null}
               deltaTone={fillDelta === null || fillDelta === 0 ? 'neutral' : fillDelta > 0 ? 'good' : 'bad'}
@@ -836,15 +838,15 @@ export function SupervisorDashboard() {
               sub={
                 k
                   ? weekBase > 0
-                    ? `${filledWeek} of ${weekBase} shifts filled`
-                    : 'Nothing scheduled this week yet'
+                    ? t('sup.shiftsFilled', { filled: filledWeek, total: weekBase })
+                    : t('sup.nothingThisWeek')
                   : undefined
               }
             />
             <TileLink to="/scheduling">
               <StatTile
                 className="h-full"
-                label="Open shifts · next 7 days"
+                label={t('sup.openNext7')}
                 value={openAhead ?? '—'}
                 meter={
                   openAhead !== null && filledAhead + openAhead > 0
@@ -857,14 +859,14 @@ export function SupervisorDashboard() {
                 sub={
                   aheadDays
                     ? openAhead === 0
-                      ? 'Every shift covered'
-                      : `${aheadDays[0]!.open} today · ${aheadDays[1]!.open} tomorrow`
+                      ? t('sup.everyShiftCovered')
+                      : t('sup.todayTomorrow', { today: aheadDays[0]!.open, tomorrow: aheadDays[1]!.open })
                     : undefined
                 }
               />
             </TileLink>
             <StatTile
-              label="Tomorrow · confirmed"
+              label={t('sup.tomorrowConfirmed')}
               value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
               unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
               meter={
@@ -888,18 +890,18 @@ export function SupervisorDashboard() {
             <TileLink to="/approvals">
               <StatTile
                 className="h-full"
-                label="Waiting on you"
+                label={t('sup.waitingOnYou')}
                 value={ap ? ap.total : '—'}
                 sub={
                   ap
                     ? ap.total === 0
-                      ? 'Nothing waiting — inbox zero'
+                      ? t('sup.nothingWaiting')
                       : [
-                          ap.clockIns > 0 && plural(ap.clockIns, 'walk-in', 'walk-ins'),
-                          ap.swaps > 0 && plural(ap.swaps, 'swap', 'swaps'),
-                          ap.pickups > 0 && plural(ap.pickups, 'pickup', 'pickups'),
-                          ap.timeOff > 0 && `${ap.timeOff} time off`,
-                          ap.timesheets > 0 && plural(ap.timesheets, 'timesheet', 'timesheets'),
+                          ap.clockIns > 0 && t(ap.clockIns === 1 ? 'sup.oneWalkIn' : 'sup.nWalkIns', { n: ap.clockIns }),
+                          ap.swaps > 0 && t(ap.swaps === 1 ? 'sup.oneSwap' : 'sup.nSwaps', { n: ap.swaps }),
+                          ap.pickups > 0 && t(ap.pickups === 1 ? 'sup.onePickup' : 'sup.nPickups', { n: ap.pickups }),
+                          ap.timeOff > 0 && t('sup.nTimeOff', { n: ap.timeOff }),
+                          ap.timesheets > 0 && t(ap.timesheets === 1 ? 'sup.oneTimesheet' : 'sup.nTimesheets', { n: ap.timesheets }),
                         ]
                           .filter(Boolean)
                           .join(' · ')
@@ -1009,20 +1011,20 @@ export function SupervisorDashboard() {
                   icon={CalendarDays}
                   title={
                     <>
-                      Next 7 days
+                      {t('sup.next7')}
                       {mine && <span className="font-normal text-ink-muted"> · {focusName(myWindows)}</span>}
                     </>
                   }
                   trailing={
                     <Link to="/scheduling" className="text-xs text-accent underline-offset-2 hover:underline">
-                      Open schedule
+                      {t('sup.openSchedule')}
                     </Link>
                   }
                 />
                 {aheadDays === null ? (
                   <Skeleton className="mt-3 h-40" />
                 ) : filledAhead + (openAhead ?? 0) === 0 ? (
-                  <p className="mt-2 text-sm text-ink-muted">{'Nothing scheduled in the next seven days.'}</p>
+                  <p className="mt-2 text-sm text-ink-muted">{t('sup.nothingNext7')}</p>
                 ) : (
                   <>
                     <div className="mt-3">
@@ -1041,13 +1043,13 @@ export function SupervisorDashboard() {
                     </div>
                     <p className="mt-2 text-sm text-silver tabular-nums">
                       {filledAhead + (openAhead ?? 0) === 0
-                        ? 'Nothing scheduled in the next seven days.'
-                        : `${filledAhead} of ${filledAhead + (openAhead ?? 0)} filled`}
+                        ? t('sup.nothingNext7')
+                        : t('sup.nOfFilled', { filled: filledAhead, total: filledAhead + (openAhead ?? 0) })}
                       {openAhead ? <span className="text-alert"> · {t('portal.openCount', { count: openAhead })}</span> : null}
                     </p>
                     <DetailsTable
                       label={t('portal.details')}
-                      columns={['Day', t('portal.chartFilled'), t('portal.chartOpen')]}
+                      columns={[t('sup.day'), t('portal.chartFilled'), t('portal.chartOpen')]}
                       rows={aheadDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
                     />
                   </>
@@ -1076,12 +1078,12 @@ export function SupervisorDashboard() {
           <div className="pointer-events-auto flex gap-2 rounded-full border border-line bg-surface/95 p-1.5 shadow-lg backdrop-blur">
             <Button size="sm" variant="secondary" className="rounded-full" onClick={() => setIncidentOpen(true)}>
               <ShieldAlert className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Report incident
+              {t('sup.reportIncident')}
             </Button>
             {watchOnly && (
               <Button size="sm" variant="secondary" className="rounded-full" onClick={() => setFlagOpen(true)}>
                 <Flag className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Raise a flag
+                {t('sup.raiseFlag')}
               </Button>
             )}
           </div>
@@ -1106,6 +1108,7 @@ function TileLink({ to, children }: { to: string; children: React.ReactNode }) {
 
 /** Their shift's SOP, open until submitted — you can't clock out before. */
 function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySop>>['sop']> }) {
+  const { t } = useI18n();
   const pct = sop.sopTotal > 0 ? Math.round((sop.sopDone / sop.sopTotal) * 100) : 0;
   const ended = sop.dueAt !== null && new Date(sop.dueAt).getTime() < Date.now();
   const late = sop.overdue ?? 0;
@@ -1129,31 +1132,31 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-white">
           {sop.coveringFor
-            ? `You're running ${sop.coveringFor.name.split(' ')[0]}'s ${sop.windowLabel ?? sop.position} SOP`
-            : `Your ${sop.windowLabel ?? sop.position} SOP is open`}
-          {dayLabel && <span className="text-alert"> · from {dayLabel}</span>}
+            ? t('sup.sopRunningFor', { name: sop.coveringFor.name.split(' ')[0] ?? sop.coveringFor.name, window: sop.windowLabel ?? sop.position })
+            : t('sup.sopOpen', { window: sop.windowLabel ?? sop.position })}
+          {dayLabel && <span className="text-alert"> · {t('sup.fromDay', { day: dayLabel })}</span>}
         </div>
         {block && (
           <div className={cn('mt-0.5 truncate text-xs font-medium tabular-nums', blockLate ? 'text-alert' : 'text-gold')}>
-            Now: {block.section ?? 'Next block'} · {block.open} left ·{' '}
-            {blockLate ? `was due ${fmtTime(block.dueAt)}` : `due ${fmtTime(block.dueAt)}`}
+            {t('sup.blockNow', { section: block.section ?? t('sup.nextBlock'), left: block.open })} ·{' '}
+            {blockLate ? t('sup.wasDue', { when: fmtTime(block.dueAt) }) : t('sup.due', { when: fmtTime(block.dueAt) })}
           </div>
         )}
         <div className="mt-0.5 text-xs text-silver tabular-nums">
-          {sop.sopDone} of {sop.sopTotal} done
-          {late > 0 && <span className="text-alert"> · {late} overdue</span>}
+          {t('sup.nOfDone', { done: sop.sopDone, total: sop.sopTotal })}
+          {late > 0 && <span className="text-alert"> · {t('sup.nOverdue', { n: late })}</span>}
           {sop.dueAt && (
             <span className={ended ? 'text-alert' : undefined}>
-              {' '}· {ended ? 'was due' : 'due'} {notToday ? `${dayLabel}, ` : ''}{fmtTime(sop.dueAt)}
+              {' '}· {(ended ? t('sup.wasDue', { when: `${notToday ? `${dayLabel}, ` : ''}${fmtTime(sop.dueAt)}` }) : t('sup.due', { when: `${notToday ? `${dayLabel}, ` : ''}${fmtTime(sop.dueAt)}` }))}
             </span>
           )}
-          {' '}· submit it before you clock out
+          {' '}· {t('sup.submitBeforeClockOut')}
         </div>
         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
           <div className={cn('h-full rounded-full', overdue ? 'bg-alert' : 'bg-gold')} style={{ width: `${pct}%` }} />
         </div>
       </div>
-      <span className="shrink-0 text-sm font-medium text-gold">Continue →</span>
+      <span className="shrink-0 text-sm font-medium text-gold">{t('sup.continue')} →</span>
     </Link>
   );
 }
@@ -1161,6 +1164,7 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
 /** A floor supervisor on the clock: the SOP they help on — check items
  *  off as they walk the floor; the one running it submits it. */
 function HelpingBanner({ sop }: { sop: HelpingSop }) {
+  const { t } = useI18n();
   const pct = sop.sopTotal > 0 ? Math.round((sop.sopDone / sop.sopTotal) * 100) : 0;
   const first = sop.runBy.name.split(' ')[0] ?? sop.runBy.name;
   return (
@@ -1171,16 +1175,16 @@ function HelpingBanner({ sop }: { sop: HelpingSop }) {
       <ClipboardCheck className="h-6 w-6 shrink-0 text-gold" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-white">
-          {first}&apos;s {sop.windowLabel ?? sop.position} SOP
+          {t('sup.theirSop', { name: first, window: sop.windowLabel ?? sop.position })}
         </div>
         <div className="mt-0.5 text-xs text-silver tabular-nums">
-          {sop.sopDone} of {sop.sopTotal} done · check items off as you walk the floor — {first} submits it
+          {t('sup.nOfDone', { done: sop.sopDone, total: sop.sopTotal })} · {t('sup.helpCheckOff', { name: first })}
         </div>
         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
           <div className="h-full rounded-full bg-gold" style={{ width: `${pct}%` }} />
         </div>
       </div>
-      <span className="shrink-0 text-sm font-medium text-gold">Help →</span>
+      <span className="shrink-0 text-sm font-medium text-gold">{t('sup.help')} →</span>
     </Link>
   );
 }

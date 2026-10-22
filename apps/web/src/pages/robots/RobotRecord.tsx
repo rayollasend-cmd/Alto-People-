@@ -5,9 +5,12 @@ import { AlertTriangle, Bot, CheckCircle2, ClipboardCheck, MapPin, OctagonX, Pla
 import { toast } from 'sonner';
 import {
   FLEET_PROVIDERS,
+  OSHA_SEVERITIES,
+  OSHA_SEVERITY_LABELS,
   ROBOT_EVENT_LABELS,
   ROBOT_INCIDENT_LABELS,
   type ChecklistAnswer,
+  type OshaSeverity,
   type RobotChecklistTemplateSummary,
   type RobotDetail,
   type RobotIncidentKind,
@@ -584,7 +587,18 @@ function ChecklistsTab({ robot, canFloor, canManage }: { robot: RobotDetail; can
         {templates.isPending ? (
           <Skeleton className="h-40" />
         ) : !template ? (
-          <EmptyState icon={ClipboardCheck} title="No checklist template" description={canManage ? 'Create one for this site or for every site under Checklists on the Robots page.' : 'Ask an administrator to create a template.'} />
+          <EmptyState
+            icon={ClipboardCheck}
+            title="No checklist template"
+            description={canManage ? 'Create one for this site or for every site.' : 'Ask an administrator to create a template.'}
+            action={
+              canManage ? (
+                <Button asChild variant="secondary" size="sm">
+                  <Link to="/robots/checklists">Open checklists</Link>
+                </Button>
+              ) : undefined
+            }
+          />
         ) : (
           <Card>
             <CardContent className="space-y-3">
@@ -677,8 +691,10 @@ function IncidentsTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boole
   const [kind, setKind] = useState<RobotIncidentKind>('NEAR_MISS');
   const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString().slice(0, 16));
   const [description, setDescription] = useState('');
+  // An injury carries the OSHA severity from the report: first aid is the floor, not the only answer.
+  const [severity, setSeverity] = useState<OshaSeverity>('FIRST_AID');
   const report = useMutation({
-    mutationFn: () => reportRobotIncident(robot.id, { kind, occurredAt: new Date(occurredAt).toISOString(), description: description.trim(), oshaSeverity: kind === 'INJURY' ? 'FIRST_AID' : undefined }),
+    mutationFn: () => reportRobotIncident(robot.id, { kind, occurredAt: new Date(occurredAt).toISOString(), description: description.trim(), oshaSeverity: kind === 'INJURY' ? severity : undefined }),
     onSuccess: (i) => {
       toast.success(`Reported. ${i.sampleCount} readings and ${i.peopleOnShift.length} people on shift attached as evidence.`);
       setDescription('');
@@ -726,7 +742,11 @@ function IncidentsTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boole
                       ))}
                       {detail.data.samples.length === 0 && <div>No readings in that hour.</div>}
                     </div>
-                    <div className="mt-1">Kept until {fmtDate(detail.data.retainUntil)}.</div>
+                    <div className="mt-1">
+                      {detail.data.evidencePurgedAt
+                        ? `Evidence removed ${fmtDate(detail.data.evidencePurgedAt)} after its five-year retention; the report stays.`
+                        : `Evidence kept until ${fmtDate(detail.data.retainUntil)}.`}
+                    </div>
                   </div>
                 )}
               </li>
@@ -752,6 +772,19 @@ function IncidentsTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boole
               </Field>
               <Field label="When">{(fp) => <Input {...fp} type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} />}</Field>
             </div>
+            {kind === 'INJURY' && (
+              <Field label="Severity" hint="Anything above first aid is OSHA-recordable.">
+                {(fp) => (
+                  <Select {...fp} value={severity} onChange={(e) => setSeverity(e.target.value as OshaSeverity)}>
+                    {OSHA_SEVERITIES.map((s) => (
+                      <option key={s} value={s}>
+                        {OSHA_SEVERITY_LABELS[s]}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
             <Field label="What happened" required>{(fp) => <Textarea {...fp} rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
             <p className="text-xs2 text-ink-muted">An injury or property damage at a client site also opens a row in the OSHA log.</p>
             <div className="flex justify-end">

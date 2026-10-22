@@ -90,8 +90,9 @@ describe('pay outside the band needs someone else\'s approval', () => {
     expect(r.body.approvalNote).toBe('$19.00/hr is above the Cashier band ($14.00–$17.00/hr).');
 
     expect((await a.post(`/offers/${r.body.id}/send`)).body.error.code).toBe('needs_approval');
-    // The recruiter holds manage:comp too — still not their call.
-    expect((await a.post(`/offers/${r.body.id}/approve`)).body.error.code).toBe('own_offer');
+    // Setting pay outside the band is not the recruiter's call: it holds no
+    // manage:comp since its own charter (audit #16).
+    expect((await a.post(`/offers/${r.body.id}/approve`)).status).toBe(403);
 
     // HR heard about it.
     await flushPendingNotifications();
@@ -104,6 +105,11 @@ describe('pay outside the band needs someone else\'s approval', () => {
 
     const kinds = (await a.get(`/recruiting/candidates/${candidateId}/events`)).body.events.map((e: { kind: string }) => e.kind);
     expect(kinds).toEqual(expect.arrayContaining(['OFFER_APPROVAL_REQUESTED', 'OFFER_APPROVED', 'OFFER_SENT']));
+
+    // Maker-checker: someone who CAN set pay still can't wave their own draft through.
+    const own = await hrA.post('/offers').send(offerBody(candidateId, client.id, 19));
+    expect(own.body.status).toBe('PENDING_APPROVAL');
+    expect((await hrA.post(`/offers/${own.body.id}/approve`)).body.error.code).toBe('own_offer');
   });
 
   it('a declined approval withdraws it, with the reason', async () => {

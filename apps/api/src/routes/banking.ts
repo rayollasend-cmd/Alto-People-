@@ -14,9 +14,6 @@ import { activeConnection } from '../lib/providers/connections.js';
 import { balancedOffsetGap, bankingProfile, fileContent, originationGaps, ownAccount as drawnOnOwnAccount, usesOurAch } from '../lib/banking/ach.js';
 import { computeFunding, loadTenantHolidays, payDateFor, recordWire, submitFunding } from '../lib/banking/funding.js';
 import { applyAchReturn, applyNoc, confirmMicroDeposits, markFileUploaded, sendDuePrenotes, startAccountVerification } from '../lib/banking/directDeposit.js';
-import { accrueDepositsForRun } from '../lib/taxDeposits.js';
-import { postLiabilitiesForRun } from '../lib/payrollTaxLedger.js';
-import { accrueRemittancesForRun } from '../lib/garnishmentRemittance.js';
 import { recordPayrollEvent } from '../lib/audit.js';
 import { payrollCalendar } from '../lib/banking/calendar.js';
 import { achTimeline, SAME_DAY_WINDOWS, type AchSpeed } from '../lib/banking/holidays.js';
@@ -452,10 +449,9 @@ bankingRouter.post('/files/:id/uploaded', PROCESS, idempotent, async (req, res, 
   try {
     const r = await markFileUploaded(prisma, req.params.id!, req.user!.id);
     for (const runId of r.runsSettled) {
-      // The run just settled: the same bookkeeping the disburse route does when a rail answers at once.
-      void accrueDepositsForRun(prisma, runId).catch((err) => console.warn('[banking] tax-deposit accrual failed (advisory):', err));
-      void postLiabilitiesForRun(prisma, runId).catch((err) => console.warn('[banking] tax-liability posting failed (advisory):', err));
-      void accrueRemittancesForRun(prisma, runId).catch((err) => console.warn('[banking] garnishment-remittance accrual failed (advisory):', err));
+      // The run settled inside markFileUploaded, which accrued its deposit,
+      // liabilities and remittances (lib/payrollSettled) — one function for
+      // every path that settles a run.
       const run = await prisma.payrollRun.findUnique({ where: { id: runId }, select: { clientId: true } });
       await recordPayrollEvent({ actorUserId: req.user!.id, action: 'payroll.run_disbursed', payrollRunId: runId, clientId: run?.clientId ?? null, metadata: { provider: 'ACH', viaBankFile: true, fileId: r.fileId }, req, critical: true });
     }

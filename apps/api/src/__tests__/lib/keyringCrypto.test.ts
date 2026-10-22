@@ -48,6 +48,6 @@ describe('the field-encryption keyring', () => {
     set('one:abc', undefined);
     expect(() => fieldKeyring()).toThrow(/FIELD_KEYS/);
     set(`1:${K1}`, 3);
-    expect(() => fieldKeyring()).toThrow(/not in the keyring/);
+    expect(() => fieldKeyring()).toThrow(/names a key that is not in the ring/);
   });
 });

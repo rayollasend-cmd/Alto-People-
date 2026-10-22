@@ -5,7 +5,7 @@ import { env } from '../config/env.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { recordCriticalAudit } from '../lib/audit.js';
-import { WORKER_TYPES, applyStripeEvent, invoiceMonth, localToday, stripeMode, verifyStripeSignature } from '../lib/billing.js';
+import { WORKER_TYPES, applyStripeEvent, billingContact, invoiceMonth, localToday, saveBillingContact, stripeMode, verifyStripeSignature } from '../lib/billing.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 
 /**
@@ -13,6 +13,7 @@ import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
  *
  *   GET  /billing                       plan, this month's running counts by type, invoices (manage:org or Finance, decision 11)
  *   GET  /billing/usage?month=          the daily snapshot counts behind a month
+ *   PUT  /billing/contact               the billing contact (manage:org); the Stripe customer follows
  *   PUT  /billing/prices                the platform operator sets a plan's price per type (decision 3)
  *   POST /billing/close                 the platform operator closes and invoices a tenant's month now
  *   POST /billing/stripe/webhook        Stripe's events, signature-checked (mounted before express.json)
@@ -33,8 +34,9 @@ billingRouter.get('/', VIEW, async (_req, res) => {
   const from = new Date(`${month}-01T00:00:00Z`);
   const snaps = await prisma.usageSnapshot.findMany({ where: { tenantId, day: { gte: from } }, select: { type: true, ids: true, day: true } });
   const running = Object.fromEntries(WORKER_TYPES.map((t) => [t, new Set(snaps.filter((s) => s.type === t).flatMap((s) => s.ids)).size]));
-  const invoices = await prisma.billingInvoice.findMany({ where: { tenantId }, orderBy: { month: 'desc' }, take: 24 });
+  const [invoices, contact] = await Promise.all([prisma.billingInvoice.findMany({ where: { tenantId }, orderBy: { month: 'desc' }, take: 24 }), billingContact(prisma, tenantId)]);
   res.json({
+    contact,
     plan: tenant?.plan ?? 'internal',
     invoiced: tenant?.plan !== 'internal',
     stripe: stripeMode() ?? 'off',
@@ -43,6 +45,21 @@ billingRouter.get('/', VIEW, async (_req, res) => {
     running,
     invoices: invoices.map((i) => ({ id: i.id, month: i.month, status: i.status, totalCents: i.totalCents, lines: i.lines, holdReason: i.holdReason, hostedUrl: i.hostedUrl, lastPaymentError: i.lastPaymentError, paidAt: i.paidAt?.toISOString() ?? null })),
   });
+});
+
+/** The billing contact the invoices go to (manage:org): saved here, and on the Stripe customer when there is one. */
+billingRouter.put('/contact', requireCapability('manage:org'), async (req, res) => {
+  const input = z
+    .object({
+      name: z.string().trim().max(160).nullable(),
+      email: z.string().trim().max(254).regex(/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/, 'Must be a bare email address.').nullable(),
+    })
+    .strict()
+    .parse(req.body);
+  const tenantId = tenantIdForWrite();
+  const r = await saveBillingContact(prisma, tenantId, { name: input.name || null, email: input.email || null });
+  await recordCriticalAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'billing.contact_saved', entityType: 'Tenant', entityId: tenantId, metadata: { ...input, stripeUpdated: r.stripeUpdated } }, 'billing');
+  res.json({ contact: await billingContact(prisma, tenantId), stripeUpdated: r.stripeUpdated });
 });
 
 billingRouter.get('/usage', VIEW, async (req, res) => {

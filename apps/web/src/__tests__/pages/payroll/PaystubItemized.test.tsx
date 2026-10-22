@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import type { PayrollItem } from '@alto-people/shared';
 import { renderAs } from '../hrPack/harness';
 
@@ -8,6 +8,16 @@ vi.mock('@/lib/payrollApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/payrollApi')>()),
   getMyPayrollItemYtd: (...a: unknown[]) => getMyPayrollItemYtd(...a),
 }));
+
+// The tenant's modules: van rides are the transportation module's row.
+const tenantState = vi.hoisted(() => ({ transportation: true }));
+vi.mock('@/lib/auth', async (orig) => {
+  const real = await orig<typeof import('@/lib/auth')>();
+  return {
+    ...real,
+    useTenant: () => ({ ...real.DEFAULT_TENANT, moduleOn: (m: string) => (m === 'transportation' ? tenantState.transportation : true) }),
+  };
+});
 
 import { PaystubCard } from '@/pages/payroll/AssociatePayrollView';
 
@@ -64,5 +74,30 @@ describe('the paystub, itemized', () => {
     expect(within(await row('Employer health coverage')).getByText('$600.00')).toBeInTheDocument();
     // Total deductions now include the pre-tax lines, so the stub adds up to net.
     expect(within(await row('Total deductions')).getByText('−$322.72')).toBeInTheDocument();
+  });
+});
+
+describe('the ride row on the paystub', () => {
+  const ytd = {
+    year: 2026, paystubCount: 1, gross: 800, federalWithholding: 40, fica: 44.95, medicare: 10.51, stateWithholding: 22.26,
+    preTaxDeductions: 175, postTaxDeductions: 42, netPay: 465.28, employerFica: 44.95, employerMedicare: 10.51, employerFuta: 4.35, employerSuta: 20,
+    byKind: {}, transport: 12, deductions: {},
+  };
+  const withRides = { ...item, deductions: [], postTaxDeductions: 42, transport: { amount: 12, rides: 2, noShows: 0 } };
+
+  it('shows the van rides where the tenant runs vans', async () => {
+    tenantState.transportation = true;
+    getMyPayrollItemYtd.mockResolvedValue(ytd);
+    renderAs('ASSOCIATE', <PaystubCard item={withRides} expanded onToggle={() => {}} onAsk={() => {}} />, '/payroll', { associateId: item.associateId });
+    expect(await screen.findByText(/van rides \(2 rides, 0 missed\)/)).toBeInTheDocument();
+  });
+
+  it('a tenant without the transportation module never shows a ride row', async () => {
+    tenantState.transportation = false;
+    getMyPayrollItemYtd.mockResolvedValue(ytd);
+    renderAs('ASSOCIATE', <PaystubCard item={withRides} expanded onToggle={() => {}} onAsk={() => {}} />, '/payroll', { associateId: item.associateId });
+    await waitFor(() => expect(getMyPayrollItemYtd).toHaveBeenCalled());
+    expect(await screen.findByText(/Garnishments/)).toBeInTheDocument();
+    expect(screen.queryByText(/van rides/)).not.toBeInTheDocument();
   });
 });

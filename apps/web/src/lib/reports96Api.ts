@@ -8,7 +8,11 @@ export type ReportEntity =
   | 'PAYROLL_RUN'
   | 'APPLICATION'
   | 'EXPENSE'
-  | 'CANDIDATE';
+  | 'CANDIDATE'
+  | 'SEPARATION'
+  | 'LEAVE_CASE'
+  | 'HR_CASE'
+  | 'OFFER';
 
 // `period` pairs with a ReportPeriodToken value ('last-week', …); the
 // server resolves the token to a concrete date window at run time.

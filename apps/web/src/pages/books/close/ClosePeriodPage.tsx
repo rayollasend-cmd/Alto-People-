@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Check, CheckCircle2, Circle, CircleSlash, Lock, LockOpen, Plus, Sparkles, Undo2 } from 'lucide-react';
 import type { CloseTaskView, ClosePeriodDetail } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { createAccrual, getCloseMonth, listAccruals, markCloseReady, requestCloseReopen, signOffClose, unmarkCloseReady, updateCloseTask } from '@/lib/books/closeApi';
+import { createAccrual, finalizeCloseStatements, getCloseMonth, listAccruals, markCloseReady, postCloseHistory, requestCloseReopen, signOffClose, unmarkCloseReady, updateCloseTask } from '@/lib/books/closeApi';
 import { usePrompt } from '@/lib/confirm';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -49,6 +49,23 @@ export function ClosePeriodPage() {
   const ready = useMutation({ mutationFn: () => markCloseReady(periodKey), onSuccess: (n) => (refresh(n), toast.success('Marked ready — a second person signs it off.')), onError: fail });
   const unready = useMutation({ mutationFn: () => unmarkCloseReady(periodKey), onSuccess: (n) => (refresh(n), toast.success('Taken back to work on.')), onError: fail });
   const signOff = useMutation({ mutationFn: () => signOffClose(periodKey), onSuccess: (n) => (refresh(n), toast.success(`${n.label} is closed.`)), onError: fail });
+  // Finance walk 16: the step's own button — done here, no page change.
+  type ActionResult = { month: ClosePeriodDetail; finalized?: number; failed: Array<{ clientName?: string; error: string }> };
+  const runAction = useMutation<ActionResult, unknown, 'finalize_statements' | 'post_history'>({
+    mutationFn: (kind) => (kind === 'finalize_statements' ? finalizeCloseStatements(periodKey) : postCloseHistory(periodKey)),
+    onSuccess: (r, kind) => {
+      refresh(r.month);
+      void qc.invalidateQueries({ queryKey: ['books'] });
+      const first = r.failed[0];
+      if (kind === 'finalize_statements') {
+        const n = r.finalized ?? 0;
+        if (first) toast.error(`${n} finalized; ${first.clientName ?? 'one'}: ${first.error}`);
+        else toast.success(`${n} ${n === 1 ? 'statement' : 'statements'} finalized — each numbered, due on its terms, and in the books.`);
+      } else if (first) toast.error(`Some history couldn’t post: ${first.error}`);
+      else toast.success('History posted to the books.');
+    },
+    onError: fail,
+  });
   const reopen = useMutation({
     mutationFn: (reason: string) => requestCloseReopen(periodKey, reason),
     onSuccess: () => (refresh(), toast.success('Asked — someone else with the books decides.')),
@@ -146,7 +163,7 @@ export function ClosePeriodPage() {
               {!d.can.edit && d.can.why && d.status === 'OPEN' && <p className="text-sm text-ink-muted">{d.can.why}</p>}
               <ol className="space-y-2">
                 {d.tasks.map((t) => (
-                  <TaskRow key={t.key} task={t} editable={d.can.edit} busy={setTask.isPending} onDone={(note) => done(t, note)} onSkip={() => void skip(t)} onReopen={() => setTask.mutate({ key: t.key, status: 'OPEN' })} />
+                  <TaskRow key={t.key} task={t} editable={d.can.edit} busy={setTask.isPending} running={runAction.isPending && runAction.variables === t.action?.kind} onAction={t.action ? () => runAction.mutate(t.action!.kind) : undefined} onDone={(note) => done(t, note)} onSkip={() => void skip(t)} onReopen={() => setTask.mutate({ key: t.key, status: 'OPEN' })} />
                 ))}
               </ol>
             </div>
@@ -187,7 +204,7 @@ export function ClosePeriodPage() {
   );
 }
 
-function TaskRow({ task: t, editable, busy, onDone, onSkip, onReopen }: { task: CloseTaskView; editable: boolean; busy: boolean; onDone: (note?: string) => void; onSkip: () => void; onReopen: () => void }) {
+function TaskRow({ task: t, editable, busy, running = false, onAction, onDone, onSkip, onReopen }: { task: CloseTaskView; editable: boolean; busy: boolean; running?: boolean; onAction?: () => void; onDone: (note?: string) => void; onSkip: () => void; onReopen: () => void }) {
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState('');
   const Icon = t.status === 'DONE' ? CheckCircle2 : t.status === 'SKIPPED' ? CircleSlash : Circle;
@@ -236,6 +253,12 @@ function TaskRow({ task: t, editable, busy, onDone, onSkip, onReopen }: { task: 
           )}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
+          {editable && t.status === 'OPEN' && t.action && onAction && (
+            <Button size="sm" onClick={onAction} loading={running} disabled={busy || running}>
+              <Check className="h-4 w-4" aria-hidden="true" />
+              {t.action.label}
+            </Button>
+          )}
           {t.link && t.status === 'OPEN' && (
             <Button asChild size="sm" variant="ghost">
               <Link to={t.link}>Open</Link>

@@ -72,6 +72,7 @@ function statusVariant(
       return 'info';
     case 'QUEUED':
     case 'SUPPRESSED':
+    case 'NOT_CONFIGURED':
       return 'pending';
   }
 }
@@ -85,6 +86,7 @@ const STATUS_LABELS: Record<NotificationStatus, string> = {
   COMPLAINED: 'Marked as spam',
   SUPPRESSED: 'Suppressed',
   DELIVERED: 'Delivered',
+  NOT_CONFIGURED: 'Not sent — channel not connected',
 };
 
 /** A person's name when the account has one, else the address it went to — never a raw user id. */
@@ -117,7 +119,7 @@ interface SendGroup {
   read: number;
 }
 
-const FAILED_STATUSES = new Set<NotificationStatus>(['FAILED', 'BOUNCED', 'COMPLAINED', 'SUPPRESSED']);
+const FAILED_STATUSES = new Set<NotificationStatus>(['FAILED', 'BOUNCED', 'COMPLAINED', 'SUPPRESSED', 'NOT_CONFIGURED']);
 
 export function groupSends(items: Notification[]): SendGroup[] {
   const groups = new Map<string, SendGroup>();
@@ -347,6 +349,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                 <option value="BOUNCED">Bounced</option>
                 <option value="COMPLAINED">Marked as spam</option>
                 <option value="SUPPRESSED">Suppressed</option>
+                <option value="NOT_CONFIGURED">Not sent — channel not connected</option>
               </Select>
               <Button size="sm" variant="outline" onClick={exportCsv} disabled={!items || items.length === 0}>
                 <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV

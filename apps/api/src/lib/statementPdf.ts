@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { StatementSnapshot } from './clientStatement.js';
 import { COLOR, SIZE, createDoc, fmt, loadBrand, type Brand } from './docKit/index.js';
+import { ageStatements } from './books/aging.js';
 
 /**
  * The client statement, as the invoice a customer's accounts-payable team
@@ -41,7 +42,7 @@ export interface StatementPdfInput {
   } | null;
   /** The rest is optional: statementContext() loads it for the routes. */
   brand?: Brand;
-  remitTo?: { name: string; lines: string[] } | null;
+  remitTo?: { name: string; lines: string[]; instructions?: string | null } | null;
   financeEmail?: string | null;
   poNumber?: string | null;
   termsDays?: number | null;
@@ -52,6 +53,15 @@ export interface StatementPdfInput {
   aging?: Aging | null;
   /** The statement's own period, for snapshots that predate carrying it. */
   period?: { start: string; end: string } | null;
+}
+
+/** A statement's money, read from any snapshot vintage: hours, adjustments, the subtotal, the tax and its rate. */
+export function statementMoney(s: StatementSnapshot): { hoursAmount: number; adjustmentsAmount: number; subtotal: number; salesTax: number; salesTaxRate: number; total: number } {
+  const salesTax = s.totals.salesTax ?? 0;
+  const subtotal = s.totals.subtotal ?? Math.round((s.totals.amount - salesTax) * 100) / 100;
+  const adjustmentsAmount = s.totals.adjustmentsAmount ?? (s.adjustments ?? []).reduce((a, x) => a + x.amount, 0);
+  const hoursAmount = s.totals.hoursAmount ?? Math.round((subtotal - adjustmentsAmount) * 100) / 100;
+  return { hoursAmount, adjustmentsAmount, subtotal, salesTax, salesTaxRate: s.totals.salesTaxRatePct ?? 0, total: s.totals.amount };
 }
 
 /** "Sep 26 – Oct 9, 2026" (one year), else both years. */
@@ -79,33 +89,42 @@ export function remittanceStub(input: StatementPdfInput): { payTo: string; custo
   };
 }
 
+/**
+ * Where to send the money: the remit-to from company settings (Settings →
+ * Finance), else the employer-of-record's legal name and address. The lines
+ * print under "Remit to" on the invoice and its stub; the instructions
+ * (ACH details) print in "How to pay".
+ */
+export function remitToFor(
+  org: { remitToName?: string | null; remitToAddress?: string | null; remitToInstructions?: string | null } | null | undefined,
+  employer: { legalName: string; addressLine1: string | null; addressLine2: string | null; city: string | null; state: string | null; zip: string | null; phone: string | null } | null | undefined,
+): { name: string; lines: string[]; instructions?: string | null } | null {
+  const stored = org?.remitToName?.trim() || org?.remitToAddress?.trim();
+  if (stored) {
+    const lines = (org?.remitToAddress ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    return { name: org?.remitToName?.trim() || employer?.legalName || lines[0] || 'Remit to', lines, instructions: org?.remitToInstructions?.trim() || null };
+  }
+  if (!employer) return null;
+  const lines = [employer.addressLine1, employer.addressLine2, [employer.city, employer.state].filter(Boolean).join(', ') + (employer.zip ? ` ${employer.zip}` : ''), employer.phone].filter((l): l is string => !!l && l.trim() !== '');
+  return { name: employer.legalName, lines, instructions: org?.remitToInstructions?.trim() || null };
+}
+
 /** Load the invoice's context for a statement: remit-to, terms, PO, due date, payment, aging, finance contact, brand. */
 export async function statementContext(db: Db, o: { statementId: string; clientId: string; tenantId: string }): Promise<Partial<StatementPdfInput>> {
   const [row, client, employer, org, open, brand] = await Promise.all([
     db.clientStatement.findUnique({ where: { id: o.statementId }, select: { poNumber: true, dueAt: true, paidAt: true, paymentRef: true, periodStart: true, periodEnd: true } }),
     db.client.findUnique({ where: { id: o.clientId }, select: { poNumber: true, paymentTermsDays: true } }),
     db.employerOrganization.findFirst({ where: { tenantId: o.tenantId, clientId: null }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }], select: { legalName: true, addressLine1: true, addressLine2: true, city: true, state: true, zip: true, phone: true } }),
-    db.orgSetting.findFirst({ where: { tenantId: o.tenantId }, select: { financeMailbox: true, supportEmail: true } }),
-    db.clientStatement.findMany({ where: { clientId: o.clientId, status: 'FINAL', paidAt: null }, select: { dueAt: true, snapshot: true } }),
+    db.orgSetting.findFirst({ where: { tenantId: o.tenantId }, select: { financeMailbox: true, supportEmail: true, remitToName: true, remitToAddress: true, remitToInstructions: true } }),
+    db.clientStatement.findMany({ where: { clientId: o.clientId, status: 'FINAL', paidAt: null }, select: { dueAt: true, finalizedAt: true, periodEnd: true, snapshot: true } }),
     loadBrand(db as never, o.tenantId),
   ]);
-  const now = Date.now();
-  const aging: Aging = { current: 0, d1to30: 0, d31to60: 0, d61to90: 0, over90: 0 };
-  for (const st of open) {
-    const amount = Number((st.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0);
-    const late = st.dueAt ? Math.floor((now - st.dueAt.getTime()) / 86_400_000) : 0;
-    if (late <= 0) aging.current += amount;
-    else if (late <= 30) aging.d1to30 += amount;
-    else if (late <= 60) aging.d31to60 += amount;
-    else if (late <= 90) aging.d61to90 += amount;
-    else aging.over90 += amount;
-  }
-  const remitLines = employer
-    ? [employer.addressLine1, employer.addressLine2, [employer.city, employer.state].filter(Boolean).join(', ') + (employer.zip ? ` ${employer.zip}` : ''), employer.phone].filter((l): l is string => !!l && l.trim() !== '')
-    : [];
+  // One aging definition (lib/books/aging): days past DUE, the Books buckets.
+  const aged = ageStatements(open.map((st) => ({ dueAt: st.dueAt, finalizedAt: st.finalizedAt, periodEnd: st.periodEnd, amount: Number((st.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0) })));
+  const aging: Aging = { current: aged.buckets.current, d1to30: aged.buckets.days1to30, d31to60: aged.buckets.days31to60, d61to90: aged.buckets.days61to90, over90: aged.buckets.over90 };
   return {
     brand,
-    remitTo: employer ? { name: employer.legalName, lines: remitLines } : null,
+    remitTo: remitToFor(org, employer),
     financeEmail: org?.financeMailbox ?? org?.supportEmail ?? null,
     poNumber: row?.poNumber ?? client?.poNumber ?? null,
     termsDays: client?.paymentTermsDays ?? null,
@@ -131,7 +150,16 @@ export function completeStatementSnapshot(snap: StatementSnapshot, fallbackName:
     periodEnd: s.periodEnd ?? period?.end ?? '',
     lines: s.lines ?? [],
     stores: s.stores ?? [],
-    totals: { hours: t.hours ?? 0, regularHours: t.regularHours ?? t.hours ?? 0, otHours: t.otHours ?? 0, amount: t.amount ?? 0, hoursAmount: t.hoursAmount, adjustmentsAmount: t.adjustmentsAmount },
+    totals: {
+      hours: t.hours ?? 0,
+      regularHours: t.regularHours ?? t.hours ?? 0,
+      otHours: t.otHours ?? 0,
+      amount: t.amount ?? 0,
+      hoursAmount: t.hoursAmount,
+      adjustmentsAmount: t.adjustmentsAmount,
+      ...(t.subtotal !== undefined ? { subtotal: t.subtotal } : {}),
+      ...(t.salesTax !== undefined ? { salesTax: t.salesTax, salesTaxRatePct: t.salesTaxRatePct ?? 0 } : {}),
+    },
     sla: s.sla ?? { publishedShifts: 0, assignedShifts: 0, fillRatePct: null, punctualPct: null, noShows: 0, pendingEntries: 0 },
   };
 }
@@ -144,8 +172,7 @@ export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer
   const final = input.status === 'FINAL';
   const label = invoiceLabel(input.status, input.number);
   const paid = !!input.paidAt;
-  const hoursAmount = s.totals.hoursAmount ?? s.totals.amount - (s.totals.adjustmentsAmount ?? 0);
-  const adjustmentsAmount = s.totals.adjustmentsAmount ?? (s.adjustments ?? []).reduce((a, x) => a + x.amount, 0);
+  const { hoursAmount, adjustmentsAmount, subtotal, salesTax, salesTaxRate } = statementMoney(s);
   const total = s.totals.amount;
   const amountDue = paid ? 0 : total;
   const { k } = createDoc({ title: `${label} — ${s.clientName} — ${s.periodStart} to ${s.periodEnd}`, author: orgName, subject: `Workforce services, ${s.periodStart} to ${s.periodEnd}` });
@@ -243,8 +270,8 @@ export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer
     const rows: Array<[string, string, boolean?]> = [
       ['Services', fmt.money(hoursAmount)],
       ...(adjustmentsAmount ? ([['Adjustments', fmt.money(adjustmentsAmount)]] as Array<[string, string]>) : []),
-      ['Subtotal', fmt.money(total)],
-      ['Sales tax', fmt.money(0)],
+      ['Subtotal', fmt.money(subtotal)],
+      [salesTaxRate > 0 ? `Sales tax (${salesTaxRate}%)` : 'Sales tax', fmt.money(salesTax)],
       ['Total', fmt.money(total), true],
       ...(paid ? ([['Payments received', fmt.money(-total)]] as Array<[string, string]>) : []),
     ];
@@ -300,7 +327,7 @@ export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer
       {
         tone: 'info',
         title: 'How to pay',
-        body: `Pay by ACH or check payable to ${payTo.replace(/\.$/, '')}. Put ${label} on the payment so it applies to this invoice.${input.financeEmail ? ` Questions about this invoice: ${input.financeEmail}.` : ''} Hours are approved time net of unpaid breaks; overtime is the part of a person's week beyond 40 hours across all assignments${s.overtimeBilling === 'STRAIGHT' ? ', billed at straight time per the contract' : ', billed at 1.5× per the contract'}.`,
+        body: `Pay by ACH or check payable to ${payTo.replace(/\.$/, '')}.${input.remitTo?.instructions ? ` ${input.remitTo.instructions.replace(/\.$/, '')}.` : ''} Put ${label} on the payment so it applies to this invoice.${input.financeEmail ? ` Questions about this invoice: ${input.financeEmail}.` : ''} Hours are approved time net of unpaid breaks; overtime is the part of a person's week beyond 40 hours across all assignments${s.overtimeBilling === 'STRAIGHT' ? ', billed at straight time per the contract' : ', billed at 1.5× per the contract'}.`,
       },
       y,
     );

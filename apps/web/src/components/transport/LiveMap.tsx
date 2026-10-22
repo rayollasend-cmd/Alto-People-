@@ -86,6 +86,8 @@ export interface LiveMapProps {
   footInset?: number;
   /** Set: tapping the map reports that spot — dropping a pickup's pin. */
   onPick?: (point: { lat: number; lng: number }) => void;
+  /** Set: tapping a marker reports its id — the dispatch map reorders pickups this way. */
+  onMarkerClick?: (id: string) => void;
 }
 
 const BUS_SVG =
@@ -212,7 +214,10 @@ export default function LiveMap({
   cooperativeGestures = false,
   footInset = 0,
   onPick,
+  onMarkerClick,
 }: LiveMapProps) {
+  const markerClick = useRef(onMarkerClick);
+  markerClick.current = onMarkerClick;
   const box = useRef<HTMLDivElement | null>(null);
   const map = useRef<MapLibreMap | null>(null);
   const pins = useRef(new Map<string, { marker: Marker; el: HTMLElement; kind: MapMarker['kind'] }>());
@@ -352,6 +357,12 @@ export default function LiveMap({
       } else {
         have?.marker.remove();
         const el = markerElement(mk);
+        el.addEventListener('click', (ev) => {
+          if (!markerClick.current) return;
+          ev.stopPropagation();
+          markerClick.current(mk.id);
+        });
+        if (markerClick.current) el.style.cursor = 'pointer';
         const marker = new Marker({ element: el }).setLngLat([mk.lng, mk.lat]).addTo(m);
         pins.current.set(mk.id, { marker, el, kind: mk.kind });
       }

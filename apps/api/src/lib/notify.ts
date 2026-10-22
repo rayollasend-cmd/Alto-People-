@@ -49,7 +49,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { activeDelegationsFrom } from './delegations.js';
-import { EmailSuppressedError, send, type SendAttachment } from './notifications.js';
+import { EmailSuppressedError, anyPushConfigured, send, type SendAttachment } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
 import { holdIfDeferred } from './notificationDelivery.js';
 import { emitLiveEvent } from './liveEvents.js';
@@ -65,7 +65,10 @@ import { publicBaseUrl } from './emailLayout.js';
 // Snapshot at module load. Drives the notifyAllAdmins recipient query.
 // Capability-based (not a hardcoded role list) so a future role gaining
 // manage:onboarding automatically gets in the loop without code changes here.
-const ONBOARDING_ADMIN_ROLES = rolesWithCapability('manage:onboarding');
+// The recruiter holds manage:recruiting, not manage:onboarding, since it got
+// its own charter (audit #16); the routing table still sends it the hiring
+// events, so it stays in the pool the fan-out selects from.
+const ONBOARDING_ADMIN_ROLES = [...new Set([...rolesWithCapability('manage:onboarding'), ...rolesWithCapability('manage:recruiting')])];
 
 const MANDATORY_CATEGORIES = new Set<NotificationCategory>(
   NOTIFICATION_CATEGORIES.filter((c) => c.mandatory).map((c) => c.key),
@@ -238,9 +241,9 @@ function sendEmailNotification(
   userId: string,
   email: string,
   opts: NotifyOpts,
-): Promise<void> {
+): Promise<'SENT' | 'FAILED' | 'SUPPRESSED'> {
   return track(
-    (async () => {
+    (async (): Promise<'SENT' | 'FAILED' | 'SUPPRESSED'> => {
       let externalRef: string | null = null;
       let providerMessageId: string | null = null;
       let failureReason: string | null = null;
@@ -283,10 +286,11 @@ function sendEmailNotification(
         }
         failureReason = err instanceof Error ? err.message : String(err);
       }
+      const status = suppressed ? 'SUPPRESSED' : failureReason ? 'FAILED' : 'SENT';
       await prisma.notification.create({
         data: {
           channel: 'EMAIL',
-          status: suppressed ? 'SUPPRESSED' : failureReason ? 'FAILED' : 'SENT',
+          status,
           recipientUserId: userId,
           recipientEmail: email,
           subject: opts.subject,
@@ -299,11 +303,89 @@ function sendEmailNotification(
           sentAt: failureReason ? null : new Date(),
         },
       });
-    })().catch((err: unknown) => {
+      return status;
+    })().catch((err: unknown): 'FAILED' => {
       console.warn(
         '[notify] sendEmailNotification failed:',
         err instanceof Error ? err.message : err,
       );
+      return 'FAILED';
+    }),
+  );
+}
+
+/** What one chosen channel of a broadcast did for one person (lib/broadcastDelivery). */
+export type ChannelOutcome = 'sent' | 'failed' | 'muted' | 'suppressed' | 'not_configured' | 'held' | 'skipped';
+
+/**
+ * Deliver on exactly the channels asked for — the broadcast composer's
+ * choice, honoured per recipient (the audit of 2026-10-21: channels were
+ * stored and ignored; everyone got bell + email regardless). Mute
+ * preferences, quiet hours and the mandatory buckets apply as in
+ * notifyUser; a channel with no provider behind it answers
+ * 'not_configured' instead of pretending. Tracked for
+ * flushPendingNotifications.
+ */
+export function notifyUserOn(
+  userId: string,
+  opts: NotifyOpts,
+  channels: ReadonlyArray<'IN_APP' | 'EMAIL' | 'PUSH'>,
+): Promise<Record<'IN_APP' | 'EMAIL' | 'PUSH', ChannelOutcome>> {
+  return track(
+    (async () => {
+      const out: Record<'IN_APP' | 'EMAIL' | 'PUSH', ChannelOutcome> = { IN_APP: 'skipped', EMAIL: 'skipped', PUSH: 'skipped' };
+      const want = new Set(channels);
+      const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, status: true } });
+      if (!u || u.status !== 'ACTIVE') {
+        for (const c of want) out[c] = 'failed';
+        return out;
+      }
+      if (want.has('IN_APP')) {
+        if (await isInAppMutedForCategory(userId, opts.category)) out.IN_APP = 'muted';
+        else {
+          await prisma.notification.create({
+            data: {
+              channel: 'IN_APP',
+              status: 'SENT',
+              recipientUserId: userId,
+              subject: opts.subject,
+              body: opts.body,
+              category: opts.category ?? null,
+              linkUrl: opts.linkUrl ?? null,
+              byAgentId: opts.byAgentId ?? null,
+              sentAt: new Date(),
+            },
+          });
+          emitLiveEvent(userId, 'notification');
+          out.IN_APP = 'sent';
+        }
+      }
+      // Email and push share the one outside-channel mute switch.
+      const outsideMuted = want.has('EMAIL') || want.has('PUSH') ? await isEmailMutedForCategory(userId, opts.category) : false;
+      if (want.has('EMAIL')) {
+        if (outsideMuted) out.EMAIL = 'muted';
+        else if (!u.email) out.EMAIL = 'failed';
+        else if (await holdIfDeferred(userId, 'EMAIL', opts)) out.EMAIL = 'held';
+        else {
+          const status = await sendEmailNotification(userId, u.email, opts);
+          out.EMAIL = status === 'SENT' ? 'sent' : status === 'SUPPRESSED' ? 'suppressed' : 'failed';
+        }
+      }
+      if (want.has('PUSH')) {
+        if (outsideMuted) out.PUSH = 'muted';
+        else if (!anyPushConfigured()) out.PUSH = 'not_configured';
+        else if (await holdIfDeferred(userId, 'PUSH', opts)) out.PUSH = 'held';
+        else {
+          await sendPushToUser(userId, { title: opts.subject ?? getBrandingSync().orgName, body: opts.body, url: opts.linkUrl });
+          out.PUSH = 'sent';
+        }
+      }
+      return out;
+    })().catch((err: unknown) => {
+      console.warn('[notify] notifyUserOn failed:', err instanceof Error ? err.message : err);
+      const failed: Record<'IN_APP' | 'EMAIL' | 'PUSH', ChannelOutcome> = { IN_APP: 'skipped', EMAIL: 'skipped', PUSH: 'skipped' };
+      for (const c of channels) failed[c] = 'failed';
+      return failed;
     }),
   );
 }

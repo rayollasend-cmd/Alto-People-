@@ -88,9 +88,6 @@ export const toggleWebhook = (id: string) =>
 export const deleteWebhook = (id: string) =>
   apiFetch<void>(`/webhooks/${id}`, { method: 'DELETE' });
 
-export const listWebhookDeliveries = (id: string) =>
-  apiFetch<{ deliveries: WebhookDeliveryRecord[] }>(`/webhooks/${id}/deliveries`);
-
 export const testWebhook = (id: string, eventType?: string) =>
   apiFetch<{ ok: boolean; responseStatus: number | null; responseBody: string | null }>(
     `/webhooks/${id}/test`,

@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
+import { useI18n } from '@/lib/i18n';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 
 /**
@@ -15,6 +16,7 @@ import { associatePhotoUrl } from '@/lib/photoUrl';
  * to decide. Hidden when nobody's coming.
  */
 export function VanArrivalsCard({ className }: { className?: string }) {
+  const { t } = useI18n();
   const q = useQuery({
     queryKey: ['transport', 'arrivals'],
     queryFn: () => getVanArrivals(),
@@ -34,11 +36,11 @@ export function VanArrivalsCard({ className }: { className?: string }) {
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
             <Bus className="h-4 w-4 text-gold" aria-hidden="true" />
-            Arriving by van <span className="tabular-nums text-silver">· {rows.length}</span>
+            {t('floorUi.arrivingByVan')} <span className="tabular-nums text-silver">· {rows.length}</span>
           </h2>
           {noShift > 0 && (
             <span className="text-xs text-warning">
-              {noShift} without a shift here
+              {t('floorUi.nWithoutShiftHere', { n: noShift })}
             </span>
           )}
         </div>
@@ -47,13 +49,14 @@ export function VanArrivalsCard({ className }: { className?: string }) {
             <ArrivalRow key={a.rideId} a={a} showStore={stores > 1} />
           ))}
         </ul>
-        <p className="mt-2 text-xs text-silver/70">Associates book their own rides — this is a heads-up, not a request.</p>
+        <p className="mt-2 text-xs text-silver/70">{t('floorUi.vanHeadsUp')}</p>
       </CardContent>
     </Card>
   );
 }
 
 function ArrivalRow({ a, showStore }: { a: VanArrival; showStore: boolean }) {
+  const { t } = useI18n();
   const onVan = a.status === 'BOARDED';
   const arrived = a.status === 'COMPLETED';
   return (
@@ -69,22 +72,22 @@ function ArrivalRow({ a, showStore }: { a: VanArrival; showStore: boolean }) {
         <div className="truncate text-sm text-white">{a.name}</div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-xs text-silver">
-            {a.van ?? 'Waiting on a van'}
+            {a.van ?? t('floorUi.waitingOnVan')}
             {showStore ? ` · ${a.store.name}` : ''}
-            {a.etaAt && !arrived && <> · here about {fmtTimeTz(a.etaAt)}</>}
-            {arrived && a.droppedAt && <> · dropped off {fmtTimeTz(a.droppedAt)}</>}
+            {a.etaAt && !arrived && <> · {t('floorUi.hereAbout', { time: fmtTimeTz(a.etaAt) })}</>}
+            {arrived && a.droppedAt && <> · {t('floorUi.droppedOff', { time: fmtTimeTz(a.droppedAt) })}</>}
           </span>
           {a.lateMinutes >= 5 && !arrived && (
             <Badge size="sm" variant="pending">
-              ~{a.lateMinutes} min late
+              {t('floorUi.minLate', { n: a.lateMinutes })}
             </Badge>
           )}
           <Badge size="sm" variant={arrived || onVan ? 'success' : a.van ? 'accent' : 'default'}>
-            {arrived ? 'Arrived' : onVan ? 'On the van' : a.van ? 'Van set' : 'Booked'}
+            {arrived ? t('floorUi.vanArrived') : onVan ? t('floorUi.onTheVan') : a.van ? t('floorUi.vanSet') : t('floorUi.vanBooked')}
           </Badge>
           {!a.hasShift && (
             <Badge size="sm" variant="pending">
-              No shift
+              {t('floorUi.noShift')}
             </Badge>
           )}
         </div>

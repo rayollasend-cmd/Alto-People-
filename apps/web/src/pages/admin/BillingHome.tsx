@@ -1,9 +1,15 @@
-import { useQuery } from '@tanstack/react-query';
-import { Bot, Cpu, ExternalLink, Users as UsersIcon } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bot, CreditCard, Cpu, ExternalLink, Users as UsersIcon } from 'lucide-react';
+import { ApiError, apiFetch } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { Field } from '@/components/ui/Field';
+import { Input } from '@/components/ui/Input';
+import { toast } from '@/components/ui/Toaster';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { SkeletonRows } from '@/components/ui';
@@ -18,7 +24,15 @@ import { SkeletonRows } from '@/components/ui';
 
 type WorkerType = 'PERSON' | 'AGENT' | 'ROBOT';
 
+interface BillingContact {
+  name: string | null;
+  email: string | null;
+  paymentMethod: { kind: 'card' | 'bank' | 'other'; label: string } | null;
+  paymentMethodNote: 'stripe_off' | 'no_customer' | 'error' | null;
+}
+
 interface BillingOverview {
+  contact?: BillingContact;
   plan: string;
   invoiced: boolean;
   stripe: 'test' | 'live' | 'off';
@@ -69,6 +83,8 @@ export function BillingHome() {
               {d.invoiced && d.stripe === 'test' && <Badge variant="pending" size="sm">Payment processor in test mode</Badge>}
             </CardContent>
           </Card>
+
+          {d.invoiced && d.contact && <ContactCard contact={d.contact} />}
 
           <section aria-labelledby="running" className="space-y-2">
             <h2 id="running" className="text-base font-semibold text-white">
@@ -130,5 +146,92 @@ export function BillingHome() {
         </>
       )}
     </div>
+  );
+}
+
+const PM_NOTE: Record<NonNullable<BillingContact['paymentMethodNote']>, string> = {
+  stripe_off: 'The payment processor isn’t connected yet, so no payment method can be on file.',
+  no_customer: 'None yet — your first invoice comes with a link to add one.',
+  error: 'Couldn’t reach the payment processor just now. Try again in a moment.',
+};
+
+/** Who the invoices go to, and the card or bank on file at the payment processor (audit 2026-10-21, Tier 3). */
+function ContactCard({ contact }: { contact: BillingContact }) {
+  const { can } = useAuth();
+  const edit = can('manage:org');
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const save = useMutation({
+    mutationFn: () => apiFetch<{ stripeUpdated: boolean }>('/billing/contact', { method: 'PUT', body: { name: name.trim() || null, email: email.trim() || null } }),
+    onSuccess: (r) => {
+      toast.success(r.stripeUpdated ? 'Billing contact saved — the payment processor has it too.' : 'Billing contact saved.');
+      setEditing(false);
+      void qc.invalidateQueries({ queryKey: ['billing', 'overview'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not save the contact.'),
+  });
+  return (
+    <section aria-labelledby="billing-contact" className="space-y-2">
+      <h2 id="billing-contact" className="text-base font-semibold text-ink">
+        Billing contact and payment method
+      </h2>
+      <Card>
+        <CardContent className="space-y-3 text-sm">
+          {editing ? (
+            <form
+              className="grid gap-3 sm:grid-cols-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                save.mutate();
+              }}
+            >
+              <Field label="Name on invoices">{(p) => <Input value={name} maxLength={160} onChange={(e) => setName(e.target.value)} {...p} />}</Field>
+              <Field label="Invoices go to">{(p) => <Input type="email" value={email} maxLength={254} placeholder="ap@yourcompany.com" onChange={(e) => setEmail(e.target.value)} {...p} />}</Field>
+              <div className="flex gap-2 sm:col-span-2">
+                <Button type="submit" size="sm" loading={save.isPending}>
+                  Save contact
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
+              <dt className="text-ink-muted">Name on invoices</dt>
+              <dd className="text-ink">{contact.name ?? 'Not set'}</dd>
+              <dt className="text-ink-muted">Invoices go to</dt>
+              <dd className="text-ink">{contact.email ?? 'Not set'}</dd>
+              <dt className="text-ink-muted">Payment method</dt>
+              <dd className="flex items-center gap-2 text-ink">
+                {contact.paymentMethod ? (
+                  <>
+                    <CreditCard className="h-4 w-4 text-ink-muted" aria-hidden="true" />
+                    {contact.paymentMethod.label}
+                  </>
+                ) : (
+                  <span className={contact.paymentMethodNote === 'error' ? 'text-warning' : 'text-ink-muted'}>{contact.paymentMethodNote ? PM_NOTE[contact.paymentMethodNote] : 'None on file.'}</span>
+                )}
+              </dd>
+            </dl>
+          )}
+          {edit && !editing && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setName(contact.name ?? '');
+                setEmail(contact.email ?? '');
+                setEditing(true);
+              }}
+            >
+              Edit contact
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    </section>
   );
 }

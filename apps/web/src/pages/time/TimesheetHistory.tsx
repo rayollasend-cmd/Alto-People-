@@ -5,6 +5,7 @@ import { AlertTriangle, CalendarRange, ChevronDown, Download, ExternalLink, Mess
 import { toast } from 'sonner';
 import type { TimesheetHistoryPeriod, TimesheetHistoryResponse, TimesheetHistoryWeek } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { useTenant } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtDateTz, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { downloadTimesheetHistoryCsv, getTimesheetHistory, markFieldglassEntered, setTimesheetNote } from '@/lib/timeApi';
@@ -118,6 +119,9 @@ export function TimesheetHistory() {
     enabled: !!associateId,
   });
   const h = q.data;
+  // Fieldglass is a client's vendor system: a tenant with no clients never sees its columns (tenant profile §5.3 item 5).
+  const { moduleOn } = useTenant();
+  const fieldglass = moduleOn('clientPortal');
   const [year, setYear] = useState<number | 'all'>('all');
   const [show, setShow] = useState<'all' | 'attention'>('all');
   const [openWeek, setOpenWeek] = useState<string | null>(null);
@@ -160,7 +164,7 @@ export function TimesheetHistory() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          title="Timesheet history" breadcrumbs={[{ label: 'Fieldglass hours', to: '/time-attendance/timesheets' }, { label: 'History' }]}
+          title="Timesheet history" breadcrumbs={[{ label: fieldglass ? 'Fieldglass hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: 'History' }]}
       >
         <EmptyState
           title="Couldn’t load this timesheet"
@@ -176,8 +180,8 @@ export function TimesheetHistory() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title={a.name}
-        subtitle="Timesheet history — every week worked, by the pay period that paid it, and where it stands in Fieldglass."
-        breadcrumbs={[{ label: 'Fieldglass hours', to: '/time-attendance/timesheets' }, { label: a.name }]}
+        subtitle={fieldglass ? 'Timesheet history — every week worked, by the pay period that paid it, and where it stands in Fieldglass.' : 'Timesheet history — every week worked, by the pay period that paid it.'}
+        breadcrumbs={[{ label: fieldglass ? 'Fieldglass hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: a.name }]}
         primaryAction={
           <Button variant="secondary" size="sm" onClick={() => void exportCsv()} loading={exporting} disabled={allWeeks.length === 0}>
             <Download className="h-3.5 w-3.5" />
@@ -186,14 +190,15 @@ export function TimesheetHistory() {
         }
     >
 
-      <Identity h={h} />
-      <Totals h={h} />
+      <Identity h={h} fieldglass={fieldglass} />
+      <Totals h={h} fieldglass={fieldglass} />
 
       {allWeeks.length === 0 ? (
         <EmptyState title="No hours yet" description="Once their time is approved, each week shows up here, in its pay period." />
       ) : (
         <>
           <WeekBars
+            fieldglass={fieldglass}
             weeks={allWeeks.filter((w) => year === 'all' || w.weekEnd.startsWith(String(year)))}
             onPick={(w) => {
               setShow('all');
@@ -232,6 +237,7 @@ export function TimesheetHistory() {
                   key={p.periodStart}
                   period={p}
                   history={h}
+                  fieldglass={fieldglass}
                   openWeek={openWeek}
                   onToggle={(k) => setOpenWeek((cur) => (cur === k ? null : k))}
                 />
@@ -247,7 +253,7 @@ export function TimesheetHistory() {
   );
 }
 
-function Identity({ h }: { h: TimesheetHistoryResponse }) {
+function Identity({ h, fieldglass }: { h: TimesheetHistoryResponse; fieldglass: boolean }) {
   const a = h.associate;
   return (
     <Card className="p-4">
@@ -260,7 +266,7 @@ function Identity({ h }: { h: TimesheetHistoryResponse }) {
               {[a.clientName, a.position].filter(Boolean).join(' · ') || 'No client yet'}
             </div>
             <div className="mt-1 flex flex-wrap gap-1.5">
-              {a.registeredAt ? (
+              {!fieldglass ? null : a.registeredAt ? (
                 <Badge variant="success" size="sm">
                   In Fieldglass since {fmtDate(a.registeredAt)}
                 </Badge>
@@ -280,8 +286,8 @@ function Identity({ h }: { h: TimesheetHistoryResponse }) {
         </div>
         <div className="grid gap-x-8 md:grid-cols-2">
           <div className="divide-y divide-navy-secondary/50">
-            <CopyValue label="Worker ID" value={a.workerId} mono />
-            {a.securityId !== null && <CopyValue label="Security ID" value={a.securityId} mono />}
+            {fieldglass && <CopyValue label="Worker ID" value={a.workerId} mono />}
+            {fieldglass && a.securityId !== null && <CopyValue label="Security ID" value={a.securityId} mono />}
             <CopyValue label="Worker" value={a.worker} />
           </div>
           <div className="divide-y divide-navy-secondary/50">
@@ -304,7 +310,7 @@ function Tile({ label, value, hint, tone }: { label: string; value: ReactNode; h
   );
 }
 
-function Totals({ h }: { h: TimesheetHistoryResponse }) {
+function Totals({ h, fieldglass }: { h: TimesheetHistoryResponse; fieldglass: boolean }) {
   const t = h.totals;
   const fg = t.fieldglass;
   return (
@@ -320,6 +326,7 @@ function Totals({ h }: { h: TimesheetHistoryResponse }) {
           hint={t.pendingHours > 0 ? 'worked, awaiting a supervisor' : 'nothing waiting'}
         />
       </div>
+      {fieldglass && (
       <div className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="Weeks in Fieldglass">
         <span className="mr-1 text-silver/70">In Fieldglass:</span>
         <Badge variant="success" size="sm">{fg.approved} approved</Badge>
@@ -330,6 +337,7 @@ function Totals({ h }: { h: TimesheetHistoryResponse }) {
         {fg.notRegistered > 0 && <Badge variant="destructive" size="sm">{fg.notRegistered} not in Fieldglass</Badge>}
         {fg.variances > 0 && <Badge variant="pending" size="sm">{fg.variances} hours differ</Badge>}
       </div>
+      )}
       {t.money && (
         <div className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
           <Money label="Approved" value={t.money.approved} tone="text-success" />
@@ -351,7 +359,7 @@ function Money({ label, value, tone }: { label: string; value: number; tone: str
 }
 
 /** A bar per week, oldest to newest, colored by where it stands. */
-function WeekBars({ weeks, onPick }: { weeks: TimesheetHistoryWeek[]; onPick: (w: TimesheetHistoryWeek) => void }) {
+function WeekBars({ weeks, fieldglass, onPick }: { weeks: TimesheetHistoryWeek[]; fieldglass: boolean; onPick: (w: TimesheetHistoryWeek) => void }) {
   const byWeek = useMemo(() => {
     // One bar per week — a week split across clients stacks its parts.
     const m = new Map<string, TimesheetHistoryWeek[]>();
@@ -366,7 +374,7 @@ function WeekBars({ weeks, onPick }: { weeks: TimesheetHistoryWeek[]; onPick: (w
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold text-white">Hours by week</h2>
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-2xs text-silver">
-          {LEGEND.map(([tone, label]) => (
+          {(fieldglass ? LEGEND : []).map(([tone, label]) => (
             <span key={tone} className="inline-flex items-center gap-1">
               <span className={cn('h-2 w-2 rounded-sm', BAR[tone])} aria-hidden="true" />
               {label}
@@ -383,7 +391,7 @@ function WeekBars({ weeks, onPick }: { weeks: TimesheetHistoryWeek[]; onPick: (w
           {byWeek.map(([ws, parts]) => {
             const total = parts.reduce((s, w) => s + w.total, 0);
             const pending = parts.reduce((s, w) => s + w.pendingHours, 0);
-            const label = `Week ending ${usDate(parts[0]!.weekEnd)} · ${hrs(total)}h${pending > 0 ? ` (+${hrs(pending)}h not approved)` : ''} · ${parts.map((w) => weekStanding(w).label).join(', ')}`;
+            const label = `Week ending ${usDate(parts[0]!.weekEnd)} · ${hrs(total)}h${pending > 0 ? ` (+${hrs(pending)}h not approved)` : ''}${fieldglass ? ` · ${parts.map((w) => weekStanding(w).label).join(', ')}` : ''}`;
             return (
               <button
                 key={ws}
@@ -399,7 +407,7 @@ function WeekBars({ weeks, onPick }: { weeks: TimesheetHistoryWeek[]; onPick: (w
                 {parts.map((w) => (
                   <span
                     key={weekKey(w)}
-                    className={cn('w-full transition-opacity group-hover:opacity-80', BAR[weekStanding(w).tone], pending > 0 ? '' : 'first:rounded-t-sm')}
+                    className={cn('w-full transition-opacity group-hover:opacity-80', BAR[fieldglass ? weekStanding(w).tone : 'none'], pending > 0 ? '' : 'first:rounded-t-sm')}
                     style={{ height: `${(w.total / max) * 100}%`, minHeight: w.total > 0 ? 2 : 0 }}
                   />
                 ))}
@@ -419,18 +427,20 @@ function WeekBars({ weeks, onPick }: { weeks: TimesheetHistoryWeek[]; onPick: (w
 function PeriodCard({
   period,
   history,
+  fieldglass,
   openWeek,
   onToggle,
 }: {
   period: TimesheetHistoryPeriod;
   history: TimesheetHistoryResponse;
+  fieldglass: boolean;
   openWeek: string | null;
   onToggle: (key: string) => void;
 }) {
   const money = history.totals.money !== null;
   const paid = period.payDate ? period.payDate <= todayYmd() : false;
   const dayNames = period.weeks[0]!.days.map((d) => d.weekday);
-  const cols = 10 + (money ? 1 : 0);
+  const cols = 9 + (fieldglass ? 1 : 0) + (money ? 1 : 0);
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-navy-secondary bg-navy-secondary/30 px-4 py-2.5">
@@ -473,7 +483,7 @@ function PeriodCard({
                 </th>
               ))}
               <th className="px-2 py-2 text-right font-semibold">Total</th>
-              <th className="px-3 py-2 text-left font-semibold">Fieldglass</th>
+              {fieldglass && <th className="px-3 py-2 text-left font-semibold">Fieldglass</th>}
               {money && <th className="px-3 py-2 text-right font-semibold">Amount</th>}
             </tr>
           </thead>
@@ -525,6 +535,7 @@ function PeriodCard({
                       {hrs(w.total)}
                       {w.pendingHours > 0 && <div className="whitespace-nowrap text-xs2 font-normal text-warning">+{hrs(w.pendingHours)} pending</div>}
                     </td>
+                    {fieldglass && (
                     <td className="px-3 py-2">
                       <div className="flex flex-col items-start gap-0.5">
                         <span className="flex items-center gap-1">
@@ -544,12 +555,13 @@ function PeriodCard({
                         )}
                       </div>
                     </td>
+                    )}
                     {money && <td className="px-3 py-2 text-right tabular-nums text-silver">{w.amount !== null ? fmtMoney(w.amount) : '—'}</td>}
                   </tr>
                   {open && (
                     <tr className="bg-navy-secondary/15">
                       <td colSpan={cols} className="px-3 pb-4 pt-1">
-                        <WeekDetail week={w} associateId={history.associate.id} />
+                        <WeekDetail week={w} associateId={history.associate.id} fieldglass={fieldglass} />
                       </td>
                     </tr>
                   )}
@@ -565,9 +577,9 @@ function PeriodCard({
 
 /** One week, opened: each day's times and breaks, the Fieldglass trail,
  *  the buyer's comment, finance's note, and the next thing to do. */
-function WeekDetail({ week: w, associateId }: { week: TimesheetHistoryWeek; associateId: string }) {
+function WeekDetail({ week: w, associateId, fieldglass }: { week: TimesheetHistoryWeek; associateId: string; fieldglass: boolean }) {
   const qc = useQueryClient();
-  const f = w.fieldglass;
+  const f = fieldglass ? w.fieldglass : null;
   const [note, setNote] = useState(f?.note ?? '');
   const [saving, setSaving] = useState(false);
   const [marking, setMarking] = useState(false);

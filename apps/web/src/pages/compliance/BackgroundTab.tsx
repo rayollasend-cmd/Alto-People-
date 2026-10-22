@@ -1,12 +1,13 @@
 import { BackgroundProviderPanel } from './providers/BackgroundProviderPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, ExternalLink, FileCheck2, FileSearch, Plus, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Download, ExternalLink, FileCheck2, FileSearch, Plus, ShieldCheck } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import { sanitizeReturnPath } from './section2Verification';
 import { toast } from 'sonner';
 import type {
+  AdverseActionStage,
   BackgroundCheck,
   BackgroundCheckDetail,
   BackgroundPendingResponse,
@@ -16,10 +17,15 @@ import {
   bulkInitiateBackgroundChecks,
   getBackgroundCheckDetail,
   initiateBackgroundCheck,
+  listAdverseActions,
   listBackgroundChecks,
   listPendingBackgroundChecks,
+  sendFinalAdverse,
+  sendPreAdverse,
   updateBackgroundCheck,
+  withdrawAdverse,
 } from '@/lib/complianceApi';
+import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { uploadAdminDocument } from '@/lib/documentsApi';
 import { DocumentThumbnails } from '@/components/DocumentViewer';
@@ -77,6 +83,9 @@ function statusVariant(s: BgCheckStatus): 'default' | 'pending' | 'success' | 'd
       return 'pending';
     case 'INITIATED':
       return 'default';
+    // Never ran: no screening provider is connected (audit 2026-10-21 #3).
+    case 'NOT_RUN':
+      return 'destructive';
   }
 }
 
@@ -86,6 +95,7 @@ const STATUS_LABELS: Record<BgCheckStatus, string> = {
   NEEDS_REVIEW: 'Needs review',
   PASSED: 'Passed',
   FAILED: 'Failed',
+  NOT_RUN: 'Not run — no provider',
 };
 
 function transitionVariant(
@@ -121,6 +131,7 @@ const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
   'NEEDS_REVIEW',
   'PASSED',
   'FAILED',
+  'NOT_RUN',
 ];
 type InitiatedFilter = 'any' | 'week' | 'month' | 'quarter';
 
@@ -135,9 +146,9 @@ function matchesStatus(c: BackgroundCheck, f: StatusFilter): boolean {
     case 'all':
       return true;
     case 'in_flight':
-      return !isTerminal(c.status);
+      return !isTerminal(c.status) && c.status !== 'NOT_RUN';
     case 'stuck':
-      return !isTerminal(c.status) && ageInDays(c.initiatedAt) >= 7;
+      return !isTerminal(c.status) && c.status !== 'NOT_RUN' && ageInDays(c.initiatedAt) >= 7;
     case 'missing_report':
       return isTerminal(c.status) && (c.reportCount ?? 0) === 0;
     default:
@@ -238,6 +249,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   };
   const [pendingId, setPendingId] = useState<string | null>(null);
 
+  const queryClient = useQueryClient();
   const refreshQuery = useQuery({
     queryKey: ['BackgroundTab', 'checks'],
     queryFn: () => listBackgroundChecks(),
@@ -342,9 +354,11 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   // Snapshot strip — same at-a-glance idiom as the E-Verify directory.
   // Deliberately computed over ALL checks, not the filtered view: the KPIs
   // answer "how are we doing overall", the filters narrow the table.
-  const open = (checks ?? []).filter((c) => !isTerminal(c.status));
+  // NOT_RUN is not in flight: nothing is running (no provider connected).
+  const open = (checks ?? []).filter((c) => !isTerminal(c.status) && c.status !== 'NOT_RUN');
   const kpi = {
     inFlight: open.length,
+    notRun: (checks ?? []).filter((c) => c.status === 'NOT_RUN').length,
     needsReview: (checks ?? []).filter((c) => c.status === 'NEEDS_REVIEW').length,
     stuck: open.filter((c) => ageInDays(c.initiatedAt) >= 7).length,
     passed: (checks ?? []).filter((c) => c.status === 'PASSED').length,
@@ -390,6 +404,14 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
         </ErrorBanner>
       )}
 
+      <AdverseWorklist
+        onOpen={(checkId) => {
+          const hit = checks?.find((c) => c.id === checkId);
+          if (hit) openDrawer(hit);
+          else toast.error('That check is not in the list on screen — clear the filters and try again.');
+        }}
+      />
+
       {checks && checks.length > 0 && (
         <KpiStrip>
           <Kpi label="In flight" value={kpi.inFlight} />
@@ -403,6 +425,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             value={kpi.stuck}
             tone={kpi.stuck > 0 ? 'text-alert' : undefined}
           />
+          {kpi.notRun > 0 && <Kpi label="Not run — no provider" value={kpi.notRun} tone="text-alert" />}
           <Kpi label="Passed" value={kpi.passed} tone="text-success" />
           <Kpi
             label="Failed"
@@ -439,6 +462,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             <option value="NEEDS_REVIEW">Needs review</option>
             <option value="PASSED">Passed</option>
             <option value="FAILED">Failed</option>
+            <option value="NOT_RUN">Not run — no provider</option>
             <option value="stuck">Stuck 7d+</option>
             <option value="missing_report">Finalized, no report</option>
           </Select>
@@ -621,6 +645,11 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
               void detailQuery.refetch();
               void refresh(); // report counts in the table + KPI strip
             }}
+            onCheckChanged={(updated) => {
+              setDrawerTarget(updated);
+              void refresh();
+              void queryClient.invalidateQueries({ queryKey: ['BackgroundTab', 'adverse'] });
+            }}
           />
         )}
       </Drawer>
@@ -636,6 +665,7 @@ function BackgroundCheckDetailPanel({
   pending,
   onTransition,
   onReportsChanged,
+  onCheckChanged,
 }: {
   check: BackgroundCheck;
   /** null while the audited detail fetch is in flight. */
@@ -646,6 +676,8 @@ function BackgroundCheckDetailPanel({
   pending: boolean;
   onTransition: (status: BgCheckStatus) => void;
   onReportsChanged: () => void;
+  /** An adverse-action step moved the check; here is the record as it now stands. */
+  onCheckChanged: (updated: BackgroundCheck) => void;
 }) {
   const ageDays = ageInDays(check.initiatedAt);
   const finalized = isTerminal(check.status);
@@ -699,6 +731,15 @@ function BackgroundCheckDetailPanel({
           <DetailRow label="External ref">{check.externalId ?? '—'}</DetailRow>
         </dl>
 
+        {check.status === 'NOT_RUN' && (
+          <p className="mt-5 flex items-start gap-2 rounded-md border border-alert/40 bg-alert/5 p-3 text-sm text-ink" role="status">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-alert" aria-hidden="true" />
+            <span>
+              The consent is on file but no check ran: no screening provider is connected. Connect one under Integrations and order it, or record a check run elsewhere.
+            </span>
+          </p>
+        )}
+
         <BackgroundProviderPanel
           checkId={check.id}
           personName={check.associateName}
@@ -706,6 +747,8 @@ function BackgroundCheckDetailPanel({
           onCleared={() => onTransition('PASSED')}
           onChanged={onReportsChanged}
         />
+
+        {!check.viaProvider && canManage && <ManualAdversePanel check={check} onChanged={onCheckChanged} />}
 
         <div className="mt-6">
           <h3 className="mb-2 text-2xs uppercase tracking-widest text-silver/80">
@@ -860,6 +903,8 @@ function labelFor(s: BgCheckStatus): string {
       return 'Mark failed';
     case 'INITIATED':
       return 'Reopen';
+    case 'NOT_RUN':
+      return 'Not run';
   }
 }
 
@@ -1163,5 +1208,151 @@ function InitiateCheckDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ----- FCRA adverse action (audit 2026-10-21 #14) ------------------------ */
+
+const STAGE_COPY: Record<AdverseActionStage, { label: string; variant: 'destructive' | 'pending' | 'default' | 'outline' }> = {
+  FINAL_DUE: { label: 'Final notice due', variant: 'destructive' },
+  DECIDE: { label: 'Decide', variant: 'pending' },
+  WAITING: { label: 'Waiting period', variant: 'default' },
+  DONE: { label: 'Final notice sent', variant: 'outline' },
+};
+
+/**
+ * The adverse-action worklist: what the FCRA asks of HR next, in order —
+ * final notices now due, reports to decide, notices waiting out their
+ * period, and those finished in the last 90 days. Quiet when empty.
+ */
+function AdverseWorklist({ onOpen }: { onOpen: (checkId: string) => void }) {
+  const q = useQuery({ queryKey: ['BackgroundTab', 'adverse'], queryFn: listAdverseActions });
+  const rows = q.data?.rows ?? [];
+  if (rows.length === 0) return null;
+  return (
+    <section aria-labelledby="adverse-worklist" className="mb-4 rounded-lg border border-line bg-surface p-3">
+      <h3 id="adverse-worklist" className="mb-2 text-sm font-medium text-ink">
+        Adverse actions
+      </h3>
+      <ul className="divide-y divide-line">
+        {rows.map((r) => (
+          <li key={r.checkId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+            <div className="min-w-0">
+              <button type="button" className="text-sm text-accent hover:underline" onClick={() => onOpen(r.checkId)}>
+                {r.associateName}
+              </button>
+              <div className="text-xs text-ink-muted">
+                {r.stage === 'WAITING' && r.waitUntil && `They have until ${fmtDate(r.waitUntil)} to respond`}
+                {r.stage === 'FINAL_DUE' && r.waitUntil && `Waiting period ended ${fmtDate(r.waitUntil)}`}
+                {r.stage === 'DECIDE' && 'The report needs a decision'}
+                {r.stage === 'DONE' && r.adverseSentAt && `Final notice sent ${fmtDate(r.adverseSentAt)}`}
+                {r.viaProvider && ' · through the provider'}
+              </div>
+            </div>
+            <Badge variant={STAGE_COPY[r.stage].variant}>{STAGE_COPY[r.stage].label}</Badge>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * The FCRA steps for a check recorded by hand (provider-ordered checks run
+ * them in the provider panel above): the pre-adverse notice with the report
+ * on file and the summary of rights, the waiting period, then the final
+ * notice — or withdrawing once the person clears it up.
+ */
+function ManualAdversePanel({ check, onChanged }: { check: BackgroundCheck; onChanged: (c: BackgroundCheck) => void }) {
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const decidable = !check.adjudication && check.status !== 'PASSED' && (check.status === 'NEEDS_REVIEW' || check.status === 'FAILED' || check.result === 'consider');
+  const pending = check.adjudication === 'PRE_ADVERSE';
+  if (!decidable && !pending && check.adjudication !== 'ADVERSE') return null;
+  const waitOver = !!check.adverseWaitUntil && new Date(check.adverseWaitUntil).getTime() <= Date.now();
+
+  const run = async (fn: () => Promise<BackgroundCheck>, done: string) => {
+    setBusy(true);
+    try {
+      onChanged(await fn());
+      toast.success(done);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'That did not go through. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-label="Adverse action" className="mt-6 space-y-3 rounded-lg border border-line p-4">
+      <h3 className="text-sm font-medium text-ink">Adverse action</h3>
+      {decidable && (
+        <>
+          <p className="text-sm text-ink-muted">
+            To decide against {check.associateName} on this report, the law asks for two notices: a pre-adverse notice with a copy of the report and a summary of their rights, a waiting period for them to respond, then the final notice. Upload the report below first — the notice carries it.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            loading={busy}
+            onClick={async () => {
+              const ok = await confirm({
+                title: 'Send the pre-adverse notice?',
+                description: `${check.associateName} gets the report on file and the summary of their FCRA rights, and has 7 days to respond before any final decision.`,
+                confirmLabel: 'Send pre-adverse notice',
+              });
+              if (ok) await run(() => sendPreAdverse(check.id), 'Pre-adverse notice sent with the report.');
+            }}
+          >
+            Send pre-adverse notice
+          </Button>
+        </>
+      )}
+      {pending && (
+        <>
+          <p className="text-sm text-ink-muted">
+            Pre-adverse notice sent {check.preAdverseSentAt ? fmtDateTime(check.preAdverseSentAt) : ''}.{' '}
+            {check.adverseWaitUntil && (waitOver ? 'The waiting period is over.' : `They have until ${fmtDate(check.adverseWaitUntil)} to respond.`)}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              loading={busy}
+              disabled={!waitOver}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Send the final adverse action notice?',
+                  description: `${check.associateName} is told the decision, with the report and their rights. The check is recorded as failed.`,
+                  confirmLabel: 'Send final notice',
+                  destructive: true,
+                });
+                if (ok) await run(() => sendFinalAdverse(check.id), 'Final notice sent.');
+              }}
+            >
+              {waitOver ? 'Send final notice' : `Final notice from ${check.adverseWaitUntil ? fmtDate(check.adverseWaitUntil) : 'the end of the wait'}`}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              loading={busy}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Withdraw the adverse action?',
+                  description: 'Use this when they cleared it up. The check is recorded as passed.',
+                  confirmLabel: 'Withdraw',
+                });
+                if (ok) await run(() => withdrawAdverse(check.id), 'Adverse action withdrawn — the check is cleared.');
+              }}
+            >
+              They cleared it up — withdraw
+            </Button>
+          </div>
+        </>
+      )}
+      {check.adjudication === 'ADVERSE' && (
+        <p className="text-sm text-ink-muted">Final adverse action notice sent {check.adverseSentAt ? fmtDateTime(check.adverseSentAt) : ''}.</p>
+      )}
+    </section>
   );
 }

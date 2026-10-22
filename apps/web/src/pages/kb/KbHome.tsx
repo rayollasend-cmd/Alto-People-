@@ -67,6 +67,15 @@ function slugify(s: string): string {
     .slice(0, 80);
 }
 
+function kbStatusLabel(t: ReturnType<typeof useI18n>['t'], s: KbStatus): string {
+  switch (s) {
+    case 'DRAFT': return t('kb.statusDraft');
+    case 'PUBLISHED': return t('kb.statusPublished');
+    case 'ARCHIVED': return t('kb.statusArchived');
+    default: return statusLabel(s);
+  }
+}
+
 function RetryBanner({
   message,
   onRetry,
@@ -118,7 +127,7 @@ export function KbHome() {
   // One in-flight action at a time — a double-click on Publish/Delete
   // used to fire the write twice.
   const [actionKey, setActionKey] = useState<string | null>(null);
-  const act = async (key: string, fn: () => Promise<void>) => {
+  const act = async (key: string, fn: () => void | Promise<void>) => {
     if (actionKey) return;
     setActionKey(key);
     try {
@@ -201,12 +210,12 @@ export function KbHome() {
           onChange={(v) => setTab(v)}
           options={[
             { value: 'browse' as const, label: t('kb.tab.browse') },
-            ...(canManage ? [{ value: 'admin' as const, label: 'Admin' }] : []),
+            ...(canManage ? [{ value: 'admin' as const, label: t('kb.tab.admin') }] : []),
           ]}
         />
         {canManage && tab === 'admin' && (
           <Button onClick={() => setEditing('new')}>
-            <Plus className="mr-2 h-4 w-4" /> New article
+            <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
           </Button>
         )}
       </div>
@@ -257,13 +266,13 @@ export function KbHome() {
                     q
                       ? t('kb.noMatchesDesc')
                       : canManage
-                        ? 'Write the first article — policies, benefits, how-tos.'
+                        ? t('kb.writeFirstDesc')
                         : t('kb.noArticlesDesc')
                   }
                   action={
                     !q && canManage ? (
                       <Button onClick={startCreate}>
-                        <Plus className="mr-2 h-4 w-4" /> New article
+                        <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
                       </Button>
                     ) : undefined
                   }
@@ -305,26 +314,27 @@ export function KbHome() {
           <div className="flex flex-wrap items-center gap-2">
             <SearchInput
               wrapperClassName="flex-1 min-w-48"
-              aria-label="Search title, slug, or category"
-              placeholder="Search title, slug, or category…"
+              aria-label={t('kb.adminSearchAria')}
+              placeholder={t('kb.adminSearchPlaceholder')}
               value={adminSearch}
               onChange={(e) => setAdminSearch(e.target.value)}
             />
             <Select
               size="sm"
-              aria-label="Filter by status"
+              aria-label={t('kb.filterStatusAria')}
               value={adminStatus}
               onChange={(e) => setAdminStatus(e.target.value as KbStatus | '')}
             >
-              <option value="">All statuses</option>
-              <option value="DRAFT">Draft</option>
-              <option value="PUBLISHED">Published</option>
-              <option value="ARCHIVED">Archived</option>
+              <option value="">{t('kb.allStatuses')}</option>
+              <option value="DRAFT">{t('kb.statusDraft')}</option>
+              <option value="PUBLISHED">{t('kb.statusPublished')}</option>
+              <option value="ARCHIVED">{t('kb.statusArchived')}</option>
             </Select>
             {filteredAdmin !== null && (
               <span className="text-xs text-silver tabular-nums">
-                {filteredAdmin.length}{' '}
-                {filteredAdmin.length === 1 ? 'article' : 'articles'}
+                {filteredAdmin.length === 1
+                  ? t('kb.oneArticle')
+                  : t('kb.nArticles', { n: filteredAdmin.length })}
               </span>
             )}
           </div>
@@ -338,28 +348,28 @@ export function KbHome() {
               ) : filteredAdmin.length === 0 ? (
                 <EmptyState
                   icon={BookOpen}
-                  title="No articles"
+                  title={t('kb.noArticles')}
                   description={
                     adminSearch || adminStatus
-                      ? 'Nothing matches this filter.'
-                      : 'Create the first article.'
+                      ? t('kb.noFilterMatches')
+                      : t('kb.createFirst')
                   }
                 />
               ) : (
                 <DataGrid<(typeof filteredAdmin)[number]>
                   id="kb-articles"
-                  caption="Knowledge base articles"
+                  caption={t('kb.gridCaption')}
                   rows={filteredAdmin}
                   rowKey={(a) => a.id}
                   search={false}
                   urlState={false}
                   exportCsv={{ filename: 'kb-articles' }}
                   onRowClick={(a) => setEditing(a)}
-                  rowActionLabel={(a) => `Edit ${a.title}`}
+                  rowActionLabel={(a) => t('kb.editName', { title: a.title })}
                   columns={[
                     {
                       key: 'title',
-                      header: 'Title',
+                      header: t('kb.fieldTitle'),
                       accessor: (a) => a.title,
                       sortable: true,
                       primary: true,
@@ -370,12 +380,12 @@ export function KbHome() {
                         </>
                       ),
                     },
-                    { key: 'category', header: 'Category', accessor: (a) => a.category, sortable: true, cardMeta: true, className: 'text-sm text-silver' },
-                    { key: 'status', header: 'Status', accessor: (a) => statusLabel(a.status), sortable: true, cell: (a) => <Badge variant={statusTone(a.status)}>{statusLabel(a.status)}</Badge> },
-                    { key: 'views', header: 'Views', accessor: (a) => a.views, sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums' },
+                    { key: 'category', header: t('kb.fieldCategory'), accessor: (a) => a.category, sortable: true, cardMeta: true, className: 'text-sm text-silver' },
+                    { key: 'status', header: t('kb.colStatus'), accessor: (a) => kbStatusLabel(t, a.status), sortable: true, cell: (a) => <Badge variant={statusTone(a.status)}>{kbStatusLabel(t, a.status)}</Badge> },
+                    { key: 'views', header: t('kb.colViews'), accessor: (a) => a.views, sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums' },
                     {
                       key: 'helpful',
-                      header: 'Helpful',
+                      header: t('kb.colHelpful'),
                       accessor: (a) => a.helpful,
                       csv: (a) => (a.notHelpful > 0 ? `${a.helpful} / ${a.notHelpful}` : String(a.helpful)),
                       sortable: true,
@@ -391,7 +401,7 @@ export function KbHome() {
                     },
                     {
                       key: 'actions',
-                      header: 'Actions',
+                      header: t('kb.colActions'),
                       accessor: () => null,
                       searchable: false,
                       csv: () => '',
@@ -410,36 +420,36 @@ export function KbHome() {
                                 void act(`pub-${a.id}`, async () => {
                                   try {
                                     await publishKbArticle(a.id);
-                                    toast.success('Article published.');
+                                    toast.success(t('kb.publishedToast'));
                                     refresh();
                                   } catch (err) {
-                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                    toast.error(err instanceof ApiError ? err.message : t('kb.failed'));
                                   }
                                 })
                               }
                             >
-                              Publish
+                              {t('kb.publish')}
                             </Button>
                           )}
                           <Button size="sm" variant="ghost" onClick={() => setEditing(a)}>
-                            Edit
+                            {t('kb.edit')}
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            aria-label={`Delete ${a.title}`}
+                            aria-label={t('kb.deleteName', { title: a.title })}
                             className="hover:text-alert"
                             loading={actionKey === `del-${a.id}`}
                             disabled={actionKey !== null}
                             onClick={async () => {
-                              if (!(await confirm({ title: `Delete "${a.title}"?`, destructive: true }))) return;
+                              if (!(await confirm({ title: t('kb.deleteConfirm', { title: a.title }), destructive: true }))) return;
                               await act(`del-${a.id}`, async () => {
                                 try {
                                   await deleteKbArticle(a.id);
-                                  toast.success('Article deleted.');
+                                  toast.success(t('kb.deletedToast'));
                                   refresh();
                                 } catch (err) {
-                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                  toast.error(err instanceof ApiError ? err.message : t('kb.failed'));
                                 }
                               });
                             }}
@@ -582,6 +592,7 @@ function EditDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const isNew = article === null;
   const [title, setTitle] = useState(article?.title ?? '');
@@ -610,7 +621,7 @@ function EditDrawer({
   const bodyError = bodyQuery.error
     ? bodyQuery.error instanceof ApiError
       ? bodyQuery.error.message
-      : 'Could not load the article body.'
+      : t('kb.bodyFailed')
     : null;
 
   const tagList = useMemo(
@@ -624,11 +635,11 @@ function EditDrawer({
 
   const submit = async () => {
     if (!title.trim() || !body.trim()) {
-      toast.error('Title and body required.');
+      toast.error(t('kb.titleBodyRequired'));
       return;
     }
     if (isNew && !slug.match(/^[a-z0-9-]+$/)) {
-      toast.error('Slug: lowercase letters, digits, hyphens only.');
+      toast.error(t('kb.slugInvalid'));
       return;
     }
     setSaving(true);
@@ -641,7 +652,7 @@ function EditDrawer({
           category: category.trim(),
           tags: tagList,
         });
-        toast.success('Article created.');
+        toast.success(t('kb.createdToast'));
       } else if (article) {
         await updateKbArticle(article.id, {
           title: title.trim(),
@@ -649,11 +660,11 @@ function EditDrawer({
           category: category.trim(),
           tags: tagList,
         });
-        toast.success('Article updated.');
+        toast.success(t('kb.updatedToast'));
       }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('kb.failed'));
     } finally {
       setSaving(false);
     }
@@ -662,11 +673,11 @@ function EditDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{isNew ? 'New article' : 'Edit article'}</DrawerTitle>
+        <DrawerTitle>{isNew ? t('kb.newArticle') : t('kb.editArticle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Title</Label>
+          <Label>{t('kb.fieldTitle')}</Label>
           <Input
             className="mt-1"
             value={title}
@@ -678,7 +689,7 @@ function EditDrawer({
         </div>
         {isNew && (
           <div>
-            <Label>Slug (URL-safe, auto-generated from the title)</Label>
+            <Label>{t('kb.fieldSlug')}</Label>
             <Input
               className="mt-1 font-mono text-xs"
               value={slug}
@@ -692,12 +703,12 @@ function EditDrawer({
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>Category</Label>
+            <Label>{t('kb.fieldCategory')}</Label>
             <Input
               className="mt-1"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              placeholder="Benefits"
+              placeholder={t('kb.categoryPlaceholder')}
               list="kb-category-options"
             />
             <datalist id="kb-category-options">
@@ -707,17 +718,17 @@ function EditDrawer({
             </datalist>
           </div>
           <div>
-            <Label>Tags (comma-separated)</Label>
+            <Label>{t('kb.fieldTags')}</Label>
             <Input
               className="mt-1"
               value={tags}
               onChange={(e) => setTags(e.target.value)}
-              placeholder="benefits, 401k, enrollment"
+              placeholder={t('kb.tagsPlaceholder')}
             />
           </div>
         </div>
         <div>
-          <Label>Body (plain text)</Label>
+          <Label>{t('kb.fieldBody')}</Label>
           {bodyError ? (
             <div className="mt-1">
               <RetryBanner message={bodyError} onRetry={loadBody} />
@@ -738,30 +749,30 @@ function EditDrawer({
             variant="ghost"
             disabled={saving}
             onClick={async () => {
-              if (!(await confirm({ title: 'Archive this article?', destructive: true }))) return;
+              if (!(await confirm({ title: t('kb.archiveConfirm'), destructive: true }))) return;
               if (saving) return;
               setSaving(true);
               try {
                 await archiveKbArticle(article.id);
-                toast.success('Article archived.');
+                toast.success(t('kb.archivedToast'));
                 onSaved();
               } catch (err) {
-                toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                toast.error(err instanceof ApiError ? err.message : t('kb.failed'));
               } finally {
                 setSaving(false);
               }
             }}
           >
-            Archive
+            {t('kb.archive')}
           </Button>
         )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button onClick={submit} disabled={saving || bodyLoading || bodyError !== null}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('kb.saving') : t('kb.save')}
         </Button>
       </DrawerFooter>
     </Drawer>

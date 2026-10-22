@@ -19,6 +19,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
 import { placedClientIds } from '../lib/openShiftEligibility.js';
 import { answerPayday, answerRide, answerSchedule, handoff } from '../lib/whatsappAssistant.js';
+import { answerDriverNextRun, answerDriverRiders, answerDriverVanIssue } from '../lib/transportHugo.js';
 import { helpCenterReply, helpCenterToolText, searchHelpCenter } from '../lib/helpCenterSearch.js';
 import { WA_REPLY, toWaLang, type WaLang } from '../lib/whatsappContent.js';
 import { ActionError, actionTools, decideAction, type ActionContext } from '../lib/assistantActions.js';
@@ -203,6 +204,13 @@ function answerFor(intent: HugoIntentKey, user: Asker, tenantId: string, lang: W
       return async () => ({ reply: await answerRide(prisma, user.associateId!, lang, now), linkUrl: '/rides' });
     case 'SCHEDULE':
       return async () => ({ reply: await answerSchedule(prisma, user.associateId!, lang, now), linkUrl: '/scheduling' });
+    // The driver's own (lib/transportHugo, floor walk 19).
+    case 'DRIVER_NEXT_RUN':
+      return async () => ({ reply: await answerDriverNextRun(prisma, user.id, lang, now), linkUrl: '/' });
+    case 'DRIVER_RUN_RIDERS':
+      return async () => ({ reply: await answerDriverRiders(prisma, user.id, lang, now), linkUrl: '/' });
+    case 'DRIVER_VAN_ISSUE':
+      return async () => ({ reply: answerDriverVanIssue(lang), linkUrl: '/?report=van' });
     default:
       return null;
   }
@@ -218,6 +226,9 @@ function toolsFor(open: HugoIntent[], mk: (k: HugoIntentKey) => Runner | null): 
     PAYDAY: ['my_next_payday', "The person's next payday and the pay period it covers."],
     RIDE: ['my_next_ride', "The person's next van ride: when and where the pickup is."],
     SCHEDULE: ['my_next_shifts', "The person's next shifts: days, times and sites."],
+    DRIVER_NEXT_RUN: ['my_next_run', "The driver's next van run (or the one on the road): when it leaves, the van, how many riders, which store."],
+    DRIVER_RUN_RIDERS: ['riders_on_my_run', "Who is on the driver's next run, in pickup order, with each stop and who is already on board."],
+    DRIVER_VAN_ISSUE: ['how_to_report_van_issue', 'How a driver reports a van problem and takes the van off the road from the app.'],
   };
   const out: AssistantTool[] = [];
   for (const i of open) {

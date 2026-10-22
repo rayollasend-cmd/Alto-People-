@@ -8,6 +8,7 @@ import { requireCapability } from '../middleware/auth.js';
 import {
   ENTITY_COLUMNS,
   SpecSchema,
+  assertEntityAllowed,
   aggregateColumns,
   buildGroupBy,
   buildOrderBy,
@@ -43,6 +44,11 @@ const ReportInputSchema = z.object({
     'APPLICATION',
     'EXPENSE',
     'CANDIDATE',
+    // HR events (HR walk 17).
+    'SEPARATION',
+    'LEAVE_CASE',
+    'HR_CASE',
+    'OFFER',
   ]),
   spec: SpecSchema,
   isPublic: z.boolean().optional(),
@@ -121,6 +127,7 @@ reports96Router.get('/reports/:id', VIEW, async (req, res) => {
 
 reports96Router.post('/reports', VIEW, async (req, res) => {
   const input = ReportInputSchema.parse(req.body);
+  assertEntityAllowed(input.entity, req.user!);
   // Validate the spec against the whitelist — fail early so saved reports
   // don't ship with invalid columns.
   buildSelect(input.entity, input.spec.columns);
@@ -342,5 +349,6 @@ reports96Router.delete('/report-schedules/:id', VIEW, async (req, res) => {
 reports96Router.get('/reports/_columns/:entity', VIEW, async (req, res) => {
   const cols = ENTITY_COLUMNS[req.params.entity];
   if (!cols) throw new HttpError(404, 'invalid_entity', 'Unknown entity.');
+  assertEntityAllowed(req.params.entity, req.user!);
   res.json({ entity: req.params.entity, columns: Object.keys(cols) });
 });

@@ -426,10 +426,6 @@ const HAND_PICKED = new Set(SURFACES.map((s) => (s.route ?? '').split('?')[0]).f
 /** Pages another builder is rebuilding this round — their owners clean them. */
 const OWNED_ELSEWHERE: Record<string, string> = {
   org: 'rebuilt by STRUCTURE this round',
-  celebrations: 'rebuilt by TALENT this round',
-  assets: 'rebuilt by TALENT this round',
-  ramp: 'rebuilt by TALENT this round',
-  expirations: 'rebuilt by INSIGHT this round',
   // Renders docs/design-system.md, the product's own written standard, verbatim:
   // like the Organization profile it describes the product, not the tenant.
   'design-system': 'the product standard, quoted verbatim',

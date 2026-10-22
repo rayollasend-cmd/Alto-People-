@@ -146,7 +146,7 @@ describe('invoicing terms and the dunning cadence', () => {
     // Finance sets the client's standing terms itself.
     const own = await agent.patch(`/clients/${client.id}/billing-terms`).send({ poNumber: 'PO-5000', paymentTermsDays: 45 });
     expect(own.status).toBe(200);
-    expect(own.body).toEqual({ poNumber: 'PO-5000', paymentTermsDays: 45 });
+    expect(own.body).toEqual({ poNumber: 'PO-5000', paymentTermsDays: 45, salesTaxable: false, salesTaxRatePct: null });
   });
 
   it('reminds at each stage once, and not while paused', async () => {

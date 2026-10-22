@@ -232,7 +232,7 @@ describe('<TransportHome> — plan the day in one go', () => {
       if (path.startsWith('/transport/board')) return board();
       if (path.startsWith('/transport/live')) return { date: '', generatedAt: '', runs: [] };
       if (path === '/transport/plan' && init?.method === 'POST') return plan;
-      if (path === '/transport/runs' && init?.method === 'POST') return { run: {} };
+      if (path === '/transport/runs/batch' && init?.method === 'POST') return { created: [{ key: 'p1', runId: 'new1' }], updated: [] };
     });
     renderAs('TRANSPORTATION_DIRECTOR');
     await userEvent.click((await screen.findAllByRole('button', { name: 'Plan runs' }))[0]!);
@@ -240,10 +240,15 @@ describe('<TransportHome> — plan the day in one go', () => {
     expect(await within(dialog).findByText('To Front Beach 218')).toBeInTheDocument();
     expect(within(dialog).getByText(/Ben Ray · Gulf Pines/)).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Dispatch 1 run' }));
-    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/runs', expect.objectContaining({ method: 'POST' })));
-    const body = (vi.mocked(apiFetch).mock.calls.find(([p]) => p === '/transport/runs')![1] as { body: { vanId: string; rides: Array<{ rideId: string }> } }).body;
-    expect(body.vanId).toBe('v2');
-    expect(body.rides.map((r) => r.rideId)).toEqual(['r2', 'r1']);
+    // The whole plan in one request — all or nothing (transport walk 10).
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/runs/batch', expect.objectContaining({ method: 'POST' })));
+    const body = (vi.mocked(apiFetch).mock.calls.find(([p]) => p === '/transport/runs/batch')![1] as { body: { runs: Array<{ key: string; vanId: string; rides: Array<{ rideId: string }> }>; topUps: unknown[] } }).body;
+    expect(body.runs).toHaveLength(1);
+    expect(body.runs[0]!.key).toBe('p1');
+    expect(body.runs[0]!.vanId).toBe('v2');
+    expect(body.runs[0]!.rides.map((r) => r.rideId)).toEqual(['r2', 'r1']);
+    expect(body.topUps).toEqual([]);
+    expect(apiFetch).not.toHaveBeenCalledWith('/transport/runs', expect.anything());
   });
 
   it('a group dispatches in one click — the dialog opens already in the best order', async () => {
@@ -267,8 +272,9 @@ describe('<TransportHome> — plan the day in one go', () => {
     const dialog = await screen.findByRole('dialog');
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/route', { method: 'POST', body: { rideIds: ['r1', 'r2'] } }));
     await waitFor(() => {
+      // A rider with no map point says so beside the name ("no map location").
       const names = within(dialog).getAllByText(/Maria Lopez|Ben Ray/).map((el) => el.textContent);
-      expect(names[0]).toBe('Ben Ray');
+      expect(names[0]).toMatch(/^Ben Ray/);
     });
   });
 });

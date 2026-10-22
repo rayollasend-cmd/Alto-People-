@@ -22,8 +22,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { DAILY_KEEP, MONTHLY_KEEP, planBackupPrune } from '../src/lib/backupRetention.js';
 
 const need = (k: string) => {
   const v = process.env[k];
@@ -87,6 +88,33 @@ async function postEvidence(control: string, status: 'PASS' | 'FAIL' | 'WARN', s
   console.log(`Evidence ${res.ok ? 'recorded' : `not recorded (HTTP ${res.status})`}.`);
 }
 
+/** Every key under db/, across pages. */
+async function listBackupKeys(client: S3Client, bucket: string): Promise<string[]> {
+  const keys: string[] = [];
+  let token: string | undefined;
+  do {
+    const page = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: 'db/', ContinuationToken: token }));
+    for (const o of page.Contents ?? []) if (o.Key) keys.push(o.Key);
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
+}
+
+/**
+ * Decision 4: 35 daily + 12 monthly. Planned by lib/backupRetention (pure,
+ * tested); the dumps and manifests outside the plan are deleted here, in
+ * batches of 1,000 (the S3 limit). Only ever called AFTER today's upload
+ * succeeded, so a failed backup never thins the set.
+ */
+async function pruneBackups(client: S3Client, bucket: string): Promise<{ removed: number; kept: number; dailyKept: number; monthlyKept: number }> {
+  const plan = planBackupPrune(await listBackupKeys(client, bucket));
+  for (let i = 0; i < plan.remove.length; i += 1000) {
+    const slice = plan.remove.slice(i, i + 1000);
+    await client.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: slice.map((Key) => ({ Key })), Quiet: true } }));
+  }
+  return { removed: plan.remove.length, kept: plan.keep.length, dailyKept: plan.dailyKept, monthlyKept: plan.monthlyKept };
+}
+
 async function previousManifestSize(client: S3Client, bucket: string): Promise<number | null> {
   const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: 'db/' }));
   const manifests = (listed.Contents ?? []).filter((o) => o.Key?.endsWith('.manifest.json')).sort((a, b) => (b.Key ?? '').localeCompare(a.Key ?? ''));
@@ -139,7 +167,25 @@ async function main() {
 
     const shrank = before !== null && dumpBytes < before * 0.5;
     console.log(`Backed up ${tables.length} tables, ${dumpBytes} bytes, to db/alto-${stamp}.dump.enc.`);
-    await postEvidence('database-backup', shrank ? 'WARN' : 'PASS', shrank ? `Dump written (${dumpBytes} bytes) but it is under half yesterday’s (${before}): look before trusting it.` : `Encrypted dump of ${tables.length} tables (${dumpBytes} bytes) with its row-count manifest.`, { key: `db/alto-${stamp}.dump.enc`, tables: tables.length, dumpBytes, previousBytes: before });
+
+    // 4. Retention: 35 daily + 12 monthly, the rest deleted. A prune failure
+    // is reported in the evidence but never fails the backup itself.
+    let prune: Awaited<ReturnType<typeof pruneBackups>> | null = null;
+    let pruneError: string | null = null;
+    try {
+      prune = await pruneBackups(client, bucket);
+      console.log(`Retention: kept ${prune.dailyKept} daily and ${prune.monthlyKept} monthly dumps, removed ${prune.removed} objects.`);
+    } catch (err) {
+      pruneError = err instanceof Error ? err.message : String(err);
+      console.error(`Retention prune failed: ${pruneError}`);
+    }
+    const retention = prune ? `${prune.dailyKept}/${DAILY_KEEP} daily and ${prune.monthlyKept}/${MONTHLY_KEEP} monthly kept, ${prune.removed} pruned.` : `Prune failed: ${pruneError}.`;
+    await postEvidence(
+      'database-backup',
+      shrank || pruneError ? 'WARN' : 'PASS',
+      shrank ? `Dump written (${dumpBytes} bytes) but it is under half yesterday’s (${before}): look before trusting it. ${retention}` : `Encrypted dump of ${tables.length} tables (${dumpBytes} bytes) with its row-count manifest. ${retention}`,
+      { key: `db/alto-${stamp}.dump.enc`, tables: tables.length, dumpBytes, previousBytes: before, retention: prune ?? { error: pruneError } },
+    );
   } catch (err) {
     await postEvidence('database-backup', 'FAIL', `The database backup failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300), {});
     throw err;

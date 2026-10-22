@@ -138,14 +138,6 @@ export const enrollInLearningPath = (input: {
 export const withdrawLearningPathEnrollment = (id: string) =>
   apiFetch<void>(`/learning-path-enrollments/${id}`, { method: 'DELETE' });
 
-export const getLearningPathStatus = (pathId: string, associateId: string) =>
-  apiFetch<LearningPathStatusResp>(
-    `/learning-paths/${pathId}/status?associateId=${associateId}`,
-  );
-
-export const listMyLearningPaths = () =>
-  apiFetch<{ paths: MyLearningPath[] }>('/my/learning-paths');
-
 export const listPathEnrollments = (pathId: string) =>
   apiFetch<{ enrollments: PathEnrollment[] }>(
     `/learning-paths/${pathId}/enrollments`,

@@ -1,0 +1,35 @@
+# Dependabot — SOC 2 CC7.1 (audit 2026-10-21 item 13). Weekly, grouped, so
+# the Monday scan finds advisories already answered by an open PR. Security
+# updates are always on regardless of the schedule below. Prisma and the
+# React stack are grouped so a minor bump never lands half of a pair.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: UTC
+    open-pull-requests-limit: 5
+    groups:
+      prisma:
+        patterns: ['prisma', '@prisma/*']
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
+      aws-sdk:
+        patterns: ['@aws-sdk/*']
+      dev-tooling:
+        dependency-type: development
+        patterns: ['vitest', '@vitest/*', 'eslint', '@typescript-eslint/*', 'typescript', 'vite', '@vitejs/*']
+    ignore:
+      # Major versions are taken by hand: each is a migration, not a bump.
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: UTC

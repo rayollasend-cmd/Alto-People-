@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Store,
   Users,
+  UserCog,
   ListTodo,
   Briefcase,
   ClipboardCheck,
@@ -54,7 +55,8 @@ export function useSettingsRail(): SettingsRailEntry[] {
       { key: 'communications', label: 'Communications', to: '/admin/communications', icon: Megaphone, section: 'Organization', description: 'Which channels can send, WhatsApp templates, the do-not-email list, and who hears about what.', show: can('manage:communications') },
       { key: 'branding', label: 'Branding', to: '/admin/branding', icon: Palette, section: 'Organization', description: 'Name, colour and logo on every email; the words the product uses for your people and places.', show: can('view:hr-admin') },
       // Access & trust
-      { key: 'users', label: 'Users & access', to: '/admin/users', icon: Users, section: 'Access & trust', description: 'Every account, its role and status; the permission matrix.', show: can('view:hr-admin') },
+      { key: 'users', label: 'Users & access', to: '/admin/users', icon: Users, section: 'Access & trust', description: 'Every account, its role and status, and the access report.', show: can('view:hr-admin') },
+      { key: 'roles', label: 'Roles & permissions', to: '/admin/roles', icon: UserCog, section: 'Access & trust', description: 'What each role may do, custom roles, who holds them, and the groups that grant them.', show: can('view:hr-admin') },
       { key: 'sign-in', label: 'Sign-in', to: '/admin/sign-in', icon: KeyRound, section: 'Access & trust', description: 'Your identity provider, the email domains that lead to it, and SCIM.', show: can('manage:org') },
       { key: 'audit', label: 'Audit & integrity', to: '/audit', icon: ScrollText, section: 'Access & trust', description: 'Every event, searchable and exportable, on a chain you can verify.', show: can('view:audit') },
       { key: 'approval-record', label: 'Approval record', to: '/audit/approvals', icon: ClipboardCheck, section: 'Access & trust', description: 'Every change that went to a second person: who asked, who decided, the before and after.', show: can('view:audit') || can('manage:org') || can('process:payroll') },

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { OvertimeRotationPanel } from './OvertimeRotationPanel';
-import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   Calendar,
   Clock,
-  CalendarDays,
   CalendarRange,
   CheckCircle2,
   ChevronLeft,
@@ -18,8 +17,9 @@ import {
   FileText,
   Filter,
   Inbox,
+  Info,
   LayoutTemplate,
-  List,
+  MoreHorizontal,
   Plus,
   Printer,
   Send,
@@ -36,10 +36,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
+import { isOpenShift, wentUnfilled } from '@alto-people/shared';
 import type {
   AssociateLite,
   StaffingTargetLocation,
   AutoFillCandidate,
+  PublishLaborFinding,
+  PublishPreflightResponse,
   AutoScheduleSkip,
   AutoScheduleWeekResponse,
   ClientSummary,
@@ -53,6 +56,15 @@ import type {
 } from '@alto-people/shared';
 import { ShiftTeamsDialog } from './ShiftTeamsDialog';
 import { DraftsDialog } from './DraftsDialog';
+import { ChangeReasonField, changeReasonRequired } from './ChangeReasonField';
+import { AssignCandidateFacts } from './AssignCandidateFacts';
+import { PublishReviewSheet } from './PublishReviewSheet';
+import { SchedulingToolbar, kpiLine, useHeaderCollapsed } from './SchedulingToolbar';
+import { shiftTimesOnDay } from './weekGridFit';
+import { getSiteForecast } from '@/lib/forecastApi';
+import { useMinWidth } from '@/lib/useViewport';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
+import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { listClientLocations } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
 import { listShiftPositions } from '@/lib/orgApi';
@@ -64,7 +76,9 @@ import {
   assignShift,
   bulkCreateShifts,
   cancelShift,
+  closeOutUnfilled,
   copyWeek,
+  getLastShift,
   dedupeDrafts,
   createShift,
   createShiftTemplate,
@@ -86,6 +100,7 @@ import {
   publishWeek,
   unassignShift,
   updateShift,
+  type ChangeReason,
   type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
@@ -106,6 +121,7 @@ import {
   fmtMonthYearTz,
   fmtRelativeDayTz,
   fmtShiftRangeTz,
+  fmtShiftTz,
   fmtTime,
   fmtTimeTz,
   fmtWeekdayTz,
@@ -157,7 +173,6 @@ import {
   TileDensityProvider,
   type TileDensity,
 } from './shiftTile';
-import type { LucideIcon } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
@@ -275,8 +290,40 @@ const STATUS_LABELS: Record<ShiftStatus, string> = {
   CANCELLED: 'Cancelled',
 };
 
-function fmt(iso: string): string {
-  return fmtDateTime(iso);
+/** A shift's start in ITS store's zone — never the browser's (role walk, ops 2). */
+function fmtShift(s: Pick<Shift, 'startsAt' | 'timezone'>): string {
+  return fmtShiftTz(s.startsAt, s.timezone);
+}
+
+/** Where a shift is: the client, else the store (a company's own shift
+ *  has no client and used to print as "Housekeeper —"). */
+function shiftPlace(s: Pick<Shift, 'clientName' | 'locationName' | 'location'>): string {
+  return s.clientName ?? s.locationName ?? s.location ?? '—';
+}
+
+/** Last-used New-shift values, per browser (role walk, ops 15). */
+const NEW_SHIFT_LAST_KEY = 'alto:sched.newShift.last.v1';
+interface NewShiftLast {
+  clientId?: string;
+  locationId?: string;
+  position?: string;
+  startTime?: string;
+  endTime?: string;
+}
+function readNewShiftLast(): NewShiftLast {
+  try {
+    const raw = typeof window !== 'undefined' ? window.localStorage.getItem(NEW_SHIFT_LAST_KEY) : null;
+    return raw ? (JSON.parse(raw) as NewShiftLast) : {};
+  } catch {
+    return {};
+  }
+}
+function writeNewShiftLast(v: NewShiftLast): void {
+  try {
+    window.localStorage.setItem(NEW_SHIFT_LAST_KEY, JSON.stringify(v));
+  } catch {
+    // Private mode: the prefill just won't remember.
+  }
 }
 
 /** "8h", "7h 30m", "45m" — the live duration hint under the time fields. */
@@ -865,6 +912,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [listVisibleCount, setListVisibleCount] = useState(LIST_PAGE_SIZE);
   const [listFrom, setListFrom] = useState<string>(() => {
     if (deepLinkDate) return deepLinkDate;
+    // The open-shifts list starts at today: a shift that is over isn't open
+    // (role walk, HR 19).
+    if (searchParams.get('open') === '1') return ymd(new Date());
     const stored = readStoredAnchors();
     if (stored && stored.listFrom !== undefined) return stored.listFrom;
     const d = new Date();
@@ -917,15 +967,51 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     candidateIds: string[];
   } | null>(null);
   // Publish-week late-notice reason typed on a run that then FAILED — held
-  // so the retry's prompt reopens prefilled instead of losing the text.
+  // so the review sheet reopens prefilled instead of losing the text.
   const heldPublishReasonRef = useRef('');
-  const [reasonPrompt, setReasonPrompt] = useState<{
-    title: string;
-    description: string;
-    reasonLabel: string;
-    initial: string;
-    resolve: (value: string | null) => void;
+  // The publish review sheet (role walk, ops 10): the preflight report and,
+  // after a refused publish, the labor-rules findings that blocked it.
+  const [publishReview, setPublishReview] = useState<{
+    preflight: PublishPreflightResponse | null;
+    failed: boolean;
+    blockedBy: PublishLaborFinding[] | null;
   } | null>(null);
+  // Schedule-change reason asked mid-flow (a drag, an unassign) when the
+  // shift is in a predictability-pay jurisdiction (audit Tier 1 #9).
+  const [changeReasonPrompt, setChangeReasonPrompt] = useState<{
+    shift: Shift;
+    what: string;
+    resolve: (value: ChangeReason | null) => void;
+  } | null>(null);
+  const askChangeReason = useCallback(
+    (shift: Shift, what: string): Promise<ChangeReason | undefined> => {
+      if (!changeReasonRequired(shift)) return Promise.resolve(undefined);
+      return new Promise<ChangeReason | undefined>((resolve) => {
+        setChangeReasonPrompt({
+          shift,
+          what,
+          resolve: (v) => {
+            setChangeReasonPrompt(null);
+            // null = the manager backed out; the caller treats that as cancel.
+            resolve(v === null ? undefined : v);
+            if (v === null) cancelledChangeRef.current = true;
+          },
+        });
+      });
+    },
+    [],
+  );
+  // Set when the change-reason prompt was dismissed, so the caller can tell
+  // "no reason given" (premium owed) from "don't do this at all".
+  const cancelledChangeRef = useRef(false);
+  // Phones get the day agenda and a filter sheet (role walk, ops 14 / floor 9).
+  const isPhone = !useMinWidth(768);
+  // The desktop range/layout tools (From/To, Repeat, Time grid/Compact,
+  // density) fold away so the grid starts above the fold (ops 4).
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [kpiDetails, setKpiDetails] = useState(false);
+  const headerCollapsed = useHeaderCollapsed();
   // Bulk selection: shift/cmd/ctrl-click chips to add them. Stored as a
   // Set so adds and toggles are O(1); rebuilt on every selection change.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -1564,7 +1650,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // own status chips (the link's ?open=1 sets them to Open as well).
     const lensOpen = openOnly && view !== 'list';
     if (!pos && !lensOpen) return shifts;
-    return shifts.filter((s) => (!pos || s.position.trim().toLowerCase() === pos) && (!lensOpen || s.status === 'OPEN'));
+    return shifts.filter((s) => (!pos || s.position.trim().toLowerCase() === pos) && (!lensOpen || isOpenShift(s)));
   }, [shifts, posFilter, openOnly, view]);
 
   // The complement of the position filter — shifts that exist in the loaded
@@ -1676,7 +1762,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const endMs = publishWindow.to.getTime();
     return filteredShifts
       .filter((s) => {
-        if (s.status !== 'OPEN' || s.assignedAssociateId !== null) return false;
+        if (!isOpenShift(s) || s.assignedAssociateId !== null) return false;
         const t = new Date(s.startsAt).getTime();
         return t >= startMs && t < endMs;
       })
@@ -1733,13 +1819,40 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // (draftsInWeek got this in the first sweep; this is its twin).
     const startMs = publishWindow.from.getTime();
     const endMs = publishWindow.to.getTime();
+    const nowMs = Date.now();
     return shifts.filter((s) => {
       if (s.assignedAssociateId) return false;
       if (s.status !== 'OPEN' && s.status !== 'DRAFT') return false;
+      // A shift that is over can't be filled — it went unfilled (ops 6).
+      if (new Date(s.endsAt).getTime() <= nowMs) return false;
       const t = new Date(s.startsAt).getTime();
       return t >= startMs && t < endMs;
     }).length;
   }, [shifts, view, publishWindow]);
+
+  // Shifts in view that ended while still OPEN — "went unfilled". They are
+  // history, not work: no Assign, no Auto-fill, and a one-time close-out.
+  const unfilledInView = useMemo(
+    () => (filteredShifts ?? []).filter((s) => wentUnfilled(s)).length,
+    [filteredShifts],
+  );
+
+  // The forecast for the visible week at the filtered site, for the KPI
+  // line ("77h scheduled · 66h forecast"). Only a single site has one.
+  const forecastQuery = useQuery({
+    queryKey: ['forecast', 'site', locationFilter],
+    queryFn: () => getSiteForecast(locationFilter),
+    enabled: canManage && !!locationFilter && view === 'week',
+    staleTime: 5 * 60_000,
+  });
+  const forecastHours = useMemo(() => {
+    const weeks = forecastQuery.data?.weeks;
+    if (!weeks || view !== 'week') return null;
+    const keys = new Set<string>();
+    for (let i = 0; i < weekDayCount; i++) keys.add(ymd(addDaysLocal(weekStart, i)));
+    const hit = weeks.find((w) => keys.has(w.weekStart.slice(0, 10)));
+    return hit ? hit.p50 : null;
+  }, [forecastQuery.data, view, weekStart, weekDayCount]);
 
   // Phase 54 — print / CSV / PDF exports.
 
@@ -1827,77 +1940,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     }
   };
 
+  // Publish: open the review sheet (role walk, ops 10) with the preflight
+  // report; the sheet's button runs the publish. Best-effort report — a
+  // failed one never blocks publishing, the sheet says it is missing.
   const onPublishWeek = async () => {
     if (publishing) return;
-    // Preflight: name the problems BEFORE the notifications go out. Best-
-    // effort — a failed report never blocks publishing.
-    let health = '';
-    let noticeWindowDrafts = 0;
+    setPublishReview({ preflight: null, failed: false, blockedBy: null });
     try {
       const pf = await getPublishPreflight({
         from: publishWindow.from.toISOString(),
         to: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
       });
-      noticeWindowDrafts = pf.noticeWindowDrafts ?? 0;
-      const lines: string[] = [];
-      if (pf.open > 0) {
-        lines.push(`• ${pf.open} shift${pf.open === 1 ? '' : 's'} still unfilled`);
-      }
-      if (pf.otProjected.length > 0) {
-        const names = pf.otProjected
-          .slice(0, 3)
-          .map((p) => `${p.name} (${p.hours}h)`)
-          .join(', ');
-        lines.push(
-          `• ${pf.otProjected.length} projected over 40h: ${names}${pf.otProjected.length > 3 ? ', …' : ''}`,
-        );
-      }
-      if (pf.restGaps.length > 0) {
-        const names = pf.restGaps
-          .slice(0, 3)
-          .map((r) => `${r.name} (${r.gapHours}h rest)`)
-          .join(', ');
-        lines.push(
-          `• ${pf.restGaps.length} short turnaround${pf.restGaps.length === 1 ? '' : 's'} under 10h: ${names}${pf.restGaps.length > 3 ? ', …' : ''}`,
-        );
-      }
-      health =
-        lines.length > 0
-          ? `\n\nWeek health:\n${lines.join('\n')}\n\nYou can publish anyway and fix these after.`
-          : '\n\nWeek health: no unfilled shifts, no projected overtime, no short turnarounds. Clean.';
+      setPublishReview((cur) => (cur ? { ...cur, preflight: pf } : cur));
     } catch {
-      // Report unavailable — publish flow proceeds with the basics.
+      setPublishReview((cur) => (cur ? { ...cur, failed: true } : cur));
     }
-    const truncatedWarning = listTruncated
-      ? ' WARNING: this range is showing a truncated shift list — narrow the range first so you can see everything you are publishing.'
-      : '';
-    // With notice-window drafts in the batch, the confirm grows a textarea so
-    // one shared reason can publish them all in this same click. Blank keeps
-    // the old behavior (they're skipped). Without any, the plain confirm.
-    let lateNoticeReason: string | undefined;
-    if (noticeWindowDrafts > 0) {
-      // Local prefillable prompt (not lib/confirm's, which always opens
-      // blank): a reason typed on a run that failed is re-offered on retry.
-      const reason = await new Promise<string | null>((resolve) => {
-        setReasonPrompt({
-          title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-          description: `Assigned ${term('workers').toLowerCase()} will be notified. ${noticeWindowDrafts} draft${noticeWindowDrafts === 1 ? ' is' : 's are'} inside a fair-workweek state's 14-day notice window: give one reason below to publish ${noticeWindowDrafts === 1 ? 'it' : 'them'} too, or leave it blank to skip ${noticeWindowDrafts === 1 ? 'it' : 'them'} (add reasons individually via Edit).${truncatedWarning}${health}`,
-          reasonLabel: `Reason for short notice (applies to all ${noticeWindowDrafts} shift${noticeWindowDrafts === 1 ? '' : 's'})`,
-          initial: heldPublishReasonRef.current,
-          resolve,
-        });
-      });
-      if (reason === null) return; // cancelled
-      if (reason) lateNoticeReason = reason;
-    } else {
-      const ok = await confirm({
-        title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-        description: `Assigned ${term('workers').toLowerCase()} will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${truncatedWarning}${health}`,
-        confirmLabel: 'Publish week',
-      });
-      if (!ok) return;
-    }
+  };
+
+  const runPublishWeek = async (lateNoticeReason: string) => {
+    if (publishing) return;
     setPublishing(true);
     try {
       const res = await publishWeek({
@@ -1908,9 +1970,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       });
       // The run went through — the held retry reason has served its purpose.
       heldPublishReasonRef.current = '';
+      setPublishReview(null);
       if (res.truncated) {
         toast.warning(
           'This week has more drafts than one publish run covers — run Publish again for the rest.',
+        );
+      }
+      if (res.laborWarnings && res.laborWarnings.length > 0) {
+        toast.warning(
+          `Published with ${res.laborWarnings.length} labor-rule warning${res.laborWarnings.length === 1 ? '' : 's'} — see the week's review.`,
         );
       }
       if (res.skipped.length > 0) {
@@ -1926,8 +1994,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       }
       await refresh();
     } catch (err) {
-      // Keep the typed late-notice reason for the retry's prompt.
+      // Keep the typed late-notice reason for the retry.
       if (lateNoticeReason) heldPublishReasonRef.current = lateNoticeReason;
+      if (err instanceof ApiError && err.code === 'labor_rules_block') {
+        // The engine refused: show its findings in the same sheet, each a
+        // row that opens the shift to fix.
+        const findings = ((err.details as { findings?: PublishLaborFinding[] } | undefined)?.findings ?? []);
+        setPublishReview((cur) => ({ preflight: cur?.preflight ?? null, failed: cur?.failed ?? false, blockedBy: findings }));
+        toast.error('Publish is blocked by labor rules — fix the shifts listed, then publish again.');
+        return;
+      }
       toast.error(err instanceof ApiError ? err.message : 'Publish failed.', {
         ...(lateNoticeReason
           ? { description: 'Your late-notice reason was kept and will be prefilled on retry.' }
@@ -1935,6 +2011,40 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       });
     } finally {
       setPublishing(false);
+    }
+  };
+
+  // Close out the past shifts that went unfilled (role walk, ops 6 / HR 19):
+  // cancelled with the reason "unfilled" so they stop reading as open and
+  // the fill-rate history stays honest.
+  const [closingOut, setClosingOut] = useState(false);
+  const onCloseOutUnfilled = async (count: number) => {
+    if (closingOut) return;
+    const ok = await confirm({
+      title: `Close out ${count} unfilled past shift${count === 1 ? '' : 's'}?`,
+      description: `${count === 1 ? 'This shift' : 'These shifts'} ended with nobody assigned. Closing ${count === 1 ? 'it' : 'them'} out records ${count === 1 ? 'it' : 'them'} as cancelled with the reason "unfilled" — ${count === 1 ? 'it stops' : 'they stop'} counting as open, and fill-rate history keeps the miss.`,
+      confirmLabel: 'Close out',
+      destructive: true,
+    });
+    if (!ok) return;
+    setClosingOut(true);
+    try {
+      const r = await closeOutUnfilled({
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(clientFilter && locationFilter ? { locationId: locationFilter } : {}),
+        from: fromYmd(exportRange.from).toISOString(),
+        to: new Date(fromYmd(exportRange.to).getTime() + 86_400_000).toISOString(),
+      });
+      toast.success(
+        r.closed === 0
+          ? 'Nothing to close out.'
+          : `${r.closed} shift${r.closed === 1 ? '' : 's'} closed out as unfilled.`,
+      );
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not close out the shifts.');
+    } finally {
+      setClosingOut(false);
     }
   };
 
@@ -2324,6 +2434,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const currentAssignee = s.assignedAssociateId ?? null;
       const assigneeChanged = currentAssignee !== target.associateId;
       if (!dateChanged && !assigneeChanged) return;
+      // A published shift in a predictability-pay jurisdiction: the reason
+      // is asked BEFORE the chip moves, so a backed-out prompt moves nothing.
+      cancelledChangeRef.current = false;
+      const changeReason = await askChangeReason(s, dateChanged ? 'move' : 'reassign');
+      if (cancelledChangeRef.current) return;
+      const reasonBody = changeReason ? { changeReason } : {};
 
       // Compute the new start/end if the day changed.
       let newStartISO = s.startsAt;
@@ -2403,13 +2519,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               updated = await updateShift(s.id, {
                 startsAt: newStartISO,
                 endsAt: newEndISO,
+                ...reasonBody,
               });
               timesWritten = true;
             }
             if (assigneeChanged) {
               try {
                 if (target.associateId === null) {
-                  updated = await unassignShift(s.id);
+                  updated = await unassignShift(s.id, changeReason ? { changeReason } : undefined);
                 } else {
                   // Soft blocks (day off, <10h rest) prompt right here in
                   // the drag flow; a decline rolls the whole drop back.
@@ -2418,6 +2535,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     target.associateId,
                     confirm,
                     patch.assignedAssociateName ?? `This ${term('worker').toLowerCase()}`,
+                    reasonBody,
                   );
                   if (!ok) {
                     if (timesWritten) {
@@ -2463,7 +2581,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         commitFailedMessage: 'Move failed.',
       });
     },
-    [refresh, gridTimeZone, associates, patchShift, replaceShift, confirm, term]
+    [refresh, gridTimeZone, associates, patchShift, replaceShift, confirm, term, askChangeReason]
   );
 
   const onAutoFill = async (id: string) => {
@@ -2545,9 +2663,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   const onUnassign = async (s: Shift) => {
     if (pendingId) return;
+    cancelledChangeRef.current = false;
+    const changeReason = await askChangeReason(s, 'unassign');
+    if (cancelledChangeRef.current) return;
     setPendingId(s.id);
     try {
-      await unassignShift(s.id);
+      await unassignShift(s.id, changeReason ? { changeReason } : undefined);
       toast.success('Shift unassigned.');
       await refresh();
     } catch (err) {
@@ -2563,7 +2684,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const tellsSomeone = !!s.assignedAssociateId && !!s.publishedAt;
     const ok = await confirm({
       title: 'Cancel this shift?',
-      description: `${s.position} on ${fmtDateTime(s.startsAt)} stays on the record as cancelled. ${
+      description: `${s.position} on ${fmtShift(s)} stays on the record as cancelled. ${
         tellsSomeone
           ? `${s.assignedAssociateName ?? `The ${term('worker').toLowerCase()}`} is told right away.`
           : 'Nobody is notified — it was not published to anyone.'
@@ -2601,6 +2722,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       await refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Duplicate failed.');
+    }
+  };
+
+  // Alt/Option-drag (and ⌘V) in the week grids: the copy lands on the row
+  // and day it was dropped on, at the shift's own wall-clock (ops 8).
+  const onShiftCopy = async (s: Shift, target: { associateId: string | null; dayStart: Date }) => {
+    try {
+      const who = target.associateId
+        ? (() => {
+            const a = associates.find((x) => x.id === target.associateId);
+            return a ? `${a.firstName} ${a.lastName}` : `This ${term('worker').toLowerCase()}`;
+          })()
+        : '';
+      const r = await copyShiftToCell(s, target, confirm, who);
+      if (r === 'declined') toast.warning('Copied as an open shift — the assignment was not made.');
+      else toast.success(target.associateId ? `Copied to ${who}.` : 'Copied as an open shift.');
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Copy failed.');
+      await refresh();
     }
   };
 
@@ -2642,8 +2783,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const ok = await confirm({
       title: published ? 'Delete this shift?' : 'Delete this draft?',
       description: published
-        ? `Permanently delete ${s.position} on ${fmtDateTime(s.startsAt)}? This can't be undone${s.assignedAssociateId ? ' and removes it from the associate’s schedule' : ''}.`
-        : `Permanently delete this draft (${s.position} on ${fmtDateTime(s.startsAt)})?`,
+        ? `Permanently delete ${s.position} on ${fmtShift(s)}? This can't be undone${s.assignedAssociateId ? ' and removes it from the associate’s schedule' : ''}.`
+        : `Permanently delete this draft (${s.position} on ${fmtShift(s)})?`,
       confirmLabel: 'Delete',
       destructive: true,
     });
@@ -2753,7 +2894,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           and each view's own filter row follow. */}
       <ListTemplate
         className="print-area"
-        headerClassName="no-print"
+        headerClassName={cn('no-print', headerCollapsed && 'hidden')}
         title={t('schedHome.title')}
         subtitle={canManage ? t('schedHome.subManage', { workersLc: term('workers').toLowerCase() }) : t('schedHome.subReadOnly')}
         secondaryActions={
@@ -2821,7 +2962,22 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </div>
           {canSeeKpis && (
             <div className="no-print">
-              <KpiStrip kpis={kpis} period={kpi.period} />
+              {/* One line (ops 4); the tiles stay behind "Details". On a phone
+                  the line scrolls sideways as chips (ops 14). */}
+              <div className="mb-2 flex items-center gap-2 overflow-x-auto text-sm text-silver" data-testid="kpi-line">
+                <span className="whitespace-nowrap tabular-nums">
+                  {kpis ? kpiLine(kpis, forecastHours) : '…'}
+                </span>
+                {unfilledInView > 0 && canManage && (
+                  <Button size="xs" variant="ghost" onClick={() => void onCloseOutUnfilled(unfilledInView)} loading={closingOut} className="whitespace-nowrap" data-testid="close-out-unfilled">
+                    Close out {unfilledInView} unfilled past shift{unfilledInView === 1 ? '' : 's'}
+                  </Button>
+                )}
+                <button type="button" onClick={() => setKpiDetails((v) => !v)} className="ml-auto whitespace-nowrap text-2xs text-silver/70 underline underline-offset-2 hover:text-gold" aria-expanded={kpiDetails}>
+                  {kpiDetails ? 'Hide details' : 'Details'}
+                </button>
+              </div>
+              {kpiDetails && <KpiStrip kpis={kpis} period={kpi.period} />}
             </div>
           )}
           {canManage && (
@@ -2866,18 +3022,147 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               </>
         }
       >
-      {/* View-mode toggle + per-view navigator */}
-      <div className="flex flex-wrap items-center gap-3 mb-4 no-print">
-        <div
-          role="radiogroup"
-          aria-label="Schedule view"
-          className="inline-flex gap-0.5 rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30"
-        >
-          <ViewTab current={view} value="list" onClick={setView} icon={List} label="List" />
-          <ViewTab current={view} value="day" onClick={setView} icon={Calendar} label="Day" />
-          <ViewTab current={view} value="week" onClick={setView} icon={CalendarDays} label="Week" />
-          <ViewTab current={view} value="month" onClick={setView} icon={CalendarRange} label="Month" />
-        </div>
+      {/* One sticky toolbar: view, period, scope chips, Build, Publish (ops 4). */}
+      <SchedulingToolbar
+        view={view}
+        onView={setView}
+        periodLabel={
+          view === 'week'
+            ? `${fmtDayHeaderTz(weekStart, null)} – ${fmtDayHeaderTz(weekEndInclusive, null)}`
+            : view === 'day'
+              ? fmtDayHeaderTz(dayAnchor, null, { year: true })
+              : view === 'month'
+                ? fmtMonthYearTz(monthAnchor)
+                : `${listFrom || '…'} → ${listTo || '…'}`
+        }
+        onPrev={
+          view === 'week'
+            ? () => setWeekStart((w) => addDaysLocal(w, -weekDayCount))
+            : view === 'day'
+              ? () => setDayAnchor(addDaysLocal(dayAnchor, -1))
+              : view === 'month'
+                ? () => {
+                    const d = new Date(monthAnchor);
+                    d.setMonth(d.getMonth() - 1);
+                    setMonthAnchor(d);
+                  }
+                : undefined
+        }
+        onNext={
+          view === 'week'
+            ? () => setWeekStart((w) => addDaysLocal(w, weekDayCount))
+            : view === 'day'
+              ? () => setDayAnchor(addDaysLocal(dayAnchor, 1))
+              : view === 'month'
+                ? () => {
+                    const d = new Date(monthAnchor);
+                    d.setMonth(d.getMonth() + 1);
+                    setMonthAnchor(d);
+                  }
+                : undefined
+        }
+        onToday={() => {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (view === 'week') {
+            setWeekStart(startOfWeekMonday(today));
+            setWeekDayCount(7);
+          } else if (view === 'day') setDayAnchor(today);
+          else if (view === 'month') {
+            today.setDate(1);
+            setMonthAnchor(today);
+          }
+        }}
+        chips={[
+          // The scope, said plainly: a pinned client, the picked one, or the whole org.
+          ...(boundedClient
+            ? [{ key: 'client', label: boundedClient.name }]
+            : clientFilter
+              ? [{ key: 'client', label: clients.find((c) => c.id === clientFilter)?.name ?? term('label.client'), onRemove: () => setClientFilter('') }]
+              : [{ key: 'scope', label: clientsOn ? 'All clients' : 'All locations' }]),
+          ...(locationFilter
+            ? [{ key: 'location', label: clientLocations.find((l) => l.id === locationFilter)?.name ?? term('site'), onRemove: () => setLocationFilter('') }]
+            : []),
+          ...(posFilter ? [{ key: 'position', label: posFilter, onRemove: () => setPosFilter('') }] : []),
+          ...(teamFilter ? [{ key: 'team', label: teams.find((x) => x.id === teamFilter)?.name ?? 'Crew', onRemove: () => setTeamFilter('') }] : []),
+        ]}
+        onOpenFilters={canManage ? () => setFiltersOpen((v) => !v) : undefined}
+        canManage={canManage}
+        openToFill={view === 'week' ? openInWeek : 0}
+        onBuild={canManage && view === 'week' ? () => void onBuildNextWeek() : undefined}
+        building={buildingWeek}
+        draftsToPublish={view === 'list' ? 0 : draftsInWeek}
+        onPublish={canManage && view !== 'list' ? () => void onPublishWeek() : undefined}
+        publishing={publishing}
+        trailing={
+          <>
+            {tzHint && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" className="shrink-0 text-silver/70 hover:text-ink" aria-label="Time zone note">
+                    <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{tzHint}</TooltipContent>
+              </Tooltip>
+            )}
+            {(view === 'week' || view === 'day' || view === 'month') && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" className="shrink-0 text-silver/70 hover:text-ink" aria-label="Status key">
+                    <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <StatusMarkLegend className="text-ink" />
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {canManage && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" aria-label="More schedule actions" className="shrink-0">
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  {view === 'week' && openInWeek > 0 && (
+                    <DropdownMenuItem onSelect={() => void onAutoScheduleWeek()}>
+                      <Wand2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Auto-schedule {openInWeek} open shift{openInWeek === 1 ? '' : 's'}
+                    </DropdownMenuItem>
+                  )}
+                  {view === 'week' && (
+                    <DropdownMenuItem onSelect={() => setCopyWeeksOpen(true)}>
+                      <Copy className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Repeat week…
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onSelect={() => setShowTemplates(true)}>
+                    <LayoutTemplate className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Templates
+                  </DropdownMenuItem>
+                  {view !== 'list' && draftsInWeek > 0 && (
+                    <DropdownMenuItem onSelect={() => void onDedupeDrafts()}>
+                      <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Remove duplicate drafts
+                    </DropdownMenuItem>
+                  )}
+                  {view !== 'list' && (
+                    <DropdownMenuItem onSelect={() => setToolsOpen((v) => !v)}>
+                      <CalendarRange className="mr-2 h-4 w-4" aria-hidden="true" />
+                      {toolsOpen ? 'Hide range & layout' : 'Range & layout…'}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </>
+        }
+      />
+
+      {/* Per-view navigator — the range and layout tools, folded by default. */}
+      <div className={cn('flex flex-wrap items-center gap-3 mb-4 no-print', !toolsOpen && view !== 'list' && 'hidden')}>
 
         {/* Persistent drafts indicator. Visible across views so the manager
             knows unpublished work exists even when looking at a different
@@ -3026,7 +3311,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         {/* Status key + tile density. Shown on every calendar layout so the
             shape vocabulary is learnable and the manager can trade
             legibility against rows without hunting through settings. */}
-        {(view === 'week' || view === 'day' || view === 'month') && (
+        {(view === 'week' || view === 'day' || view === 'month') && toolsOpen && (
           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 no-print">
             <StatusMarkLegend />
             {/* One-click bulk selection: feeds the SelectionToolbar (bulk
@@ -3224,7 +3509,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Full-schedule filter bar — shown in every view (incl. the list
           "full schedule" table) so the cascade client → location → position
           narrows the whole org schedule from one place. */}
-      {canManage && (
+      {canManage && filtersOpen && !isPhone && (
         <div className="no-print">
           <FilterBar
             posFilter={posFilter}
@@ -3249,9 +3534,41 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           />
         </div>
       )}
+      {/* Phone: the same filters as a sheet, one screen (ops 14 / floor 9). */}
+      {canManage && isPhone && (
+        <Drawer open={filtersOpen} onOpenChange={setFiltersOpen}>
+          <DrawerHeader>
+            <DrawerTitle>Filters</DrawerTitle>
+          </DrawerHeader>
+          <DrawerBody>
+            <FilterBar
+              posFilter={posFilter}
+              setPosFilter={setPosFilter}
+              positions={knownPositions}
+              boundedClient={boundedClient}
+              clientFilter={clientFilter}
+              setClientFilter={setClientFilter}
+              locationFilter={locationFilter}
+              setLocationFilter={setLocationFilter}
+              clientLocations={clientLocations}
+              clients={clients}
+              teams={teams}
+              teamFilter={teamFilter}
+              setTeamFilter={setTeamFilter}
+              showAllAssociates={showAllAssociates}
+              setShowAllAssociates={setShowAllAssociates}
+              showAssociateToggle
+              zoneNote={tzHint}
+            />
+            {view === 'list' && <div className="mt-3">{rangeControls}</div>}
+            <SegmentedControl options={STATUS_FILTERS} value={filter} onChange={setFilter} ariaLabel="Filter by shift status" className="mt-3 flex-wrap" />
+          </DrawerBody>
+        </Drawer>
+      )}
 
       {/* Read-only viewers have no filter row; the range stands alone for them. */}
       {!canManage && rangeControls && <div className="no-print mb-3 flex">{rangeControls}</div>}
+      {canManage && view === 'list' && !filtersOpen && !isPhone && rangeControls && <div className="no-print mb-3 flex">{rangeControls}</div>}
 
       {/* The open-only lens a "needs cover" link turns on — said out loud,
           one click to drop it, so the grid never reads as half-empty. */}
@@ -3267,13 +3584,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Auto-schedule ribbon (week view only). Hides when there are no
           unassigned OPEN shifts in the visible week. Stacks above the publish
           ribbon so the manager flow reads top-to-bottom: fill, then publish. */}
-      {canManage && view === 'week' && openInWeek > 0 && (
+      {/* The auto-schedule ribbon is the badge on the toolbar's Build button
+          and an item in its menu (ops 4); the publish ribbon is its Publish
+          button. Both ribbons stayed in the file for the read-only path. */}
+      {!canManage && view === 'week' && openInWeek > 0 && (
         <div className="no-print">
-          <AutoScheduleRibbon
-            count={openInWeek}
-            onAutoSchedule={onAutoScheduleWeek}
-            loading={autoScheduling}
-          />
+          <AutoScheduleRibbon count={openInWeek} onAutoSchedule={onAutoScheduleWeek} loading={autoScheduling} />
         </div>
       )}
 
@@ -3281,28 +3597,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           manager always knows when there's unpublished work, regardless of
           which calendar layout they're in. (List view has its own scope so
           we keep the ribbon on the calendar views.) */}
-      {canManage &&
-        (view === 'week' || view === 'day' || view === 'month') &&
-        draftsInWeek > 0 && (
-          <div className="no-print">
-            <PublishRibbon
-              count={draftsInWeek}
-              onPublish={onPublishWeek}
-              loading={publishing}
-            />
-            <div className="mt-1 flex justify-end">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => void onDedupeDrafts()}
-                loading={deduping}
-                disabled={deduping}
-              >
-                Remove duplicate drafts
-              </Button>
-            </div>
-          </div>
-        )}
+      {canManage && isPhone && (view === 'week' || view === 'day' || view === 'month') && draftsInWeek > 0 && (
+        <div className="no-print">
+          <PublishRibbon count={draftsInWeek} onPublish={() => void onPublishWeek()} loading={publishing || deduping} />
+        </div>
+      )}
 
       {!shifts && (
         // Reserve roughly the real surface's height so the page doesn't lurch
@@ -3349,6 +3648,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             onShiftClick={(s) => setMobileAction(s)}
             onPrevDay={() => setDayAnchor(addDaysLocal(dayAnchor, -1))}
             onNextDay={() => setDayAnchor(addDaysLocal(dayAnchor, 1))}
+            onPickDay={(d) => setDayAnchor(d)}
             onCreate={(dayStart) => {
               setCreateInitialDate(dayStart);
               setCreateInitialAssociateId(null);
@@ -3392,6 +3692,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setShowCreate(true);
           }}
           onShiftMove={onShiftMove}
+          onShiftCopy={onShiftCopy}
           onShiftResize={onShiftResize}
           quickActions={quickActions}
           selectedIds={selectedIds}
@@ -3444,6 +3745,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setShowCreate(true);
           }}
           onShiftMove={onShiftMove}
+          onShiftCopy={onShiftCopy}
           onShiftResize={onShiftResize}
           quickActions={quickActions}
           selectedIds={selectedIds}
@@ -3634,9 +3936,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 sortable: true,
                 cell: (sh) => (
                   <>
-                    <Badge variant={STATUS_VARIANT[sh.status] ?? 'default'} data-status={sh.status}>
-                      {STATUS_LABELS[sh.status] ?? sh.status}
-                    </Badge>
+                    {wentUnfilled(sh) ? (
+                      <Badge variant="default" data-status="UNFILLED" title="Ended while still open — it went unfilled">
+                        Unfilled
+                      </Badge>
+                    ) : (
+                      <Badge variant={STATUS_VARIANT[sh.status] ?? 'default'} data-status={sh.status}>
+                        {STATUS_LABELS[sh.status] ?? sh.status}
+                      </Badge>
+                    )}
                     {sh.cancellationReason && <div className="text-alert text-2xs mt-1">{sh.cancellationReason}</div>}
                   </>
                 ),
@@ -3654,7 +3962,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                       className: 'whitespace-nowrap no-print',
                       cell: (sh: NonNullable<typeof filteredShifts>[number]) => (
                         <div className="inline-flex gap-1.5">
-                          {(sh.status === 'OPEN' || sh.status === 'DRAFT') && (
+                          {(sh.status === 'OPEN' || sh.status === 'DRAFT') && !wentUnfilled(sh) && (
                             <>
                               <Button size="sm" variant="outline" onClick={() => onAutoFill(sh.id)} disabled={pendingId === sh.id}>
                                 <Sparkles className="h-3.5 w-3.5" />
@@ -3749,7 +4057,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               <DialogHeader>
                 <DialogTitle>{mobileAction.position}</DialogTitle>
                 <DialogDescription>
-                  {mobileAction.clientName ?? '—'} · {fmt(mobileAction.startsAt)} ·{' '}
+                  {shiftPlace(mobileAction)} · {fmtShift(mobileAction)} ·{' '}
                   {STATUS_LABELS[mobileAction.status] ?? mobileAction.status}
                   {mobileAction.assignedAssociateName
                     ? ` · ${mobileAction.assignedAssociateName}`
@@ -4084,22 +4392,52 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }}
       />
 
-      {/* Publish-week late-notice reason prompt — local (not lib/confirm)
-          so a retry after a failed run reopens with the reason prefilled. */}
-      {reasonPrompt && (
-        <LateNoticeReasonDialog
-          title={reasonPrompt.title}
-          description={reasonPrompt.description}
-          reasonLabel={reasonPrompt.reasonLabel}
-          initial={reasonPrompt.initial}
-          onCancel={() => {
-            reasonPrompt.resolve(null);
-            setReasonPrompt(null);
-          }}
-          onSubmit={(reason) => {
-            reasonPrompt.resolve(reason);
-            setReasonPrompt(null);
-          }}
+      {/* Publish review sheet — totals, who's notified, every issue a row
+          that opens the fix; blocks from the labor-rules engine disable
+          Publish until cleared (ops 10). */}
+      <PublishReviewSheet
+        open={publishReview !== null}
+        draftsInWeek={draftsInWeek}
+        preflight={publishReview?.preflight ?? null}
+        preflightFailed={publishReview?.failed ?? false}
+        blockedBy={publishReview?.blockedBy ?? null}
+        truncated={listTruncated}
+        initialReason={heldPublishReasonRef.current}
+        workersLabel={term('workers').toLowerCase()}
+        publishing={publishing}
+        onCancel={() => setPublishReview(null)}
+        onPublish={(reason) => void runPublishWeek(reason)}
+        onOpenShift={(shiftId) => {
+          const sh = (shifts ?? []).find((x) => x.id === shiftId);
+          setPublishReview(null);
+          if (!sh) {
+            toast.error('That shift isn’t in the loaded range — change the week to find it.');
+            return;
+          }
+          if (sh.status === 'OPEN' || sh.status === 'DRAFT') setAssignTarget(sh);
+          else setEditTarget(sh);
+        }}
+        onOpenAssociate={(associateId, shiftIds) => {
+          setPublishReview(null);
+          setHighlightAssociateId(associateId);
+          if (view !== 'week') setView('week');
+          const first = shiftIds.map((id) => (shifts ?? []).find((x) => x.id === id)).find(Boolean);
+          if (first) {
+            const day = new Date(first.startsAt);
+            day.setHours(0, 0, 0, 0);
+            setWeekStart(startOfWeekMonday(day));
+          }
+        }}
+      />
+
+      {/* Schedule-change reason, asked mid-flow (drag, unassign) when the
+          shift is in a predictability-pay jurisdiction (audit #9). */}
+      {changeReasonPrompt && (
+        <ChangeReasonDialog
+          shift={changeReasonPrompt.shift}
+          what={changeReasonPrompt.what}
+          onCancel={() => changeReasonPrompt.resolve(null)}
+          onSubmit={(r) => changeReasonPrompt.resolve(r)}
         />
       )}
 
@@ -4163,9 +4501,17 @@ function KpiStrip({ kpis, period }: { kpis: SchedulingKpis | null; period: strin
       />
       <StatTile
         label="Open shifts"
-        value={kpis.openShifts}
-        sub={kpis.openShifts > 0 ? `Need ${withArticle(term('worker').toLowerCase())}` : noShifts ? '—' : 'Every shift covered'}
-        className={kpis.openShifts > 0 ? 'border-warning/35' : undefined}
+        value={kpis.openUpcoming ?? kpis.openShifts}
+        sub={
+          (kpis.unfilledPast ?? kpis.wentUnfilled ?? 0) > 0
+            ? `${kpis.unfilledPast ?? kpis.wentUnfilled} went unfilled`
+            : (kpis.openUpcoming ?? kpis.openShifts) > 0
+              ? `Need ${withArticle(term('worker').toLowerCase())}`
+              : noShifts
+                ? '—'
+                : 'Every shift covered'
+        }
+        className={(kpis.openUpcoming ?? kpis.openShifts) > 0 ? 'border-warning/35' : undefined}
       />
       <StatTile
         label="Hours scheduled"
@@ -4226,7 +4572,7 @@ type TimeOffRow = {
   endDate: string;
 };
 
-function AssignDialog({
+export function AssignDialog({
   target,
   associates,
   initialAssociateId = null,
@@ -4255,6 +4601,11 @@ function AssignDialog({
   const [picked, setPicked] = useState<AssociateLite | null>(null);
   const [query, setQuery] = useState('');
   const confirmOverride = useConfirm();
+  // Predictability pay: assigning someone to a published shift inside the
+  // notice window is a schedule change for them (audit #9).
+  const [changeReason, setChangeReason] = useState<ChangeReason | ''>('');
+  const [reasonError, setReasonError] = useState<string | null>(null);
+  const reasonRequired = !!target && changeReasonRequired(target);
   // Which submit is in flight: the plain assign or "assign & next".
   const [submitMode, setSubmitMode] = useState<null | 'one' | 'next'>(null);
   const submitting = submitMode !== null;
@@ -4272,6 +4623,8 @@ function AssignDialog({
       setQuery('');
       setSubmitMode(null);
       setHighlight(0);
+      setChangeReason('');
+      setReasonError(null);
     }
     // Reset only when the TARGET changes — a mid-dialog associates refetch
     // must not wipe the admin's picked candidate.
@@ -4348,6 +4701,11 @@ function AssignDialog({
 
   const submit = async (mode: 'one' | 'next' = 'one') => {
     if (!target || !picked || submitting) return;
+    if (reasonRequired && !changeReason) {
+      setReasonError('Pick a reason — this store owes predictability pay for changes inside the notice window.');
+      return;
+    }
+    setReasonError(null);
     setSubmitMode(mode);
     try {
       const assigned = await assignWithOverridePrompt(
@@ -4355,6 +4713,7 @@ function AssignDialog({
         picked.id,
         confirmOverride,
         `${picked.firstName} ${picked.lastName}`,
+        changeReason ? { changeReason } : {},
       );
       if (assigned) {
         if (mode === 'next') {
@@ -4443,8 +4802,8 @@ function AssignDialog({
           <DialogDescription>
             {target && (
               <>
-                {target.position} at {target.clientName ?? '—'} ·{' '}
-                {fmt(target.startsAt)}
+                {target.position} at {shiftPlace(target)} ·{' '}
+                <span data-testid="assign-when">{fmtShift(target)}</span>
               </>
             )}
           </DialogDescription>
@@ -4538,20 +4897,23 @@ function AssignDialog({
                           <div className="truncate">
                             {a.firstName} {a.lastName}
                           </div>
-                          <div className="text-2xs text-silver/70 truncate">
-                            {a.email}
-                          </div>
+                          {(() => {
+                            // The facts the decision rests on, in place of the
+                            // email (ops 7). Without a candidate row (typed
+                            // search past the ranked list) the email stays.
+                            const c = candidateById.get(a.id);
+                            return c ? (
+                              <AssignCandidateFacts c={c} className="mt-0.5" />
+                            ) : (
+                              <div className="text-2xs text-silver/70 truncate">{a.email}</div>
+                            );
+                          })()}
                         </div>
                         {(() => {
                           const c = candidateById.get(a.id);
                           if (!c) return null;
-                          const hrs =
-                            Math.round((c.weeklyMinutesScheduled / 60) * 10) / 10;
                           return (
                             <div className="shrink-0 text-right leading-tight">
-                              <div className="text-2xs tabular-nums text-silver/80">
-                                {hrs}h wk
-                              </div>
                               {c.onApprovedTimeOff ? (
                                 <span className="text-3xs uppercase tracking-wide text-alert">
                                   PTO
@@ -4670,7 +5032,7 @@ function AssignDialog({
                   {conflicts!.map((c) => (
                     <li key={c.shiftId} className="text-xs">
                       • {c.position} @ {c.client ?? '—'} ·{' '}
-                      <span className="tabular-nums">{fmt(c.startsAt)}</span>
+                      <span className="tabular-nums">{fmtShiftTz(c.startsAt, target?.timezone)}</span>
                       {onViewShift && (
                         <>
                           {' '}
@@ -4692,6 +5054,8 @@ function AssignDialog({
 
           {/* Overtime offered fairly: who'd go over by taking it, in turn (lib/overtimeRotation on the API). */}
           {target && target.status === 'OPEN' && <OvertimeRotationPanel shiftId={target.id} />}
+
+          <ChangeReasonField value={changeReason} onChange={(v) => { setChangeReason(v); setReasonError(null); }} required={reasonRequired} error={reasonError} id="assign-change-reason" />
 
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={onClose}>
@@ -4735,7 +5099,7 @@ function fmtCategory(c: string): string {
 
 /* ===== Cancel dialog ====================================================== */
 
-function CancelDialog({
+export function CancelDialog({
   target,
   onClose,
   onCancelled,
@@ -4746,20 +5110,31 @@ function CancelDialog({
 }) {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Predictability pay: cancelling a published shift inside the notice
+  // window owes the worker a premium unless it is exempt (audit #9).
+  const [changeReason, setChangeReason] = useState<ChangeReason | ''>('');
+  const [reasonError, setReasonError] = useState<string | null>(null);
+  const reasonRequired = !!target && !!target.assignedAssociateId && changeReasonRequired(target);
 
   useEffect(() => {
     if (target) {
       setReason('');
       setSubmitting(false);
+      setChangeReason('');
+      setReasonError(null);
     }
   }, [target]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!target || !reason.trim()) return;
+    if (reasonRequired && !changeReason) {
+      setReasonError('Pick a reason — this store owes predictability pay for changes inside the notice window.');
+      return;
+    }
     setSubmitting(true);
     try {
-      await cancelShift(target.id, { reason: reason.trim() });
+      await cancelShift(target.id, { reason: reason.trim(), ...(changeReason ? { changeReason } : {}) });
       onCancelled();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Cancel failed.');
@@ -4775,8 +5150,8 @@ function CancelDialog({
           <DialogDescription>
             {target && (
               <>
-                {target.position} at {target.clientName ?? '—'} ·{' '}
-                {fmt(target.startsAt)}
+                {target.position} at {shiftPlace(target)} ·{' '}
+                {fmtShift(target)}
               </>
             )}
           </DialogDescription>
@@ -4794,6 +5169,9 @@ function CancelDialog({
               />
             )}
           </Field>
+          {target?.assignedAssociateId && (
+            <ChangeReasonField value={changeReason} onChange={(v) => { setChangeReason(v); setReasonError(null); }} required={reasonRequired} error={reasonError} id="cancel-change-reason" />
+          )}
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={onClose}>
               Keep shift
@@ -4913,17 +5291,50 @@ function AutoFillDialog({
  * Returns true when an assignment landed; false when the admin declined.
  * Hard errors (double-booked etc.) throw.
  */
+/**
+ * Copy a shift onto a grid cell: same position, site, rates and notes, at
+ * the shift's wall-clock on the target day in the SHIFT's zone (a 9 AM
+ * Chicago shift copied to Thursday is 9 AM Chicago on Thursday, wherever
+ * the scheduler sits), then assigned to the target row through the same
+ * soft-block prompts as any assign. The copy is a draft until published.
+ * 'declined' = the copy exists but a soft block was declined, so it stays
+ * open.
+ */
+export async function copyShiftToCell(
+  s: Shift,
+  target: { associateId: string | null; dayStart: Date },
+  confirm: (opts: ConfirmOptions) => Promise<boolean>,
+  who = 'This associate',
+): Promise<'copied' | 'declined'> {
+  const times = shiftTimesOnDay(s, ymd(target.dayStart), s.timezone || null);
+  const made = await createShift({
+    clientId: s.clientId ?? undefined,
+    position: s.position,
+    startsAt: times.startsAt,
+    endsAt: times.endsAt,
+    ...(s.locationId ? { locationId: s.locationId } : {}),
+    ...(s.location ? { location: s.location } : {}),
+    ...(s.hourlyRate != null ? { hourlyRate: s.hourlyRate } : {}),
+    ...(s.payRate != null ? { payRate: s.payRate } : {}),
+    ...(s.notes ? { notes: s.notes } : {}),
+  });
+  if (!target.associateId) return 'copied';
+  const ok = await assignWithOverridePrompt(made.id, target.associateId, confirm, who);
+  return ok ? 'copied' : 'declined';
+}
+
 async function assignWithOverridePrompt(
   shiftId: string,
   associateId: string,
   confirm: (opts: ConfirmOptions) => Promise<boolean>,
   who = 'This associate',
+  extra: { changeReason?: ChangeReason } = {},
 ): Promise<boolean> {
   const overrides: { overrideUnavailability?: boolean; overrideRestGap?: boolean } = {};
   // Both soft blocks can apply to one assignment; each is asked at most once.
   for (;;) {
     try {
-      await assignShift(shiftId, { associateId, ...overrides });
+      await assignShift(shiftId, { associateId, ...overrides, ...extra });
       return true;
     } catch (err) {
       if (!(err instanceof ApiError)) throw err;
@@ -5028,7 +5439,7 @@ function DuplicateToEmployeeDialog({
           <DialogTitle>Copy shift to {withArticle(term('worker').toLowerCase())}</DialogTitle>
           <DialogDescription>
             {source.position} ·{' '}
-            {fmtDateTime(source.startsAt)} — creates a draft copy on the
+            {fmtShift(source)} — creates a draft copy on the
             {term('worker').toLowerCase()} you pick.
           </DialogDescription>
         </DialogHeader>
@@ -5175,6 +5586,11 @@ function EditShiftDialog({
   const [lateNotice, setLateNotice] = useState('');
   const [showLateNotice, setShowLateNotice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Predictability pay: moving a published, assigned shift inside the
+  // notice window is a schedule change (audit #9). Only the times count —
+  // a note or rate edit changes nobody's schedule.
+  const [changeReason, setChangeReason] = useState<ChangeReason | ''>('');
+  const [reasonError, setReasonError] = useState<string | null>(null);
 
   // Pre-fill from the shift each time a new one is opened. Times show in the
   // WORK SITE's zone (same as the calendar grid), so editing a FL store from
@@ -5202,6 +5618,8 @@ function EditShiftDialog({
     setLateNotice(target.lateNoticeReason ?? '');
     setShowLateNotice(!!target.lateNoticeReason);
     setSubmitting(false);
+    setChangeReason('');
+    setReasonError(null);
   }, [target]);
 
   const overnight = !!startTime && !!endTime && endTime <= startTime;
@@ -5243,6 +5661,12 @@ function EditShiftDialog({
       toast.error('Position is required.');
       return;
     }
+    const timesChanged = start.toISOString() !== target.startsAt || end.toISOString() !== target.endsAt;
+    const reasonRequired = timesChanged && !!target.assignedAssociateId && changeReasonRequired(target);
+    if (reasonRequired && !changeReason) {
+      setReasonError('Pick a reason — this store owes predictability pay for changes inside the notice window.');
+      return;
+    }
     setSubmitting(true);
     try {
       await updateShift(target.id, {
@@ -5254,6 +5678,7 @@ function EditShiftDialog({
         payRate: payRate ? Number(payRate) : null,
         notes: notes.trim() || null,
         ...(lateNotice.trim() ? { lateNoticeReason: lateNotice.trim() } : {}),
+        ...(changeReason ? { changeReason } : {}),
       });
       toast.success('Shift updated.');
       onSaved();
@@ -5389,6 +5814,15 @@ function EditShiftDialog({
               )}
             </Field>
           )}
+          {target.assignedAssociateId && (
+            <ChangeReasonField
+              value={changeReason}
+              onChange={(v) => { setChangeReason(v); setReasonError(null); }}
+              required={changeReasonRequired(target) && (startTime !== utcToZonedDatetimeInput(target.startsAt, target.timezone).split('T')[1] || endTime !== utcToZonedDatetimeInput(target.endsAt, target.timezone).split('T')[1] || dateStr !== utcToZonedDatetimeInput(target.startsAt, target.timezone).split('T')[0])}
+              error={reasonError}
+              id="edit-change-reason"
+            />
+          )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
@@ -5463,6 +5897,36 @@ export function CreateShiftDialog({
   const clientsOn = tenant.moduleOn('clientPortal');
   const hideBillRate = useClientBounded() || !billRatesOn;
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
+  // Clients with nothing set up are never the default and read as such in
+  // the picker (ops 15): the dialog used to open on "Alto HR — Internal
+  // Hires" with no locations, no positions and no people.
+  const clientLocationCounts = useQueries({
+    queries: (open && clientsOn ? clients : []).map((c) => ({
+      queryKey: ['clients', c.id, 'locations'],
+      queryFn: () => listClientLocations(c.id),
+      staleTime: 5 * 60_000,
+    })),
+  });
+  const emptyClientIds = useMemo(() => {
+    const out = new Set<string>();
+    clientLocationCounts.forEach((q, i) => {
+      const c = clients[i];
+      if (c && q.data && q.data.locations.length === 0) out.add(c.id);
+    });
+    return out;
+  }, [clientLocationCounts, clients]);
+  const firstUsableClient = (preferred: string): string => {
+    if (preferred && !emptyClientIds.has(preferred)) return preferred;
+    return clients.find((c) => !emptyClientIds.has(c.id))?.id ?? preferred ?? clients[0]?.id ?? '';
+  };
+  // The location counts land after the dialog opens: once the seeded client
+  // turns out to have no locations, move to the first one that has some.
+  // (An empty client can't be picked by hand — its option is disabled.)
+  useEffect(() => {
+    if (!open || !clientsOn || !clientId || !emptyClientIds.has(clientId)) return;
+    const next = clients.find((c) => !emptyClientIds.has(c.id));
+    if (next) setClientId(next.id);
+  }, [open, clientsOn, clientId, emptyClientIds, clients]);
   const [locationId, setLocationId] = useState('');
   const [position, setPosition] = useState('');
   const positionOptions = useShiftPositionNames(clientsOn ? clientId : '', !clientsOn);
@@ -5597,8 +6061,11 @@ export function CreateShiftDialog({
 
   useEffect(() => {
     if (open) {
-      const seededClientId = initialClientId || clients[0]?.id || '';
-      const seededPosition = initialPosition ?? '';
+      // Prefill order (ops 15): the board's filter, then the last values
+      // used in this browser, then the first client that has a location.
+      const last = readNewShiftLast();
+      const seededClientId = firstUsableClient(initialClientId || (last.clientId && clients.some((c) => c.id === last.clientId) ? last.clientId : '') || clients[0]?.id || '');
+      const seededPosition = initialPosition ?? last.position ?? '';
       // Pre-fill times: the selected shift team's defaults win (that's the
       // shift being scheduled), else 9–5 — the most common shape for hourly
       // workforce. A calendar-cell open pins the clicked day (and clicked
@@ -5607,9 +6074,9 @@ export function CreateShiftDialog({
       const minuteToTime = (m: number) =>
         `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
       const defStart =
-        team?.startMinute != null ? minuteToTime(team.startMinute) : '09:00';
+        team?.startMinute != null ? minuteToTime(team.startMinute) : (last.startTime ?? '09:00');
       const defEnd =
-        team?.endMinute != null ? minuteToTime(team.endMinute) : '17:00';
+        team?.endMinute != null ? minuteToTime(team.endMinute) : (last.endTime ?? '17:00');
       let seededDate: string;
       let seededStart: string;
       let seededEnd: string;
@@ -5677,7 +6144,47 @@ export function CreateShiftDialog({
         extraDays: new Set(),
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, clients, initialDate, initialEnd, initialAssociateId, initialClientId, initialPosition, initialOpenSlots, team]);
+
+  // The last-used location wins when it belongs to the seeded client; a
+  // site with no remembered values takes its last shift's wall-clock and
+  // position so the common case is "pick times, save" (ops 15).
+  const lastShiftSeededRef = useRef('');
+  const rememberedHere = (() => {
+    const last = readNewShiftLast();
+    return last.locationId === locationId && !!(last.startTime || last.position);
+  })();
+  const lastShiftQuery = useQuery({
+    queryKey: ['scheduling', 'last-shift', locationId, clientsOn ? clientId : ''],
+    queryFn: () => getLastShift({ locationId, ...(clientsOn && clientId ? { clientId } : {}) }),
+    enabled: open && !!locationId && !rememberedHere && team?.startMinute == null,
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (!open || !locationId || !lastShiftQuery.data) return;
+    if (lastShiftSeededRef.current === locationId) return;
+    lastShiftSeededRef.current = locationId;
+    const sh = lastShiftQuery.data.shift;
+    if (!sh) return;
+    const [, startClock] = utcToZonedDatetimeInput(sh.startsAt, sh.timezone).split('T');
+    const [, endClock] = utcToZonedDatetimeInput(sh.endsAt, sh.timezone).split('T');
+    setStartTime((cur) => (cur === '09:00' && startClock ? startClock : cur));
+    setEndTime((cur) => (cur === '17:00' && endClock ? endClock : cur));
+    setPosition((cur) => cur || sh.position);
+  }, [open, locationId, lastShiftQuery.data]);
+  useEffect(() => {
+    if (!open) lastShiftSeededRef.current = '';
+  }, [open]);
+  // The remembered location for the seeded client, once its locations load.
+  useEffect(() => {
+    if (!open || !locations || locations.length === 0) return;
+    const last = readNewShiftLast();
+    if (last.locationId && (!clientsOn || last.clientId === clientId) && locations.some((l) => l.id === last.locationId)) {
+      setLocationId((cur) => (cur === locations[0]!.id || !cur ? last.locationId! : cur));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, locations, clientId]);
 
   // The day chips belong to the org week (Sat→Fri) around the picked Day —
   // changing the Day moves the week, so stale picks must not survive it.
@@ -5822,6 +6329,7 @@ export function CreateShiftDialog({
         toast.success('Shift created.');
       }
       onPositionUsed?.(position);
+      writeNewShiftLast({ ...(clientsOn ? { clientId } : {}), locationId, position, startTime, endTime });
       onCreated();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Create failed.');
@@ -5892,8 +6400,9 @@ export function CreateShiftDialog({
                     {...p}
                   >
                     {clients.map((c) => (
-                      <option key={c.id} value={c.id}>
+                      <option key={c.id} value={c.id} disabled={emptyClientIds.has(c.id) && c.id !== clientId}>
                         {c.name}
+                        {emptyClientIds.has(c.id) ? ' (no locations)' : ''}
                       </option>
                     ))}
                   </Select>
@@ -6693,43 +7202,6 @@ function CreateTemplateDialog({
 
 /* ===== View tab + filter bar + publish ribbon (Phase 53) ================== */
 
-function ViewTab({
-  current,
-  value,
-  onClick,
-  icon: Icon,
-  label,
-}: {
-  current: ViewMode;
-  value: ViewMode;
-  onClick: (v: ViewMode) => void;
-  icon: LucideIcon;
-  label: string;
-}) {
-  const active = current === value;
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      onClick={() => onClick(value)}
-      className={cn(
-        // Matches SegmentedControl's selection language: the app-wide
-        // gold-tint ghost for the active choice, quiet ghost otherwise —
-        // no solid primary fill competing with real CTAs.
-        'inline-flex h-7 items-center gap-1.5 rounded-sm border px-2.5 text-xs font-medium uppercase tracking-wider transition coarse:h-9 coarse:px-3',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
-        active
-          ? 'bg-gold/15 border-gold/50 text-gold'
-          : 'border-transparent text-silver hover:text-white',
-      )}
-    >
-      <Icon className="h-3.5 w-3.5" />
-      {label}
-    </button>
-  );
-}
-
 function FilterBar({
   posFilter,
   setPosFilter,
@@ -7334,65 +7806,43 @@ function AutoScheduleReviewDialog({
 /** Publish-week late-notice prompt. Local twin of lib/confirm's optional-
  *  reason prompt with ONE difference: `initial` prefills the textarea, so a
  *  reason typed on a run that then failed isn't retyped on retry. */
-function LateNoticeReasonDialog({
-  title,
-  description,
-  reasonLabel,
-  initial,
+/** The change-reason prompt for a drag or an unassign — the same field the
+ *  dialogs carry, as its own small dialog. Backing out does nothing. */
+function ChangeReasonDialog({
+  shift,
+  what,
   onCancel,
   onSubmit,
 }: {
-  title: string;
-  description: string;
-  reasonLabel: string;
-  initial: string;
+  shift: Shift;
+  what: string;
   onCancel: () => void;
-  /** Trimmed reason; empty string = publish while skipping notice-window drafts. */
-  onSubmit: (reason: string) => void;
+  onSubmit: (reason: ChangeReason | null) => void;
 }) {
-  const { moduleOn } = useTenant();
-  const [reason, setReason] = useState(initial);
+  const [reason, setReason] = useState<ChangeReason | ''>('');
   return (
     <Dialog open onOpenChange={(o) => !o && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
+          <DialogTitle>Why is this shift changing?</DialogTitle>
+          <DialogDescription>
+            {shift.position} at {shiftPlace(shift)} · {fmtShift(shift)} — you're about to {what} a published shift inside its notice window.
+          </DialogDescription>
         </DialogHeader>
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            onSubmit(reason.trim());
+            onSubmit(reason || null);
           }}
           className="grid gap-3"
         >
-          <div className="grid gap-1">
-            <label
-              htmlFor="publish-late-notice-reason"
-              className="text-xs2 uppercase tracking-wider text-silver"
-            >
-              {reasonLabel}
-            </label>
-            <Textarea
-              id="publish-late-notice-reason"
-              autoFocus
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder={
-                moduleOn('clientPortal')
-                  ? 'e.g. Volume spike — client added coverage after the posting deadline'
-                  : 'e.g. Volume spike — coverage added after the posting deadline'
-              }
-              maxLength={500}
-              rows={4}
-            />
-          </div>
+          <ChangeReasonField value={reason} onChange={setReason} required id="drag-change-reason" />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onCancel}>
-              Cancel
+              Don't change it
             </Button>
             <Button type="submit" variant="primary">
-              Publish week
+              {reason ? 'Continue' : 'Continue — premium owed'}
             </Button>
           </DialogFooter>
         </form>

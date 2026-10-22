@@ -3,6 +3,7 @@ import { agent, loginAs } from '../../../test/http.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { resetAgentRateLimits } from '../../lib/agents.js';
 import { invalidateTenantProfile } from '../../lib/tenantProfile.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
 
 /**
  * Brief 2-6 step 3 — the automated-decision record (acceptance: "a tagged
@@ -89,6 +90,37 @@ describe('the record', () => {
     expect((await admin.post(`/agents/decisions/${row.id}/events`).send({ event: 'notice_given' })).status).toBe(409);
     await expect(prisma.automatedDecisionRecord.update({ where: { id: row.id }, data: { noticeGivenAt: new Date(0) } })).rejects.toThrow();
     expect((await admin.post(`/agents/decisions/${row.id}/events`).send({ event: 'review_requested' })).status).toBe(200);
+  });
+});
+
+describe('the notices (audit 2026-10-21, Tier 3: stamped but never sent)', () => {
+  it('“notice given” and “explanation sent” reach a subject who has a login; one without says it was not delivered', async () => {
+    const { admin, token, shift, ana, ben } = await world();
+    const { user: anaUser } = await createUser({ role: 'ASSOCIATE' });
+    await prisma.user.update({ where: { id: anaUser.id }, data: { associateId: ana.id } });
+    const filed = await propose(token, { capability: 'shift.fill', subjectType: 'Shift', subjectId: shift.id, summary: 'Ana covers for Ben', payload: { associateId: ana.id, replacesAssociateId: ben.id } });
+    await admin.post(`/agents/approvals/${filed.body.approvalId}/approve`).send({ note: 'Fine' });
+    const anaRow = await prisma.automatedDecisionRecord.findFirstOrThrow({ where: { subjectAssociateId: ana.id } });
+    const benRow = await prisma.automatedDecisionRecord.findFirstOrThrow({ where: { subjectAssociateId: ben.id } });
+
+    const sent = await admin.post(`/agents/decisions/${anaRow.id}/events`).send({ event: 'notice_given' });
+    expect(sent.status).toBe(200);
+    expect(sent.body.delivered).toBe(true);
+    await flushPendingNotifications();
+    const bell = await prisma.notification.findMany({ where: { recipientUserId: anaUser.id, channel: 'IN_APP' } });
+    expect(bell.map((n) => n.subject)).toContain('A decision about you involved an automated system');
+    expect(bell.find((n) => n.subject?.startsWith('A decision'))!.body).toContain(`decision about you: ${anaRow.summary.replace(/\.+$/, '')}. A person decided`);
+    expect(await prisma.automatedDecisionRecord.findUniqueOrThrow({ where: { id: anaRow.id } })).toMatchObject({ noticeChannel: 'IN_APP', noticeTextVersion: 1 });
+
+    const explained = await admin.post(`/agents/decisions/${anaRow.id}/events`).send({ event: 'explanation_sent' });
+    expect(explained.body.delivered).toBe(true);
+    await flushPendingNotifications();
+    expect((await prisma.notification.findMany({ where: { recipientUserId: anaUser.id } })).map((n) => n.subject)).toContain('How a decision about you was made');
+
+    // Ben has no login: the date is recorded with the channel used by hand, and the product says it did not send it.
+    const paper = await admin.post(`/agents/decisions/${benRow.id}/events`).send({ event: 'notice_given', channel: 'PAPER' });
+    expect(paper.body.delivered).toBe(false);
+    expect((await prisma.automatedDecisionRecord.findUniqueOrThrow({ where: { id: benRow.id } })).noticeChannel).toBe('PAPER');
   });
 });
 

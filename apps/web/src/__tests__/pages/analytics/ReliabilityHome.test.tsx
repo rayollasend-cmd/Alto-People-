@@ -5,8 +5,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReliabilityResponse } from '@alto-people/shared';
 
 vi.mock('@/lib/reliabilityApi', () => ({ getReliability: vi.fn() }));
+vi.mock('@/lib/scheduledJobsApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/scheduledJobsApi')>()),
+  listScheduledJobs: vi.fn(),
+  runScheduledJob: vi.fn(),
+}));
 
 import { getReliability } from '@/lib/reliabilityApi';
+import { listScheduledJobs, runScheduledJob, type ScheduledJob } from '@/lib/scheduledJobsApi';
 import { ReliabilityHome } from '@/pages/analytics/ReliabilityHome';
 import { AuthContext } from '@/lib/auth';
 
@@ -74,8 +80,51 @@ function renderPage() {
   );
 }
 
+const job = (over: Partial<ScheduledJob>): ScheduledJob => ({
+  name: 'shiftReminder',
+  label: 'Shift reminders (day before, confirm asks, no-shows)',
+  intervalSeconds: 1800,
+  armed: true,
+  running: false,
+  runs: 4,
+  failures: 0,
+  lastStartedAt: '2026-10-21T10:00:00.000Z',
+  lastFinishedAt: '2026-10-21T10:00:02.000Z',
+  lastOkAt: '2026-10-21T10:00:02.000Z',
+  lastDurationMs: 2000,
+  lastError: null,
+  nextRunAt: '2026-10-21T10:30:00.000Z',
+  note: null,
+  ...over,
+});
+
 beforeEach(() => {
   vi.mocked(getReliability).mockReset();
+  vi.mocked(listScheduledJobs).mockReset();
+  vi.mocked(runScheduledJob).mockReset();
+  vi.mocked(listScheduledJobs).mockResolvedValue({ jobs: [], now: '2026-10-21T10:05:00.000Z' });
+});
+
+describe('scheduled jobs', () => {
+  it('lists each job with its state, cadence and next run, and says when a job is off or failing', async () => {
+    vi.mocked(getReliability).mockResolvedValue(response());
+    vi.mocked(listScheduledJobs).mockResolvedValue({
+      now: '2026-10-21T10:05:00.000Z',
+      jobs: [
+        job({}),
+        job({ name: 'scheduleDigest', label: 'Schedule digest to admins (daily)', intervalSeconds: 0, armed: false, nextRunAt: null }),
+        job({ name: 'auditChainCheck', label: 'Audit hash-chain verification (nightly)', intervalSeconds: 86400, lastError: 'db down', failures: 1 }),
+      ],
+    });
+    renderPage();
+    expect((await screen.findAllByText('Shift reminders (day before, confirm asks, no-shows)')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Every 30 min').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Off').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Last run failed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('db down').length).toBeGreaterThan(0);
+    expect(screen.getByText(/1 failing\. 1 off\./)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Run .* now/ }).length).toBe(3);
+  });
 });
 
 describe('ReliabilityHome', () => {

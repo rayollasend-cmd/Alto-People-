@@ -66,6 +66,10 @@ export interface ErasureResult {
     kioskSelfiesPurged: number;
     faceReferenceCleared: number;
     notificationsScrubbed: number;
+    /** Sign-in tracking: one row per day the login was used. */
+    activityDaysDeleted: number;
+    /** Sign-in tracking: the IP addresses the login came from. */
+    knownIpsDeleted: number;
   };
 }
 
@@ -152,6 +156,8 @@ export async function eraseAssociate(
     kioskSelfiesPurged: 0,
     faceReferenceCleared: 0,
     notificationsScrubbed: 0,
+    activityDaysDeleted: 0,
+    knownIpsDeleted: 0,
   };
 
   await prisma.$transaction(async (tx) => {
@@ -232,6 +238,13 @@ export async function eraseAssociate(
       counts.mfaRecoveryCodesDeleted = recovery.count;
       counts.authTokensDeleted = invites.count + resets.count + emailChanges.count;
       counts.pushSubscriptionsDeleted = pushes.count;
+      // Sign-in tracking (audit 2026-10-21 #15): the days the login was used
+      // and the IP addresses it came from are personal data with no
+      // retention duty — they go with the identity.
+      const activityDays = await tx.userActivityDay.deleteMany({ where: { userId } });
+      const knownIps = await tx.userKnownIp.deleteMany({ where: { userId } });
+      counts.activityDaysDeleted = activityDays.count;
+      counts.knownIpsDeleted = knownIps.count;
 
       // Notifications: null the content, keep the rows + categories so
       // delivery accounting (e.g. campaign send history) still adds up.

@@ -31,6 +31,7 @@ import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { startReadyToWorkHandoff } from '../lib/readyToWork.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
+import { openDescriptor, openSelfie, sealDescriptor, sealSelfie } from '../lib/biometricFields.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
@@ -43,7 +44,7 @@ import { openSopOnClockIn, sopBlockSummary, sopBlockingClockOut, sopOpenMessage,
 import { kioskPunchSummary } from '../lib/kioskPunchSummary.js';
 import { recordAttendanceForEntry } from '../lib/attendance.js';
 import { env } from '../config/env.js';
-import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
+import { KIOSK_PIN_REGEX, ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
 
 /**
  * Tenant clamp for kiosk admin surfaces. Client-bounded roles
@@ -300,7 +301,7 @@ const PinInputSchema = z.object({
   // hand out a memorable PIN, or to rotate to a known value.
   pin: z
     .string()
-    .regex(/^\d{4}$/, 'PIN must be 4 digits.')
+    .regex(KIOSK_PIN_REGEX, 'PIN must be 4 digits.')
     .optional(),
 });
 
@@ -1032,7 +1033,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
   // associate by name, then find whatever PIN row points at them.
   const employeeNumber = z
     .string()
-    .regex(/^\d{4}$/)
+    .regex(KIOSK_PIN_REGEX)
     .optional()
     .parse(req.query.employeeNumber);
   const associateQuery = z
@@ -1648,7 +1649,7 @@ kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
       id: req.params.id,
       ...(selfieClamp ? { device: { is: { clientId: selfieClamp } } } : {}),
     },
-    select: { selfie: true, associateId: true, kioskDeviceId: true },
+    select: { selfie: true, selfieEncrypted: true, associateId: true, kioskDeviceId: true },
   });
   if (!p || !p.selfie) {
     throw new HttpError(404, 'not_found', 'Selfie not found.');
@@ -1676,7 +1677,7 @@ kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
   res.setHeader('Cache-Control', 'private, no-store');
-  res.send(Buffer.from(p.selfie));
+  res.send(openSelfie(p));
 });
 
 // ----- Public: kiosk punch ----------------------------------------------
@@ -1701,7 +1702,7 @@ const PunchInputSchema = z.object({
   deviceToken: z.string().min(10),
   // The typed clock-in number — or a badge (NFC tag / Wallet pass QR) in its
   // place. Exactly one of the two (see credentialLookup).
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  pin: z.string().regex(KIOSK_PIN_REGEX, 'PIN must be 4 digits.').optional().nullable(),
   badgeToken: z.string().min(10).max(400).optional().nullable(),
   // Selfie as a base64 data URL or raw base64. Optional but strongly
   // encouraged — we surface it in HR for buddy-punching disputes.
@@ -1863,7 +1864,7 @@ const NOT_RECOGNIZED: Record<CredentialLookup['kind'], string> = {
 
 const VerifyPinInputSchema = z.object({
   deviceToken: z.string().min(10),
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  pin: z.string().regex(KIOSK_PIN_REGEX, 'PIN must be 4 digits.').optional().nullable(),
   badgeToken: z.string().min(10).max(400).optional().nullable(),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
@@ -2425,7 +2426,7 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
  */
 const KioskSopSubmitSchema = z.object({
   deviceToken: z.string().min(10),
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  pin: z.string().regex(KIOSK_PIN_REGEX, 'PIN must be 4 digits.').optional().nullable(),
   badgeToken: z.string().min(10).max(400).optional().nullable(),
   /** Required when required items are still open (submitting incomplete). */
   reason: z.string().trim().max(1000).optional().nullable(),
@@ -2489,7 +2490,7 @@ kiosk99Router.post('/kiosk/sop/submit', async (req, res) => {
 // immediately.
 const FaceConsentSchema = z.object({
   deviceToken: z.string().min(10),
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.').optional().nullable(),
+  pin: z.string().regex(KIOSK_PIN_REGEX, 'PIN must be 4 digits.').optional().nullable(),
   badgeToken: z.string().min(10).max(400).optional().nullable(),
   consent: z.boolean(),
 });
@@ -2775,7 +2776,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
         ...(wrongSite && pinRow
           ? { associateId: pinRow.associate.id, kioskPinId: pinRow.id }
           : {}),
-        selfie,
+        ...sealSelfie(selfie),
         punchLat,
         punchLng,
         distanceMeters: dist,
@@ -2822,7 +2823,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
           // Attributed: the PIN matched — HR needs to see WHO tried.
           associateId: pinRow.associateId,
           kioskPinId: pinRow.id,
-          selfie,
+          ...sealSelfie(selfie),
           punchLat,
           punchLng,
           distanceMeters: dist,
@@ -2954,7 +2955,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
     input.faceDescriptor && faceAllowed
       ? prisma.kioskFaceReference.findUnique({
           where: { associateId: pinRow.associateId },
-          select: { descriptor: true },
+          select: { descriptor: true, descriptorEncrypted: true },
         })
       : Promise.resolve(null),
     // PERF: `select`, never `include` — this runs on EVERY punch, inside
@@ -2989,7 +2990,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
   let faceReferenceUsed = false;
   if (input.faceDescriptor && faceAllowed) {
     if (faceRef) {
-      const refVec = bytesToDescriptor(faceRef.descriptor);
+      const refVec = bytesToDescriptor(openDescriptor(faceRef));
       faceDistance = euclideanDistance(refVec, input.faceDescriptor);
       faceMismatch = faceDistance > FACE_MATCH_THRESHOLD;
       faceReferenceUsed = true;
@@ -3248,7 +3249,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
         associateId: pinRow.associateId,
         timeEntryId: timeEntry.id,
         action,
-        selfie: storedSelfie,
+        ...sealSelfie(storedSelfie),
         punchLat,
         punchLng,
         distanceMeters: dist,
@@ -3267,7 +3268,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
       await tx.kioskFaceReference.create({
         data: {
           associateId: pinRow.associateId,
-          descriptor: descriptorToBytes(input.faceDescriptor),
+          ...sealDescriptor(descriptorToBytes(input.faceDescriptor)),
           enrolledByPunchId: punch.id,
           lastUsedAt: new Date(),
         },
@@ -3524,7 +3525,7 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
       } catch {
         /* malformed — nothing to keep */
       }
-      if (late) await prisma.kioskPunch.update({ where: { id: punch.id }, data: { selfie: late } });
+      if (late) await prisma.kioskPunch.update({ where: { id: punch.id }, data: sealSelfie(late) });
     }
     res.json({ ok: true, skipped: true });
     return;
@@ -3542,7 +3543,7 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
   if (selfie) {
     await prisma.kioskPunch.update({
       where: { id: punch.id },
-      data: { selfie },
+      data: sealSelfie(selfie),
     });
   }
 
@@ -3553,7 +3554,7 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
 
   const ref = await prisma.kioskFaceReference.findUnique({
     where: { associateId },
-    select: { descriptor: true },
+    select: { descriptor: true, descriptorEncrypted: true },
   });
   if (!ref) {
     // First sighting — enroll this descriptor as the reference. upsert
@@ -3564,7 +3565,7 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
       where: { associateId },
       create: {
         associateId,
-        descriptor: descriptorToBytes(input.faceDescriptor),
+        ...sealDescriptor(descriptorToBytes(input.faceDescriptor)),
         enrolledByPunchId: punch.id,
         lastUsedAt: new Date(),
       },
@@ -3589,7 +3590,7 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
   }
 
   const faceDistance = euclideanDistance(
-    bytesToDescriptor(ref.descriptor),
+    bytesToDescriptor(openDescriptor(ref)),
     input.faceDescriptor,
   );
   const faceMismatch = faceDistance > FACE_MATCH_THRESHOLD;

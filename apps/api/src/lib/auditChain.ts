@@ -4,6 +4,10 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { getBlobStore } from './blobStore.js';
 import { encryptBytes } from './crypto.js';
 import { enqueueAudit } from './audit.js';
+import { env } from '../config/env.js';
+import { armJob } from './jobs.js';
+import { raiseSecurityAlert } from './securityAlerts.js';
+import { platformJob } from './tenantJobs.js';
 
 /**
  * Brief 2-3 step 4 — tamper evidence and retention for the audit trail
@@ -100,12 +104,36 @@ export async function runAuditChainChecks(db: Db): Promise<ChainResult[]> {
     });
     if (r.breaks.length) {
       broken.push(r);
-      const summary = `The audit trail's hash chain is broken for tenant ${tenantId ?? '(none)'} at ${r.breaks.slice(0, 3).map((b) => `#${b.seq} (${b.reason})`).join(', ')}.`;
-      await db.securityAlert.create({ data: { rule: 'AUDIT_CHAIN', key: `${tenantId ?? '-'}:${r.breaks[0]!.seq}`, summary, auditLogIds: [], deliveredTo: [] } });
+      const summary = `The audit trail's hash chain is broken for tenant ${tenantId ?? '(none)'} at ${r.breaks.slice(0, 3).map((b) => `#${b.seq} (${b.reason})`).join(', ')}. Investigate before trusting the trail.`;
+      // The security contact and the operator's org admins hear it the
+      // way every other security alert reaches them (lib/securityAlerts),
+      // once an hour per break — not a row nobody reads.
+      await raiseSecurityAlert(db, { rule: 'AUDIT_CHAIN', key: `${tenantId ?? '-'}:${r.breaks[0]!.seq}`, summary, auditLogIds: [], linkUrl: '/admin/audit' });
       console.error(`[alto-people/api] ${summary}`);
     }
   }
   return broken;
+}
+
+export const AUDIT_CHAIN_CHECK_JOB = 'auditChainCheck';
+
+/**
+ * Audit item 20 (2026-10-21): the nightly verifier the identity plan
+ * promised. Every tenant's chain, recorded as an AuditChainCheck, a break
+ * raised as an AUDIT_CHAIN security alert. Default daily
+ * (AUDIT_CHAIN_CHECK_INTERVAL_SECONDS); listed on the jobs panel.
+ */
+export function startAuditChainCheckCron(db: Db): void {
+  armJob({
+    name: AUDIT_CHAIN_CHECK_JOB,
+    label: 'Audit hash-chain verification (nightly)',
+    intervalSeconds: env.AUDIT_CHAIN_CHECK_INTERVAL_SECONDS,
+    run: platformJob(AUDIT_CHAIN_CHECK_JOB, () => runAuditChainChecks(db)),
+    // The evidence sweep already checks at boot; the first scheduled tick
+    // comes after one interval so two checks are not written on every deploy.
+    immediate: false,
+    note: 'AUDIT_CHAIN_CHECK_INTERVAL_SECONDS; a break raises an AUDIT_CHAIN security alert to the security contact and org admins.',
+  });
 }
 
 /** The evidence form of the check, for the daily sweep (lib/evidence). */

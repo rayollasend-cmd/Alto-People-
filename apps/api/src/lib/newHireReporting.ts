@@ -185,11 +185,19 @@ export function newHireCsv(records: NewHireRecord[]): string {
   return rows.join('\r\n') + '\r\n';
 }
 
-/** A state filing service. None ships enabled; tests use a mock. */
+/**
+ * A filing provider. ELECTRONIC ones submit to the state themselves
+ * (none ships configured; tests register a mock). The one that ships is
+ * MANUAL_UPLOAD: the CSV this file produces, which a person uploads at
+ * the state portal — registered formally so the product says so instead
+ * of implying an electronic filing it never makes.
+ */
 export interface NewHireReportingProvider {
   key: string;
   label: string;
-  /** States this service files in. */
+  /** ELECTRONIC files for the person; MANUAL_UPLOAD produces the file the person files. Absent = ELECTRONIC (the mocks). */
+  kind?: 'ELECTRONIC' | 'MANUAL_UPLOAD';
+  /** States this service files in ('*' = every state). */
   states: string[];
   submit(state: string, records: NewHireRecord[]): Promise<{ confirmation: string }>;
 }
@@ -204,9 +212,45 @@ export function unregisterNewHireProvider(key: string): void {
   providers.delete(key);
 }
 
+/** The provider that files electronically for a state, if one is connected. The CSV provider never is. */
 export function providerForState(state: string): NewHireReportingProvider | null {
-  for (const p of providers.values()) if (p.states.includes(state)) return p;
+  for (const p of providers.values()) if ((p.kind ?? 'ELECTRONIC') === 'ELECTRONIC' && (p.states.includes(state) || p.states.includes('*'))) return p;
   return null;
+}
+
+/** The provider that ships: the CSV every state portal accepts, uploaded by hand. */
+export const CSV_MANUAL_UPLOAD_PROVIDER: NewHireReportingProvider = {
+  key: 'csv-manual-upload',
+  label: 'CSV for the state portal',
+  kind: 'MANUAL_UPLOAD',
+  states: ['*'],
+  async submit() {
+    throw new Error('The CSV provider does not file: download the file, upload it at the state portal and mark the reports submitted.');
+  },
+};
+registerNewHireProvider(CSV_MANUAL_UPLOAD_PROVIDER);
+
+export interface NewHireFilingStatus {
+  /** How this state's reports get filed today. */
+  kind: 'ELECTRONIC' | 'MANUAL_UPLOAD';
+  provider: { key: string; label: string };
+  configured: boolean;
+  /** What the person has to do. */
+  note: string;
+}
+
+/** How new hires are filed for a state: an electronic service when one is connected, else the CSV for manual upload. */
+export function filingStatus(state?: string): NewHireFilingStatus {
+  const electronic = state ? providerForState(state) : null;
+  if (electronic) {
+    return { kind: 'ELECTRONIC', provider: { key: electronic.key, label: electronic.label }, configured: true, note: `${electronic.label} files with the state and returns a confirmation.` };
+  }
+  return {
+    kind: 'MANUAL_UPLOAD',
+    provider: { key: CSV_MANUAL_UPLOAD_PROVIDER.key, label: CSV_MANUAL_UPLOAD_PROVIDER.label },
+    configured: true,
+    note: 'Manual upload: download the CSV, upload it at the state new-hire portal, then mark the reports submitted with the confirmation. No electronic filing service is connected.',
+  };
 }
 
 /** Mark reports filed; the person's record shows the date too. */

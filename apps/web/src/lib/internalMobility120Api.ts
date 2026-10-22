@@ -76,9 +76,6 @@ export const STATUS_LABELS: Record<InternalApplicationStatus, string> = {
 export const listInternalJobs = () =>
   apiFetch<{ jobs: JobRow[] }>('/internal-jobs');
 
-export const getInternalJob = (id: string) =>
-  apiFetch<JobDetail>(`/internal-jobs/${id}`);
-
 export const applyToInternalJob = (
   id: string,
   input: { coverLetter?: string | null; resumeUrl?: string | null },

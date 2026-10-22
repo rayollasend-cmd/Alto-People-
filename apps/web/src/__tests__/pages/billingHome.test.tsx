@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { screen } from '@testing-library/react';
 import { axe } from 'vitest-axe';
+import { renderAs } from './hrPack/harness';
 
 /**
  * Brief 2-6 step 4 — Billing shows the plan, this month's active workers by
@@ -11,7 +10,8 @@ import { axe } from 'vitest-axe';
 
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
-  apiFetch: vi.fn(async () => ({
+  apiFetch: vi.fn(async (path: string) => (path === '/billing/contact' ? { stripeUpdated: true } : {
+    contact: { name: 'Acme Hotels LLC', email: 'ap@acme.test', paymentMethod: { kind: 'card', label: 'Visa ending 4242, expires 4/2028' }, paymentMethodNote: null },
     plan: 'standard',
     invoiced: true,
     stripe: 'test',
@@ -29,18 +29,18 @@ import { BillingHome } from '@/pages/admin/BillingHome';
 
 describe('BillingHome', () => {
   it('shows the running counts, the invoices and why a draft waits', async () => {
-    const { container } = render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <MemoryRouter>
-          <BillingHome />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+    const { container } = renderAs('HR_ADMINISTRATOR', <BillingHome />, '/admin/billing');
     expect(await screen.findByText('212')).toBeTruthy();
     expect(screen.getByText('AI agents')).toBeTruthy();
     expect(screen.getByText('$99.00')).toBeTruthy();
     expect(screen.getByRole('link', { name: /view/i }).getAttribute('href')).toBe('https://invoice.stripe.test/in_1');
     expect(screen.getByText('Waiting for your plan’s prices.')).toBeTruthy();
+    // The billing contact and the payment method on file (audit 2026-10-21, Tier 3).
+    expect(screen.getByText('Acme Hotels LLC')).toBeTruthy();
+    expect(screen.getByText('ap@acme.test')).toBeTruthy();
+    expect(screen.getByText('Visa ending 4242, expires 4/2028')).toBeTruthy();
+    // An admin can change who the invoices go to.
+    expect(screen.getByRole('button', { name: 'Edit contact' })).toBeTruthy();
     const results = await axe(container, { rules: { 'color-contrast': { enabled: false }, region: { enabled: false } } });
     expect(results.violations).toHaveLength(0);
   });

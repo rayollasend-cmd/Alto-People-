@@ -332,9 +332,17 @@ export interface BooksDimensions {
 
 export interface BooksOverview {
   asOf: string;
-  cash: { total: number; accounts: Array<{ id: string; code: string; name: string; subtype: string; balance: number }> };
-  receivables: {
+  cash: {
     total: number;
+    accounts: Array<{ id: string; code: string; name: string; subtype: string; balance: number }>;
+    /** Bank and card accounts connected to a feed (the Bank page's list) — the ledger can hold more. */
+    connectedAccounts: number;
+  };
+  receivables: {
+    /** The AR accounts' balance in the ledger. */
+    total: number;
+    /** What the open finalized statements add up to — the same number the aging card shows. */
+    openOnStatements: number;
     /** Open finalized statements by age past due: current (not yet due), 1–30, 31–60, 61–90, over 90. */
     aging: { current: number; days1to30: number; days31to60: number; days61to90: number; over90: number };
     topClients: Array<{ clientId: string; name: string; open: number; oldestDueAt: string | null }>;

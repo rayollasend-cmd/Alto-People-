@@ -89,7 +89,7 @@ export function PaySchedulesPage() {
         ) : null
       }
     >
-      {list.data && list.data.unassigned > 0 && <UnassignedBucket schedules={active} focus={params.get('view') === 'unassigned'} />}
+      {list.data && list.data.unassigned > 0 && <UnassignedBucket schedules={active} focus={params.get('view') === 'unassigned'} only={params.get('people')?.split(',').filter(Boolean) ?? null} />}
       {list.isError ? (
         <EmptyState
           icon={AlertTriangle}
@@ -223,7 +223,7 @@ function ScheduleTable({ schedules, loading, onOpen }: { schedules: PayScheduleS
 
 /* ---- Everyone on no schedule ------------------------------------------- */
 
-function UnassignedBucket({ schedules, focus }: { schedules: PayScheduleSummary[]; focus: boolean }) {
+function UnassignedBucket({ schedules, focus, only }: { schedules: PayScheduleSummary[]; focus: boolean; only?: string[] | null }) {
   const qc = useQueryClient();
   const ref = useRef<HTMLDivElement>(null);
   const [showAll, setShowAll] = useState(focus);
@@ -247,7 +247,9 @@ function UnassignedBucket({ schedules, focus }: { schedules: PayScheduleSummary[
     }
   }, [focus, ready]);
   if (!q.data || q.data.total === 0) return null;
-  const people = q.data.people;
+  // Readiness's "Cover with a schedule rule" hands its picked people here (?people=…, finance walk 4).
+  const picked = only && only.length ? q.data.people.filter((p) => only.includes(p.associateId)) : null;
+  const people = picked && picked.length ? picked : q.data.people;
   return (
     <Card ref={ref} tabIndex={-1} aria-label="People on no pay schedule" className={cn('scroll-mt-24 border-alert/40 bg-alert/5 focus:outline-none', focus && 'ring-2 ring-alert/40')}>
       <CardContent className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -255,7 +257,7 @@ function UnassignedBucket({ schedules, focus }: { schedules: PayScheduleSummary[
           <AvatarStack people={people.map((p) => ({ name: p.name, photoUrl: p.photoUrl }))} max={6} />
           <div className="min-w-0">
             <p className="font-medium text-ink">
-              {q.data.total} {q.data.total === 1 ? 'person is' : 'people are'} on no pay schedule
+              {picked && picked.length ? `${picked.length} of the ${q.data.total} on no pay schedule, picked on Readiness` : `${q.data.total} ${q.data.total === 1 ? 'person is' : 'people are'} on no pay schedule`}
             </p>
             <p className="text-sm text-ink-muted">
               They won’t be paid by any run until a schedule covers them.{' '}

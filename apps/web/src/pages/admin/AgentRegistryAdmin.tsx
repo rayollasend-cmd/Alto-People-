@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Bot, Copy, LayoutGrid, MoreHorizontal, Plus, Settings2, ShieldAlert, TableProperties } from 'lucide-react';
+import { BookUser, Bot, Copy, LayoutGrid, MoreHorizontal, Plus, Settings2, ShieldAlert, TableProperties } from 'lucide-react';
 import { AgentCards } from '@/components/agents/AgentCards';
 import { ProposalList } from '@/components/agents/ProposalDecision';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
@@ -637,6 +637,11 @@ export function AgentRegistryAdmin() {
         }
         secondaryActions={
           <span className="flex items-center gap-2">
+            <Button asChild variant="ghost" size="sm" title="People, agents and robots in one roster, with each agent's scorecard">
+              <Link to="/workers?type=AGENT">
+                <BookUser className="h-4 w-4" aria-hidden="true" /> Workforce roster
+              </Link>
+            </Button>
             <Button asChild variant="ghost" size="sm">
               <Link to="/admin/agents">
                 <Settings2 className="h-4 w-4" aria-hidden="true" /> Agents &amp; gates

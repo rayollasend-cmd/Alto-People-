@@ -11,11 +11,13 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { GripVertical, Plus } from 'lucide-react';
-import type { AssociateLite, Shift } from '@alto-people/shared';
+import { wentUnfilled, type AssociateLite, type Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import { fmtTimeTz, zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
 import { shiftMinutes, ymd } from './calendarDates';
+import { layoutLanes } from './dayLanes';
+import { dayIsPast } from './weekGridFit';
 import { Avatar } from '@/components/ui/Avatar';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
@@ -189,19 +191,26 @@ export function DayCalendarView({
   const hourLabels = Array.from({ length: HOURS_VISIBLE }).map(
     (_, i) => DAY_START_HOUR + i
   );
+  // The day is over in the grid's zone: dim it, and its OPEN shifts read
+  // "Unfilled" (role walk, ops 6).
+  const isPast = dayIsPast(ymd(dayAnchor), displayTimeZone);
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain">
+      <div
+        className={cn('rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain', isPast && 'opacity-60')}
+        data-past={isPast ? 'true' : undefined}
+      >
         <div className="flex min-w-[700px]">
-          {/* Hour gutter */}
-          <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur w-16 border-r border-navy-secondary">
-            <div className="h-12 border-b border-navy-secondary" />
-            <div className="relative" style={{ height: totalHeight }}>
+          {/* Hour gutter — its own column with a solid surface, so the hour
+              labels never draw over the first column's chips. */}
+          <div className="sticky left-0 z-20 bg-navy w-16 shrink-0 border-r border-navy-secondary">
+            <div className="h-12 border-b border-navy-secondary bg-navy" />
+            <div className="relative bg-navy" style={{ height: totalHeight }}>
               {hourLabels.map((h, i) => (
                 <div
                   key={h}
-                  className="absolute left-0 right-0 px-2 text-2xs text-silver/70 tabular-nums"
+                  className="absolute left-0 right-0 px-2 text-2xs text-silver/70 tabular-nums bg-navy"
                   style={{ top: i * PX_PER_HOUR - 6 }}
                 >
                   {h % 12 === 0 ? 12 : h % 12}
@@ -333,6 +342,10 @@ const DayColumn = memo(function DayColumn({
   const totalHeight = HOURS_VISIBLE * PX_PER_HOUR;
   const associateId = associate ? associate.id : null;
   const tone = associate ? undefined : ('warning' as const);
+  // Overlapping shifts share the column in side-by-side lanes; identical
+  // open shifts fold into one counted chip until it is tapped open.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const laidOut = useMemo(() => layoutLanes(shifts, { unfoldKeys: expanded }), [shifts, expanded]);
 
   // Click-to-create at the y position the user clicked (snapped).
   const onColumnClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -402,12 +415,19 @@ const DayColumn = memo(function DayColumn({
           backgroundSize: `100% ${PX_PER_HOUR}px`,
         }}
       >
-        {shifts.map((s) => (
+        {laidOut.map(({ shift: s, lane, lanes, group, foldKey }) => (
           <DayShiftChip
             key={s.id}
             shift={s}
+            lane={lane}
+            lanes={lanes}
+            groupCount={group.length}
             displayTimeZone={displayTimeZone}
-            onClick={() => onShiftClick(s)}
+            onClick={
+              group.length > 1 && foldKey
+                ? () => setExpanded((prev) => new Set(prev).add(foldKey))
+                : () => onShiftClick(s)
+            }
             onContextMenu={(e) => onContextMenu(s, e)}
             onResize={onShiftResize}
             canManage={canManage}
@@ -426,6 +446,9 @@ const DayColumn = memo(function DayColumn({
 
 function DayShiftChip({
   shift,
+  lane = 0,
+  lanes = 1,
+  groupCount = 1,
   displayTimeZone,
   onClick,
   onContextMenu,
@@ -434,6 +457,11 @@ function DayShiftChip({
   hoverHandlers,
 }: {
   shift: Shift;
+  /** Lane inside the overlap cluster, and the cluster's lane count. */
+  lane?: number;
+  lanes?: number;
+  /** Identical open shifts folded into this chip — a count chip when > 1. */
+  groupCount?: number;
   displayTimeZone: string | null;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -528,14 +556,21 @@ function DayShiftChip({
     : endsAt;
 
   const color = colorForPosition(shift.position);
+  const unfilled = wentUnfilled(shift);
+  const folded = groupCount > 1;
+  const laneLeft = `calc(${(lane / lanes) * 100}% + 4px)`;
+  const laneWidth = `calc(${100 / lanes}% - 8px)`;
   return (
     <div
       ref={setNodeRef}
+      data-lane={lane}
+      data-lanes={lanes}
+      data-group-count={folded ? groupCount : undefined}
       style={{
         position: 'absolute',
         top,
-        left: 4,
-        right: 4,
+        left: laneLeft,
+        width: laneWidth,
         height,
         backgroundColor: color.bg,
         borderColor: color.border,
@@ -577,13 +612,23 @@ function DayShiftChip({
         type="button"
         onClick={onClick}
         className="w-full h-full text-left pl-6 pr-2 pt-1.5 pb-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
-        title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEnds, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
+        title={
+          folded
+            ? `${groupCount} × ${shift.position} ${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEnds, shift.timezone)} — click to show each`
+            : `${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEnds, shift.timezone)} · ${shift.position} · ${unfilled ? 'Went unfilled' : SHIFT_STATUS_LABEL[shift.status]}`
+        }
       >
         <div className="flex items-center justify-between gap-1.5">
           <div className="text-xs2 text-silver tabular-nums truncate">
             {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEnds, shift.timezone)}
           </div>
-          <StatusMark status={shift.status} />
+          {unfilled ? (
+            <span className="shrink-0 rounded bg-alert/20 px-1 text-2xs font-medium text-alert" data-testid="unfilled-tag">
+              Unfilled
+            </span>
+          ) : (
+            <StatusMark status={shift.status} />
+          )}
         </div>
         <div
           className={cn(
@@ -591,7 +636,7 @@ function DayShiftChip({
             statusLabelClass(shift.status),
           )}
         >
-          {shift.position}
+          {folded ? `${groupCount} × ${shift.position}` : shift.position}
         </div>
         {shift.clientName && !hideClient && (
           <div className="text-2xs text-silver/70 truncate">

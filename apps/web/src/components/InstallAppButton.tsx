@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useI18n } from '@/lib/i18n';
 import { Download } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import {
@@ -21,6 +22,7 @@ import {
 const DISMISS_KEY = 'alto.install.dismissed';
 
 export function InstallAppButton() {
+  const { t } = useI18n();
   const [available, setAvailable] = useState(false);
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -48,10 +50,10 @@ export function InstallAppButton() {
       variant="ghost"
       size="sm"
       onClick={handleInstall}
-      aria-label="Install Alto People as an app"
+      aria-label={t('install.asApp')}
     >
       <Download className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="hidden sm:inline">Install app</span>
+      <span className="hidden sm:inline">{t('install.app')}</span>
     </Button>
   );
 }

@@ -38,7 +38,8 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
         'people',
         'documents',
         'compliance',
-        'hr-cases',
+        // hr-cases left 2026-10-21: the case desk needs manage:onboarding,
+        // which the recruiter's own charter (audit #16) does not hold.
         // 2026-10-17: the requisitions they hire against, the report builder
         // and the internal job board were reachable only by URL.
         'headcount',

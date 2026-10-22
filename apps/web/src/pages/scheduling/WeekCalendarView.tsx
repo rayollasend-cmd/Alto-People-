@@ -11,8 +11,17 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { VirtualizedRows } from './VirtualizedRows';
-import { AlertTriangle, Plus, GripVertical, UserMinus } from 'lucide-react';
-import type { AssociateLite, Shift } from '@alto-people/shared';
+import { AlertTriangle, ArrowDown, ArrowUp, Plus, GripVertical, UserMinus } from 'lucide-react';
+import { wentUnfilled, type AssociateLite, type Shift } from '@alto-people/shared';
+import {
+  dayIsPast,
+  dropFitFor,
+  hourlyCoverage,
+  isCopyDrag,
+  shiftTimesOnDay,
+  type DropFit,
+} from './weekGridFit';
+import { CoverageHeatStrip } from './CoverageHeatStrip';
 
 /** A grid row: a roster associate, or someone assigned this week who is no
  *  longer on the active roster (flagged, never silently dropped). */
@@ -118,6 +127,16 @@ interface Props {
   ) => Promise<void>;
   /** Drag the right edge of a chip to change duration (snapped 15 min). */
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
+  /**
+   * Alt/Option-drag (and ⌘V onto a cell): copy the shift to another cell —
+   * same wall-clock times on the target day, assigned to the target row.
+   * Undefined = the copy lands through `quickActions.onDuplicate` with the
+   * target day's times (unassigned, in the Unassigned row).
+   */
+  onShiftCopy?: (
+    s: Shift,
+    target: { associateId: string | null; dayStart: Date }
+  ) => Promise<void>;
   /** Hover-card quick actions (assign / unassign / cancel / duplicate / edit). */
   quickActions: QuickActions;
   /** Apply a dragged-from-rail template to a specific cell. */
@@ -176,6 +195,7 @@ export function WeekCalendarView({
   onCellCreate,
   onShiftMove,
   onShiftResize,
+  onShiftCopy,
   quickActions,
   selectedIds,
   onToggleGroupSelection,
@@ -444,6 +464,42 @@ export function WeekCalendarView({
   // Row-reorder drag in flight — enables the per-row drop targets (kept
   // disabled otherwise so shift drags can never land on a row by mistake).
   const [draggingRowId, setDraggingRowId] = useState<string | null>(null);
+  // Alt/Option held during a drag means "copy, don't move". dnd-kit only
+  // hands us the activator event, so the key is tracked for the drag's
+  // whole life — pressing it after the pickup still counts.
+  const altHeldRef = useRef(false);
+  const [copyArmed, setCopyArmed] = useState(false);
+  useEffect(() => {
+    if (!activeDragShift) {
+      altHeldRef.current = false;
+      setCopyArmed(false);
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      altHeldRef.current = e.altKey;
+      setCopyArmed(e.altKey);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+    };
+  }, [activeDragShift]);
+
+  // A copy onto a cell: the parent's handler when it has one, else the
+  // duplicate action with the target day's times (lands unassigned).
+  const copyShiftTo = useCallback(
+    async (shift: Shift, target: { associateId: string | null; dayStart: Date }) => {
+      if (onShiftCopy) {
+        await onShiftCopy(shift, target);
+        return;
+      }
+      const times = shiftTimesOnDay(shift, ymd(target.dayStart), displayTimeZone);
+      await quickActions.onDuplicate({ ...shift, ...times, assignedAssociateId: null, assignedAssociateName: null });
+    },
+    [onShiftCopy, quickActions, displayTimeZone],
+  );
 
   const handleDragStart = (e: DragStartEvent) => {
     const id = String(e.active.id);
@@ -489,6 +545,18 @@ export function WeekCalendarView({
     const shift = shifts.find((s) => s.id === shiftId);
     if (!shift) return;
 
+    // Alt/Option-drag copies: Duplicate-then-move was three clicks and a
+    // drag for a chip that just needed to exist on Thursday too.
+    if (isCopyDrag(e.activatorEvent, altHeldRef.current)) {
+      setMovingShiftId(shiftId);
+      try {
+        await copyShiftTo(shift, { associateId, dayStart });
+      } finally {
+        setMovingShiftId(null);
+      }
+      return;
+    }
+
     // No-op if dropped on the cell it already lived in (compare in grid zone).
     if (
       (shift.assignedAssociateId ?? null) === associateId &&
@@ -503,6 +571,60 @@ export function WeekCalendarView({
       setMovingShiftId(null);
     }
   };
+
+  // ⌘C / ⌘V / Delete on the grid: copy the selected chips, paste them onto
+  // the cell under the pointer, cancel the selection. The page-level keys
+  // (← → t n) stand down on modifiers, so these never collide.
+  const clipboardRef = useRef<Shift[]>([]);
+  const focusedCellRef = useRef<{ associateId: string | null; dayStart: Date } | null>(null);
+  const onCellPointerEnter = useCallback((dayStart: Date, associateId: string | null) => {
+    focusedCellRef.current = { associateId, dayStart };
+  }, []);
+  const keyDepsRef = useRef({ shifts, selectedIds, canManage, copyShiftTo, quickActions });
+  keyDepsRef.current = { shifts, selectedIds, canManage, copyShiftTo, quickActions };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const { shifts, selectedIds, canManage, copyShiftTo, quickActions } = keyDepsRef.current;
+      if (!canManage) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key.toLowerCase() === 'c') {
+        const picked = shifts.filter((s) => selectedIds.has(s.id));
+        if (picked.length === 0) return;
+        e.preventDefault();
+        clipboardRef.current = picked;
+        return;
+      }
+      if (meta && e.key.toLowerCase() === 'v') {
+        const cell = focusedCellRef.current;
+        if (!cell || clipboardRef.current.length === 0) return;
+        e.preventDefault();
+        for (const s of clipboardRef.current) void copyShiftTo(s, cell);
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !meta) {
+        const picked = shifts.filter((s) => selectedIds.has(s.id) && s.status !== 'CANCELLED' && s.status !== 'COMPLETED');
+        if (picked.length === 0) return;
+        e.preventDefault();
+        for (const s of picked) void quickActions.onCancel(s);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Past day columns are history: dimmed, and an OPEN chip there reads
+  // "Unfilled" — the shift went unfilled, nobody can be assigned now.
+  const pastKeys = useMemo(() => new Set(dayKeys.filter((k) => dayIsPast(k, displayTimeZone))), [dayKeys, displayTimeZone]);
+
+  // Headcount at the top of every hour, for the coverage strip under the
+  // grid (the footer's single peak hid a mid-afternoon hole).
+  const coverageByDay = useMemo(
+    () => (coverageTarget != null && coverageTarget > 0 ? hourlyCoverage(shifts, dayKeys, displayTimeZone) : null),
+    [shifts, dayKeys, displayTimeZone, coverageTarget],
+  );
 
   // 200px sticky rail + N day columns. Columns flex to fill the available
   // width (minmax(0, 1fr)) so the whole selected range fits on screen without
@@ -566,6 +688,24 @@ export function WeekCalendarView({
     return out;
   }, [activeDragShift, visibleAssociates, dayKeys, byCell, displayTimeZone]);
 
+  // While a chip is in the air, every associate × day cell says what the
+  // drop would do to that person: time off (red), outside their windows
+  // (amber), or past 40h (amber "+OT"). Same data the rail badges use.
+  const dropFitKeys = useMemo(() => {
+    const out = new Map<string, DropFit>();
+    if (!activeDragShift) return out;
+    for (const a of visibleAssociates) {
+      const fit = availabilityFit?.get(a.id);
+      const mins = weeklyMinutes.get(a.id) ?? 0;
+      days.forEach((d, i) => {
+        const key = dayKeys[i];
+        const f = dropFitFor({ associateId: a.id, dayKey: key, dow: d.getDay() }, activeDragShift, fit, mins);
+        if (f) out.set(`${a.id}_${key}`, f);
+      });
+    }
+    return out;
+  }, [activeDragShift, visibleAssociates, availabilityFit, weeklyMinutes, days, dayKeys]);
+
   return (
     <DndContext
       sensors={sensors}
@@ -610,9 +750,11 @@ export function WeekCalendarView({
             return (
               <div
                 key={d.toISOString()}
+                data-past={pastKeys.has(dayKeys[i]) ? 'true' : undefined}
                 className={cn(
                   'border-b border-navy-secondary sticky top-0 z-10 bg-navy/95 backdrop-blur',
-                  isToday && 'bg-gold/10'
+                  isToday && 'bg-gold/10',
+                  pastKeys.has(dayKeys[i]) && 'opacity-60',
                 )}
               >
                 {onToggleGroupSelection ? (
@@ -664,17 +806,20 @@ export function WeekCalendarView({
               dayStart={d}
               associateId={null}
               isToday={sameDay(d, today)}
+              isPast={pastKeys.has(dayKeys[i])}
               canManage={canManage}
               onShiftClick={onShiftClick}
               onCellCreate={onCellCreate}
               onShiftResize={onShiftResize}
               hoverBind={hoverBind}
               onContextMenu={openContextMenu}
+              onPointerEnterCell={onCellPointerEnter}
               movingShiftId={movingShiftId}
               selectedIds={selectedIds}
               isConflictTarget={false}
               variant="unassigned"
               onTemplateDrop={onTemplateDrop}
+              copyArmed={copyArmed}
             />
           ))}
           </div>
@@ -693,6 +838,11 @@ export function WeekCalendarView({
             const overTime = mins > 40 * 60;
             const nearOT = !overTime && mins >= 36 * 60;
             const fit = availabilityFit?.get(a.id);
+            // The visible neighbours in the saved order — the anchors the
+            // ↑/↓ buttons (and the row drag) move against. Off-roster rows
+            // sit outside the saved order, so they are never an anchor.
+            const prevRow = visibleAssociates.slice(0, index).reverse().find((r) => !r.offRoster) ?? null;
+            const nextRow = visibleAssociates.slice(index + 1).find((r) => !r.offRoster) ?? null;
             return (
               <Row
                 key={a.id}
@@ -704,6 +854,8 @@ export function WeekCalendarView({
                 highlighted={a.id === highlightAssociateId}
                 colsStyle={colsStyle}
                 reorderArmed={!!onReorderRow && !a.offRoster}
+                onMoveUp={onReorderRow && !a.offRoster && prevRow ? () => onReorderRow(a.id, prevRow.id, -1) : undefined}
+                onMoveDown={onReorderRow && !a.offRoster && nextRow ? () => onReorderRow(a.id, nextRow.id, 1) : undefined}
                 rowDragActive={draggingRowId !== null}
                 onRemoveFromCrew={
                   onRemoveFromCrew ? () => onRemoveFromCrew(a.id) : undefined
@@ -745,18 +897,22 @@ export function WeekCalendarView({
                       dayStart={d}
                       associateId={a.id}
                       isToday={sameDay(d, today)}
+                      isPast={pastKeys.has(dayKey)}
                       canManage={canManage}
                       onShiftClick={onShiftClick}
                       onCellCreate={onCellCreate}
                       onShiftResize={onShiftResize}
                       hoverBind={hoverBind}
                       onContextMenu={openContextMenu}
+                      onPointerEnterCell={onCellPointerEnter}
                       movingShiftId={movingShiftId}
                       selectedIds={selectedIds}
                       isConflictTarget={conflictCellKeys.has(`${a.id}_${dayKey}`)}
+                      dropFit={dropFitKeys.get(`${a.id}_${dayKey}`) ?? null}
                       variant="default"
                       onTemplateDrop={onTemplateDrop}
                       availabilityShade={shade}
+                      copyArmed={copyArmed}
                     />
                   );
                 })}
@@ -782,6 +938,7 @@ export function WeekCalendarView({
                 className={cn(
                   'border-t border-r border-navy-secondary px-2 py-2',
                   isToday && 'bg-gold/[0.03]',
+                  pastKeys.has(dayKeys[i]) && 'opacity-60',
                 )}
               >
                 {count === 0 ? (
@@ -828,6 +985,20 @@ export function WeekCalendarView({
           </div>
         </div>
       </div>
+      {coverageByDay && coverageTarget != null && (
+        <div className="mt-3 no-print">
+          <CoverageHeatStrip
+            days={days.map((d, i) => ({
+              dayKey: dayKeys[i],
+              dayStart: d,
+              label: `${fmtWeekdayTz(d)} ${fmtDateTz(d)}`,
+              coverage: coverageByDay.get(dayKeys[i]) ?? { scheduled: Array(24).fill(0), open: Array(24).fill(0) },
+            }))}
+            target={coverageTarget}
+            onCoverageGap={onCoverageGap}
+          />
+        </div>
+      )}
       {hover.active && (
         <ShiftHoverCard
           shift={hover.active.shift}
@@ -894,6 +1065,8 @@ const Row = memo(function Row({
   children,
   reorderArmed = false,
   rowDragActive = false,
+  onMoveUp,
+  onMoveDown,
   onRemoveFromCrew,
   onSelectRow,
 }: {
@@ -913,6 +1086,11 @@ const Row = memo(function Row({
   reorderArmed?: boolean;
   /** A row drag is in flight somewhere — arms this row's drop target. */
   rowDragActive?: boolean;
+  /** Move this row above/below its visible neighbour — the keyboard and
+   *  touch route to the saved order (the grip is drag-only). Undefined at
+   *  the top/bottom of the roster. */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   /** Remove this row's associate from the active crew filter. */
   onRemoveFromCrew?: () => void;
   /** Toggle selection of every one of this row's shifts in the visible
@@ -958,18 +1136,44 @@ const Row = memo(function Row({
             'bg-gold/15 outline outline-1 outline-gold/50 -outline-offset-1',
         )}
       >
-        {/* The grip alone — drag is the one reorder gesture (arrows were
-            redundant chrome once dragging landed, and names need the room). */}
+        {/* The grip drags; the ↑/↓ pair under it is the same move for a
+            keyboard or a finger (a drag grip alone left the saved order
+            unreachable without a mouse). The pair shows on hover/focus so
+            names keep the room. */}
         {reorderArmed && (
-          <div
-            ref={rowDrag.setNodeRef}
-            {...rowDrag.listeners}
-            {...rowDrag.attributes}
-            className={cn(GRIP_HIT, 'shrink-0 touch-none coarse:p-1.5')}
-            aria-label={`Drag to reorder ${associate.firstName} ${associate.lastName}`}
-            title="Drag to reorder this row"
-          >
-            <GripVertical className={GRIP_ICON} />
+          <div className="flex shrink-0 flex-col items-center">
+            <div
+              ref={rowDrag.setNodeRef}
+              {...rowDrag.listeners}
+              {...rowDrag.attributes}
+              className={cn(GRIP_HIT, 'touch-none coarse:p-1.5')}
+              aria-label={`Drag to reorder ${associate.firstName} ${associate.lastName}`}
+              title="Drag to reorder this row"
+            >
+              <GripVertical className={GRIP_ICON} />
+            </div>
+            <div className="flex can-hover:opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity no-print">
+              <button
+                type="button"
+                onClick={onMoveUp}
+                disabled={!onMoveUp}
+                aria-label={`Move ${associate.firstName} ${associate.lastName} up`}
+                title="Move this row up"
+                className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              >
+                <ArrowUp className="h-3 w-3" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={onMoveDown}
+                disabled={!onMoveDown}
+                aria-label={`Move ${associate.firstName} ${associate.lastName} down`}
+                title="Move this row down"
+                className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              >
+                <ArrowDown className="h-3 w-3" aria-hidden="true" />
+              </button>
+            </div>
           </div>
         )}
         <Avatar
@@ -1094,11 +1298,15 @@ const Cell = memo(function Cell({
   movingShiftId,
   selectedIds,
   isConflictTarget,
+  dropFit = null,
   variant,
   onTemplateDrop,
   availabilityShade = null,
   hiddenCount = 0,
   shortRestIds,
+  isPast = false,
+  onPointerEnterCell,
+  copyArmed = false,
 }: {
   cellId: string;
   shifts: Shift[];
@@ -1106,6 +1314,14 @@ const Cell = memo(function Cell({
   /** Row owner — null for the Unassigned row. */
   associateId: string | null;
   isToday: boolean;
+  /** The day ended in the grid's zone — dimmed; its OPEN shifts went unfilled. */
+  isPast?: boolean;
+  /** Last cell the pointer entered — the ⌘V paste target. */
+  onPointerEnterCell?: (dayStart: Date, associateId: string | null) => void;
+  /** Alt/Option is held during the drag: the drop copies. */
+  copyArmed?: boolean;
+  /** What dropping the dragged chip here would do to this person. */
+  dropFit?: DropFit | null;
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onContextMenu: (s: Shift, e: React.MouseEvent) => void;
@@ -1155,12 +1371,21 @@ const Cell = memo(function Cell({
       onDragOver={onNativeDragOver}
       onDragLeave={onNativeDragLeave}
       onDrop={onNativeDrop}
+      onPointerEnter={onPointerEnterCell ? () => onPointerEnterCell(dayStart, associateId) : undefined}
+      data-drop-fit={dropFit ?? undefined}
+      data-past={isPast ? 'true' : undefined}
       title={
-        availabilityShade === 'blocked'
-          ? 'Approved time off / unavailable this day'
-          : availabilityShade === 'outside'
-            ? 'Outside weekly availability'
-            : undefined
+        dropFit === 'blocked'
+          ? 'Approved time off this day'
+          : dropFit === 'outside'
+            ? 'Outside their weekly availability'
+            : dropFit === 'ot'
+              ? 'Would put them past 40h this week'
+              : availabilityShade === 'blocked'
+                ? 'Approved time off / unavailable this day'
+                : availabilityShade === 'outside'
+                  ? 'Outside weekly availability'
+                  : undefined
       }
       className={cn(
         // Near-zero inset: a lone shift tile stretches to paint the whole
@@ -1186,10 +1411,32 @@ const Cell = memo(function Cell({
         isConflictTarget && !isOver && 'bg-alert/15',
         isConflictTarget && isOver && 'bg-alert/30 outline outline-1 outline-alert/60 -outline-offset-1',
         !isConflictTarget && isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
+        // Drag fit, under the conflict/hover states: red for time off,
+        // amber for outside availability or past 40h.
+        !isConflictTarget && !isOver && dropFit === 'blocked' && 'bg-alert/20',
+        !isConflictTarget && !isOver && (dropFit === 'outside' || dropFit === 'ot') && 'bg-warning/20',
+        isOver && copyArmed && 'outline-dashed',
         tplOver && 'bg-gold/20 outline-2 outline outline-gold/70 -outline-offset-1',
-        variant === 'unassigned' && !isOver && !isConflictTarget && !tplOver && 'bg-warning/[0.04]'
+        variant === 'unassigned' && !isOver && !isConflictTarget && !tplOver && 'bg-warning/[0.04]',
+        isPast && 'opacity-60',
       )}
     >
+      {dropFit === 'ot' && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute top-0.5 right-0.5 z-[1] rounded bg-warning/80 px-1 text-2xs font-semibold text-navy"
+        >
+          +OT
+        </span>
+      )}
+      {isOver && copyArmed && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-0.5 left-0.5 z-[1] rounded bg-gold px-1 text-2xs font-semibold text-navy"
+        >
+          Copy
+        </span>
+      )}
       {shifts.length === 0 ? (
         <>
           {canManage && (
@@ -1368,6 +1615,9 @@ function ShiftChip({
   const isResizing = resizeDeltaPx !== null;
   const color = colorForPosition(shift.position);
   const density = useTileDensity();
+  // Ended while still OPEN: the shift went unfilled. It is history, not a
+  // hole to fill — the label says so and the status mark is the record.
+  const unfilled = wentUnfilled(shift);
   return (
     <div
       ref={setNodeRef}
@@ -1426,7 +1676,7 @@ function ShiftChip({
           // Clear the ⋯ touch-menu trigger, which only renders sans hover.
           '[@media(hover:none)]:pr-8',
         )}
-        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
+        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${unfilled ? 'Went unfilled' : SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
         <div className="w-full flex items-center gap-1.5 min-w-0">
           <span
@@ -1457,6 +1707,11 @@ function ShiftChip({
             >
               <AlertTriangle className="h-3 w-3" aria-hidden="true" />
               <span className="sr-only">Short rest before this shift</span>
+            </span>
+          )}
+          {unfilled && (
+            <span className="shrink-0 rounded bg-alert/20 px-1 text-2xs font-medium text-alert" data-testid="unfilled-tag">
+              Unfilled
             </span>
           )}
           <StatusMark status={shift.status} />

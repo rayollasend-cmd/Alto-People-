@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { env } from '../config/env.js';
 import PDFDocument from 'pdfkit';
 import { COLOR, fmt } from './docKit/index.js';
 import { fontName, registerFonts, runsFor, type Weight } from './docKit/fonts.js';
@@ -61,7 +62,7 @@ const STUB_H = 3.75 * PT; // 270
 
 /** Where the licensed E-13B font is, if this deployment installed one. */
 export function micrFontPath(): string | null {
-  const p = process.env.MICR_FONT_PATH;
+  const p = env.MICR_FONT_PATH;
   return p && existsSync(p) ? p : null;
 }
 

@@ -15,6 +15,7 @@
 // The wizard runs `createPayrollRun` only at step 4 — the prior steps are
 // pure UI projections so the user can back out without polluting the DB.
 
+import { ChangesVsLastRun } from './ChangesVsLastRun';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -82,6 +83,12 @@ export interface RunPayrollSeed {
   scheduleId: string;
   periodStart: string;
   periodEnd: string;
+  /**
+   * A payday that passed with no run (the period ledger, finance walk 1):
+   * the run is OFF_CYCLE and pays only the period's approved hours that
+   * are on no paystub yet.
+   */
+  missedPayday?: boolean;
 }
 
 interface Props {
@@ -153,8 +160,11 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
   // same entry point (same seed) resumes as-is, while a different seed —
   // or the unseeded "New run" button — starts fresh.
   const seedKey = seed
-    ? `${seed.scheduleId}|${seed.periodStart}|${seed.periodEnd}`
+    ? `${seed.scheduleId}|${seed.periodStart}|${seed.periodEnd}|${seed.missedPayday ? 'missed' : ''}`
     : '';
+  // Paying a missed payday's hours: an off-cycle run built from the period's approved time.
+  const missedPayday = !!seed?.missedPayday;
+  const ledgerRun = missedPayday ? ({ kind: 'OFF_CYCLE', includesApprovedTime: true } as const) : {};
   const sessionKeyRef = useRef<string | null>(null);
   // A seeded open must keep the hero's exact period — the schedule-default
   // effect below would otherwise clobber it when the schedule list resolves.
@@ -332,6 +342,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
           periodEnd,
           payrollScheduleId,
           defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined,
+          ...ledgerRun,
         }),
         listPayrollExceptions(exceptionsInput).catch((err: unknown) => {
           setExceptionsError(err instanceof ApiError ? err.message : 'the check failed');
@@ -386,7 +397,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
       const [res, fresh] = await Promise.all([
         listPayrollExceptions(exceptionsInput),
         runKind === 'REGULAR' && preview
-          ? previewPayrollRun({ clientId, periodStart, periodEnd, payrollScheduleId, defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined }).catch(() => null)
+          ? previewPayrollRun({ clientId, periodStart, periodEnd, payrollScheduleId, defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined, ...ledgerRun }).catch(() => null)
           : Promise.resolve(null),
       ]);
       setExceptions(res);
@@ -473,8 +484,9 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
         periodEnd,
         payrollScheduleId: scheduleId || null,
         defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined,
-        notes: notes || undefined,
+        notes: notes || (missedPayday ? 'Off-cycle: hours from a payday that passed with no run' : undefined),
         ...(runKind === 'OFF_CYCLE' ? { kind: 'OFF_CYCLE' as const } : {}),
+        ...ledgerRun,
       });
       let detail = created;
       if (andFinalize) {
@@ -513,7 +525,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
       {/* Phones: a full-screen sheet (the review is too dense for a half sheet). */}
       <DialogContent className="sm:max-w-3xl max-sm:top-0 max-sm:max-h-none max-sm:h-[100dvh] max-sm:rounded-none max-sm:border-t-0">
         <DialogHeader>
-          <DialogTitle>Run payroll</DialogTitle>
+          <DialogTitle>{missedPayday ? 'Pay a missed payday' : 'Run payroll'}</DialogTitle>
           <DialogDescription>
             {quickReview
               ? 'Review & create'
@@ -534,6 +546,11 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
           />
         )}
 
+        {missedPayday && (
+          <p role="note" className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
+            Off-cycle run for a payday that passed with no run: it pays only the approved hours in this period that are on no paystub yet.
+          </p>
+        )}
         <div className="min-h-[260px]">
           {quickReview && (
             <QuickReview
@@ -623,6 +640,12 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               overrideBlocking={overrideBlocking}
               setOverrideBlocking={acknowledgeBlocking}
             />
+          )}
+          {/* Changes vs last run, before the run is created (finance walk 9). */}
+          {(quickReview || step === 3 || step === 4) && preview && preview.items.length > 0 && runKind === 'REGULAR' && (
+            <div className="mt-3">
+              <ChangesVsLastRun preview={preview} />
+            </div>
           )}
         </div>
 
@@ -1879,7 +1902,7 @@ function Step4({
             </li>
           )}
           <li>• Status will be <strong>Draft</strong> until you finalize it from the run drawer.</li>
-          <li>• A QuickBooks journal entry will be queued on disbursement.</li>
+          <li>• The run posts to the company books on finalize and disbursement (and on to QuickBooks when it is connected).</li>
         </ul>
       </div>
 

@@ -17,6 +17,8 @@ import { getBlobStore } from '../lib/blobStore.js';
 import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { inviteWhen } from '../lib/interviewInvites.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { saveEeoSelfId } from '../lib/hiringCompliance.js';
+import { EeoSelfIdInputSchema } from '@alto-people/shared';
 
 /**
  * The candidate's own page, and the recruiter's calendar feed.
@@ -90,7 +92,7 @@ async function sendPortalLink(
   actorUserId: string | null,
   reason: 'invite' | 'document',
   documentLabel?: string,
-): Promise<{ url: string; emailed: boolean; texted: boolean; expiresAt: Date }> {
+): Promise<{ url: string; emailed: boolean; texted: boolean; textReason: string | null; expiresAt: Date }> {
   const token = generateInviteToken();
   const expiresAt = new Date(Date.now() + PORTAL_LINK_DAYS * 86_400_000);
   await prisma.$transaction(async (tx) => {
@@ -143,20 +145,28 @@ async function sendPortalLink(
       /* fire-and-forget — the link is already saved */
     });
   }
+  // The text is awaited so the answer tells the truth: `texted` is true
+  // only when the provider took it. With no SMS provider the row is
+  // recorded NOT_CONFIGURED and the panel says the link went by email only.
+  let textReason: string | null = null;
   if (c.phone?.trim()) {
-    texted = true;
-    void send({
-      channel: 'SMS',
-      category: 'candidate_portal',
-      recipient: { userId: null, phone: c.phone.trim(), email: null },
-      subject: null,
-      body:
-        reason === 'document'
-          ? `${branding.orgName}: we need a document from you${documentLabel ? ` (${documentLabel})` : ''}. Upload it here: ${url}`
-          : `${branding.orgName}: your application page — your stage, interview and documents: ${url}`,
-    }).catch(() => undefined);
+    try {
+      await send({
+        channel: 'SMS',
+        category: 'candidate_portal',
+        recipient: { userId: null, phone: c.phone.trim(), email: null },
+        subject: null,
+        body:
+          reason === 'document'
+            ? `${branding.orgName}: we need a document from you${documentLabel ? ` (${documentLabel})` : ''}. Upload it here: ${url}`
+            : `${branding.orgName}: your application page — your stage, interview and documents: ${url}`,
+      });
+      texted = true;
+    } catch (err) {
+      textReason = err instanceof Error ? err.message : 'The text could not be sent.';
+    }
   }
-  return { url, emailed, texted, expiresAt };
+  return { url, emailed, texted, textReason, expiresAt };
 }
 
 async function liveCandidate(id: string) {
@@ -177,6 +187,7 @@ candidatePortalRouter.post('/recruiting/candidates/:id/portal-link', requireAuth
     ok: true,
     emailed: sent.emailed,
     texted: sent.texted,
+    textReason: sent.textReason,
     expiresAt: sent.expiresAt.toISOString(),
     ...(env.RESEND_API_KEY ? {} : { link: sent.url }),
   });
@@ -259,6 +270,7 @@ candidatePortalRouter.post('/recruiting/candidates/:id/document-requests', requi
     request: docOut(row),
     emailed: sent?.emailed ?? false,
     texted: sent?.texted ?? false,
+    textReason: sent?.textReason ?? null,
     ...(sent && !env.RESEND_API_KEY ? { link: sent.url } : {}),
   });
 });
@@ -386,6 +398,8 @@ candidatePortalRouter.get('/candidate-portal/:token', signedLinkIpLimiter, async
     prisma.candidateDocumentRequest.findMany({ where: { candidateId: c.id }, orderBy: { createdAt: 'asc' } }),
     ensureBrandingLoaded(prisma),
   ]);
+  // Only whether they answered the voluntary EEO form — never the answers.
+  const eeoAnswered = (await prisma.eeoSelfIdentification.count({ where: { candidateId: c.id } })) > 0;
   void prisma.candidate.update({ where: { id: c.id }, data: { portalLastSeenAt: new Date() } }).catch(() => undefined);
   const words = STAGE_WORDS[c.stage] ?? STAGE_WORDS.APPLIED!;
   res.json({
@@ -397,6 +411,7 @@ candidatePortalRouter.get('/candidate-portal/:token', signedLinkIpLimiter, async
     stageLabel: words.label,
     stageDetail: words.detail,
     expiresAt: c.portalTokenExpiresAt!.toISOString(),
+    eeoAnswered,
     interviews: interviews.map((i) => ({
       id: i.id,
       scheduledFor: i.scheduledFor.toISOString(),
@@ -444,6 +459,19 @@ candidatePortalRouter.post('/candidate-portal/:token/interviews/:id/confirm', si
     }
   }
   res.json({ ok: true, confirmedAt: (iv.candidateConfirmedAt ?? new Date()).toISOString() });
+});
+
+/**
+ * The applicant's voluntary EEO self-identification (audit 2026-10-21 #14).
+ * Stored apart from the candidate; no recruiter screen reads it back — only
+ * the aggregate report under /compliance does. Answering is optional, and
+ * "I'd rather not say" for the whole form keeps no answers.
+ */
+candidatePortalRouter.post('/candidate-portal/:token/eeo', signedLinkIpLimiter, async (req, res) => {
+  const c = await candidateByToken(req.params.token);
+  const input = EeoSelfIdInputSchema.parse(req.body ?? {});
+  await saveEeoSelfId(prisma, { candidateId: c.id }, input);
+  res.json({ ok: true });
 });
 
 candidatePortalRouter.post(

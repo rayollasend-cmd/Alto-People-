@@ -11,7 +11,8 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { GripVertical } from 'lucide-react';
-import type { AssociateLite, Shift } from '@alto-people/shared';
+import { wentUnfilled, type AssociateLite, type Shift } from '@alto-people/shared';
+import { dayIsPast, isCopyDrag, shiftTimesOnDay } from './weekGridFit';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import {
@@ -124,6 +125,13 @@ interface Props {
     target: { associateId: string | null; dayStart: Date },
   ) => Promise<void>;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
+  /** Alt/Option-drag: copy the shift to the target cell (same wall-clock
+   *  times on that day). Undefined = copy through quickActions.onDuplicate
+   *  with the target day's times, unassigned. */
+  onShiftCopy?: (
+    s: Shift,
+    target: { associateId: string | null; dayStart: Date },
+  ) => Promise<void>;
   quickActions: QuickActions;
   /** Apply a dragged-from-rail template to a specific cell. */
   onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
@@ -147,6 +155,7 @@ export function TimeGridWeekView({
   onCellCreateRange,
   onShiftMove,
   onShiftResize,
+  onShiftCopy,
   quickActions,
   selectedIds,
   onTemplateDrop,
@@ -252,8 +261,28 @@ export function TimeGridWeekView({
 
   const [movingShiftId, setMovingShiftId] = useState<string | null>(null);
   const [activeDrag, setActiveDrag] = useState<Shift | null>(null);
+  // Alt/Option during the drag = copy (tracked for the drag's whole life;
+  // dnd-kit only reports the activator event's modifiers).
+  const altHeldRef = useRef(false);
+  useEffect(() => {
+    if (!activeDrag) {
+      altHeldRef.current = false;
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      altHeldRef.current = e.altKey;
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+    };
+  }, [activeDrag]);
 
   const today = startOfDay(new Date());
+  // Past day columns are history — dimmed; an OPEN chip there went unfilled.
+  const pastKeys = useMemo(() => new Set(dayKeys.filter((k) => dayIsPast(k, displayTimeZone))), [dayKeys, displayTimeZone]);
 
   // Conflict overlay during drag — same logic as WeekCalendarView, just
   // checking different bucketed shifts. Only flags double-booking; PTO and
@@ -309,6 +338,20 @@ export function TimeGridWeekView({
     const shiftId = String(e.active.id);
     const shift = shifts.find((s) => s.id === shiftId);
     if (!shift) return;
+    // Alt/Option-drag copies instead of moving (role walk, ops 8).
+    if (isCopyDrag(e.activatorEvent, altHeldRef.current)) {
+      setMovingShiftId(shiftId);
+      try {
+        if (onShiftCopy) await onShiftCopy(shift, { associateId, dayStart });
+        else {
+          const times = shiftTimesOnDay(shift, ymd(dayStart), displayTimeZone);
+          await quickActions.onDuplicate({ ...shift, ...times, assignedAssociateId: null, assignedAssociateName: null });
+        }
+      } finally {
+        setMovingShiftId(null);
+      }
+      return;
+    }
     // Compare days in the grid's zone (null → browser-local, unchanged).
     if (
       (shift.assignedAssociateId ?? null) === associateId &&
@@ -355,14 +398,16 @@ export function TimeGridWeekView({
             Schedule
           </div>
           <div className="border-b border-r border-navy-secondary bg-navy/95" />
-          {days.map((d) => {
+          {days.map((d, i) => {
             const isToday = sameDay(d, today);
             return (
               <div
                 key={d.toISOString()}
+                data-past={pastKeys.has(dayKeys[i]) ? 'true' : undefined}
                 className={cn(
                   'border-b border-r border-navy-secondary px-2 py-2 sticky top-0 z-10 bg-navy/95 backdrop-blur',
                   isToday && 'bg-gold/10',
+                  pastKeys.has(dayKeys[i]) && 'opacity-60',
                 )}
               >
                 <div
@@ -405,6 +450,7 @@ export function TimeGridWeekView({
               dayStart={d}
               displayTimeZone={displayTimeZone}
               isToday={sameDay(d, today)}
+              isPast={pastKeys.has(dayKeys[i])}
               canManage={canManage}
               onShiftClick={onShiftClick}
               onCreate={onCellCreate}
@@ -465,6 +511,7 @@ export function TimeGridWeekView({
                       dayStart={d}
                       displayTimeZone={displayTimeZone}
                       isToday={sameDay(d, today)}
+                      isPast={pastKeys.has(dayKey)}
                       canManage={canManage}
                       onShiftClick={onShiftClick}
                       onCreate={onCellCreate}
@@ -696,12 +743,15 @@ const TimeCell = memo(function TimeCell({
   associateId,
   onTemplateDrop,
   fitStatus = null,
+  isPast = false,
 }: {
   cellId: string;
   shifts: Shift[];
   dayStart: Date;
   displayTimeZone: string | null;
   isToday: boolean;
+  /** The day ended in the grid's zone — dimmed. */
+  isPast?: boolean;
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onContextMenu: (s: Shift, e: React.MouseEvent) => void;
@@ -869,7 +919,9 @@ const TimeCell = memo(function TimeCell({
         !isConflictTarget && isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
         tplOver && 'bg-gold/20 outline-2 outline outline-gold/70 -outline-offset-1',
         variant === 'unassigned' && !isOver && !isConflictTarget && !tplOver && 'bg-warning/[0.04]',
+        isPast && 'opacity-60',
       )}
+      data-past={isPast ? 'true' : undefined}
       style={{
         height: TOTAL_HEIGHT,
         backgroundImage:
@@ -1078,7 +1130,7 @@ function TimeChip({
           onClick={onClick}
           {...(compact ? { ...listeners, ...attributes } : {})}
           className="w-full h-full text-left pl-2 pr-1 flex items-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
+          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${wentUnfilled(shift) ? 'Went unfilled' : SHIFT_STATUS_LABEL[shift.status]}`}
         >
           <span className="text-2xs text-silver tabular-nums truncate">
             {fmtTime(startsAt, shift.timezone)}
@@ -1098,7 +1150,7 @@ function TimeChip({
           type="button"
           onClick={onClick}
           className="w-full h-full text-left pl-2 pr-6 pt-1 pb-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
+          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${wentUnfilled(shift) ? 'Went unfilled' : SHIFT_STATUS_LABEL[shift.status]}`}
         >
           <div className="flex items-center gap-1.5">
             <div className="text-xs2 text-silver tabular-nums truncate">

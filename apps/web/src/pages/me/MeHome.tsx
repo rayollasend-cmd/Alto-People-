@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
-import { Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { isPending } from '@/lib/approvalRequestsApi';
 import {
@@ -37,6 +37,7 @@ import {
 } from '@/lib/selfApi';
 import { useConfirm } from '@/lib/confirm';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
+import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import {
   Badge,
   Button,
@@ -473,7 +474,10 @@ function ProfilePanel({
             label={t('me.fld.jobProfile')}
             value={profile.jobProfile?.title ?? '—'}
           />
-          <ReadonlyField label={t('me.fld.employmentType')} value={profile.employmentType} />
+          <ReadonlyField
+            label={t('me.fld.employmentType')}
+            value={EMPLOYMENT_LABEL[profile.employmentType] ?? profile.employmentType}
+          />
         </div>
 
         <div className="border-t border-navy-secondary pt-5 space-y-4">
@@ -648,6 +652,9 @@ function EmployeeNumberRow({
   employeeNumber: EmployeeNumber | null;
 }) {
   const { t } = useI18n();
+  // Masked like the home's number line: it is the key to their punches,
+  // and this page is the one people show over a shoulder.
+  const [revealed, setRevealed] = useState(false);
   return (
     <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
       <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver">
@@ -657,8 +664,19 @@ function EmployeeNumberRow({
         <Skeleton className="mt-1 h-9 w-56" />
       ) : employeeNumber.employeeNumber ? (
         <>
-          <div className="mt-1 font-mono text-3xl tracking-[0.5em] text-white">
-            {employeeNumber.employeeNumber}
+          <div className="mt-1 flex items-center gap-3">
+            <span className="font-mono text-3xl tracking-[0.5em] text-ink" data-testid="me-employee-number">
+              {revealed ? employeeNumber.employeeNumber : '••••'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setRevealed((v) => !v)}
+              className="inline-flex items-center rounded p-1.5 text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11 coarse:min-w-11 coarse:justify-center"
+              aria-label={revealed ? t('dash.hideNumber') : t('dash.showNumber')}
+              aria-pressed={revealed}
+            >
+              {revealed ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+            </button>
           </div>
           <div className="mt-1 text-xs text-silver">
             {t('me.num.hint', { date: fmtDate(employeeNumber.issuedAt) })}

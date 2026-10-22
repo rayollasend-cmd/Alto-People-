@@ -181,7 +181,7 @@ export function AgreementsHome() {
           options={[
             { value: 'mine' as const, label: t('agr.tab.mine') },
             ...(user?.associateId ? [{ value: 'policies' as const, label: t('agr.tab.policies') }] : []),
-            ...(canManage ? [{ value: 'all' as const, label: 'All' }] : []),
+            ...(canManage ? [{ value: 'all' as const, label: t('agreementsPage.tabAll') }] : []),
           ]}
         />
         {canManage && tab === 'all' && (
@@ -193,15 +193,15 @@ export function AgreementsHome() {
                 setStatusFilter(e.target.value as AgreementStatus | 'ALL')
               }
             >
-              <option value="ALL">All statuses</option>
+              <option value="ALL">{t('agreementsPage.allStatuses')}</option>
               {(Object.keys(STATUS_LABELS) as AgreementStatus[]).map((s) => (
                 <option key={s} value={s}>
-                  {STATUS_LABELS[s]}
+                  {statusText(t, s)}
                 </option>
               ))}
             </Select>
             <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Issue
+              <Plus className="mr-2 h-4 w-4" /> {t('agreementsPage.issue')}
             </Button>
           </div>
         )}
@@ -295,19 +295,19 @@ export function AgreementsHome() {
             <div className="p-3">
               <DataGrid<AgreementRow>
                 id="agreements"
-                caption="Agreements"
+                caption={t('agr.title')}
                 rows={rows}
                 rowKey={(a) => a.id}
                 loading={rows === null && !loadError}
                 error={loadError}
                 onRetry={refresh}
-                search={{ placeholder: `${term('worker')}, email, kind…` }}
+                search={{ placeholder: t('agreementsPage.searchPlaceholder', { worker: term('worker') }) }}
                 urlState={false}
                 exportCsv={{ filename: 'agreements' }}
                 empty={{
                   icon: FileSignature,
-                  title: 'No agreements',
-                  description: 'Nothing matches this filter.',
+                  title: t('agr.emptyTitle'),
+                  description: t('agreementsPage.noMatch'),
                 }}
                 columns={[
                   {
@@ -320,7 +320,7 @@ export function AgreementsHome() {
                   },
                   {
                     key: 'email',
-                    header: 'Email',
+                    header: t('agreementsPage.colEmail'),
                     accessor: (a) => a.associateEmail,
                     sortable: true,
                     cardMeta: true,
@@ -328,26 +328,26 @@ export function AgreementsHome() {
                   },
                   {
                     key: 'kind',
-                    header: 'Kind',
-                    accessor: (a) => (a.kind === 'OTHER' && a.customLabel ? a.customLabel : KIND_LABELS[a.kind]),
+                    header: t('agreementsPage.kind'),
+                    accessor: (a) => (a.kind === 'OTHER' && a.customLabel ? a.customLabel : kindText(t, a.kind)),
                     sortable: true,
                     cardMeta: true,
                     className: 'text-sm',
                   },
                   {
                     key: 'status',
-                    header: 'Status',
-                    accessor: (a) => STATUS_LABELS[a.status],
+                    header: t('agreementsPage.colStatus'),
+                    accessor: (a) => statusText(t, a.status),
                     sortable: true,
                     cell: (a) => (
                       <Badge variant={statusTone(a.status, { overrides: AGREEMENT_STATUS_TONES })}>
-                        {STATUS_LABELS[a.status]}
+                        {statusText(t, a.status)}
                       </Badge>
                     ),
                   },
                   {
                     key: 'signed',
-                    header: 'Signed',
+                    header: t('agreementsPage.colSigned'),
                     accessor: (a) => a.signedAt,
                     csv: (a) => (a.signedAt ? a.signedAt.slice(0, 10) : a.status === 'PENDING_SIGNATURE' ? `unsigned ${daysSince(a.createdAt)}d` : ''),
                     sortable: true,
@@ -360,7 +360,7 @@ export function AgreementsHome() {
                         // Seven days unsigned is the point at which someone
                         // should walk over and ask.
                         <span className={daysSince(a.createdAt) >= 7 ? 'text-alert' : 'text-silver'}>
-                          Unsigned · {daysSince(a.createdAt)}d
+                          {t('agreementsPage.unsignedDays', { days: daysSince(a.createdAt) })}
                         </span>
                       ) : (
                         fmtDate(a.signedAt)
@@ -368,7 +368,7 @@ export function AgreementsHome() {
                   },
                   {
                     key: 'expires',
-                    header: 'Expires',
+                    header: t('agreementsPage.expires'),
                     accessor: (a) => a.expiresOn,
                     sortable: true,
                     searchable: false,
@@ -386,7 +386,7 @@ export function AgreementsHome() {
                     ? [
                         {
                           key: 'actions',
-                          header: 'Actions',
+                          header: t('agreementsPage.colActions'),
                           accessor: () => null,
                           searchable: false,
                           csv: () => '',
@@ -403,9 +403,8 @@ export function AgreementsHome() {
                                   onClick={async () => {
                                     if (
                                       !(await confirm({
-                                        title: 'Expire this agreement now?',
-                                        description:
-                                          'Agreements past their expiry date are expired automatically by a daily sweep — use this to expire one immediately.',
+                                        title: t('agreementsPage.expireTitle'),
+                                        description: t('agreementsPage.expireDesc'),
                                         destructive: true,
                                       }))
                                     )
@@ -415,27 +414,26 @@ export function AgreementsHome() {
                                       await expireAgreement(a.id);
                                       refresh();
                                     } catch (err) {
-                                      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                      toast.error(err instanceof ApiError ? err.message : t('agr.failed'));
                                     } finally {
                                       setPendingKey(null);
                                     }
                                   }}
                                   className="text-silver hover:text-warning"
                                 >
-                                  Expire
+                                  {t('agreementsPage.expire')}
                                 </Button>
                               )}
                               <Button
                                 variant="ghost"
                                 size="icon-sm"
                                 loading={pendingKey === `delete:${a.id}`}
-                                aria-label="Delete agreement"
+                                aria-label={t('agreementsPage.deleteAria')}
                                 onClick={async () => {
                                   if (
                                     !(await confirm({
-                                      title: 'Delete this agreement record?',
-                                      description:
-                                        'The record is soft-deleted and the deletion is recorded in the audit trail.',
+                                      title: t('agreementsPage.deleteTitle'),
+                                      description: t('agreementsPage.deleteDesc'),
                                       destructive: true,
                                     }))
                                   )
@@ -443,10 +441,10 @@ export function AgreementsHome() {
                                   setPendingKey(`delete:${a.id}`);
                                   try {
                                     await deleteAgreement(a.id);
-                                    toast.success('Agreement deleted.');
+                                    toast.success(t('agreementsPage.deleted'));
                                     refresh();
                                   } catch (err) {
-                                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                    toast.error(err instanceof ApiError ? err.message : t('agr.failed'));
                                   } finally {
                                     setPendingKey(null);
                                   }
@@ -497,6 +495,7 @@ function NewAgreementDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const term = useTerm();
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<AgreementKind>('NDA');
@@ -509,11 +508,15 @@ function NewAgreementDrawer({
 
   const submit = async () => {
     if (!associate) {
-      toast.error(`Pick ${/^[aeiou]/i.test(term('worker')) ? 'an' : 'a'} ${term('worker').toLowerCase()}.`);
+      toast.error(
+        t(/^[aeiou]/i.test(term('worker')) ? 'agreementsPage.pickWorkerAn' : 'agreementsPage.pickWorkerA', {
+          worker: term('worker').toLowerCase(),
+        }),
+      );
       return;
     }
     if (kind === 'OTHER' && !customLabel.trim()) {
-      toast.error('Custom label required for OTHER.');
+      toast.error(t('agreementsPage.customLabelRequired'));
       return;
     }
     setSaving(true);
@@ -527,10 +530,10 @@ function NewAgreementDrawer({
         expiresOn: expiresOn || null,
         notes: notes.trim() || null,
       });
-      toast.success(`Issued — the ${term('worker').toLowerCase()} has been notified.`);
+      toast.success(t('agreementsPage.issuedToast', { worker: term('worker').toLowerCase() }));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('agr.failed'));
     } finally {
       setSaving(false);
     }
@@ -539,7 +542,7 @@ function NewAgreementDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Issue agreement</DrawerTitle>
+        <DrawerTitle>{t('agreementsPage.issueTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
@@ -548,11 +551,11 @@ function NewAgreementDrawer({
             <AssociatePicker value={associate} onChange={setAssociate} />
           </div>
           <FormHint id="issue-agreement-associate-hint">
-            Search the directory by name.
+            {t('agreementsPage.pickerHint')}
           </FormHint>
         </div>
         <div>
-          <Label htmlFor="issue-agreement-kind">Kind</Label>
+          <Label htmlFor="issue-agreement-kind">{t('agreementsPage.kind')}</Label>
           <Select
             id="issue-agreement-kind"
             className="mt-1"
@@ -561,14 +564,14 @@ function NewAgreementDrawer({
           >
             {(Object.keys(KIND_LABELS) as AgreementKind[]).map((k) => (
               <option key={k} value={k}>
-                {KIND_LABELS[k]}
+                {kindText(t, k)}
               </option>
             ))}
           </Select>
         </div>
         {kind === 'OTHER' && (
           <div>
-            <Label htmlFor="issue-agreement-custom-label">Custom label</Label>
+            <Label htmlFor="issue-agreement-custom-label">{t('agreementsPage.customLabel')}</Label>
             <Input
               id="issue-agreement-custom-label"
               className="mt-1"
@@ -577,12 +580,12 @@ function NewAgreementDrawer({
               aria-describedby="issue-agreement-custom-label-hint"
             />
             <FormHint id="issue-agreement-custom-label-hint">
-              Example: "Mutual confidentiality side letter".
+              {t('agreementsPage.customLabelHint')}
             </FormHint>
           </div>
         )}
         <div>
-          <Label htmlFor="issue-agreement-url">Document URL</Label>
+          <Label htmlFor="issue-agreement-url">{t('agreementsPage.documentUrl')}</Label>
           <Input
             id="issue-agreement-url"
             type="url"
@@ -592,12 +595,12 @@ function NewAgreementDrawer({
             aria-describedby="issue-agreement-url-hint"
           />
           <FormHint id="issue-agreement-url-hint">
-            Public link to the signed PDF or DocuSign envelope.
+            {t('agreementsPage.documentUrlHint')}
           </FormHint>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label htmlFor="issue-agreement-effective">Effective</Label>
+            <Label htmlFor="issue-agreement-effective">{t('agreementsPage.effective')}</Label>
             <Input
               id="issue-agreement-effective"
               type="date"
@@ -607,7 +610,7 @@ function NewAgreementDrawer({
             />
           </div>
           <div>
-            <Label htmlFor="issue-agreement-expires">Expires</Label>
+            <Label htmlFor="issue-agreement-expires">{t('agreementsPage.expires')}</Label>
             <Input
               id="issue-agreement-expires"
               type="date"
@@ -617,12 +620,12 @@ function NewAgreementDrawer({
               aria-describedby="issue-agreement-expires-hint"
             />
             <FormHint id="issue-agreement-expires-hint">
-              Expires automatically on this date — no manual step needed.
+              {t('agreementsPage.expiresHint')}
             </FormHint>
           </div>
         </div>
         <div>
-          <Label htmlFor="issue-agreement-notes">Notes</Label>
+          <Label htmlFor="issue-agreement-notes">{t('agreementsPage.notes')}</Label>
           <Textarea
             id="issue-agreement-notes"
             className="mt-1 h-20"
@@ -633,14 +636,13 @@ function NewAgreementDrawer({
       </DrawerBody>
       <DrawerFooter className="flex-wrap">
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('agr.cancel')}
         </Button>
         <Button onClick={submit} disabled={saving}>
-          {saving ? 'Saving…' : 'Issue'}
+          {saving ? t('agreementsPage.saving') : t('agreementsPage.issue')}
         </Button>
         <p className="w-full text-right text-xs text-silver">
-          The {term('worker').toLowerCase()} is notified immediately and reminded weekly until
-          signed.
+          {t('agreementsPage.notifyNote', { worker: term('worker').toLowerCase() })}
         </p>
       </DrawerFooter>
     </Drawer>

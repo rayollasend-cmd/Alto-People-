@@ -95,9 +95,16 @@ describe('<MobileNav> — the phone menu sheet', () => {
 });
 
 describe('tab bar', () => {
-  it('the admin’s Approvals tab carries the waiting count, like the supervisor’s', () => {
-    const caps = ROLE_CAPABILITIES.HR_ADMINISTRATOR;
-    const approvals = tabSetFor({ role: 'HR_ADMINISTRATOR' }, (c) => caps.has(c)).find((t) => t.path === '/approvals');
+  it('the ops admin’s Approvals tab carries the waiting count, like the supervisor’s', () => {
+    const caps = ROLE_CAPABILITIES.OPERATIONS_MANAGER;
+    const approvals = tabSetFor({ role: 'OPERATIONS_MANAGER' }, (c) => caps.has(c)).find((t) => t.path === '/approvals');
     expect(approvals?.badge).toBe('approvals');
+  });
+
+  it('the HR admin’s Inbox tab carries the Inbox total (HR walk 14)', () => {
+    const caps = ROLE_CAPABILITIES.HR_ADMINISTRATOR;
+    const tabs = tabSetFor({ role: 'HR_ADMINISTRATOR' }, (c) => caps.has(c));
+    expect(tabs.map((t) => t.path)).toEqual(['/', '/inbox', '/people', '/onboarding']);
+    expect(tabs.find((t) => t.path === '/inbox')?.badge).toBe('inbox');
   });
 });

@@ -135,7 +135,7 @@ export async function invoiceMonth(db: Db, tenantId: string, month: string): Pro
   });
   if (holdReason || totalCents === 0) return { id: row.id, status: row.status, holdReason };
   try {
-    const sent = await sendToStripe(tenantId, tenant.name, row.id, month, lines);
+    const sent = await sendToStripe(db, tenantId, row.id, month, lines);
     const updated = await db.billingInvoice.update({ where: { id: row.id }, data: { status: 'OPEN', stripeInvoiceId: sent.id, hostedUrl: sent.hostedUrl, holdReason: null } });
     enqueueAudit({ actorUserId: null, clientId: null, tenantId, action: 'billing.invoice_sent', entityType: 'BillingInvoice', entityId: row.id, metadata: { month, totalCents, stripeInvoiceId: sent.id, mode: stripeMode() } }, 'billing');
     return { id: updated.id, status: updated.status, holdReason: null };
@@ -194,14 +194,80 @@ export function setStripeForTests(fn: StripeCall | null): void {
 
 const LABEL: Record<WorkerType, string> = { PERSON: 'Active people', AGENT: 'Active AI agents', ROBOT: 'Active robots' };
 
-async function sendToStripe(tenantId: string, tenantName: string, invoiceId: string, month: string, lines: InvoiceLine[]): Promise<{ id: string; hostedUrl: string | null }> {
+/**
+ * The tenant's Stripe customer: the stored id (Tenant.stripeCustomerId),
+ * else the one Stripe already holds for this tenant (metadata search, for
+ * customers made before the id was stored), else a new one — named and
+ * addressed from the tenant's billing contact. The id is stored either way,
+ * so it is never searched for twice.
+ */
+export async function ensureStripeCustomer(db: Db, tenantId: string): Promise<string> {
   if (!stripeMode()) throw new Error('Stripe is not configured for this mode');
+  const tenant = await db.tenant.findUnique({ where: { id: tenantId }, select: { name: true, billingName: true, billingEmail: true, stripeCustomerId: true } });
+  if (!tenant) throw new Error('No such tenant');
+  if (tenant.stripeCustomerId) return tenant.stripeCustomerId;
   const found = await stripe('GET', '/customers/search', { query: `metadata['altoTenantId']:'${tenantId}'` });
   let customer = ((found.data as Array<{ id: string }> | undefined) ?? [])[0]?.id;
   if (!customer) {
-    const made = await stripe('POST', '/customers', { name: tenantName, 'metadata[altoTenantId]': tenantId }, `alto-customer-${tenantId}`);
+    const made = await stripe(
+      'POST',
+      '/customers',
+      { name: tenant.billingName ?? tenant.name, ...(tenant.billingEmail ? { email: tenant.billingEmail } : {}), 'metadata[altoTenantId]': tenantId },
+      `alto-customer-${tenantId}`,
+    );
     customer = made.id as string;
   }
+  await db.tenant.update({ where: { id: tenantId }, data: { stripeCustomerId: customer } });
+  return customer;
+}
+
+export interface BillingContact {
+  name: string | null;
+  email: string | null;
+  /** The card or bank on file at Stripe, when there is one ("Visa ending 4242, expires 4/2028"). */
+  paymentMethod: { kind: 'card' | 'bank' | 'other'; label: string } | null;
+  /** Why the payment method can't be shown: 'stripe_off' (no processor), 'no_customer' (nothing invoiced yet), 'error'. */
+  paymentMethodNote: 'stripe_off' | 'no_customer' | 'error' | null;
+}
+
+/** The billing contact on file and the payment method Stripe holds for the tenant. Never throws: an outage reads as "error". */
+export async function billingContact(db: Db, tenantId: string): Promise<BillingContact> {
+  const t = await db.tenant.findUnique({ where: { id: tenantId }, select: { billingName: true, billingEmail: true, stripeCustomerId: true } });
+  const base = { name: t?.billingName ?? null, email: t?.billingEmail ?? null };
+  if (!stripeMode()) return { ...base, paymentMethod: null, paymentMethodNote: 'stripe_off' };
+  if (!t?.stripeCustomerId) return { ...base, paymentMethod: null, paymentMethodNote: 'no_customer' };
+  try {
+    const c = await stripe('GET', `/customers/${t.stripeCustomerId}`, { 'expand[]': 'invoice_settings.default_payment_method' });
+    const pm = (c.invoice_settings as { default_payment_method?: Record<string, unknown> | null } | undefined)?.default_payment_method ?? null;
+    return { name: base.name ?? ((c.name as string | null) ?? null), email: base.email ?? ((c.email as string | null) ?? null), paymentMethod: pm ? describePaymentMethod(pm) : null, paymentMethodNote: null };
+  } catch {
+    return { ...base, paymentMethod: null, paymentMethodNote: 'error' };
+  }
+}
+
+/** A Stripe payment method in words: brand and last four for a card, bank and last four for an account. */
+export function describePaymentMethod(pm: Record<string, unknown>): { kind: 'card' | 'bank' | 'other'; label: string } {
+  const card = pm.card as { brand?: string; last4?: string; exp_month?: number; exp_year?: number } | undefined;
+  if (card) {
+    const brand = card.brand ? card.brand.charAt(0).toUpperCase() + card.brand.slice(1) : 'Card';
+    return { kind: 'card', label: `${brand} ending ${card.last4 ?? '••••'}${card.exp_month && card.exp_year ? `, expires ${card.exp_month}/${card.exp_year}` : ''}` };
+  }
+  const bank = pm.us_bank_account as { bank_name?: string; last4?: string } | undefined;
+  if (bank) return { kind: 'bank', label: `${bank.bank_name ?? 'Bank account'} ending ${bank.last4 ?? '••••'}` };
+  return { kind: 'other', label: String(pm.type ?? 'On file') };
+}
+
+/** Save the billing contact; when the tenant already has a Stripe customer, Stripe gets the same name and email. */
+export async function saveBillingContact(db: Db, tenantId: string, input: { name: string | null; email: string | null }): Promise<{ stripeUpdated: boolean }> {
+  const t = await db.tenant.update({ where: { id: tenantId }, data: { billingName: input.name, billingEmail: input.email }, select: { stripeCustomerId: true } });
+  if (!stripeMode() || !t.stripeCustomerId) return { stripeUpdated: false };
+  await stripe('POST', `/customers/${t.stripeCustomerId}`, { ...(input.name ? { name: input.name } : {}), email: input.email ?? '' });
+  return { stripeUpdated: true };
+}
+
+async function sendToStripe(db: Db, tenantId: string, invoiceId: string, month: string, lines: InvoiceLine[]): Promise<{ id: string; hostedUrl: string | null }> {
+  if (!stripeMode()) throw new Error('Stripe is not configured for this mode');
+  const customer = await ensureStripeCustomer(db, tenantId);
   for (const l of lines) {
     await stripe(
       'POST',

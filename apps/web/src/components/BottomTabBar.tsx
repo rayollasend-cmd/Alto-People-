@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { unreadMessages } from '@/lib/messagesApi';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
+import { useInbox } from '@/lib/inboxApi';
 import {
   BarChart3,
   Briefcase,
@@ -59,9 +60,9 @@ export interface TabDef {
   label?: string;
   icon: LucideIcon;
   requires: Capability | null;
-  /** Live count shown on the tab — the messenger, and the supervisor's
-   *  decisions inbox. */
-  badge?: 'messages' | 'approvals';
+  /** Live count shown on the tab — the messenger, the supervisor's
+   *  decisions inbox, and the HR admin's Inbox total. */
+  badge?: 'messages' | 'approvals' | 'inbox';
 }
 
 const HOME_TAB: TabDef = {
@@ -108,6 +109,17 @@ const SCHEDULER_TABS: TabDef[] = [
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
   { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
   { path: '/time-attendance', labelKey: 'tabs.time', icon: Timer, requires: 'view:time' },
+];
+
+/** The HR admin's day (role walk HR 14): what is waiting on them, the
+ *  people, the hires in flight — not the scheduler's Schedule/Time loop
+ *  they used to fall through to. Every tab is a page their sidebar shows
+ *  (navCoverage holds the two to one menu). */
+const HR_TABS: TabDef[] = [
+  HOME_TAB,
+  { path: '/inbox', labelKey: 'tabs.inbox', icon: Inbox, requires: null, badge: 'inbox' },
+  { path: '/people', labelKey: 'tabs.people', icon: Users, requires: 'view:org' },
+  { path: '/onboarding', labelKey: 'tabs.onboarding', icon: ClipboardList, requires: 'view:onboarding' },
 ];
 
 /** The line manager (HR pack 2026-10): their team's approvals are the
@@ -222,6 +234,8 @@ export function tabSetFor(
                     ? FINANCE_TABS
                   : user?.role === 'MANAGER'
                     ? MANAGER_TABS
+                  : user?.role === 'HR_ADMINISTRATOR'
+                    ? HR_TABS
                   : can('manage:scheduling')
                     ? SCHEDULER_TABS
                     : DEFAULT_TABS;
@@ -304,6 +318,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
               <Icon className="h-5 w-5" aria-hidden="true" strokeWidth={active ? 2.4 : 2} />
               {tab.badge === 'messages' && <UnreadMessagesBadge />}
               {tab.badge === 'approvals' && <ApprovalsBadge />}
+              {tab.badge === 'inbox' && <InboxBadge />}
             </span>
             <span className={cn('w-full truncate px-1 text-center text-2xs leading-none', active && 'font-semibold')}>
               {tab.labelKey ? t(tab.labelKey) : tab.label}
@@ -331,6 +346,17 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
 /** Decisions waiting on a supervisor — the same count as the nav badge. */
 function ApprovalsBadge() {
   const n = useApprovalsCount() ?? 0;
+  if (n <= 0) return null;
+  return (
+    <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-3xs font-semibold leading-4 text-on-accent" aria-label={`${n} waiting`}>
+      {n > 99 ? '99+' : n}
+    </span>
+  );
+}
+
+/** The Inbox total on the HR admin's tab — the same number as the rail. */
+function InboxBadge() {
+  const n = useInbox().data?.total ?? 0;
   if (n <= 0) return null;
   return (
     <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-3xs font-semibold leading-4 text-on-accent" aria-label={`${n} waiting`}>

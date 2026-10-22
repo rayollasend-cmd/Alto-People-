@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Download, Plus, Repeat } from 'lucide-react';
+import { Banknote, Check, Download, Plus, Repeat } from 'lucide-react';
 import type { BooksBill, BooksRecurringBill, BooksRecurringFrequency } from '@alto-people/shared';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import { apAging, approveBills, createRecurringBill, listBills, listRecurringBills, listVendors, PAYABLES_KEY, updateRecurringBill, vendor1099, vendor1099CsvUrl, type BillsTab } from '@/lib/books/payablesApi';
@@ -17,6 +17,7 @@ import { Select } from '@/components/ui/Select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { toast } from '@/components/ui/Toaster';
 import { BillStatusBadge, LinesEditor, PayBillsDialog, blankLine, dueWords, errText, invalidatePayables, linesTotal, money, toLineInputs, useBooksWrite, type DraftLine } from './payablesKit';
+import { BillRunDialog } from './BillRunDialog';
 
 /**
  * Bills: what the company owes. Bills waiting for a second person's
@@ -56,6 +57,7 @@ export function BillsPage() {
   const owed = openBills.reduce((s, b) => s + b.balance, 0);
   const late = openBills.filter((b) => b.daysPastDue > 0);
   const dueSoon = openBills.filter((b) => b.daysPastDue > -8);
+  const [billRun, setBillRun] = useState(false);
 
   return (
     <ListTemplate
@@ -73,9 +75,17 @@ export function BillsPage() {
         ) : undefined
       }
       secondaryActions={
-        <Button asChild variant="secondary">
-          <Link to="/books/vendors">Vendors</Link>
-        </Button>
+        <>
+          {write && (
+            <Button variant="secondary" onClick={() => setBillRun(true)}>
+              <Banknote className="h-4 w-4" aria-hidden="true" />
+              Pay bills due…
+            </Button>
+          )}
+          <Button asChild variant="secondary">
+            <Link to="/books/vendors">Vendors</Link>
+          </Button>
+        </>
       }
       summary={
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -102,6 +112,7 @@ export function BillsPage() {
         {tab === 'aging' && <AgingSection />}
         {tab === '1099' && <Vendor1099Section />}
       </div>
+      {billRun && <BillRunDialog open onOpenChange={setBillRun} />}
     </ListTemplate>
   );
 }
@@ -109,6 +120,8 @@ export function BillsPage() {
 function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: BillsTab; bills: BooksBill[] | undefined; loading: boolean; error: unknown; onRetry: () => void; onOpen: (b: BooksBill) => void }) {
   const write = useBooksWrite();
   const [paying, setPaying] = useState<BooksBill[] | null>(null);
+  // Bills of several vendors picked on the grid: one bill run for all of them (finance walk 8).
+  const [running, setRunning] = useState<BooksBill[] | null>(null);
   const vendors = useQuery({ queryKey: [...PAYABLES_KEY, 'vendors', 'all'], queryFn: () => listVendors({ active: 'all' }), enabled: !!paying });
   const payVendor = paying ? vendors.data?.vendors.find((v) => v.id === paying[0]?.vendorId) : undefined;
   const columns: GridColumn<BooksBill>[] = [
@@ -187,19 +200,20 @@ function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: Bills
                 selectAllLabel: 'Select every unpaid bill',
                 actions: (selected, clear) => {
                   const chosen = (bills ?? []).filter((b) => selected.includes(b.id));
-                  const oneVendor = new Set(chosen.map((b) => b.vendorId)).size === 1;
+                  const vendorCount = new Set(chosen.map((b) => b.vendorId)).size;
                   return (
                     <div className="flex flex-wrap items-center gap-2">
-                      {!oneVendor && <span className="text-sm text-ink-muted">Pay one vendor’s bills at a time.</span>}
                       <Button
                         size="sm"
-                        disabled={!oneVendor || chosen.length === 0}
+                        disabled={chosen.length === 0}
                         onClick={() => {
-                          setPaying(chosen);
+                          if (vendorCount > 1) setRunning(chosen);
+                          else setPaying(chosen);
                           clear();
                         }}
                       >
-                        Pay {chosen.length === 1 ? 'this bill' : `${chosen.length} bills`} · {money(chosen.reduce((s, b) => s + b.balance, 0))}
+                        Pay {chosen.length === 1 ? 'this bill' : `${chosen.length} bills`}
+                        {vendorCount > 1 ? ` to ${vendorCount} vendors` : ''} · {money(chosen.reduce((s, b) => s + b.balance, 0))}
                       </Button>
                     </div>
                   );
@@ -208,6 +222,7 @@ function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: Bills
             : undefined
         }
       />
+      {running && <BillRunDialog open onOpenChange={(o) => !o && setRunning(null)} preselected={running} />}
       {paying && payVendor && (
         <PayBillsDialog
           open

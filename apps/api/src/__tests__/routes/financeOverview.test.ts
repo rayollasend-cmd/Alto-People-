@@ -463,8 +463,9 @@ describe('the money questions on /finance/overview', () => {
     expect(weeks.find((w) => w.weekStart === PW)).toMatchObject({ hours: 45, revenue: 900, wages: 712.5, margin: 187.5, marginPct: 0.208 });
     expect(res.body.margin).toMatchObject({ defaultRate: 15, defaultRateAssociates: 1 });
 
-    // Receivables by age, and who owes it.
-    expect(res.body.receivables.aging).toEqual({ current: 0, d31: 1000, d61: 0, d91: 0 });
+    // Receivables by age — days past due, the one definition (lib/books/aging); with no due date
+    // the statement fell due the day it was finalized, 45 days ago — and who owes it.
+    expect(res.body.receivables.aging).toEqual({ current: 0, days1to30: 0, days31to60: 1000, days61to90: 0, over90: 0 });
     expect(res.body.receivables.byClient).toEqual([
       { clientId: client.id, clientName: 'Walmart Destin', amount: 1000, oldestDays: expect.any(Number) },
     ]);

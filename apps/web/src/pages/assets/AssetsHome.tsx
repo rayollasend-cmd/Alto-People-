@@ -161,7 +161,7 @@ export function AssetsHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Assets"
-        subtitle="Laptops, phones, badges, keys, and other physical items assigned to associates."
+        subtitle={`Laptops, phones, badges, keys, and other physical items assigned to ${term('workers').toLowerCase()}.`}
         breadcrumbs={[{ label: 'Assets' }]}
     >
       <div className="flex flex-wrap items-center gap-3">
@@ -226,7 +226,7 @@ export function AssetsHome() {
           className="ml-auto w-56"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search label, serial, holder, store…"
+          placeholder={`Search label, serial, holder, ${term('label.store').toLowerCase()}…`}
           aria-label="Search assets"
         />
       </div>

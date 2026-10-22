@@ -199,8 +199,8 @@ export function ReimbursementsHome() {
     setBulkBusy(false);
     const ok = results.filter((r) => r.status === 'fulfilled').length;
     const failed = results.length - ok;
-    if (ok > 0) toast.success(`Approved ${ok} report${ok === 1 ? '' : 's'}.`);
-    if (failed > 0) toast.error(`${failed} approval${failed === 1 ? '' : 's'} failed.`);
+    if (ok > 0) toast.success(t(ok === 1 ? 'reimbPage.approvedOne' : 'reimbPage.approvedMany', { count: ok }));
+    if (failed > 0) toast.error(t(failed === 1 ? 'reimbPage.approvalFailedOne' : 'reimbPage.approvalFailedMany', { count: failed }));
     refresh();
   };
 
@@ -226,10 +226,10 @@ export function ReimbursementsHome() {
         subtitle={
           // Admins keep the fuller workflow line; associates get their own voice.
           canApprove || canSettle
-            ? `Submit, approve, and pay ${term('worker').toLowerCase()} expense reports.`
+            ? t('reimbPage.subtitleAdmin', { worker: term('worker').toLowerCase() })
             : t('rmb.subtitle')
         }
-        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Reimbursements' }]}
+        breadcrumbs={[{ label: t('reimbPage.crumbSection') }, { label: t('rmb.title') }]}
     >
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm text-silver">
@@ -248,12 +248,12 @@ export function ReimbursementsHome() {
               disabled={bulkBusy || selected.size === 0}
             >
               {bulkBusy
-                ? 'Approving…'
-                : `Approve selected (${selected.size})`}
+                ? t('reimbPage.approving')
+                : t('reimbPage.approveSelected', { count: selected.size })}
             </Button>
           )}
           <Button size="sm" variant="secondary" onClick={onExportCsv} disabled={visible.length === 0}>
-            <Download className="mr-2 h-4 w-4" /> Export CSV
+            <Download className="mr-2 h-4 w-4" /> {t('reimbPage.exportCsv')}
           </Button>
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> {t('rmb.newReport')}
@@ -283,7 +283,7 @@ export function ReimbursementsHome() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t('rmb.searchPlaceholder')}
-          aria-label="Search reimbursements"
+          aria-label={t('reimbPage.searchAria')}
         />
       </div>
       <Card>
@@ -493,37 +493,37 @@ function ReimbursementDrawer({
 
   const onManagerApprove = async () => {
     const note = await prompt({
-      title: 'Manager approval',
-      reasonLabel: 'Note (optional)',
-      confirmLabel: 'Approve',
+      title: t('reimbPage.approveTitle'),
+      reasonLabel: t('reimbPage.noteOptional'),
+      confirmLabel: t('reimbPage.approve'),
       required: false,
     });
     if (note === null) return;
     try {
       await managerApproveReimbursement(summary.id, note || undefined);
-      toast.success('Manager approved — sent to HR/Finance to settle.');
+      toast.success(t('reimbPage.approvedToast'));
       refresh();
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     }
   };
 
   const onReject = async () => {
     const reason = await prompt({
-      title: 'Reject reimbursement',
-      reasonLabel: 'Rejection reason',
-      confirmLabel: 'Reject',
+      title: t('reimbPage.rejectTitle'),
+      reasonLabel: t('reimbPage.rejectReasonLabel'),
+      confirmLabel: t('reimbPage.reject'),
       destructive: true,
     });
     if (!reason) return;
     try {
       await rejectReimbursement(summary.id, reason);
-      toast.success('Rejected.');
+      toast.success(t('reimbPage.rejectedToast'));
       refresh();
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     }
   };
 
@@ -643,7 +643,7 @@ function ReimbursementDrawer({
                               align: 'right' as const,
                               stopRowClick: true,
                               cell: (l: NonNullable<typeof data>['lines'][number]) => (
-                                <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDeleteLine(l)} aria-label={`Remove line ${l.description}`}>
+                                <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDeleteLine(l)} aria-label={t('reimbPage.removeLineAria', { description: l.description })}>
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
                               ),
@@ -663,19 +663,19 @@ function ReimbursementDrawer({
               )}
               {canApprove && data.status === 'SUBMITTED' && (
                 <>
-                  <Button onClick={onManagerApprove}>Approve as manager</Button>
+                  <Button onClick={onManagerApprove}>{t('reimbPage.approveAsManager')}</Button>
                   <Button variant="ghost" onClick={onReject}>
-                    Reject
+                    {t('reimbPage.reject')}
                   </Button>
                 </>
               )}
               {canSettle && data.status === 'MANAGER_APPROVED' && (
                 <>
                   <Button onClick={() => setShowSettle(true)}>
-                    Settle (queue for payroll)
+                    {t('reimbPage.settleQueue')}
                   </Button>
                   <Button variant="ghost" onClick={onReject}>
-                    Reject
+                    {t('reimbPage.reject')}
                   </Button>
                 </>
               )}
@@ -726,6 +726,7 @@ function SettleDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const { t } = useI18n();
   const term = useTerm();
   const missingReceipts = data.lines.filter(
     (l) => l.kind === 'RECEIPT' && !l.receiptUrl,
@@ -737,7 +738,7 @@ function SettleDialog({
 
   const onConfirm = async () => {
     if (needsWaiver && !waiverNote.trim()) {
-      toast.error('Waiver note required.');
+      toast.error(t('reimbPage.waiverRequired'));
       return;
     }
     setSaving(true);
@@ -747,10 +748,10 @@ function SettleDialog({
         waiveMissingReceipts: needsWaiver,
         waiverNote: needsWaiver ? waiverNote.trim() : undefined,
       });
-      toast.success('Settled — queued for next payroll.');
+      toast.success(t('reimbPage.settledToast'));
       onDone();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     } finally {
       setSaving(false);
     }
@@ -759,51 +760,52 @@ function SettleDialog({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Settle reimbursement</DrawerTitle>
+        <DrawerTitle>{t('reimbPage.settleTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
-          This will queue {fmtMoney(data.totalAmount, { currency: data.currency })} to
-          be added to {data.associateName}'s next regular payroll, after taxes.
+          {t('reimbPage.settleBody', {
+            amount: fmtMoney(data.totalAmount, { currency: data.currency }),
+            name: data.associateName,
+          })}
         </div>
         {needsWaiver && (
           <div className="bg-alert/15 border border-alert/40 rounded-md p-3 text-sm text-white space-y-2">
             <div className="font-medium">
-              {missingReceipts.length} receipt line(s) are missing a receipt.
+              {t('reimbPage.missingReceipts', { count: missingReceipts.length })}
             </div>
             <div className="text-silver">
-              You can override the receipt-required guard by providing a waiver
-              note below. The note is permanently stored on the audit log.
+              {t('reimbPage.waiverExplain')}
             </div>
           </div>
         )}
         <div>
-          <Label>Settlement note (optional)</Label>
+          <Label>{t('reimbPage.settleNoteLabel')}</Label>
           <Textarea
             className="mt-1"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder={`Internal note shown to the ${term('worker').toLowerCase()}.`}
+            placeholder={t('reimbPage.settleNotePlaceholder', { worker: term('worker').toLowerCase() })}
           />
         </div>
         {needsWaiver && (
           <div>
-            <Label>Waiver justification (required)</Label>
+            <Label>{t('reimbPage.waiverLabel')}</Label>
             <Textarea
               className="mt-1"
               value={waiverNote}
               onChange={(e) => setWaiverNote(e.target.value)}
-              placeholder="Why is this being settled without all receipts?"
+              placeholder={t('reimbPage.waiverPlaceholder')}
             />
           </div>
         )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('rmb.cancel')}
         </Button>
         <Button onClick={onConfirm} disabled={saving}>
-          {saving ? 'Settling…' : needsWaiver ? 'Settle (with waiver)' : 'Settle'}
+          {saving ? t('reimbPage.settling') : needsWaiver ? t('reimbPage.settleWithWaiver') : t('reimbPage.settle')}
         </Button>
       </DrawerFooter>
     </Drawer>
@@ -965,8 +967,11 @@ function AddLineDrawer({
             </div>
             {mileageValid && (
               <div className="mt-1 text-xs text-silver/70">
-                {milesNum} mi × {fmtMoney(rateNum, { currency, precise: true })}/mi ={' '}
-                {fmtMoney(milesNum * rateNum, { currency })}
+                {t('reimbPage.mileageMath', {
+                  miles: milesNum,
+                  rate: fmtMoney(rateNum, { currency, precise: true }),
+                  total: fmtMoney(milesNum * rateNum, { currency }),
+                })}
               </div>
             )}
           </div>
@@ -997,7 +1002,7 @@ function AddLineDrawer({
               className="mt-1"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              placeholder="Travel"
+              placeholder={t('reimbPage.categoryPlaceholder')}
               list="reimbursement-categories"
             />
             <datalist id="reimbursement-categories">

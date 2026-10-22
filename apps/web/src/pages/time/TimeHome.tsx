@@ -44,7 +44,7 @@ export function TimeHome() {
             <Button size="sm" variant="ghost" asChild>
               <Link to="/time-attendance">
                 <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                The floor
+                {t('timeHome.theFloor')}
               </Link>
             </Button>
           }
@@ -74,7 +74,7 @@ export function TimeHome() {
             <Button size="sm" variant="ghost" asChild>
               <Link to="/time-attendance">
                 <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                The floor
+                {t('timeHome.theFloor')}
               </Link>
             </Button>
           }
@@ -106,7 +106,7 @@ function TabletClockStrip() {
   const active = q.data?.active ?? null;
   return (
     <section
-      aria-label="Your own clock"
+      aria-label={t('timeHome.ownClockAria')}
       className={cn(
         'mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border px-4 py-3',
         active ? 'border-gold/40 bg-gold/[0.06]' : 'border-navy-secondary bg-navy-secondary/20',
@@ -114,13 +114,13 @@ function TabletClockStrip() {
     >
       <ScanLine className={cn('h-5 w-5 shrink-0', active ? 'text-gold' : 'text-silver')} aria-hidden="true" />
       <div className="min-w-[11rem] flex-1">
-        <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Your clock</div>
+        <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">{t('timeHome.yourClock')}</div>
         <div className="text-sm text-white">
           {q.data === undefined
             ? '…'
             : active
-              ? `On the clock since ${fmtTime(active.clockInAt)}`
-              : 'Not clocked in'}
+              ? t('timeHome.onClockSince', { time: fmtTime(active.clockInAt) })
+              : t('timeHome.notClockedIn')}
         </div>
         <div className="text-xs text-silver">{t('time.tabletClockHint')}</div>
       </div>

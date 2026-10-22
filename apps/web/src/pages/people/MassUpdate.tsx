@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Undo2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { useTenant, useTerm } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { MassPayChange } from '@/components/payroll/MassPayChange';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
 import { listDepartments } from '@/lib/orgApi';
 import { listPayrollSchedules } from '@/lib/payrollApi';
 import { useOrgSites } from '@/lib/useOrgSites';
 import { useClients } from '@/lib/useClients';
+import { getDirectoryEntry } from '@/lib/directoryApi';
 import { applyMassUpdate, listMassUpdateBatches, previewMassUpdate, undoMassUpdate, type MassUpdateChanges, type MassUpdateFilter, type MassUpdatePreviewRow } from '@/lib/massUpdateApi';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Badge } from '@/components/ui/Badge';
@@ -34,8 +36,26 @@ const FIELD_LABEL: Record<string, string> = { site: 'Site', department: 'Departm
 export function MassUpdate() {
   const term = useTerm();
   const tenant = useTenant();
+  const { can } = useAuth();
   const confirm = useConfirm();
   const [step, setStep] = useState<0 | 1 | 2>(0);
+  // ?ids= — the people picked on the People list (HR walk 7): the batch is
+  // exactly them, so the Who filters give way to the list of names.
+  const [params] = useSearchParams();
+  const chosenIds = (params.get('ids') ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 500);
+  const chosen = chosenIds.length > 0;
+  const NAMES_SHOWN = 12;
+  const chosenPeople = useQueries({
+    queries: chosenIds.slice(0, NAMES_SHOWN).map((id) => ({
+      queryKey: ['directory', 'entry', id],
+      queryFn: () => getDirectoryEntry(id),
+      staleTime: 60_000,
+    })),
+  });
   // Filter
   const [clientId, setClientId] = useState('');
   const [siteId, setSiteId] = useState('');
@@ -54,13 +74,15 @@ export function MassUpdate() {
   const schedules = useQuery({ queryKey: ['payroll', 'schedules'], queryFn: () => listPayrollSchedules() });
   const batches = useQuery({ queryKey: ['people', 'mass-update', 'batches'], queryFn: listMassUpdateBatches });
 
-  const filter: MassUpdateFilter = {
+  const filter: MassUpdateFilter = chosen
+    ? { associateIds: chosenIds }
+    : {
     ...(clientId ? { clientIds: [clientId] } : {}),
     ...(siteId ? { siteIds: [siteId] } : {}),
     ...(departmentId ? { departmentIds: [departmentId] } : {}),
     ...(manager ? { managerIds: [manager.id] } : {}),
     ...(scheduleId ? { payrollScheduleIds: [scheduleId] } : {}),
-  };
+      };
   const changes: MassUpdateChanges = {
     ...(newSiteId ? { siteId: newSiteId } : {}),
     ...(newDepartmentId ? { departmentId: newDepartmentId === '__none__' ? null : newDepartmentId } : {}),
@@ -149,6 +171,34 @@ export function MassUpdate() {
 
       {step === 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
+          {chosen ? (
+            <Card>
+              <CardContent className="space-y-3">
+                <SectionTitle
+                  as="h2"
+                  icon={Users}
+                  title={`${chosenIds.length} ${chosenIds.length === 1 ? 'person' : 'people'} chosen`}
+                  description={`Picked on the ${term('nav.people')} list. Only they change.`}
+                />
+                <ul className="flex flex-wrap gap-1.5" aria-label="Chosen people">
+                  {chosenIds.slice(0, NAMES_SHOWN).map((id, i) => {
+                    const p = chosenPeople[i]?.data;
+                    return (
+                      <li key={id}>
+                        <Badge variant="outline">{p ? `${p.firstName} ${p.lastName}` : '…'}</Badge>
+                      </li>
+                    );
+                  })}
+                  {chosenIds.length > NAMES_SHOWN && (
+                    <li className="text-xs text-ink-muted">and {chosenIds.length - NAMES_SHOWN} more</li>
+                  )}
+                </ul>
+                <Link to="/people" className="text-sm text-accent hover:underline">
+                  Change who
+                </Link>
+              </CardContent>
+            </Card>
+          ) : (
           <Card>
             <CardContent className="space-y-3">
               <SectionTitle as="h2" icon={Users} title="Who" description="Leave a filter blank to not narrow by it. Separated people are never included." />
@@ -161,6 +211,7 @@ export function MassUpdate() {
               <Field label="Pay schedule">{(p) => <Select {...p} value={scheduleId} onChange={(e) => setScheduleId(e.target.value)}><option value="">Any</option>{(schedules.data?.schedules ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
             </CardContent>
           </Card>
+          )}
           <Card>
             <CardContent className="space-y-3">
               <SectionTitle as="h2" title="What changes" description="Only the fields you set change; the rest stay as they are." />
@@ -189,6 +240,12 @@ export function MassUpdate() {
               {!hasFilter && <p className="text-xs text-ink-muted">Pick at least one filter — a mass update never applies to everyone unqualified.</p>}
             </CardContent>
           </Card>
+          {/* Pay rate for many at once, as one second-person approval (finance walk 13). */}
+          {can('manage:comp') && (
+            <div className="lg:col-span-2">
+              <MassPayChange filter={filter} hasFilter={hasFilter} />
+            </div>
+          )}
         </div>
       )}
 

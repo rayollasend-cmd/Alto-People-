@@ -168,14 +168,19 @@ describe('EFW2 refuses what its layout cannot carry', () => {
     expect(() => buildEfw2File(efw2Input(boxes()))).not.toThrow();
   });
 
-  it('refuses TY2026 Box 12 TP/TT/TA and Box 14b, naming the unconfirmed positions', () => {
+  it('files TY2026 Box 12 TP/TT and Box 14b in their 2026 positions (audit #19), and refuses them on a TY2025 file', () => {
     const b = boxes({ box12: [{ code: 'TP', amount: 4_000 }, { code: 'TT', amount: 600 }], box14bTippedOccupationCodes: ['101'], box7SsTips: 4_000 });
-    const gaps = efw2Unsupported(efw2Input(b));
+    expect(efw2Unsupported(efw2Input(b))).toEqual([]);
+    const file = buildEfw2File(efw2Input(b));
+    const ro = file.split('\r\n').find((l) => l.startsWith('RO'))!;
+    expect(ro.slice(231, 242)).toBe('00000400000'); // TP, RO 232-242
+    expect(ro.slice(242, 253)).toBe('00000060000'); // TT, RO 243-253
+    // Not 2026 codes on a 2025 W-2: refused and named, never guessed into a 2025 layout.
+    const gaps = efw2Unsupported(efw2Input(b, 2025));
     expect(gaps).toHaveLength(1);
-    // Box 7 social security tips have a confirmed RW position and file; only the 2026 additions are held back.
-    expect(gaps[0]!.missing).toEqual(['Box 12 TP (TY2026 position not confirmed)', 'Box 12 TT (TY2026 position not confirmed)', 'Box 14b (TY2026 position not confirmed)']);
+    expect(gaps[0]!.missing).toEqual(['Box 12 TP (not a TY2025 code)', 'Box 12 TT (not a TY2025 code)', 'Box 14b (not a TY2025 field)']);
     expect(gaps[0]!.ssnLast4).toBe('6789');
-    expect(() => buildEfw2File(efw2Input(b))).toThrow(Efw2UnsupportedError);
+    expect(() => buildEfw2File(efw2Input(b, 2025))).toThrow(Efw2UnsupportedError);
   });
 
   it('files a 401(k) deferral (Box 12 D) in its RW position instead of refusing it', () => {

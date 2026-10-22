@@ -33,7 +33,6 @@ import { RateDefaultsSection } from './RateDefaultsSection';
 import { StatementsSection } from './StatementsSection';
 import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
-import { QuickbooksSection } from './QuickbooksSection';
 import { PortalAccessSection } from './PortalAccessSection';
 import { ClientGlance, ClientPerformance, useCanSeeClientPerformance } from './ClientPerformance';
 
@@ -71,8 +70,8 @@ export function ClientDetail() {
   const [archiving, setArchiving] = useState(false);
 
   // Design system §4.3 (UX upgrade step 6, the sweep): the Record template.
-  // The record's facets are tabs; "?section=<key>" (a shareable deep link,
-  // and where the QuickBooks OAuth return lands) is the open tab. The two
+  // The record's facets are tabs; "?section=<key>" (a shareable deep link)
+  // is the open tab. The two
   // keys that were one card each (basics, state) share the first tab.
   const [searchParams, setSearchParams] = useSearchParams();
   const section = searchParams.get('section');
@@ -182,7 +181,6 @@ export function ClientDetail() {
     // Statements render only for process:payroll holders; the tab follows.
     ...(can('process:payroll') ? [{ key: 'statements', label: 'Statements', content: <StatementsSection clientId={client.id} /> }] : []),
     { key: 'benefits', label: 'Benefits', content: <BenefitsPlansSection clientId={client.id} /> },
-    { key: 'quickbooks', label: 'QuickBooks', content: <QuickbooksSection clientId={client.id} /> },
   ];
 
   return (

@@ -34,9 +34,9 @@ const FAILED_SIGNIN_THRESHOLD = 10;
 const EXPORT_THRESHOLD = 20;
 const SENSITIVE_EXPORT = /payroll|tax|w-?2|w-?4|1099|i-?9|ssn|bank|payout|disburse|garnish|salary|comp/i;
 
-export type AlertRule = 'FAILED_SIGNINS_IP' | 'LOCKED_ACCOUNT' | 'MFA_OFF_ADMIN' | 'PRIVILEGE_CHANGE' | 'EXPORTS';
+export type AlertRule = 'FAILED_SIGNINS_IP' | 'LOCKED_ACCOUNT' | 'MFA_OFF_ADMIN' | 'PRIVILEGE_CHANGE' | 'EXPORTS' | 'AUDIT_CHAIN';
 
-interface Candidate {
+export interface Candidate {
   rule: AlertRule;
   key: string;
   summary: string;
@@ -121,30 +121,42 @@ export async function runSecurityAlerts(db: Db, now: Date = new Date()): Promise
   const candidates = await evaluateAlertRules(db, rows);
   if (!candidates.length) return 0;
 
-  const setting = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } });
-  const admins = await db.user.findMany({ where: { tenantId: ALTO_TENANT_ID, status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:org') } }, select: { id: true }, take: 10 });
   let raised = 0;
   for (const c of candidates) {
-    const recent = await db.securityAlert.findFirst({ where: { rule: c.rule, key: c.key, createdAt: { gte: new Date(now.getTime() - DEDUPE_MS) } }, select: { id: true } });
-    if (recent) continue;
-    const deliveredTo: string[] = [];
-    if (setting?.securityContactEmail) {
-      try {
-        await send({ channel: 'EMAIL', recipient: { userId: null, phone: null, email: setting.securityContactEmail }, subject: `Security alert: ${c.rule.replace(/_/g, ' ').toLowerCase()}`, body: `${c.summary}\n\nAudit rows: ${c.auditLogIds.slice(0, 20).join(', ')}`, category: 'security_alert' });
-        deliveredTo.push('security-contact');
-      } catch (err) {
-        console.error('[alto-people/api] security alert email failed:', err);
-      }
-    }
-    for (const a of admins) {
-      void notifyUser(a.id, { subject: 'Security alert', body: c.summary, linkUrl: '/admin/audit' });
-      deliveredTo.push(`user:${a.id}`);
-    }
-    const alert = await db.securityAlert.create({ data: { rule: c.rule, key: c.key.slice(0, 200), summary: c.summary.slice(0, 500), auditLogIds: c.auditLogIds.slice(0, 200), deliveredTo } });
-    enqueueAudit({ actorUserId: null, clientId: null, tenantId: ALTO_TENANT_ID, action: 'security.alert_raised', entityType: 'SecurityAlert', entityId: alert.id, metadata: { rule: c.rule, deliveredTo: deliveredTo.length } }, 'securityAlerts');
-    raised += 1;
+    if (await raiseSecurityAlert(db, c, now)) raised += 1;
   }
   return raised;
+}
+
+/**
+ * One alert, delivered and recorded: the security contact by email, the
+ * operator's org admins in their bell, a SecurityAlert row and an audit
+ * row. De-duplicated per (rule, key) for an hour. Shared by the five
+ * audit-trail rules above and the nightly audit-chain check
+ * (lib/auditChain), so a broken chain reaches the same people the same way.
+ * Returns false when the same alert was raised within the hour.
+ */
+export async function raiseSecurityAlert(db: Db, c: Candidate & { linkUrl?: string }, now: Date = new Date()): Promise<boolean> {
+  const recent = await db.securityAlert.findFirst({ where: { rule: c.rule, key: c.key, createdAt: { gte: new Date(now.getTime() - DEDUPE_MS) } }, select: { id: true } });
+  if (recent) return false;
+  const setting = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } });
+  const admins = await db.user.findMany({ where: { tenantId: ALTO_TENANT_ID, status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:org') } }, select: { id: true }, take: 10 });
+  const deliveredTo: string[] = [];
+  if (setting?.securityContactEmail) {
+    try {
+      await send({ channel: 'EMAIL', recipient: { userId: null, phone: null, email: setting.securityContactEmail }, subject: `Security alert: ${c.rule.replace(/_/g, ' ').toLowerCase()}`, body: `${c.summary}${c.auditLogIds.length ? `\n\nAudit rows: ${c.auditLogIds.slice(0, 20).join(', ')}` : ''}`, category: 'security_alert' });
+      deliveredTo.push('security-contact');
+    } catch (err) {
+      console.error('[alto-people/api] security alert email failed:', err);
+    }
+  }
+  for (const a of admins) {
+    void notifyUser(a.id, { subject: 'Security alert', body: c.summary, category: 'security_alert', linkUrl: c.linkUrl ?? '/admin/audit' });
+    deliveredTo.push(`user:${a.id}`);
+  }
+  const alert = await db.securityAlert.create({ data: { rule: c.rule, key: c.key.slice(0, 200), summary: c.summary.slice(0, 500), auditLogIds: c.auditLogIds.slice(0, 200), deliveredTo } });
+  enqueueAudit({ actorUserId: null, clientId: null, tenantId: ALTO_TENANT_ID, action: 'security.alert_raised', entityType: 'SecurityAlert', entityId: alert.id, metadata: { rule: c.rule, deliveredTo: deliveredTo.length } }, 'securityAlerts');
+  return true;
 }
 
 let timer: NodeJS.Timeout | null = null;

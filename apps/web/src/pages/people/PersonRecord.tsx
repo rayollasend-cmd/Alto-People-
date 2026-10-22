@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, Clock, Eye, Gauge, MessageSquare, Palmtree, Smartphone, Ticket } from 'lucide-react';
+import { CalendarDays, Clock, Eye, Gauge, MessageSquare, MoreHorizontal, Palmtree, Smartphone, Ticket } from 'lucide-react';
 import type { DirectoryEntry, TimeEntry, TimeOffEntitlement, TimeOffRequest } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
 import { personRecordTabs, type PersonTabKey } from '@/lib/personTabs';
@@ -10,9 +10,14 @@ import { Avatar, Badge, Button, Card, CardContent, EmptyState, Label, MetricCard
 import { StateCertificateCard } from '@/components/payroll/StateCertificateCard';
 import { TaxWithholdingCard } from '@/components/payroll/TaxWithholdingCard';
 import { RothCatchUpCard } from '@/components/payroll/RothCatchUpCard';
+import { PaySummaryCard } from '@/components/payroll/PaySummaryCard';
+import { FederalW4Card } from '@/components/payroll/FederalW4Card';
+import { LocalTaxRuleCard } from '@/components/payroll/LocalTaxRuleCard';
 import { getCareerPosition } from '@/lib/career126Api';
 import { CareerLadderView } from '@/pages/career/CareerPosition';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
+import { StickyActionBar } from '@/components/ui/StickyActionBar';
 import { QueryError } from '@/components/ui/QueryError';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Textarea } from '@/components/ui/Input';
@@ -34,6 +39,7 @@ import { CATEGORY_LABELS as CASE_CATEGORY_LABELS, listCaseQueue, type QueueCaseR
 import { StatusBadge, statusLabel, statusTone } from '@/lib/status';
 import { CompensationTab, DocumentsTab, EmploymentTab, PaymentsTab, ProfileTab } from './PeopleDirectory';
 import { PromoteDialog } from './PromoteDialog';
+import { OnBehalfCaseDrawer } from '../hrCases/OnBehalfCaseDrawer';
 import { PunchPhotoCard } from '@/components/PunchPhotoCard';
 import { ProtectedLeaveFlag } from '../leave/ProtectedLeaveFlag';
 
@@ -142,6 +148,8 @@ export function PersonRecord() {
 
   const name = `${a.firstName} ${a.lastName}`;
   const workerWord = term('worker').toLowerCase();
+  // Separation is an org change (manage:org), offered while they still work here.
+  const canSeparate = can('manage:org') && !a.separatedAt;
   const subtitle = [
     a.position,
     hasClients ? a.workplaceClientName : null,
@@ -172,16 +180,20 @@ export function PersonRecord() {
       label: 'Pay',
       content: (
         <div className="space-y-8">
+          {/* In-house payroll first (finance walk 19): schedule, pay account, paystubs, year to date. */}
+          {can('process:payroll') && <PaySummaryCard associateId={a.id} />}
           {canSeeComp && <CompensationTab associate={a} />}
+          {can('process:payroll') && <FederalW4Card associateId={a.id} />}
+          {can('process:payroll') && <StateCertificateCard mode="hr" associateId={a.id} />}
+          {can('process:payroll') && <TaxWithholdingCard associateId={a.id} />}
+          {can('process:payroll') && <LocalTaxRuleCard associateId={a.id} />}
+          {can('process:payroll') && <RothCatchUpCard associateId={a.id} />}
           {canSeePayments && (
             <div className="space-y-3">
-              <SectionTitle title="Payments" />
+              <SectionTitle title="Before in-house payroll" description="Pay periods an outside provider paid, with the evidence on file." />
               <PaymentsTab associateId={a.id} />
             </div>
           )}
-          {can('process:payroll') && <StateCertificateCard mode="hr" associateId={a.id} />}
-          {can('process:payroll') && <TaxWithholdingCard associateId={a.id} />}
-          {can('process:payroll') && <RothCatchUpCard associateId={a.id} />}
         </div>
       ),
     },
@@ -193,7 +205,7 @@ export function PersonRecord() {
       content: <TimeOffTab associateId={a.id} requests={timeOffRequests} />,
     },
     { key: 'performance', label: 'Performance', content: <PerformanceTab associateId={a.id} showLadder={canSeeLadder} /> },
-    { key: 'cases', label: 'Cases', count: cases.data?.cases.length, content: <CasesTab query={cases} workerWord={workerWord} /> },
+    { key: 'cases', label: 'Cases', count: cases.data?.cases.length, content: <CasesTab query={cases} workerWord={workerWord} person={{ id: a.id, name }} canOpen={can('manage:onboarding')} /> },
     { key: 'documents', label: 'Documents', content: <DocumentsTab associateId={a.id} /> },
     { key: 'thread', label: 'Thread', content: <WorkThreadPanel associateId={a.id} /> },
   ].filter((t) => (visibleTabs as readonly string[]).includes(t.key));
@@ -214,6 +226,9 @@ export function PersonRecord() {
       }
       actions={
         <>
+          {/* From sm up the header row holds them; a phone gets the same
+              actions in the sticky bar below (role walk HR 15). */}
+          <div className="hidden sm:contents">
           {/* Message: a thread with their login, when the messenger serves it
               (staff). Text: an SMS to the phone on file, for everyone else
               who has one — the way the floor actually reaches a person. */}
@@ -231,7 +246,6 @@ export function PersonRecord() {
               Text
             </Button>
           )}
-          {textOpen && <TextDialog phone={a.phone!} name={name} onClose={() => setTextOpen(false)} />}
           <Button asChild variant="outline" size="sm">
             <Link to={`/people?associateId=${a.id}`}>
               <Eye className="h-3.5 w-3.5" />
@@ -252,14 +266,27 @@ export function PersonRecord() {
               </Link>
             </Button>
           )}
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/org?tab=people&associateId=${a.id}`}>Edit org assignment</Link>
-          </Button>
-          {can('manage:comp') && (
-            <Button variant="outline" size="sm" onClick={() => setPromoteOpen(true)}>
-              Promote
-            </Button>
-          )}
+          {/* The life-cycle moves live together (HR walk 12): separating
+              someone used to mean scrolling to the bottom of Profile. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" aria-label="More actions">
+                <MoreHorizontal className="h-3.5 w-3.5" />
+                More
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => navigate(`/org?tab=people&associateId=${a.id}`)}>Transfer…</DropdownMenuItem>
+              {can('manage:comp') && <DropdownMenuItem onSelect={() => setPromoteOpen(true)}>Promote…</DropdownMenuItem>}
+              {canSeparate && (
+                <DropdownMenuItem onSelect={() => navigate(`/separations?associateId=${a.id}`)} className="text-alert focus:text-alert">
+                  Separate…
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          </div>
+          {textOpen && <TextDialog phone={a.phone!} name={name} onClose={() => setTextOpen(false)} />}
           {promoteOpen && (
             <PromoteDialog
               associate={{ id: a.id, firstName: a.firstName, lastName: a.lastName }}
@@ -272,7 +299,18 @@ export function PersonRecord() {
         </>
       }
       summary={
-        <div className="grid grid-cols-2 gap-[var(--d-stack)] xl:grid-cols-5">
+        <>
+        {/* A phone reads the record in two lines, not five half-width
+            cards of dashes (role walk HR 15). */}
+        <div className="space-y-0.5 text-sm sm:hidden" data-testid="person-summary-phone">
+          <p className="truncate text-ink">
+            {[a.startDate ? `Started ${fmtDate(parseYmd(a.startDate) ?? a.startDate)}` : 'No start date', a.managerName ? `${term('manager')}: ${a.managerName}` : null].filter(Boolean).join(' · ')}
+          </p>
+          <p className="truncate text-ink-muted">
+            {[EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType, a.currentLocationName ?? 'Not placed'].join(' · ')}
+          </p>
+        </div>
+        <div className="hidden grid-cols-2 gap-[var(--d-stack)] sm:grid xl:grid-cols-5">
           <MetricCard label="Start date" value={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'} hint={`On record since ${fmtDate(a.createdAt)}`} />
           <MetricCard
             label={term('manager')}
@@ -299,6 +337,33 @@ export function PersonRecord() {
           />
           {canSeeTime && <ClockInNumberCard associate={a} />}
         </div>
+        <StickyActionBar
+          label="Actions"
+          primary={
+            a.messageUserId && user?.role !== 'ASSOCIATE' ? (
+              <Button asChild>
+                <Link to={`/messages?to=${a.messageUserId}`}>
+                  <MessageSquare className="h-4 w-4" />
+                  Message
+                </Link>
+              </Button>
+            ) : a.phone && can('manage:communications') ? (
+              <Button onClick={() => setTextOpen(true)}>
+                <Smartphone className="h-4 w-4" />
+                Text
+              </Button>
+            ) : undefined
+          }
+          more={[
+            { label: 'Quick view', onSelect: () => navigate(`/people?associateId=${a.id}`) },
+            { label: 'Schedule', onSelect: () => navigate(`/scheduling?associate=${a.id}`) },
+            ...(canSeeTime ? [{ label: term('label.timesheet'), onSelect: () => navigate(`/time-attendance?associate=${a.id}&name=${encodeURIComponent(name)}`) }] : []),
+            { label: 'Edit org assignment', onSelect: () => navigate(`/org?tab=people&associateId=${a.id}`) },
+            ...(can('manage:comp') ? [{ label: 'Promote', onSelect: () => setPromoteOpen(true) }] : []),
+            ...(canSeparate ? [{ label: 'Separate…', onSelect: () => navigate(`/separations?associateId=${a.id}`) }] : []),
+          ]}
+        />
+        </>
       }
       activeTab={activeTab}
       onTabChange={setTab}
@@ -695,31 +760,65 @@ function usePersonCases(associateId: string, enabled: boolean) {
 
 const CASE_PRIORITY_TONE = { LOW: 'default', MEDIUM: 'info', HIGH: 'pending', URGENT: 'destructive' } as const;
 
-function CasesTab({ query, workerWord }: { query: ReturnType<typeof usePersonCases>; workerWord: string }) {
+function CasesTab({
+  query,
+  workerWord,
+  person,
+  canOpen,
+}: {
+  query: ReturnType<typeof usePersonCases>;
+  workerWord: string;
+  person: { id: string; name: string };
+  /** HR can open a case for them — a call or a walk-in (HR walk 13). */
+  canOpen: boolean;
+}) {
   const caseStatusLabels = useMemo(() => ({ WAITING_ASSOCIATE: `Waiting on ${workerWord}` }), [workerWord]);
+  const [opening, setOpening] = useState(false);
+  const drawer = opening ? (
+    <OnBehalfCaseDrawer
+      initialAssociate={person}
+      onClose={() => setOpening(false)}
+      onSaved={() => {
+        setOpening(false);
+        void query.refetch();
+      }}
+    />
+  ) : null;
+  const newCase = canOpen ? (
+    <Button variant="outline" size="sm" onClick={() => setOpening(true)}>
+      New case
+    </Button>
+  ) : null;
   if (query.isError) return <QueryError what="their cases" query={query} />;
   if (query.isPending) return <SkeletonRows count={3} rowHeight="h-10" />;
   const rows = query.data.cases;
   const open = rows.filter((c) => c.status !== 'RESOLVED' && c.status !== 'CLOSED').length;
   if (rows.length === 0) {
     return (
-      <EmptyState
-        icon={Ticket}
-        title="They have not filed a case"
-        description={`A case this ${workerWord} files — a pay question, a benefits change, a workplace concern — shows up here with who is working it.`}
-        action={
-          <Button asChild variant="outline" size="sm">
-            <Link to="/hr-cases">Open the case desk</Link>
-          </Button>
-        }
-      />
+      <>
+        <EmptyState
+          icon={Ticket}
+          title="No cases yet"
+          description={`A case this ${workerWord} files — or one HR opens after a call or a visit — shows up here with who is working it.`}
+          action={
+            newCase ?? (
+              <Button asChild variant="outline" size="sm">
+                <Link to="/hr-cases">Open the case desk</Link>
+              </Button>
+            )
+          }
+        />
+        {drawer}
+      </>
     );
   }
   return (
     <div className="space-y-4">
+      {newCase && <div className="flex justify-end">{newCase}</div>}
+      {drawer}
       <div className="grid grid-cols-2 gap-[var(--d-stack)]">
         <MetricCard label="Open cases" value={String(open)} accent={open > 0} hint={open > 0 ? 'Still being worked' : 'Everything resolved'} />
-        <MetricCard label="All cases" value={String(rows.length)} hint="Filed from their account" />
+        <MetricCard label="All cases" value={String(rows.length)} hint="Filed by them or opened by HR" />
       </div>
       <Card className="p-3">
         <DataGrid<QueueCaseRow>

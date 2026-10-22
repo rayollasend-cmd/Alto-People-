@@ -155,38 +155,6 @@ describe('POST /payroll/runs/:id/void — Gap 3', () => {
     expect(audit!.actorUserId).toBe(hrUserId);
   });
 
-  it('stamps voidJournalEntryId from the QBO reversing JE in stub mode', async () => {
-    const { hrAgent, runId, clientId } = await seedDisbursedRun();
-    // Connect the client to QBO (stub mode) so the void path will post a
-    // reversing JE. accessToken/refreshToken values are unused in stub
-    // mode but the columns are NOT NULL on the schema; placeholder bytes
-    // are fine for this test path (no real Intuit call goes out).
-    const placeholder = Buffer.from('stub');
-    await prisma.quickbooksConnection.create({
-      data: {
-        clientId,
-        realmId: 'STUB-REALM',
-        accessTokenEnc: placeholder,
-        refreshTokenEnc: placeholder,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      },
-    });
-
-    // Re-disburse path is one-shot; fake the qboJournalEntryId since the
-    // forward sync only fires when the connection existed at disburse time.
-    await prisma.payrollRun.update({
-      where: { id: runId },
-      data: { qboJournalEntryId: 'STUB-QBO-original-1', qboSyncedAt: new Date() },
-    });
-    const res = await hrAgent.post(`/payroll/runs/${runId}/void`).send({
-      reason: 'Wrong period — supposed to be the next biweekly window',
-    });
-    expect(res.status).toBe(200);
-
-    const run = await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId } });
-    expect(run.voidJournalEntryId).toMatch(/^STUB-QBO-REV-/);
-  });
-
   it('refuses to void a DRAFT run', async () => {
     const client = await createClient();
     const associate = await createAssociate();

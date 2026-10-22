@@ -242,9 +242,7 @@ export function ComplianceScorecard() {
           <TrainingTile refreshEpoch={refreshEpoch} clientId={clientId} />
         </div>
 
-        {/* Operational + financial. Both have heavy "coming soon" content
-            until the schema catches up — pairing them keeps the visual
-            weight balanced. */}
+        {/* Operational + financial, side by side. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <ShiftsTile refreshEpoch={refreshEpoch} clientId={clientId} />
           <BillingTile refreshEpoch={refreshEpoch} clientId={clientId} />

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 /**
  * The Trust Center (UX upgrade step 4; docs/ux-upgrade-investigation.md
  * §5.5): what a buyer, an auditor or an IT admin can see about how the
@@ -47,6 +48,8 @@ export interface TrustSummaryPublic {
   commitments: TrustCommitment[];
   /** Whether a security contact is set (the address itself is never public). */
   securityContactSet: boolean;
+  /** Where the SOC 2 effort stands, from the controls' evidence (never a claim they do not back). */
+  soc2: Soc2Progress;
 }
 
 export interface TrustSummary extends TrustSummaryPublic {
@@ -82,3 +85,101 @@ export const TRUST_COMMITMENTS: readonly TrustCommitment[] = [
   { title: 'Retention you control', body: 'Audit rows are kept for at least seven years and archived encrypted past that; nothing is deleted without a separate, approved procedure.' },
   { title: 'Your own sign-in', body: 'Single sign-on (OIDC and SAML) and SCIM provisioning per customer, with accounts bound to the identity provider’s subject after the first sign-in.' },
 ];
+
+/* ------------------------------------------------------- SOC 2 progress -- */
+
+/**
+ * Where the SOC 2 effort stands, said from the evidence: "preparing" while any
+ * control still lacks current evidence, "observation" once every control has
+ * collected its own evidence inside its freshness window, and "audited" only
+ * when the operator has recorded the date an auditor issued the report.
+ */
+export type Soc2Stage = 'preparing' | 'observation' | 'audited';
+
+export const SOC2_STAGE_LABELS: Record<Soc2Stage, string> = {
+  preparing: 'Preparing: controls are still being brought current',
+  observation: 'Observation period: every control is collecting evidence',
+  audited: 'Audited: a SOC 2 report has been issued',
+};
+
+export interface Soc2Progress {
+  stage: Soc2Stage;
+  controlsPassing: number;
+  /** Controls whose latest evidence is inside its freshness window (passing or not). */
+  controlsCurrent: number;
+  controlsTotal: number;
+  /** The newest evidence row across every control; null before the first sweep. */
+  lastEvidenceAt: string | null;
+  /** The first day every control had evidence — the start of the observation period; null until then. */
+  observationSince: string | null;
+  /** The auditor's report date the operator recorded; null until there is one. */
+  reportIssuedOn: string | null;
+}
+
+/* ------------------------------------------------------ gated downloads -- */
+
+export const TRUST_DOCUMENT_KINDS = ['SOC2_REPORT', 'PEN_TEST_SUMMARY', 'SUB_PROCESSOR_LIST', 'DPA'] as const;
+export type TrustDocumentKind = (typeof TRUST_DOCUMENT_KINDS)[number];
+
+export const TRUST_DOCUMENT_LABELS: Record<TrustDocumentKind, string> = {
+  SOC2_REPORT: 'SOC 2 report',
+  PEN_TEST_SUMMARY: 'Penetration test summary',
+  SUB_PROCESSOR_LIST: 'Sub-processor list',
+  DPA: 'Data processing addendum',
+};
+
+export type TrustRequestStatus = 'PENDING' | 'APPROVED' | 'DECLINED';
+
+/** The public form: who is asking, for which document. */
+export const TrustDownloadRequestInputSchema = /* @__PURE__ */ (() =>
+  z.object({
+    name: z.string().trim().min(2).max(160),
+    email: z.string().trim().toLowerCase().email().max(254),
+    company: z.string().trim().min(2).max(200),
+    kind: z.enum(TRUST_DOCUMENT_KINDS),
+    note: z.string().trim().max(1000).optional(),
+  }))();
+export type TrustDownloadRequestInput = z.infer<typeof TrustDownloadRequestInputSchema>;
+
+export const TrustRequestDecisionSchema = /* @__PURE__ */ (() =>
+  z.object({
+    decision: z.enum(['APPROVED', 'DECLINED']),
+  }))();
+
+export const TrustDocumentMetaSchema = /* @__PURE__ */ (() =>
+  z.object({
+    kind: z.enum(TRUST_DOCUMENT_KINDS),
+    title: z.string().trim().min(2).max(200),
+  }))();
+
+export const Soc2ReportInputSchema = /* @__PURE__ */ (() =>
+  z.object({
+    /** YYYY-MM-DD, or null to withdraw the claim. */
+    reportIssuedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  }))();
+
+export interface TrustDocumentSummary {
+  id: string;
+  kind: TrustDocumentKind;
+  title: string;
+  contentType: string;
+  bytes: number;
+  updatedAt: string;
+}
+
+export interface TrustDownloadRequestSummary {
+  id: string;
+  kind: TrustDocumentKind;
+  name: string;
+  email: string;
+  company: string;
+  note: string | null;
+  status: TrustRequestStatus;
+  requestedAt: string;
+  decidedAt: string | null;
+  linkExpiresAt: string | null;
+  downloadCount: number;
+  lastDownloadedAt: string | null;
+  /** True when a document of this kind is on file, so approving will actually send something. */
+  documentOnFile: boolean;
+}

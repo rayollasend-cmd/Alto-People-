@@ -45,6 +45,17 @@ const SHORTCUTS: ShortcutGroup[] = [
     ],
   },
   {
+    label: 'Transportation (the board)',
+    items: [
+      { keys: ['[', ']'], description: 'Previous / next day' },
+      { keys: ['t', 'm'], description: 'Today / tomorrow' },
+      { keys: ['j', 'k'], description: 'Move between waiting groups' },
+      { keys: ['x'], description: 'Pick the group' },
+      { keys: ['d'], description: 'Dispatch what is picked' },
+      { keys: ['p'], description: 'Plan runs' },
+    ],
+  },
+  {
     label: 'Tables',
     items: [
       { keys: ['j', 'k'], description: 'Move the cursor down / up a row (Tab into the table first)' },

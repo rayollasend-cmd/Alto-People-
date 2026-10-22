@@ -245,6 +245,32 @@ describe('DataGrid', () => {
     }
   });
 
+  it('on a phone keeps every column’s label inside the card, and the row’s actions in the card’s footer (finance walk 20)', () => {
+    const desktopStub = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ ...desktopStub(query), matches: false })) as typeof window.matchMedia;
+    try {
+      const columns: GridColumn<Row>[] = [
+        ...COLUMNS,
+        // A cell that holds a link but has a header: a labelled field, not an action.
+        { key: 'w4', header: 'W-4 / TIN', accessor: () => 'missing', stopRowClick: true, cell: (r) => <a href={`/people?associateId=${r.id}`} aria-label={`W-4 missing for ${r.name}`}>✗</a> },
+        { key: 'actions', header: '', accessor: () => null, stopRowClick: true, cell: (r) => <button type="button">Pay {r.name}</button> },
+      ];
+      renderGrid({ columns, onRowClick: vi.fn(), rowActionLabel: (r) => `Open ${r.name}` });
+      const card = within(screen.getByRole('list', { name: 'Test rows' })).getAllByRole('listitem')[0]!;
+      const w4 = within(card).getByRole('link', { name: 'W-4 missing for Rosa Martinez' });
+      // Labelled: the ✗ sits in a <dd> under its <dt>.
+      expect(w4.closest('dd')?.previousElementSibling?.textContent).toBe('W-4 / TIN');
+      const pay = within(card).getByRole('button', { name: 'Pay Rosa Martinez' });
+      const footer = pay.closest('[data-card-footer]');
+      expect(footer).not.toBeNull();
+      // The footer is inside the card's border, not floating under it.
+      expect(footer!.parentElement?.className).toMatch(/rounded-lg border/);
+      expect(within(card).queryByText('W-4 / TIN', { selector: '[data-card-footer] *' })).toBeNull();
+    } finally {
+      window.matchMedia = desktopStub;
+    }
+  });
+
   it('opens a detail panel under a row, one at a time when asked', async () => {
     const onExpand = vi.fn();
     renderGrid({ expandable: { render: (r) => <div>Details of {r.name}</div>, single: true, onExpand } });

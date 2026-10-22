@@ -535,11 +535,8 @@ export async function runDailyPay(opts: { now?: Date; actorUserId?: string | nul
     });
     if (status === 'DISBURSED') {
       await prisma.payrollRun.update({ where: { id: run.id }, data: { status: 'DISBURSED', disbursedAt: now } });
-      void (async () => {
-        const [{ accrueDepositsForRun }, { postLiabilitiesForRun }] = await Promise.all([import('./taxDeposits.js'), import('./payrollTaxLedger.js')]);
-        await accrueDepositsForRun(prisma, run.id);
-        await postLiabilitiesForRun(prisma, run.id);
-      })().catch((err) => console.warn('[dailyPay] liability accrual failed (advisory):', err));
+      // The same obligations every settled run owes (lib/payrollSettled).
+      void import('./payrollSettled.js').then(({ afterRunSettled }) => afterRunSettled(prisma, run.id)).catch((err) => console.warn('[dailyPay] liability accrual failed (advisory):', err));
     }
     if (status === 'HELD') summary.held.push({ associateId, workDate: workDay, reason: failure ?? 'held' });
     summary.paid.push({ associateId, workDate: workDay, runId: run.id, itemId: item.id, gross, net, status });

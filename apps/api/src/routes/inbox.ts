@@ -3,9 +3,12 @@ import {
   InboxResponseSchema,
   can,
   hasCapability,
+  timesheetQueuePath,
   type InboxSource,
+  type InboxUrgency,
   type TenantModule,
 } from '@alto-people/shared';
+import { pendingTimeWhere, pendingTimeWindow } from '../lib/pendingTime.js';
 import { prisma } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { wotcFilingsDue } from './wotc.js';
@@ -14,6 +17,7 @@ import { stateTablesAwaitingReview } from './stateTax.js';
 import { localJurisdictionsAwaitingReview } from './taxJurisdictions.js';
 import { payrollTaxesNeedingYou } from '../lib/payrollTaxLedger.js';
 import { runsAwaitingReview } from '../lib/payrollReview.js';
+import { missedPaydaysNeedingYou } from '../lib/payrollPeriodLedger.js';
 import { isClientBoundedRole, isInternallyScoped } from '../lib/scope.js';
 import { logger } from '../lib/logger.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -40,6 +44,9 @@ import { certifiedWeeksDue } from '../lib/certifiedPayroll.js';
 import { contractorsNeedingYou } from '../lib/contractors.js';
 import { payrollFundingNeedingYou } from '../lib/banking/funding.js';
 import { countMovesThisWeek, countUnassigned } from './paySchedules.js';
+import { i9ReverificationWhere, i9RetentionWhere } from '../lib/hiringCompliance.js';
+import { certificationRequired } from '../lib/leaveOfAbsence.js';
+import { coverageGapPath, coverageGapsForUser } from '../lib/coverageGaps.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -72,10 +79,26 @@ interface SourceDef {
   module?: TenantModule;
   /** May this person see the queue at all? The list route's own gate. */
   visible: (user: SessionUser) => boolean;
+  /** How the queue ranks against the others (role walk HR 4): a legal clock
+   *  above money above routine. Routine when unsaid. */
+  urgency?: InboxUrgency;
   /** The queue's "pending" predicate, scoped as the list route scopes it.
    *  May answer a description of its own, when the size is best told in money,
-   *  and a narrower link, when the work sits in one corner of the queue. */
-  count: (user: SessionUser) => Promise<number | { count: number; description?: string; path?: string }>;
+   *  a narrower link, when the work sits in one corner of the queue, and the
+   *  soonest deadline among what it counted. */
+  count: (user: SessionUser) => Promise<number | { count: number; description?: string; path?: string; dueAt?: Date | string | null; progress?: { done: number; total: number } }>;
+}
+
+/** The earliest of the dates given, as the ISO the contract carries; null when none. */
+function soonest(...dates: Array<Date | string | null | undefined>): string | null {
+  let best: number | null = null;
+  for (const d of dates) {
+    if (!d) continue;
+    const t = d instanceof Date ? d.getTime() : Date.parse(d);
+    if (Number.isNaN(t)) continue;
+    if (best === null || t < best) best = t;
+  }
+  return best === null ? null : new Date(best).toISOString();
 }
 
 /**
@@ -92,10 +115,22 @@ function approvalCounts(u: SessionUser): ReturnType<typeof countApprovalQueues> 
   return hit;
 }
 
-/** The timesheet queue opened on the 90 days its count covers, as company-local days. */
-export function timesheetQueuePath(now: Date = new Date()): string {
+/**
+ * The timesheet queue's link, opened on the rows its count counted: from
+ * the oldest pending entry's company-local day (else the start of the
+ * 90-day window) through today. Same predicate as the count
+ * (lib/pendingTime), same builder as every other "N timesheets" link
+ * (shared timesheetQueuePath).
+ */
+async function pendingTimesheetQueuePath(u: SessionUser, now: Date = new Date()): Promise<string> {
   const tz = companyWorkweek().timezone;
-  return `/time-attendance?tab=queue&from=${localDateKey(new Date(now.getTime() - 90 * DAY_MS), tz)}&to=${localDateKey(now, tz)}`;
+  const window = pendingTimeWindow(now);
+  const oldest = await prisma.timeEntry.findFirst({
+    where: pendingTimeWhere(u, window),
+    orderBy: { clockInAt: 'asc' },
+    select: { clockInAt: true },
+  });
+  return timesheetQueuePath({ from: localDateKey(oldest?.clockInAt ?? window.from, tz), to: localDateKey(now, tz) });
 }
 
 /** Same clamp as kioskClientClamp in kiosk99.ts: bounded callers see
@@ -144,10 +179,11 @@ const SOURCES: SourceDef[] = [
     module: 'time',
     // Whoever approves time — the queue's own gate.
     visible: (u) => can(u, 'manage:time'),
-    // The link opens the queue on the same 90 days the count covers.
+    // The link opens the queue on exactly the rows the count counted —
+    // the oldest pending day through today.
     count: async (u) => {
       const c = await approvalCounts(u);
-      return { count: c.timesheets, path: timesheetQueuePath() };
+      return { count: c.timesheets, path: c.timesheets > 0 ? await pendingTimesheetQueuePath(u) : undefined };
     },
   },
   {
@@ -182,6 +218,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'reimbursements',
+    urgency: 'money',
     label: 'Reimbursements',
     description: 'Expense claims waiting on a manager’s approval, and approved ones waiting on Finance to settle into the next run.',
     path: '/reimbursements',
@@ -258,7 +295,21 @@ const SOURCES: SourceDef[] = [
       }),
   },
   {
+    // Role walk HR 2: invites nobody has touched in a week. The applications
+    // list has no "idle" filter of its own, so the link opens the drafts.
+    key: 'onboarding-stuck',
+    label: 'Onboarding drafts gone quiet',
+    description: 'Invited new hires who have not moved their paperwork in more than 7 days — a nudge now saves the start date.',
+    path: '/onboarding?status=DRAFT',
+    visible: (u) => can(u, 'view:onboarding') && can(u, 'manage:onboarding'),
+    count: (u) =>
+      prisma.application.count({
+        where: { ...scopeApplications(u), status: 'DRAFT', updatedAt: { lt: new Date(Date.now() - 7 * DAY_MS) } },
+      }),
+  },
+  {
     key: 'i9-section2',
+    urgency: 'legal',
     label: 'I-9 Section 2 to complete',
     description: 'New hires who signed Section 1 and uploaded their documents — HR has three business days from their first day to examine them.',
     path: '/compliance?tab=i9',
@@ -274,11 +325,43 @@ const SOURCES: SourceDef[] = [
         },
       }),
   },
+  // Audit 2026-10-21 #14: the same predicates the I-9 list's ?status= filters use (lib/hiringCompliance).
+  {
+    key: 'i9-reverification',
+    urgency: 'legal',
+    label: 'I-9 reverification due',
+    description: 'Work authorizations that have expired or expire within 90 days — Supplement B is due by the expiry date.',
+    path: '/compliance?tab=i9&status=work_auth',
+    module: 'compliance',
+    visible: (u) => can(u, 'manage:compliance'),
+    count: async (u) => {
+      const where = { AND: [{ tenantId: tenantIdForWrite() }, i9ReverificationWhere(), { associate: scopeActiveAssociates(u) }] };
+      const [count, first] = await Promise.all([
+        prisma.i9Verification.count({ where }),
+        prisma.i9Verification.findFirst({ where, orderBy: { workAuthExpiresAt: 'asc' }, select: { workAuthExpiresAt: true } }),
+      ]);
+      return { count, dueAt: first?.workAuthExpiresAt ?? null };
+    },
+  },
+  {
+    key: 'i9-retention',
+    label: 'I-9s past retention',
+    description: 'People who left more than a year ago and were hired more than three years ago — their I-9s may now be destroyed.',
+    path: '/compliance?tab=i9&status=retention',
+    module: 'compliance',
+    visible: (u) => can(u, 'manage:compliance'),
+    count: (u) =>
+      prisma.i9Verification.count({
+        where: { AND: [{ tenantId: tenantIdForWrite() }, i9RetentionWhere(), { associate: { AND: [{ deletedAt: null }, scopeAssociatesIncludingFormer(u)] } }] },
+      }),
+  },
   {
     key: 'everify',
+    urgency: 'legal',
     label: 'E-Verify cases to open',
     description: 'I-9s with Section 2 done and no E-Verify case yet — the federal portal wants the case within three business days.',
-    path: '/compliance?tab=everify',
+    // Role walk HR 3: the link carries the filter its count uses.
+    path: '/compliance?tab=everify&status=not_run',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
     count: () =>
@@ -298,23 +381,32 @@ const SOURCES: SourceDef[] = [
   // Connected providers (lib/providers): the steps their answers leave for a person.
   {
     key: 'everify-mismatches',
+    urgency: 'legal',
     label: 'E-Verify mismatches to act on',
     description: 'E-Verify returned a Tentative Nonconfirmation: give the employee the notice and record whether they will take action.',
-    path: '/compliance?tab=everify',
+    path: '/compliance?tab=everify&status=issue',
     module: 'compliance',
     visible: (u) => can(u, 'manage:compliance'),
-    count: (u) =>
-      prisma.i9Verification.count({
-        where: {
-          tenantId: tenantIdForWrite(),
-          eVerifyStatus: 'TENTATIVE_NONCONFIRMATION',
-          eVerifyTncDecision: null,
-          associate: scopeActiveAssociates(u),
-        },
-      }),
+    // Role walk HR 3: the list opens filtered to mismatches; with exactly
+    // one, straight onto that person's case.
+    count: async (u) => {
+      const where = {
+        tenantId: tenantIdForWrite(),
+        eVerifyStatus: 'TENTATIVE_NONCONFIRMATION' as const,
+        eVerifyTncDecision: null,
+        associate: scopeActiveAssociates(u),
+      };
+      const [count, rows] = await Promise.all([
+        prisma.i9Verification.count({ where }),
+        prisma.i9Verification.findMany({ where, select: { associateId: true }, take: 2 }),
+      ]);
+      const path = count === 1 && rows[0] ? `/compliance?tab=everify&status=issue&associateId=${rows[0].associateId}` : '/compliance?tab=everify&status=issue';
+      return { count, path };
+    },
   },
   {
     key: 'screening-decisions',
+    urgency: 'legal',
     label: 'Background checks to decide',
     description: 'Reports that came back “consider”, and adverse actions whose waiting period is over.',
     path: '/compliance?tab=background',
@@ -327,6 +419,8 @@ const SOURCES: SourceDef[] = [
           associate: scopeActiveAssociates(u),
           OR: [
             { result: 'consider', adjudication: null },
+            // Hand-recorded checks that came back for review (audit 2026-10-21 #14).
+            { status: 'NEEDS_REVIEW', adjudication: null },
             { adjudication: 'PRE_ADVERSE', adverseWaitUntil: { lte: new Date() } },
           ],
         },
@@ -334,6 +428,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'drug-results-review',
+    urgency: 'legal',
     label: 'Drug test results to review',
     description: 'Results that are not a verified negative — a positive awaiting the Medical Review Officer, a dilute, or a cancelled test.',
     path: '/compliance?tab=drug-tests',
@@ -346,6 +441,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'efile-rejected',
+    urgency: 'legal',
     label: 'Tax filings rejected',
     description: 'The agency rejected an e-filed form. Fix what it named and file again.',
     path: '/payroll/tax',
@@ -368,6 +464,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'access-certifications',
+    urgency: 'legal',
     label: 'Access to certify',
     description: 'Accounts in an open access certification waiting on your decision.',
     path: '/admin/access-certifications',
@@ -398,6 +495,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'hr-cases-sla',
+    urgency: 'legal',
     label: 'HR cases past their SLA',
     description: 'Open cases that passed their resolution target. Oldest breach first.',
     path: '/hr-cases?sla=breached',
@@ -424,9 +522,10 @@ const SOURCES: SourceDef[] = [
     description: 'Notices owed, certifications due within 3 days, and returns to work due this week.',
     path: '/leave',
     visible: (u) => can(u, 'manage:leave'),
-    count: (u) => {
+    urgency: 'legal',
+    count: async (u) => {
       const t = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
-      return prisma.leaveCase.count({
+      const rows = await prisma.leaveCase.findMany({
         where: {
           tenantId: tenantIdForWrite(),
           associate: scopeActiveAssociates(u, { former: true }),
@@ -437,7 +536,21 @@ const SOURCES: SourceDef[] = [
             { status: 'APPROVED', actualReturnDate: null, expectedReturnDate: { lte: new Date(t.getTime() + 7 * DAY_MS) } },
           ],
         },
+        select: { status: true, certificationReceivedAt: true, certificationDueAt: true, expectedReturnDate: true, actualReturnDate: true },
+        take: CAP,
       });
+      return {
+        count: rows.length,
+        dueAt: soonest(
+          ...rows.map((r) =>
+            r.status === 'PENDING_CERTIFICATION' && !r.certificationReceivedAt
+              ? r.certificationDueAt
+              : r.status === 'APPROVED' && !r.actualReturnDate
+                ? r.expectedReturnDate
+                : null,
+          ),
+        ),
+      };
     },
   },
   {
@@ -446,9 +559,10 @@ const SOURCES: SourceDef[] = [
     description: 'State notices to answer within 3 days, and hearings in the next week.',
     path: '/claims/unemployment',
     visible: (u) => can(u, 'manage:claims'),
-    count: (u) => {
+    urgency: 'legal',
+    count: async (u) => {
       const now = Date.now();
-      return prisma.unemploymentClaim.count({
+      const rows = await prisma.unemploymentClaim.findMany({
         where: {
           tenantId: tenantIdForWrite(),
           associate: { AND: [{ tenantId: tenantIdForWrite() }, scopeAssociatesIncludingFormer(u)] },
@@ -457,7 +571,10 @@ const SOURCES: SourceDef[] = [
             { status: 'HEARING_SCHEDULED', hearingAt: { gte: new Date(now - DAY_MS), lte: new Date(now + 7 * DAY_MS) } },
           ],
         },
+        select: { status: true, responseDueAt: true, hearingAt: true },
+        take: CAP,
       });
+      return { count: rows.length, dueAt: soonest(...rows.map((r) => (r.status === 'NEW' ? r.responseDueAt : r.hearingAt))) };
     },
   },
   {
@@ -466,8 +583,9 @@ const SOURCES: SourceDef[] = [
     description: 'First reports of injury not yet sent to the carrier that are due within 2 days.',
     path: '/claims/workers-comp',
     visible: (u) => can(u, 'manage:claims'),
-    count: (u) =>
-      prisma.wcClaim.count({
+    urgency: 'legal',
+    count: async (u) => {
+      const rows = await prisma.wcClaim.findMany({
         where: {
           tenantId: tenantIdForWrite(),
           associate: { AND: [{ tenantId: tenantIdForWrite() }, scopeAssociatesIncludingFormer(u)] },
@@ -475,7 +593,11 @@ const SOURCES: SourceDef[] = [
           status: { notIn: ['CLOSED', 'DENIED'] },
           froiDueAt: { lte: new Date(Date.now() + 2 * DAY_MS) },
         },
-      }),
+        select: { froiDueAt: true },
+        take: CAP,
+      });
+      return { count: rows.length, dueAt: soonest(...rows.map((r) => r.froiDueAt)) };
+    },
   },
   {
     key: 'verification-letters',
@@ -499,6 +621,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'expirations',
+    urgency: 'legal',
     label: 'Expiring qualifications',
     description: 'Certifications and licenses that have expired or expire within 30 days.',
     path: '/expirations',
@@ -586,6 +709,20 @@ const SOURCES: SourceDef[] = [
           ],
         },
       }),
+  },
+  {
+    key: 'coverage-gaps',
+    label: 'Short shift windows today',
+    description: 'A shift window you lead today with fewer people scheduled than the store contracted — fill it from the bench or the schedule.',
+    path: '/scheduling?view=day',
+    module: 'scheduling',
+    // Whoever leads a window: the same definition the supervisor's home
+    // notice draws (lib/coverageGaps), so the bell and the badge agree.
+    visible: (u) => u.role === 'SHIFT_SUPERVISOR' || u.role === 'WORKFORCE_MANAGER' || u.role === 'OPERATIONS_MANAGER',
+    count: async (u) => {
+      const gaps = await coverageGapsForUser(prisma, u.id);
+      return { count: gaps.length, path: gaps.length > 0 ? coverageGapPath(gaps[0]!) : undefined };
+    },
   },
   {
     key: 'floor-watch',
@@ -704,13 +841,58 @@ const SOURCES: SourceDef[] = [
     visible: (u) => u.role === 'ASSOCIATE',
     count: (u) => prisma.notification.count({ where: { recipientUserId: u.id, channel: 'IN_APP', readAt: null } }),
   },
+  // The associate's tasks, not their unread count (role walk floor 24): the
+  // home's Needs-you lists the thing to do, with the link that does it.
+  {
+    key: 'my-onboarding',
+    label: 'Finish onboarding',
+    description: 'Your onboarding checklist is not finished yet.',
+    path: '/onboarding',
+    visible: (u) => u.role === 'ASSOCIATE' && !!u.associateId,
+    count: async (u) => {
+      const open = await prisma.application.findFirst({
+        where: { associateId: u.associateId!, deletedAt: null, status: { notIn: ['REJECTED', 'CANCELLED'] } },
+        orderBy: { invitedAt: 'desc' },
+        select: { id: true, checklist: { select: { tasks: { select: { status: true } } } } },
+      });
+      const tasks = open?.checklist?.tasks ?? [];
+      const done = tasks.filter((t) => t.status === 'DONE' || t.status === 'SKIPPED').length;
+      if (!open || tasks.length === 0 || done === tasks.length) return 0;
+      return { count: 1, description: `${done} of ${tasks.length} tasks done.`, path: `/onboarding/me/${open.id}`, progress: { done, total: tasks.length } };
+    },
+  },
+  {
+    key: 'my-leave-certification',
+    label: 'Upload leave certification',
+    description: 'A leave of absence is waiting on a certification from you.',
+    path: '/leave',
+    visible: (u) => u.role === 'ASSOCIATE' && !!u.associateId,
+    count: async (u) => {
+      const rows = await prisma.leaveCase.findMany({
+        where: { associateId: u.associateId!, status: { in: ['REQUESTED', 'PENDING_CERTIFICATION'] }, certificationReceivedAt: null },
+        select: { type: true, reason: true, certificationDueAt: true },
+        take: CAP,
+      });
+      const needing = rows.filter((r) => certificationRequired(r));
+      return { count: needing.length, dueAt: soonest(...needing.map((r) => r.certificationDueAt)) };
+    },
+  },
   {
     key: 'payroll-review',
+    urgency: 'money',
     label: 'Payroll to review and sign',
     description: 'Payroll runs whose review report no one has signed off on yet, or whose numbers changed after the sign-off. They can’t pay out until someone does.',
     path: '/payroll/review',
     visible: (u) => can(u, 'process:payroll') && !internalSites(u),
     count: async (u) => (await runsAwaitingReview(prisma, u.id, { AND: [{ tenantId: tenantIdForWrite() }, scopePayrollRuns(u)] })).length,
+  },
+  {
+    key: 'payroll-missed-paydays',
+    label: 'Paydays with no run',
+    description: 'Scheduled paydays that passed with no payroll run, and the approved hours they left unpaid. Pay them off-cycle from the payroll home.',
+    path: '/payroll?ledger=missed',
+    visible: (u) => can(u, 'process:payroll') && !internalSites(u),
+    count: (u) => missedPaydaysNeedingYou(prisma, u),
   },
   {
     key: 'pay-schedule-unassigned',
@@ -730,6 +912,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'financial-changes',
+    urgency: 'money',
     label: 'Pay account changes to verify',
     description: 'Bank, pay card, W-4 and legal-name changes waiting on a verification call before payroll pays into them.',
     path: '/payroll/financial-changes',
@@ -738,6 +921,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'unbilled-pay',
+    urgency: 'money',
     label: 'Billable pay not billed',
     description: 'Pay for client work that is on no statement: no statement covers those days, a rebill is waiting for review, or there is no bill rate.',
     path: '/finance/pay-bill',
@@ -752,6 +936,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'pay-notices-unsigned',
+    urgency: 'legal',
     label: 'Pay notices not signed',
     description: 'State pay notices (NY, CA, IL, WA) sent more than 7 days ago and still not acknowledged.',
     path: '/payroll/compliance?tab=notices',
@@ -760,6 +945,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'new-hire-reports',
+    urgency: 'legal',
     label: 'New-hire reports due',
     description: 'Hires to report to the state new-hire directory within five days, or already late.',
     path: '/payroll/compliance?tab=newhire',
@@ -768,6 +954,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'wotc-filings',
+    urgency: 'legal',
     label: 'WOTC filings due',
     description: 'Hires whose tax credit screening points to a target group and whose 28-day state filing deadline is this week or past.',
     path: '/payroll/wotc',
@@ -776,6 +963,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'aca-offers-due',
+    urgency: 'legal',
     label: 'ACA offers due',
     description: 'Full-time workers (by hours or by hire) with no offer of coverage recorded for the stability period that starts within 30 days.',
     path: '/benefits/aca',
@@ -784,6 +972,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'state-tax-review',
+    urgency: 'legal',
     label: 'State tax tables to review',
     description: 'States where people work whose withholding was added but not yet reviewed with your tax adviser — payroll can’t finalize with them until it is.',
     path: '/payroll/state-tax',
@@ -792,6 +981,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'local-tax-review',
+    urgency: 'legal',
     label: 'Local taxes to review',
     description: 'Cities, counties and school districts your people live or work in whose rates haven’t been reviewed with your tax adviser — payroll can’t finalize with them until they are.',
     path: '/payroll/tax-jurisdictions',
@@ -800,6 +990,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'payroll-taxes',
+    urgency: 'money',
     label: 'Payroll taxes',
     description: 'Tax deposits due this week or late, payments that failed, returns due within two weeks and agency notices waiting on a response.',
     path: '/payroll/taxes',
@@ -809,6 +1000,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'certified-payroll',
+    urgency: 'legal',
     label: 'Certified payroll',
     description: 'Prevailing-wage weeks that have ended without a signed WH-347 submitted to the agency.',
     path: '/payroll/certified',
@@ -820,6 +1012,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'payroll-funding',
+    urgency: 'money',
     label: 'Payroll funding',
     description: 'Approved runs whose money hasn’t been pulled, debits the bank returned, and new accounts waiting for their deposit amounts.',
     path: '/payroll/banking',
@@ -829,6 +1022,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'contractors',
+    urgency: 'money',
     label: 'Contractors',
     description: 'IRS mismatch notices to answer before backup withholding starts, and contractor payment runs waiting for a second approver.',
     path: '/payroll/contractors',
@@ -855,6 +1049,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'books-bills',
+    urgency: 'money',
     label: 'Bills to approve',
     description: 'Vendor bills a second person entered, waiting for your approval.',
     path: '/books/bills?tab=approve',
@@ -868,8 +1063,12 @@ const SOURCES: SourceDef[] = [
     description: 'Approved vendor bills due in the next seven days, or already overdue.',
     path: '/books/bills?tab=due',
     visible: (u) => can(u, 'manage:books'),
+    urgency: 'money',
     // billTabWhere('due') — the tab this opens lists exactly these.
-    count: () => prisma.bill.count({ where: { tenantId: tenantIdForWrite(), ...billTabWhere('due') } }),
+    count: async () => {
+      const rows = await prisma.bill.findMany({ where: { tenantId: tenantIdForWrite(), ...billTabWhere('due') }, select: { dueDate: true }, take: CAP });
+      return { count: rows.length, dueAt: soonest(...rows.map((r) => r.dueDate)) };
+    },
   },
 ];
 
@@ -901,19 +1100,24 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
         let count = 0;
         let description = s.description;
         let path = s.path;
+        let dueAt: string | null = null;
+        let progress: { done: number; total: number } | undefined;
         const t0 = performance.now();
         try {
           const got = await s.count(user);
           if (typeof got !== 'number') {
             description = got.description ?? description;
             path = got.path ?? path;
+            dueAt = soonest(got.dueAt);
+            progress = got.progress;
           }
           count = Math.min(CAP, Math.max(0, typeof got === 'number' ? got : got.count));
         } catch (err) {
           logger.error({ err, source: s.key, userId: user.id }, 'inbox source failed');
         }
         timings.push(`${s.key.replace(/[^a-zA-Z0-9_-]/g, '_')};dur=${(performance.now() - t0).toFixed(1)}`);
-        return { key: s.key, label: s.label, description, count, path };
+        // A deadline only means something while the queue has items.
+        return { key: s.key, label: s.label, description, count, path, urgency: s.urgency ?? 'routine', dueAt: count > 0 ? dueAt : null, ...(count > 0 && progress ? { progress } : {}) };
       }),
     );
     // Which source is slow, visible in any browser's network panel.

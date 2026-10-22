@@ -1,0 +1,32 @@
+# Scheduled dependency scan — SOC 2 CC7.1 (docs/soc2-controls-investigation.md
+# step 7; audit 2026-10-21 item 13). CI already runs the scan on every PR and
+# push; this run covers the quiet week — the dependency-scanning control's
+# evidence has an 8-day freshness window, and a week with no push would go
+# stale — and the advisory published after the last push. Same script, same
+# accepted-risks file, same evidence post when the two secrets are set.
+name: Dependency scan
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: npm audit (production dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Dependency scan
+        run: node scripts/dependency-scan.mjs
+        env:
+          EVIDENCE_INGEST_URL: ${{ secrets.EVIDENCE_INGEST_URL }}
+          EVIDENCE_INGEST_TOKEN: ${{ secrets.EVIDENCE_INGEST_TOKEN }}

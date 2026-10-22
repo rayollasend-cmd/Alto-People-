@@ -49,7 +49,8 @@ async function seed() {
 const task = (body: { tasks: Array<{ key: string }> }, key: string) => body.tasks.find((t) => t.key === key) as { key: string; status: string; passing: boolean | null; summary: string; items: Array<{ label: string; link: string }> };
 
 async function tickManual(a: Agent, periodKey: string) {
-  for (const key of ['accruals_reviewed', 'payroll_liabilities', 'budget_review']) {
+  // payroll_liabilities checks itself against the tax deposits (finance walk 16).
+  for (const key of ['accruals_reviewed', 'budget_review']) {
     const r = await a.post(`/books/close/${periodKey}/tasks/${key}`).send({ status: 'DONE', note: 'Reviewed' });
     expect(r.status, key).toBe(200);
   }

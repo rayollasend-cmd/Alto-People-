@@ -12,7 +12,7 @@ import {
   Send,
   FileText,
 } from 'lucide-react';
-import type { AutoFillCandidate, Shift } from '@alto-people/shared';
+import { wentUnfilled, type AutoFillCandidate, type Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import type { QuickActions } from './ShiftHoverCard';
 
@@ -63,8 +63,13 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
 
   // Top-ranked candidate for an OPEN (unassigned) shift — the one-click
   // "Assign → <name>" item. undefined = loading, null = none available.
+  // An OPEN shift that already ended went unfilled — history, not a hole.
+  // Nobody is assigned to a shift that is over, so the Assign items stay
+  // off and the shift reads "Went unfilled" (role walk, ops 6).
+  const unfilled = wentUnfilled(active.shift);
   const wantTopCandidate =
     canManage &&
+    !unfilled &&
     active.shift.status === 'OPEN' &&
     active.shift.assignedAssociateId === null &&
     !!actions.getTopCandidates &&
@@ -121,7 +126,15 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
         onClose();
       },
     });
-    if (active.shift.assignedAssociateId === null) {
+    if (unfilled) {
+      items.push({
+        kind: 'item',
+        label: 'Went unfilled',
+        icon: UserMinus,
+        disabled: true,
+        onClick: () => undefined,
+      });
+    } else if (active.shift.assignedAssociateId === null) {
       // One-click best-fit assign. Loading shows a compact disabled stub;
       // "no candidates" hides the item entirely (nothing useful to click).
       if (wantTopCandidate && topCandidate !== null) {

@@ -1,6 +1,5 @@
 import type {
   ManualAttestationCreateInput,
-  ManualAttestationListResponse,
   ManualAttestationSignal,
   ScorecardNudgeInput,
   ScorecardNudgeResponse,
@@ -86,10 +85,6 @@ export function scorecardReportUrl(clientId?: string): string {
  *  oshaWcEeoApi.ts (/osha/incidents), managed on /compliance/osha. */
 export function getScorecardSafety(clientId?: string): Promise<ScorecardSafetyResponse> {
   return apiFetch<ScorecardSafetyResponse>(scoped('/safety', clientId));
-}
-
-export function listAttestationSignals(): Promise<ManualAttestationListResponse> {
-  return apiFetch<ManualAttestationListResponse>(`${ROOT}/attestations`);
 }
 
 export function upsertAttestation(

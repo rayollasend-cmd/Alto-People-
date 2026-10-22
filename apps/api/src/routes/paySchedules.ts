@@ -1445,7 +1445,7 @@ async function personInReach(user: SessionUser, id: string) {
   return p;
 }
 
-async function associateSchedule(associateId: string) {
+export async function associateSchedule(associateId: string) {
   const today = todayYmd();
   await loadTenantHolidays(prisma);
   const [m, world, facts] = await Promise.all([membershipOf([associateId], null), loadWorld(prisma), loadFacts(prisma, [associateId], today)]);

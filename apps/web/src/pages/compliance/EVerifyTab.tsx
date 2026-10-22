@@ -14,6 +14,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
+import { DeadlineStrip, matchesDeadlineDay } from './DeadlineStrip';
 import { sanitizeReturnPath } from './section2Verification';
 import type {
   DocumentKind,
@@ -217,15 +218,23 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const [returnPath] = useState<string | null>(() =>
     sanitizeReturnPath(deepLinkParams.get('return')),
   );
+  // ?status= — the Inbox's link carries the filter its count uses (the
+  // mismatches it counted, not an A–Z roster). A one-visit view, consumed
+  // with the other params, never written over the saved filter.
+  const [deepLinkStatus] = useState<StatusFilter | null>(() => {
+    const v = deepLinkParams.get('status');
+    return STATUS_FILTER_VALUES.some((s) => s === v) ? (v as StatusFilter) : null;
+  });
   const deepLinkOpened = useRef(false);
   const deepLinkConsumed = useRef(false);
   useEffect(() => {
     if (deepLinkConsumed.current) return;
-    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return')) return;
+    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return') && !deepLinkParams.has('status')) return;
     deepLinkConsumed.current = true;
     const params = new URLSearchParams(deepLinkParams);
     params.delete('associateId');
     params.delete('return');
+    params.delete('status');
     setDeepLinkParams(params, { replace: true });
   }, [deepLinkParams, setDeepLinkParams]);
   const [query, setQuery] = useState('');
@@ -238,13 +247,15 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   // person must be present whatever their state, but a saved filter the
   // user deliberately chose must not be overwritten (same idiom as I9Tab).
   const [filterOverride, setFilterOverride] = useState<StatusFilter | null>(
-    deepLinkAssociateId ? 'all' : null,
+    deepLinkStatus ?? (deepLinkAssociateId ? 'all' : null),
   );
   const filter = filterOverride ?? storedFilter;
   const setFilter = (f: StatusFilter) => {
     setFilterOverride(null);
     setStoredFilter(f);
   };
+  // A day picked on the deadline strip — this visit only.
+  const [dueDay, setDueDay] = useState<string | null>(null);
   const [storedHired, setStoredHired] = usePersistentState<HiredFilter>(
     'alto:list.everify.hired.v1',
     'any',
@@ -258,9 +269,11 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
     setHiredOverride(null);
     setStoredHired(f);
   };
+  // A worklist with a federal clock opens on the deadline soonest (v2: the
+  // A–Z default of v1 is not carried over).
   const [sort, setSort] = usePersistentState<SortMode>(
-    'alto:list.everify.sort.v1',
-    'name',
+    'alto:list.everify.sort.v2',
+    'due',
     (v): v is SortMode => SORT_MODE_VALUES.some((s) => s === v),
   );
   // '' = all clients; 'none' = rows with no client attribution.
@@ -336,6 +349,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
         return false;
       }
       if (!matchesHiredFilter(r.hireDate, hired)) return false;
+      if (dueDay && !(r.dueBy && !r.caseOpenedAt && matchesDeadlineDay(r.dueBy, dueDay))) return false;
       if (clientFilter && (clientFilter === 'none' ? !!r.clientId : r.clientId !== clientFilter)) {
         return false;
       }
@@ -376,7 +390,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
       });
     }
     return filtered;
-  }, [rows, query, filter, hired, sort, clientFilter]);
+  }, [rows, query, filter, hired, sort, clientFilter, dueDay]);
 
   // Distinct clients present in the roster, for the dropdown — derived from
   // the rows themselves so no extra fetch (and no /clients dependency).
@@ -403,19 +417,24 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           without scrolling a table. */}
       {counts && counts.total > 0 && (
         <KpiStrip>
-          <Kpi label="Associates" value={counts.total} />
-          <Kpi label="Authorized" value={counts.authorized} tone="text-success" />
-          <Kpi label="Pending" value={counts.pending} />
+          {/* Each number is the filter for the rows it counts. */}
+          <Kpi label="Associates" value={counts.total} onClick={() => setFilter('all')} active={filter === 'all'} />
+          <Kpi label="Authorized" value={counts.authorized} tone="text-success" onClick={() => setFilter('authorized')} active={filter === 'authorized'} />
+          <Kpi label="Pending" value={counts.pending} onClick={() => setFilter('pending')} active={filter === 'pending'} />
           <Kpi
             label="Nonconfirmation"
             value={counts.nonconfirmation}
             tone={counts.nonconfirmation > 0 ? 'text-alert' : undefined}
+            onClick={() => setFilter('issue')}
+            active={filter === 'issue'}
           />
-          <Kpi label="Not yet run" value={counts.notRun} />
+          <Kpi label="Not yet run" value={counts.notRun} onClick={() => setFilter('not_run')} active={filter === 'not_run'} />
           <Kpi
             label="Overdue"
             value={counts.overdue}
             tone={counts.overdue > 0 ? 'text-alert' : undefined}
+            onClick={() => setFilter('overdue')}
+            active={filter === 'overdue'}
           />
           <Kpi
             label="Blocked"
@@ -423,6 +442,17 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
             tone={counts.blocked > 0 ? 'text-warning' : undefined}
           />
         </KpiStrip>
+      )}
+
+      {rows && (
+        <DeadlineStrip
+          title="Case deadlines"
+          what="E-Verify cases to open"
+          // Open deadlines only: a case already opened has met its clock.
+          dueDates={rows.filter((r) => !r.caseOpenedAt).map((r) => r.dueBy)}
+          selectedDay={dueDay}
+          onSelectDay={setDueDay}
+        />
       )}
 
       {truncated && (

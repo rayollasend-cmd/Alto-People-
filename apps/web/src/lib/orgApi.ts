@@ -442,24 +442,6 @@ export function listAssociateHistory(
   return apiFetch(`/org/associates/${associateId}/history`);
 }
 
-export function getAssociateAsOf(
-  associateId: string,
-  when?: string,
-): Promise<{
-  when: string;
-  snapshot: {
-    managerId: string | null;
-    departmentId: string | null;
-    costCenterId: string | null;
-    jobProfileId: string | null;
-    state: string | null;
-    hourlyRate: string | null;
-  } | null;
-}> {
-  const q = when ? `?when=${encodeURIComponent(when)}` : '';
-  return apiFetch(`/org/associates/${associateId}/as-of${q}`);
-}
-
 /**
  * Brief 2-1b steps 4–7 — the organization behind the people: employers of
  * record, the organizational tree, and the sites.
@@ -565,8 +547,6 @@ export const createOrgUnit = (body: OrgUnitInput) => apiFetch<{ unit: OrgUnitRow
 export const updateOrgUnit = (id: string, body: Partial<Omit<OrgUnitInput, 'type'>> & { isActive?: boolean }) =>
   apiFetch<{ unit: OrgUnitRow }>(`/admin/org-units/${encodeURIComponent(id)}`, { method: 'PATCH', body });
 export const deleteOrgUnit = (id: string) => apiFetch<void>(`/admin/org-units/${encodeURIComponent(id)}`, { method: 'DELETE' });
-export const setOrgUnitSites = (id: string, locationIds: string[]) =>
-  apiFetch<void>(`/admin/org-units/${encodeURIComponent(id)}/sites`, { method: 'PUT', body: { locationIds } });
 
 export interface UnitSite {
   id: string;
@@ -574,12 +554,6 @@ export interface UnitSite {
   clientId: string | null;
   clientName: string | null;
   orgUnitId: string | null;
-}
-export const listOrgUnitSites = (id: string) => apiFetch<{ sites: UnitSite[] }>(`/admin/org-units/${encodeURIComponent(id)}/sites`);
-
-/** Depth from the path: a root is 0. */
-export function unitDepth(path: string): number {
-  return Math.max(0, path.split('/').filter(Boolean).length - 1);
 }
 
 /* ----- Sites ------------------------------------------------------------- */

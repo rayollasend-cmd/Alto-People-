@@ -1,6 +1,5 @@
 import type {
   BankAccountCreateInput,
-  BankAccountUpdateInput,
   BankBulkAction,
   BankBulkResult,
   BankCategorizeInput,
@@ -18,7 +17,6 @@ import type {
   BankTxnCounts,
   BankSuggestionsBatch,
   BankTxnStatus,
-  BankTxnSuggestions,
   BankTxnView,
   BankUndoInput,
   BankUndoResult,
@@ -34,7 +32,6 @@ export const listLedgerAccountOptions = () => apiFetch<{ accounts: BankLedgerAcc
 export const listBankAccounts = () => apiFetch<{ accounts: BankFeedAccountView[] }>(`${B}/accounts`);
 export const getBankAccount = (id: string) => apiFetch<{ account: BankFeedAccountView }>(`${B}/accounts/${id}`);
 export const createBankAccount = (body: BankAccountCreateInput) => apiFetch<{ account: BankFeedAccountView }>(`${B}/accounts`, { method: 'POST', body });
-export const updateBankAccount = (id: string, body: BankAccountUpdateInput) => apiFetch<{ account: BankFeedAccountView }>(`${B}/accounts/${id}`, { method: 'PATCH', body });
 
 export function listBankTransactions(id: string, q: { status?: BankTxnStatus; q?: string } = {}) {
   const p = new URLSearchParams();
@@ -50,7 +47,6 @@ export const importBankFile = (id: string, body: { filename: string; content: st
   apiFetch<BankImportResult>(`${B}/accounts/${id}/import`, { method: 'POST', body, timeoutMs: 120_000 });
 export const syncBankAccount = (id: string) => apiFetch<BankImportResult>(`${B}/accounts/${id}/sync`, { method: 'POST', timeoutMs: 120_000 });
 
-export const getTxnSuggestions = (id: string) => apiFetch<BankTxnSuggestions>(`${B}/transactions/${id}/suggestions`);
 /** A page of suggestions in one request. */
 /** A page's suggestions — asked in chunks of 200 (the API's limit), so "Show more" never outgrows it. */
 export async function getTxnSuggestionsBatch(ids: string[]): Promise<BankSuggestionsBatch> {

@@ -87,6 +87,10 @@ async function loadResponse(tenantId: string): Promise<OrgBranding> {
       roleChangeApproval: true,
       requisitionApproval: true,
       payrollReviewRequired: true,
+      remitToName: null,
+      remitToAddress: null,
+      remitToInstructions: null,
+      cashMinimum: null,
       updatedAt: new Date(0).toISOString(),
     };
   }
@@ -114,6 +118,10 @@ async function loadResponse(tenantId: string): Promise<OrgBranding> {
     roleChangeApproval: row.roleChangeApproval,
     requisitionApproval: row.requisitionApproval,
     payrollReviewRequired: row.payrollReviewRequired,
+    remitToName: row.remitToName,
+    remitToAddress: row.remitToAddress,
+    remitToInstructions: row.remitToInstructions,
+    cashMinimum: row.cashMinimum === null ? null : Number(row.cashMinimum),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -155,6 +163,10 @@ orgSettingsRouter.patch(
         mfaRequirement: body.mfaRequirement ?? 'OFF',
         financeMailbox: body.financeMailbox ?? null,
         unverifiedPayoutPolicy: body.unverifiedPayoutPolicy ?? 'PREVIOUS_VERIFIED',
+        remitToName: body.remitToName ?? null,
+        remitToAddress: body.remitToAddress ?? null,
+        remitToInstructions: body.remitToInstructions ?? null,
+        cashMinimum: body.cashMinimum ?? null,
       },
       update: body,
     });

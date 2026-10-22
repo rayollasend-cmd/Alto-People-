@@ -13,6 +13,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusIncidentsPanel } from '@/components/status/StatusIncidentsPanel';
+import { ScheduledJobsCard } from '@/components/reliability/ScheduledJobsCard';
 import { useAuth, useTenant } from '@/lib/auth';
 import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 
@@ -425,6 +426,9 @@ export function ReliabilityHome() {
         <Bus className="ml-2 h-3.5 w-3.5" aria-hidden="true" />
         Ride completion counts seats past their pickup time; cancellations are left out.
       </p>
+
+      {/* ---- The timers: what each scheduled job did last and does next -- */}
+      <ScheduledJobsCard canRun={can('manage:org')} />
 
       {/* ---- The public status page: the operator posts incidents here --- */}
       {operator && <StatusIncidentsPanel />}

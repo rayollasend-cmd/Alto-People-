@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { CalendarClock, MessageSquare } from 'lucide-react';
+import { AlertTriangle, CalendarClock, MessageSquare, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   InterviewScorecardSchema,
@@ -13,7 +13,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtRelativeDate } from '@/lib/format';
+import { fmtDateTime, fmtRelativeDate, fmtTime } from '@/lib/format';
 import {
   addCandidateNote,
   listCandidateEvents,
@@ -25,6 +25,8 @@ import { useClients } from '@/lib/useClients';
 import {
   createInterview,
   listInterviewKits,
+  listInterviewers,
+  listInterviews,
   listJobPostings,
   scoreInterview,
   updateInterview,
@@ -245,6 +247,40 @@ function toLocalInput(iso: string): string {
 }
 
 const LENGTHS = [15, 30, 45, 60, 90];
+/** An interview panel holds at most this many people (the API's limit). */
+const MAX_PANEL = 3;
+
+/** Local midnight to midnight around an instant, as ISO — one day's calendar. */
+function dayWindow(at: Date): { from: string; to: string } {
+  const start = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+/**
+ * Who on the panel is already booked against this slot: their interviews
+ * that day which overlap [at, at + minutes), the one being moved aside.
+ * Advisory — two interviews can share a slot on purpose.
+ */
+export function panelOverlaps(
+  slotStart: Date,
+  minutes: number,
+  busy: Array<{ userId: string; interviews: InterviewRecord[] }>,
+  skipInterviewId: string | null,
+): Array<{ userId: string; start: Date; end: Date }> {
+  const s0 = slotStart.getTime();
+  const s1 = s0 + minutes * 60_000;
+  const out: Array<{ userId: string; start: Date; end: Date }> = [];
+  for (const b of busy) {
+    for (const iv of b.interviews) {
+      if (iv.id === skipInterviewId || iv.completedAt) continue;
+      const a0 = new Date(iv.scheduledFor).getTime();
+      const a1 = a0 + iv.durationMinutes * 60_000;
+      if (a0 < s1 && s0 < a1) out.push({ userId: b.userId, start: new Date(a0), end: new Date(a1) });
+    }
+  }
+  return out;
+}
 
 /**
  * Schedule an interview — or, given one, move it. Either way the candidate
@@ -271,7 +307,8 @@ export function ScheduleInterviewDialog({
   const [length, setLength] = useState(30);
   const [where, setWhere] = useState('');
   const [kitId, setKitId] = useState('');
-  const [mine, setMine] = useState(true);
+  // The panel: up to three interviewers, the scheduler by default.
+  const [panel, setPanel] = useState<string[]>([]);
   const [notify, setNotify] = useState(true);
   const [saving, setSaving] = useState(false);
   const kitsQuery = useQuery({
@@ -282,13 +319,54 @@ export function ScheduleInterviewDialog({
   });
   // A failed kit load still lets them schedule — just without a kit.
   const kits: InterviewKit[] | null = kitsQuery.isError ? [] : (kitsQuery.data?.kits ?? null);
+  // Staff with hiring permissions, plus the posting client's contacts.
+  const peopleQuery = useQuery({
+    queryKey: ['recruiting', 'interviewers', candidate.id],
+    queryFn: () => listInterviewers(candidate.id),
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+  const people = peopleQuery.data?.interviewers ?? [];
+  const nameOf = (id: string) =>
+    people.find((p) => p.id === id)?.name ??
+    interview?.interviewers?.find((i) => i.userId === id)?.name ??
+    (id === user?.id ? 'You' : 'Interviewer');
+  // Each panel member's interviews that day, to warn on a double booking.
+  const slot = when ? new Date(when) : null;
+  const slotOk = slot !== null && !Number.isNaN(slot.getTime());
+  const day = slotOk ? dayWindow(slot) : null;
+  const busyQuery = useQuery({
+    queryKey: ['recruiting', 'interviews', 'panel-day', panel.join(','), day?.from ?? ''],
+    queryFn: () =>
+      Promise.all(
+        panel.map((userId) =>
+          listInterviews(undefined, { interviewerUserId: userId, from: day!.from, to: day!.to }).then((r) => ({
+            userId,
+            interviews: r.interviews,
+          })),
+        ),
+      ),
+    enabled: open && panel.length > 0 && day !== null,
+    staleTime: 60_000,
+  });
+  const clashes = slotOk && busyQuery.data ? panelOverlaps(slot, length, busyQuery.data, interview?.id ?? null) : [];
 
   useEffect(() => {
     if (!open) return;
     setWhen(interview ? toLocalInput(interview.scheduledFor) : defaultSlot());
     setLength(interview?.durationMinutes ?? 30);
     setWhere(interview?.location ?? '');
-    setMine(true);
+    setPanel(
+      interview
+        ? interview.interviewers?.length
+          ? interview.interviewers.map((i) => i.userId)
+          : interview.interviewerUserId
+            ? [interview.interviewerUserId]
+            : []
+        : user
+          ? [user.id]
+          : [],
+    );
     setNotify(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, interview?.id]);
@@ -306,6 +384,8 @@ export function ScheduleInterviewDialog({
             scheduledFor: at.toISOString(),
             durationMinutes: length,
             location: where.trim() || null,
+            interviewerUserIds: panel,
+            interviewerUserId: panel[0] ?? null,
             notify,
           })
         : await createInterview({
@@ -314,10 +394,11 @@ export function ScheduleInterviewDialog({
             durationMinutes: length,
             location: where.trim() || null,
             kitId: kitId || null,
-            interviewerUserId: mine && user ? user.id : null,
+            interviewerUserIds: panel,
+            interviewerUserId: panel[0] ?? null,
             notify,
           });
-      const who = [res.invited.candidate && candidate.firstName, res.invited.interviewer && 'the interviewer']
+      const who = [res.invited.candidate && candidate.firstName, res.invited.interviewer && (panel.length > 1 ? 'the panel' : 'the interviewer')]
         .filter(Boolean)
         .join(' and ');
       toast.success(
@@ -391,15 +472,72 @@ export function ScheduleInterviewDialog({
                   </Select>
                 )}
               </Field>
-              <label className="flex items-center gap-2 text-sm text-white coarse:min-h-11">
-                <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} className="h-4 w-4 accent-gold" />
-                I'm doing this interview
-              </label>
             </>
+          )}
+          <Field
+            label="Interviewers"
+            hint={panel.length >= MAX_PANEL ? `A panel holds up to ${MAX_PANEL} people.` : 'Up to three — a hiring manager, a client contact, you.'}
+          >
+            {(p) => (
+              <div className="space-y-2">
+                {panel.length > 0 && (
+                  <ul className="flex flex-wrap gap-1.5" aria-label="Chosen interviewers">
+                    {panel.map((id) => (
+                      <li key={id}>
+                        <Badge variant="outline" className="gap-1 pr-1">
+                          {nameOf(id)}
+                          <button
+                            type="button"
+                            className="rounded p-0.5 text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                            onClick={() => setPanel((prev) => prev.filter((x) => x !== id))}
+                            aria-label={`Remove ${nameOf(id)}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Select
+                  {...p}
+                  value=""
+                  disabled={panel.length >= MAX_PANEL || people.length === 0}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    if (id) setPanel((prev) => (prev.includes(id) || prev.length >= MAX_PANEL ? prev : [...prev, id]));
+                  }}
+                >
+                  <option value="">
+                    {peopleQuery.isLoading ? 'Loading people…' : peopleQuery.isError ? 'Could not load people' : 'Add an interviewer…'}
+                  </option>
+                  {people
+                    .filter((x) => !panel.includes(x.id))
+                    .map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name}
+                        {x.clientName ? ` · ${x.clientName}` : ''}
+                      </option>
+                    ))}
+                </Select>
+              </div>
+            )}
+          </Field>
+          {clashes.length > 0 && (
+            <div role="status" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-2 text-xs text-ink">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+              <ul className="space-y-0.5">
+                {clashes.map((c, i) => (
+                  <li key={`${c.userId}-${i}`}>
+                    {nameOf(c.userId)} already has an interview {fmtTime(c.start)}–{fmtTime(c.end)}.
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           <label className="flex items-center gap-2 text-sm text-white coarse:min-h-11">
             <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} className="h-4 w-4 accent-gold" />
-            Email {candidate.firstName} and the interviewer a calendar invite
+            Email {candidate.firstName} and {panel.length > 1 ? 'the panel' : 'the interviewer'} a calendar invite
           </label>
         </div>
         <DialogFooter>

@@ -55,6 +55,8 @@ import { FilterChip } from '@/components/ui/FilterBar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { useI18n } from '@/lib/i18n';
+import { useMediaQuery } from '@/lib/useViewport';
 
 const POLL_MS = 30_000;
 
@@ -160,6 +162,20 @@ export function groupNotifications(list: readonly Notification[], min = 3): Bell
   return out;
 }
 
+/**
+ * What a folded group is called: its bucket's name ("12 schedule changes"),
+ * else its kind in words ("10 overdue timesheet reminders" for
+ * `overdue_timesheet_reminder`) — never `10 like "Overdue at Coastal…"`,
+ * which read as a fragment of one of them (role walk floor 23).
+ */
+export function groupTitle(n: number, category: string | null, bucketLabel: string | null): string {
+  if (bucketLabel) return `${n} ${bucketLabel.toLowerCase()}`;
+  const words = (category ?? '').replace(/[._-]+/g, ' ').trim().toLowerCase();
+  if (!words) return `${n} notifications`;
+  if (/(reminder|alert|notice|request|update|change|message)$/.test(words)) return `${n} ${words}s`;
+  return `${n} ${words} notifications`;
+}
+
 type BellFilter = 'all' | 'mine';
 const FILTER_KEY = 'alto.bell.filter.v1';
 function readFilter(key: string): BellFilter {
@@ -174,7 +190,13 @@ export function NotificationsBell() {
   // The full inbox page is a communications screen; portal accounts read
   // their notifications here in the panel only.
   const { can, user } = useAuth();
+  const { t } = useI18n();
   const hasInboxPage = can('view:communications');
+  // A tooltip is a hover affordance. On touch the first tap both opened the
+  // "Notifications" tooltip and the panel, and the tooltip sat on top of
+  // "Mark all read" (role walk floor 23) — so touch gets no tooltip at all:
+  // one tap opens the panel. The aria-label still names the button.
+  const canHover = useMediaQuery('(hover: hover) and (pointer: fine)');
   const [items, setItems] = useState<Notification[] | null>(null);
   const [total, setTotal] = useState(0);
   const [open, setOpen] = useState(false);
@@ -418,7 +440,7 @@ export function NotificationsBell() {
     const meta = categoryMeta(newest.category);
     const isOpen = openGroups.has(key);
     const unread = group.filter((x) => !x.readAt).length;
-    const title = meta.label ? `${group.length} ${meta.label.toLowerCase()}` : `${group.length} like “${newest.subject ?? 'this'}”`;
+    const title = groupTitle(group.length, newest.category, meta.label);
     return (
       <div key={`group:${key}`}>
         <DropdownMenuItem
@@ -450,10 +472,10 @@ export function NotificationsBell() {
             </span>
             <div className="min-w-0 flex-1">
               <div className={cn('text-sm truncate', meta.urgent ? 'text-alert' : 'text-ink', unread > 0 && 'font-medium')}>{title}</div>
-              <div className="text-xs leading-snug text-silver truncate">Latest: {newest.subject ?? newest.body}</div>
+              <div className="text-xs leading-snug text-silver truncate">{t('bell.latest', { text: newest.subject ?? newest.body })}</div>
               <div className="text-2xs text-silver/80 mt-0.5 tabular-nums">
                 {fmt(newest.createdAt)}
-                {unread > 0 ? ` · ${unread} unread` : ''}
+                {unread > 0 ? ` · ${t('bell.nUnread', { n: unread })}` : ''}
               </div>
             </div>
             <ChevronRight className={cn('mt-1 h-4 w-4 shrink-0 text-silver transition-transform', isOpen && 'rotate-90')} aria-hidden="true" />
@@ -470,7 +492,7 @@ export function NotificationsBell() {
                 className="w-full rounded-none py-1.5 pl-8 pr-3 text-2xs text-gold cursor-pointer focus:bg-navy-secondary data-[highlighted]:bg-navy-secondary/60"
               >
                 <CheckCheck className="mr-1 h-3 w-3" aria-hidden="true" />
-                Mark these {unread} read
+                {t('bell.markTheseRead', { n: unread })}
               </DropdownMenuItem>
             )}
             {group.map((n) => renderItem(n, true))}
@@ -486,18 +508,14 @@ export function NotificationsBell() {
       <span aria-live="polite" role="status" className="sr-only">
         {announcement}
       </span>
-      <Tooltip>
-        <TooltipTrigger asChild>
+      {(() => {
+        const trigger = (
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon-sm"
               className="relative"
-              aria-label={
-                unseenCount > 0
-                  ? `Notifications (${unseenCount} new)`
-                  : 'Notifications'
-              }
+              aria-label={unseenCount > 0 ? t('bell.ariaNew', { n: unseenCount }) : t('bell.title')}
             >
               <span
                 className={cn('inline-flex origin-top', swing && 'animate-bell-swing')}
@@ -522,13 +540,18 @@ export function NotificationsBell() {
               )}
             </Button>
           </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {unseenCount > 0
-            ? `${unseenCount} new notification${unseenCount === 1 ? '' : 's'}`
-            : 'Notifications'}
-        </TooltipContent>
-      </Tooltip>
+        );
+        // Touch: no tooltip — the tap is for the panel (floor 23).
+        if (!canHover) return trigger;
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+            <TooltipContent side="bottom">
+              {unseenCount > 0 ? t(unseenCount === 1 ? 'bell.oneNew' : 'bell.nNew', { n: unseenCount }) : t('bell.title')}
+            </TooltipContent>
+          </Tooltip>
+        );
+      })()}
 
       <DropdownMenuContent
         align="end"
@@ -539,7 +562,7 @@ export function NotificationsBell() {
       >
         <DropdownMenuLabel className="flex items-center justify-between gap-2 px-3 py-2.5">
           <span className="text-xs uppercase tracking-widest text-silver">
-            Inbox
+            {t('bell.inbox')}
           </span>
           {unreadCount > 0 && (
             <button
@@ -548,17 +571,17 @@ export function NotificationsBell() {
               className="inline-flex items-center gap-1 rounded text-2xs text-gold hover:text-gold-bright focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             >
               <CheckCheck className="h-3 w-3" />
-              Mark all read
+              {t('bell.markAllRead')}
             </button>
           )}
         </DropdownMenuLabel>
         {items && items.length > 0 && (
-          <div className="flex gap-1 px-3 pb-2" role="group" aria-label="Which notifications">
+          <div className="flex gap-1 px-3 pb-2" role="group" aria-label={t('bell.whichAria')}>
             <FilterChip active={filter === 'mine'} onClick={() => setFilter('mine')}>
-              Needs me{needsMeCount ? ` (${needsMeCount})` : ''}
+              {needsMeCount ? t('bell.needsMeN', { n: needsMeCount }) : t('bell.needsMe')}
             </FilterChip>
             <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
-              Everything
+              {t('bell.everything')}
             </FilterChip>
           </div>
         )}
@@ -580,7 +603,7 @@ export function NotificationsBell() {
           )}
           {loadError && (
             <div className="p-6 text-center text-sm text-alert">
-              Failed to load. Retrying…
+              {t('bell.failed')}
             </div>
           )}
           {items && items.length === 0 && (
@@ -588,22 +611,20 @@ export function NotificationsBell() {
               <div className="mx-auto h-10 w-10 rounded-full bg-navy-secondary/60 grid place-items-center mb-3">
                 <Inbox className="h-5 w-5 text-silver" aria-hidden="true" />
               </div>
-              <p className="text-sm text-white">All caught up</p>
-              <p className="text-xs text-silver mt-1">
-                You'll see new in-app messages here.
-              </p>
+              <p className="text-sm text-white">{t('bell.caughtUp')}</p>
+              <p className="text-xs text-silver mt-1">{t('bell.caughtUpBody')}</p>
             </div>
           )}
           {items && items.length > 0 && filter === 'mine' && shown.length === 0 && (
             <EmptyState
               size="sm"
               className="p-6"
-              title="Nothing is waiting on you here"
+              title={t('bell.nothingMine')}
               description={
                 <>
-                  Everything is read or for your information.{' '}
+                  {t('bell.nothingMineBody')}{' '}
                   <button type="button" className="text-gold hover:underline" onClick={() => setFilter('all')}>
-                    Show everything
+                    {t('bell.showEverything')}
                   </button>
                 </>
               }
@@ -621,7 +642,7 @@ export function NotificationsBell() {
           <>
             <DropdownMenuSeparator className="m-0" />
             <p className="px-3 py-2 text-center text-2xs text-silver/60">
-              Showing the latest {shown.length} of {listTotal}
+              {t('bell.showingLatest', { shown: shown.length, total: listTotal })}
             </p>
           </>
         )}
@@ -636,8 +657,8 @@ export function NotificationsBell() {
               }}
               className="w-full px-3 py-2 coarse:min-h-11 text-2xs text-center text-silver/80 hover:text-gold-bright hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:bg-navy-secondary"
             >
-              Showing {shown.length} of {listTotal} —{' '}
-              <span className="text-gold">View all in Inbox</span>
+              {t('bell.showing', { shown: shown.length, total: listTotal })} —{' '}
+              <span className="text-gold">{t('bell.viewAll')}</span>
             </button>
           </>
         )}

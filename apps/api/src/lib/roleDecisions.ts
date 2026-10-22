@@ -9,6 +9,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { type Capability, type Role, can as userCan } from '@alto-people/shared';
 import { computeNoShowRisk } from './noShowRisk.js';
+import { coverageGapLabel, coverageGapPath, coverageGapsForUser } from './coverageGaps.js';
 import { companyWorkweek, startOfWeekUTC } from './timeAnomalies.js';
 import { pendingDeskApprovals, pendingDeskShiftFills, runningCapabilityKeys } from './agentCapabilities.js';
 import { I9_SECTION2, blockerWords, pendingSection2, section2Link } from './complianceAgent.js';
@@ -16,6 +17,7 @@ import { INCIDENT_LOOP, closable, incidentWhere, openDays, openIncidents, severi
 import { COVERAGE_CREDENTIALS, latestCoverage } from './credentialCoverage.js';
 import { tenantIdForWrite } from './tenant.js';
 import { addDaysInZone, localDateKey } from './timezone.js';
+import { addBusinessDays } from './everifyReadiness.js';
 
 const DAY_MS = 24 * 3600_000;
 /** Company-local "YYYY-MM-DD" (the company's own zone, the same one its
@@ -62,7 +64,9 @@ const ROLE_PROFILES: Partial<
 > = {
   SHIFT_SUPERVISOR: { lead: ['site-ops', 'people'], exclude: [] },
   FINANCE_ACCOUNTANT: { lead: ['money'], exclude: [] },
-  HR_ADMINISTRATOR: { lead: ['hiring', 'compliance', 'people'], exclude: [] },
+  // Role walk HR 2: the HR desk leads with legal deadlines; chasing a
+  // client's statement is Finance's, not hers.
+  HR_ADMINISTRATOR: { lead: ['compliance', 'hiring', 'people'], exclude: ['money'] },
   OPERATIONS_MANAGER: { lead: ['site-ops', 'people', 'money'], exclude: [] },
   MANAGER: { lead: ['people', 'site-ops'], exclude: ['money', 'compliance', 'hiring'] },
   INTERNAL_RECRUITER: { lead: ['hiring', 'compliance'], exclude: ['money', 'site-ops', 'people'] },
@@ -214,11 +218,15 @@ export async function computeRoleDecisions(
     }
   }
   if (can('manage:scheduling')) {
+    // isOpenShift (@alto-people/shared): published, OPEN and not over yet —
+    // the one rule every "open shifts" count reads, here narrowed to the
+    // next 24 hours. A shift that ended unfilled is history, never a decision.
     const openWhere = {
       publishedAt: { not: null },
       status: 'OPEN' as const,
       assignedAssociateId: null,
       startsAt: { gte: now, lt: new Date(now.getTime() + DAY_MS) },
+      endsAt: { gt: now },
       ...clientClamp,
     };
     const [openToday, openSpan, claims] = await Promise.all([
@@ -278,6 +286,25 @@ export async function computeRoleDecisions(
         stakes: null,
         ageDays: null,
         linkUrl: '/approvals?tab=pickups',
+      });
+    }
+    // The hole in tonight's crew (lib/coverageGaps): a window this person
+    // leads today with fewer scheduled than the store contracted. The
+    // same definition feeds the Inbox, so the bell and the badge agree
+    // with the home's notice instead of saying "all clear" above 0 of 6.
+    for (const g of await coverageGapsForUser(prisma, user.id, now)) {
+      out.push({
+        key: `coverage:${g.window.locationId}:${g.window.label}`,
+        domain: 'site-ops',
+        severity: 'high',
+        label: coverageGapLabel(g),
+        detail:
+          g.openShiftIds.length > 0
+            ? `${g.openShiftIds.length} open shift${g.openShiftIds.length === 1 ? '' : 's'} in the window — fill from the bench.`
+            : 'Nothing is posted for the window yet — add shifts on today’s schedule.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: coverageGapPath(g),
       });
     }
   }
@@ -546,6 +573,11 @@ export async function computeRoleDecisions(
     }
   }
 
+  /* ----- Legal clocks on the HR desk (role walk HR 2) ---------------------- */
+  // One item a record, so the home lands on the case itself; more than
+  // PER_RECORD_CAP of a kind fold into one summary that opens the list.
+  await pushLegalDeadlines(prisma, can, out, now);
+
   /* ----- Money (payroll / finance) ---------------------------------------- */
   if (can('settle:reimbursement')) {
     const toSettle = await prisma.reimbursement.count({
@@ -752,4 +784,174 @@ export async function computeRoleDecisions(
     return (b.stakes ?? 0) - (a.stakes ?? 0);
   });
   return filtered;
+}
+
+/** More than this many dated records of one kind fold into a single summary item. */
+const PER_RECORD_CAP = 5;
+
+/**
+ * The HR desk's legal clocks, one item a record (role walk HR 2): an
+ * E-Verify mismatch opens that person's case; an unemployment claim says
+ * "respond by"; a leave case says when its notice is owed; onboarding
+ * drafts idle a week fold into one item. Each list past PER_RECORD_CAP
+ * becomes one summary linking the filtered list instead.
+ */
+async function pushLegalDeadlines(
+  prisma: PrismaClient,
+  can: (c: Capability) => boolean,
+  out: RoleDecision[],
+  now: Date,
+): Promise<void> {
+  const tenantId = tenantIdForWrite();
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  const ageOf = (d: Date) => Math.max(0, Math.floor((now.getTime() - d.getTime()) / DAY_MS));
+
+  if (can('manage:compliance')) {
+    const tncs = await prisma.i9Verification.findMany({
+      where: {
+        tenantId,
+        eVerifyStatus: 'TENTATIVE_NONCONFIRMATION',
+        eVerifyTncDecision: null,
+        associate: { deletedAt: null, separatedAt: null },
+      },
+      orderBy: { eVerifyCaseOpenedAt: 'asc' },
+      select: { associateId: true, eVerifyCaseOpenedAt: true, associate: { select: { firstName: true, lastName: true } } },
+      take: 50,
+    });
+    if (tncs.length > PER_RECORD_CAP) {
+      out.push({
+        key: 'everify:tnc',
+        domain: 'compliance',
+        severity: 'critical',
+        label: `${tncs.length} E-Verify mismatches to act on`,
+        detail: 'Give each employee the notice and record whether they will take action — the federal clock is running.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/compliance?tab=everify&status=issue',
+      });
+    } else {
+      for (const t of tncs) {
+        out.push({
+          key: `everify:tnc:${t.associateId}`,
+          domain: 'compliance',
+          severity: 'critical',
+          label: `E-Verify mismatch for ${t.associate.firstName} ${t.associate.lastName}`,
+          detail: 'Give them the further-action notice and record whether they will take action — the federal clock is running.',
+          stakes: null,
+          ageDays: t.eVerifyCaseOpenedAt ? ageOf(t.eVerifyCaseOpenedAt) : null,
+          linkUrl: `/compliance?tab=everify&associateId=${t.associateId}`,
+        });
+      }
+    }
+  }
+
+  if (can('manage:claims')) {
+    const claims = await prisma.unemploymentClaim.findMany({
+      where: { tenantId, status: 'NEW', responseDueAt: { lte: new Date(now.getTime() + 7 * DAY_MS) } },
+      orderBy: { responseDueAt: 'asc' },
+      select: { id: true, state: true, responseDueAt: true, associate: { select: { firstName: true, lastName: true } } },
+      take: 50,
+    });
+    if (claims.length > PER_RECORD_CAP) {
+      out.push({
+        key: 'claims:ui-due',
+        domain: 'compliance',
+        severity: 'critical',
+        label: `${claims.length} unemployment claims to answer, the first by ${day(claims[0]!.responseDueAt)}`,
+        detail: 'A late response loses the right to contest and can charge the claim to your account.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/claims/unemployment',
+      });
+    } else {
+      for (const c of claims) {
+        const late = c.responseDueAt.getTime() < now.getTime() - DAY_MS;
+        out.push({
+          key: `claims:ui:${c.id}`,
+          domain: 'compliance',
+          severity: late || c.responseDueAt.getTime() <= now.getTime() + 2 * DAY_MS ? 'critical' : 'high',
+          label: `${late ? 'Overdue' : 'Respond by'} ${day(c.responseDueAt)}: ${c.associate.firstName} ${c.associate.lastName}'s ${c.state} unemployment claim`,
+          detail: 'A late response loses the right to contest and can charge the claim to your account.',
+          stakes: null,
+          ageDays: null,
+          linkUrl: `/claims/unemployment?claim=${c.id}`,
+        });
+      }
+    }
+  }
+
+  if (can('manage:leave')) {
+    const soon = new Date(now.getTime() + 3 * DAY_MS);
+    const cases = await prisma.leaveCase.findMany({
+      where: {
+        tenantId,
+        OR: [
+          { status: 'REQUESTED', noticeSentAt: null },
+          { status: 'PENDING_CERTIFICATION', certificationReceivedAt: null, certificationDueAt: { lte: soon } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        certificationDueAt: true,
+        associate: { select: { firstName: true, lastName: true } },
+      },
+      take: 50,
+    });
+    // FMLA: the eligibility notice within 5 business days of the request.
+    const dueOf = (c: (typeof cases)[number]) => (c.status === 'REQUESTED' ? addBusinessDays(c.createdAt, 5) : c.certificationDueAt!);
+    if (cases.length > PER_RECORD_CAP) {
+      out.push({
+        key: 'leave:notices',
+        domain: 'compliance',
+        severity: 'high',
+        label: `${cases.length} leave cases with a notice or certification due`,
+        detail: 'Eligibility notices are owed within 5 business days of the request.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/leave',
+      });
+    } else {
+      for (const c of cases) {
+        const due = dueOf(c);
+        const who = `${c.associate.firstName} ${c.associate.lastName}`;
+        out.push({
+          key: `leave:notice:${c.id}`,
+          domain: 'compliance',
+          severity: due.getTime() < now.getTime() ? 'critical' : 'high',
+          label:
+            c.status === 'REQUESTED'
+              ? `Send ${who} the leave notice by ${day(due)}`
+              : `${who}'s medical certification is due ${day(due)}`,
+          detail:
+            c.status === 'REQUESTED'
+              ? 'The eligibility and rights notice is owed within 5 business days of the request.'
+              : 'Follow up now — the leave cannot be designated without it.',
+          stakes: null,
+          ageDays: ageOf(c.createdAt),
+          linkUrl: `/leave?case=${c.id}`,
+        });
+      }
+    }
+  }
+
+  if (can('manage:onboarding')) {
+    const idle = await prisma.application.count({
+      where: { tenantId, deletedAt: null, status: 'DRAFT', updatedAt: { lt: new Date(now.getTime() - 7 * DAY_MS) } },
+    });
+    if (idle > 0) {
+      out.push({
+        key: 'onboarding:idle-drafts',
+        domain: 'hiring',
+        severity: idle >= 5 ? 'high' : 'normal',
+        label: `${idle} onboarding draft${idle === 1 ? '' : 's'} idle more than 7 days`,
+        detail: 'Invited and not moving — a nudge now keeps the start date.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/onboarding?status=DRAFT',
+      });
+    }
+  }
 }

@@ -21,7 +21,8 @@ import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { computeRoleDecisions } from '../lib/roleDecisions.js';
 import { deskMayDecide } from '../lib/agentCapabilities.js';
 import { decideApproval } from '../lib/agents.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone } from '../lib/timezone.js';
+import { formatTimeInZone } from '../lib/timezone.js';
+import { companyWorkweek } from '../lib/timeAnomalies.js';
 
 /**
  * The collaborative work layer under every dashboard:
@@ -270,9 +271,20 @@ async function computeItemFacts(
       ? key.slice('risk:tomorrow:'.length)
       : null;
     const risky = await computeNoShowRisk(prisma, new Date(), clientId);
+    // Each row on its own store's clock (one shift, one time — role walk,
+    // ops 2); a shift with no store reads in the company's zone.
+    const siteTz = new Map(
+      (
+        await prisma.site.findMany({
+          where: { id: { in: [...new Set(risky.map((r) => r.locationId).filter((id): id is string => !!id))] } },
+          select: { id: true, timezone: true },
+        })
+      ).map((s) => [s.id, s.timezone]),
+    );
+    const companyTz = companyWorkweek().timezone;
     for (const r of risky.slice(0, 8)) {
       list.push(
-        `${formatTimeInZone(r.startsAt, DEFAULT_TIMEZONE)} ${r.position} — ${r.holderName} (${r.points} pts, 90d)`,
+        `${formatTimeInZone(r.startsAt, (r.locationId && siteTz.get(r.locationId)) || companyTz)} ${r.position} — ${r.holderName} (${r.points} pts, 90d)`,
       );
     }
   } else if (key.startsWith('shifts:open-24h')) {
@@ -287,14 +299,16 @@ async function computeItemFacts(
         startsAt: { gte: new Date(), lt: new Date(Date.now() + 24 * 3600_000) },
         ...(clientId ? { clientId } : {}),
       },
-      select: { position: true, startsAt: true, location: true, client: { select: { name: true } } },
+      select: { position: true, startsAt: true, location: true, client: { select: { name: true } }, locationRel: { select: { name: true, timezone: true } } },
       orderBy: { startsAt: 'asc' },
       take: 8,
     });
+    const companyTz = companyWorkweek().timezone;
     for (const s of shifts) {
-      list.push(
-        `${formatTimeInZone(s.startsAt, DEFAULT_TIMEZONE)} ${s.position} — ${s.location ?? s.client?.name ?? ''}`,
-      );
+      // The store's clock, and the store (or client) by name — never
+      // "Housekeeper —" for the company's own shift.
+      const where = s.locationRel?.name ?? s.location ?? s.client?.name ?? 'the company';
+      list.push(`${formatTimeInZone(s.startsAt, s.locationRel?.timezone ?? companyTz)} ${s.position} — ${where}`);
     }
   }
   return { facts, list };

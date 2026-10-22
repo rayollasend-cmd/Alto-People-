@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigationType } from 'react-router-dom';
 import { noteRouteChange } from '@/lib/webVitals';
+import { startProductSession } from '@/lib/productEvents';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { CommandPalette, useCommandPalette } from '@/components/ui/CommandPalette';
 import {
@@ -120,6 +121,10 @@ export function Layout() {
   useEffect(() => {
     noteRouteChange(location.pathname);
   }, [location.pathname]);
+  // The behaviour events' session: once per tab, from the first signed-in shell.
+  useEffect(() => {
+    startProductSession();
+  }, []);
   const navigationType = useNavigationType();
   const mainRef = useRef<HTMLElement>(null);
   // True while a page chunk is still on the wire — see lib/chunkLoading.

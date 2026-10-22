@@ -85,7 +85,7 @@ robotsRouter.post('/sample', MANAGE, wrap(async (_req, res) => {
 
 robotsRouter.get('/checklists/templates', VIEW, wrap(async (req, res) => {
   const locationId = typeof req.query.locationId === 'string' && Uuid.safeParse(req.query.locationId).success ? req.query.locationId : null;
-  res.json({ templates: await listChecklistTemplates(prisma, locationId, tenantIdForWrite()) });
+  res.json({ templates: await listChecklistTemplates(prisma, locationId, tenantIdForWrite(), { all: req.query.all === '1' }) });
 }));
 
 robotsRouter.post('/checklists/templates', MANAGE, wrap(async (req, res) => {

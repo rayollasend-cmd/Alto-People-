@@ -79,23 +79,6 @@ export const archiveCourse = (id: string) =>
 export const deleteCourse = (id: string) =>
   apiFetch<void>(`/courses/${id}`, { method: 'DELETE' });
 
-export const listModules = (courseId: string) =>
-  apiFetch<{ modules: CourseModule[] }>(`/courses/${courseId}/modules`);
-
-export const addModule = (
-  courseId: string,
-  input: {
-    kind: CourseModuleKind;
-    title: string;
-    content?: Record<string, unknown>;
-    order?: number;
-  },
-) =>
-  apiFetch<{ id: string }>(`/courses/${courseId}/modules`, {
-    method: 'POST',
-    body: input,
-  });
-
 export const enrollAssociates = (courseId: string, associateIds: string[]) =>
   apiFetch<{ created: number; skipped: number }>(`/courses/${courseId}/enroll`, {
     method: 'POST',

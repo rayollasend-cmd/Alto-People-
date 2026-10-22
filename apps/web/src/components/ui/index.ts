@@ -35,3 +35,4 @@ export * from './Tabs';
 export * from './Toaster';
 export * from './Tooltip';
 export * from './ViewToggle';
+export * from './StickyActionBar';

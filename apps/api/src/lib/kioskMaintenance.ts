@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { armJob, stopJob } from './jobs.js';
 import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -370,31 +371,21 @@ export async function runKioskMaintenance(
   };
 }
 
-let timer: NodeJS.Timeout | null = null;
+export const KIOSK_MAINTENANCE_JOB = 'kioskMaintenance';
 
+/** On by default (KIOSK_MAINTENANCE_INTERVAL_SECONDS=3600). */
 export function startKioskMaintenanceCron(): void {
-  if (timer) return;
-  const seconds = env.KIOSK_MAINTENANCE_INTERVAL_SECONDS;
-  if (seconds <= 0) return;
-  void tenantJob('kioskMaintenance', runKioskMaintenance)().catch((err) => {
-    console.error('[alto-people/api] kiosk maintenance failed:', err);
+  armJob({
+    name: KIOSK_MAINTENANCE_JOB,
+    label: 'Kiosk maintenance (forgotten clock-outs, selfie and face-template retention)',
+    intervalSeconds: env.KIOSK_MAINTENANCE_INTERVAL_SECONDS,
+    run: tenantJob(KIOSK_MAINTENANCE_JOB, runKioskMaintenance),
+    note:
+      `KIOSK_MAINTENANCE_INTERVAL_SECONDS; forgotten-shift threshold ${FORGOTTEN_CLOCKOUT_AFTER_HOURS}h, ` +
+      `selfie retention ${SELFIE_RETENTION_DAYS}d, face-template dormant cutoff ${FACE_REFERENCE_DORMANT_DAYS}d.`,
   });
-  timer = setInterval(() => {
-    void tenantJob('kioskMaintenance', runKioskMaintenance)().catch((err) => {
-      console.error('[alto-people/api] kiosk maintenance failed:', err);
-    });
-  }, seconds * 1000);
-  timer.unref();
-  console.log(
-    `[alto-people/api] kiosk maintenance cron armed (every ${seconds}s; ` +
-      `forgotten-shift threshold ${FORGOTTEN_CLOCKOUT_AFTER_HOURS}h, ` +
-      `selfie retention ${SELFIE_RETENTION_DAYS}d, ` +
-      `face-template dormant cutoff ${FACE_REFERENCE_DORMANT_DAYS}d)`,
-  );
 }
 
 export function stopKioskMaintenanceCron(): void {
-  if (!timer) return;
-  clearInterval(timer);
-  timer = null;
+  stopJob(KIOSK_MAINTENANCE_JOB);
 }

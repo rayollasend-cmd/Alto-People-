@@ -478,6 +478,33 @@ describe('POST /org/associates/:id/erase', () => {
     expect(untouchedPast.assignedAssociateId).toBe(seeded.associate.id);
   });
 
+  it('deletes the sign-in tracking — the days the login was used and the IPs it came from (audit #15)', async () => {
+    const client = await createClient();
+    const seeded = await seedFullAssociate(client.id);
+    await prisma.userActivityDay.createMany({
+      data: [
+        { userId: seeded.user.id, day: new Date('2026-09-01'), role: 'ASSOCIATE' },
+        { userId: seeded.user.id, day: new Date('2026-09-02'), role: 'ASSOCIATE' },
+      ],
+    });
+    await prisma.userKnownIp.createMany({
+      data: [
+        { userId: seeded.user.id, ip: '203.0.113.7', timezone: 'America/Chicago' },
+        { userId: seeded.user.id, ip: '198.51.100.22' },
+      ],
+    });
+    const hr = await seedHrAdmin();
+
+    const r = await hr.post(`/org/associates/${seeded.associate.id}/erase`).send({
+      reason: 'Right-to-deletion request, ticket #5150',
+      confirmName: 'Gonzalez',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.counts).toMatchObject({ activityDaysDeleted: 2, knownIpsDeleted: 2 });
+    expect(await prisma.userActivityDay.count({ where: { userId: seeded.user.id } })).toBe(0);
+    expect(await prisma.userKnownIp.count({ where: { userId: seeded.user.id } })).toBe(0);
+  });
+
   it('409s on a last-name confirmation mismatch and changes nothing', async () => {
     const client = await createClient();
     const seeded = await seedFullAssociate(client.id);

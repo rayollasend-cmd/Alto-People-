@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { LocalTaxRulesSection } from '@/components/payroll/LocalTaxRulesSection';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -197,6 +198,7 @@ export function TaxJurisdictions() {
           }}
         />
         <Reciprocity />
+        <LocalTaxRulesSection />
       </div>
       <JurisdictionDrawer row={open} onClose={() => setOpen(null)} />
     </ListTemplate>

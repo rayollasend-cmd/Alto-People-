@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { CalendarCheck, CalendarClock, CheckCircle2, FileText, MapPin, Upload, UserRound } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { confirmPortalInterview, getCandidatePortal, uploadPortalDocument, type CandidatePortal } from '@/lib/candidatePortalApi';
+import { confirmPortalInterview, getCandidatePortal, submitPortalEeo, uploadPortalDocument, type CandidatePortal } from '@/lib/candidatePortalApi';
+import { EeoSelfIdCard } from '@/pages/onboarding/EeoSelfIdCard';
 import { fmtDate } from '@/lib/format';
 import { Logo } from '@/components/Logo';
 import { Badge } from '@/components/ui/Badge';
@@ -216,6 +217,9 @@ export function CandidatePortalPage() {
               </ul>
             )}
           </Panel>
+
+          {/* Voluntary EEO self-identification (audit 2026-10-21 #14). */}
+          <EeoSelfIdCard answered={!!data.eeoAnswered} onSubmit={(input) => submitPortalEeo(token, input)} />
 
           <p className="text-center text-xs text-ink-muted">
             This link is yours alone and works until {fmtDate(data.expiresAt)}. Questions? Reply to the email your recruiter sent.

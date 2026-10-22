@@ -5,6 +5,7 @@ import {
   randomInt,
   timingSafeEqual,
 } from 'node:crypto';
+import { KIOSK_PIN_LENGTH, KIOSK_PIN_REGEX } from '@alto-people/shared';
 import { jobSecret } from './jobSecrets.js';
 
 /**
@@ -40,9 +41,9 @@ function pinSecret(): string {
 }
 
 export function hmacPin(pin: string): Buffer<ArrayBuffer> {
-  // Validate format here so we never HMAC garbage. 4-digit numeric only.
-  if (!/^\d{4}$/.test(pin)) {
-    throw new Error('PIN must be exactly 4 digits.');
+  // Validate format here so we never HMAC garbage. Numeric only, the shared length.
+  if (!KIOSK_PIN_REGEX.test(pin)) {
+    throw new Error(`PIN must be exactly ${KIOSK_PIN_LENGTH} digits.`);
   }
   return Buffer.from(createHmac('sha256', pinSecret()).update(pin).digest());
 }

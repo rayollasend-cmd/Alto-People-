@@ -45,11 +45,16 @@ export interface StatementSnapshot {
     hours: number;
     regularHours: number;
     otHours: number;
-    /** Hours + adjustments. */
+    /** What the client owes: subtotal + sales tax (hours + adjustments before 2026-10-21). */
     amount: number;
     /** The hours alone, and the adjustments alone (absent on older snapshots). */
     hoursAmount?: number;
     adjustmentsAmount?: number;
+    /** Hours + adjustments, before tax (absent on snapshots that predate sales tax: then equal to amount). */
+    subtotal?: number;
+    /** The client's sales tax rate on this statement (percent) and the tax it adds; absent or 0 = not taxable. */
+    salesTaxRatePct?: number;
+    salesTax?: number;
   };
   sla: {
     publishedShifts: number;
@@ -65,6 +70,32 @@ export interface StatementSnapshot {
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
+
+export type StatementTotals = StatementSnapshot['totals'];
+
+/**
+ * The one place a statement's money is totalled (audit 2026-10-21 #17: the
+ * invoice's sales tax was always $0.00 because nothing computed one). Given
+ * the hours part, the adjustments part and the client's rate, it returns the
+ * subtotal, the tax and the amount the client owes — every caller that
+ * rebuilds a snapshot's totals (finalize claims adjustments, the adjustments-
+ * only statement) goes through here, so the tax survives a recompute.
+ */
+export function totalsWithTax(parts: { hoursAmount: number; adjustmentsAmount: number; salesTaxRatePct: number | null | undefined }): Pick<StatementTotals, 'amount' | 'hoursAmount' | 'adjustmentsAmount' | 'subtotal' | 'salesTaxRatePct' | 'salesTax'> {
+  const hoursAmount = round2(parts.hoursAmount);
+  const adjustmentsAmount = round2(parts.adjustmentsAmount);
+  const subtotal = round2(hoursAmount + adjustmentsAmount);
+  const rate = parts.salesTaxRatePct && parts.salesTaxRatePct > 0 ? Number(parts.salesTaxRatePct) : 0;
+  const salesTax = rate > 0 ? round2((subtotal * rate) / 100) : 0;
+  return { hoursAmount, adjustmentsAmount, subtotal, salesTaxRatePct: rate, salesTax, amount: round2(subtotal + salesTax) };
+}
+
+/** The sales tax rate a client's statements carry: its rate when taxable, else nothing. */
+export async function clientSalesTaxRate(db: Db, clientId: string): Promise<number | null> {
+  const c = await db.client.findUnique({ where: { id: clientId }, select: { salesTaxable: true, salesTaxRatePct: true } });
+  if (!c?.salesTaxable || c.salesTaxRatePct == null) return null;
+  return Number(c.salesTaxRatePct);
+}
 
 function netMinutes(e: {
   clockInAt: Date;
@@ -87,7 +118,7 @@ export async function computeStatementSnapshot(
   periodEndExclusive: Date,
 ): Promise<StatementSnapshot> {
   const [client, entries, rateDefaults, positions, locations] = await Promise.all([
-    db.client.findUniqueOrThrow({ where: { id: clientId }, select: { name: true } }),
+    db.client.findUniqueOrThrow({ where: { id: clientId }, select: { name: true, salesTaxable: true, salesTaxRatePct: true } }),
     db.timeEntry.findMany({
       where: {
         clientId,
@@ -319,9 +350,7 @@ export async function computeStatementSnapshot(
       hours: round2((regularMin + otMin) / 60),
       regularHours: round2(regularMin / 60),
       otHours: round2(otMin / 60),
-      amount: round2(totalAmount + adjustmentsAmount),
-      hoursAmount: round2(totalAmount),
-      adjustmentsAmount,
+      ...totalsWithTax({ hoursAmount: totalAmount, adjustmentsAmount, salesTaxRatePct: client.salesTaxable && client.salesTaxRatePct != null ? Number(client.salesTaxRatePct) : null }),
     },
     sla: {
       publishedShifts: published,

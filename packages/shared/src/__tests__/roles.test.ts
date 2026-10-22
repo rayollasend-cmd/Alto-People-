@@ -49,19 +49,56 @@ describe('hasCapability', () => {
     for (const c of ALL_CAPS) expect(hasCapability('HR_ADMINISTRATOR', c)).toBe(true);
   });
 
-  // Per product policy, OPERATIONS_MANAGER, MANAGER and INTERNAL_RECRUITER
-  // share the HR_ADMINISTRATOR capability surface. The role label still
-  // differs so audit logs reflect functional capacity. WORKFORCE_MANAGER
-  // left this list with `3cf2e12d`, MARKETING_MANAGER on 2026-10-17 — each
-  // has its own charter, tested below.
+  // Per product policy, OPERATIONS_MANAGER and MANAGER share the
+  // HR_ADMINISTRATOR capability surface. The role label still differs so
+  // audit logs reflect functional capacity. WORKFORCE_MANAGER left this list
+  // with `3cf2e12d`, MARKETING_MANAGER on 2026-10-17 and INTERNAL_RECRUITER
+  // on 2026-10-21 (system audit #16) — each has its own charter, tested below.
   it.each([
     'OPERATIONS_MANAGER',
     'MANAGER',
-    'INTERNAL_RECRUITER',
   ] as const)('%s mirrors HR_ADMINISTRATOR capability set', (role) => {
     for (const c of ALL_CAPS) expect(hasCapability(role, c)).toBe(true);
     expect(hasCapability(role, 'view:hr-admin')).toBe(true);
     expect(hasCapability(role, 'view:audit')).toBe(true);
+  });
+
+  it('INTERNAL_RECRUITER holds the recruiting charter, not an admin clone (audit #16)', () => {
+    // The funnel end to end, the hand-off into onboarding, and reads of the
+    // people, documents and compliance a hire depends on.
+    expect([...ROLE_CAPABILITIES.INTERNAL_RECRUITER].sort()).toEqual(
+      [
+        'view:dashboard',
+        'view:recruiting',
+        'manage:recruiting',
+        'view:onboarding',
+        'invite:onboarding',
+        'view:org',
+        'view:documents',
+        'view:compliance',
+        'view:communications',
+        'view:analytics',
+        'view:marketing',
+      ].sort(),
+    );
+    // What a URL used to reach: SSN reveal (process:payroll), role and user
+    // changes (manage:org), API keys (manage:integrations), the admin lists
+    // and the audit log.
+    for (const c of [
+      'process:payroll',
+      'manage:org',
+      'manage:onboarding',
+      'manage:integrations',
+      'view:integrations',
+      'view:hr-admin',
+      'view:audit',
+      'view:payroll',
+      'manage:comp',
+      'export:payroll-pii',
+      'manage:compliance',
+    ] as const) {
+      expect(hasCapability('INTERNAL_RECRUITER', c), c).toBe(false);
+    }
   });
 
   it('MARKETING_MANAGER holds the employer-brand charter, not an admin clone', () => {
@@ -252,10 +289,13 @@ describe('hasCapability', () => {
     // It is deliberately NOT process:payroll: running the pay cycle is a
     // job six roles do, and "may run payroll" is not "may pull up this
     // named person's paystub".
-    for (const role of ['INTERNAL_RECRUITER', 'MANAGER'] as const) {
+    for (const role of ['MANAGER'] as const) {
       expect(hasCapability(role, 'process:payroll'), role).toBe(true);
       expect(hasCapability(role, 'view:payroll-documents'), role).toBe(false);
     }
+    // The recruiter holds neither since its own charter (audit #16).
+    expect(hasCapability('INTERNAL_RECRUITER', 'process:payroll')).toBe(false);
+    expect(hasCapability('INTERNAL_RECRUITER', 'view:payroll-documents')).toBe(false);
 
     // And holding it is not enough for an SSN-bearing form: the W-2 route
     // also demands export:payroll-pii, which two of these four hold. If

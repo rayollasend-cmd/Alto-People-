@@ -10,7 +10,6 @@ import { AuthContext } from '@/lib/auth';
 vi.mock('@/lib/seasonPlansApi', () => ({
   listSeasonPlans: vi.fn(),
   getSeasonPlan: vi.fn(),
-  getSeasonPlanDefaults: vi.fn(),
   createSeasonPlan: vi.fn(),
   updateSeasonPlan: vi.fn(),
   duplicateSeasonPlan: vi.fn(),

@@ -18,7 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { TimeOffRequest } from '@alto-people/shared';
+import { TIMESHEET_QUEUE_WINDOW_DAYS, timesheetQueuePath, type TimeOffRequest } from '@alto-people/shared';
 import {
   approveAdminRequest,
   bulkDecideRequests,
@@ -29,6 +29,7 @@ import {
   approveOpenShiftClaim,
   listAdminSwaps,
   listOpenShiftClaims,
+  listUnconfirmedShifts,
   managerApproveSwap,
   managerRejectSwap,
   rejectOpenShiftClaim,
@@ -41,7 +42,8 @@ import {
 } from '@/lib/timeApi';
 import type { ClockInRequestRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtRelativeDayTz, fmtTime, parseYmd } from '@/lib/format';
+import { fmtDate, fmtRelativeDayTz, fmtTime, parseYmd, ymdLocal } from '@/lib/format';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useSelection } from '@/lib/useSelection';
@@ -68,6 +70,7 @@ import { Textarea } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { AdminUnconfirmedPanel } from '@/pages/scheduling/AdminApprovalPanels';
+import { PendingTimesheetsPanel } from '@/pages/time/PendingTimesheetsPanel';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ProposalList } from '@/components/agents/ProposalDecision';
 import { listMyProposals, MY_PROPOSALS_KEY } from '@/lib/agentProposalsApi';
@@ -156,7 +159,7 @@ const when = (iso: string) => `${fmtRelativeDayTz(iso)} · ${fmtTime(iso)}`;
 
 
 /** The queues on the desk, in the order they are worked. */
-type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'proposals' | 'requests' | 'unconfirmed';
+type QueueKey = 'walk-ins' | 'time-off' | 'swaps' | 'pickups' | 'proposals' | 'requests' | 'timesheets' | 'unconfirmed';
 
 /** ?tab= names a queue (the links' contract: swaps, pickups, walkins,
  *  timeoff, proposals, requests, unconfirmed); an item param names one row
@@ -170,7 +173,33 @@ const TAB_QUEUES: Record<string, QueueKey> = {
   'time-off': 'time-off',
   proposals: 'proposals',
   requests: 'requests',
+  timesheets: 'timesheets',
   unconfirmed: 'unconfirmed',
+};
+
+/* The shifts nobody has confirmed — the same cache entry the chase panel
+ * reads (AdminApprovalPanels), so the count on the tile is its list. */
+const unconfirmedQuery = {
+  queryKey: ['approvals', 'unconfirmed'] as const,
+  queryFn: async () => {
+    try {
+      return (await listUnconfirmedShifts()).shifts;
+    } catch {
+      return [];
+    }
+  },
+};
+
+/** The queue's name and its one-line state, by count — translated. */
+const QUEUE_TEXT: Record<QueueKey, { label: MessageKey; busy: MessageKey; idle: MessageKey }> = {
+  'walk-ins': { label: 'appr.q.walkIns', busy: 'appr.q.walkInsBusy', idle: 'appr.q.walkInsIdle' },
+  'time-off': { label: 'appr.q.timeOff', busy: 'appr.q.timeOffBusy', idle: 'appr.q.idle' },
+  swaps: { label: 'appr.q.swaps', busy: 'appr.q.swapsBusy', idle: 'appr.q.idle' },
+  pickups: { label: 'appr.q.pickups', busy: 'appr.q.pickupsBusy', idle: 'appr.q.idle' },
+  proposals: { label: 'appr.q.proposals', busy: 'appr.q.proposalsBusy', idle: 'appr.q.idle' },
+  requests: { label: 'appr.q.requests', busy: 'appr.q.requestsBusy', idle: 'appr.q.idle' },
+  timesheets: { label: 'appr.q.timesheets', busy: 'appr.q.timesheetsBusy', idle: 'appr.q.idle' },
+  unconfirmed: { label: 'appr.q.unconfirmed', busy: 'appr.q.unconfirmedBusy', idle: 'appr.q.unconfirmedIdle' },
 };
 export function queueFromParams(p: URLSearchParams): QueueKey | null {
   if (p.get('request')) return 'time-off';
@@ -185,6 +214,7 @@ export function queueFromParams(p: URLSearchParams): QueueKey | null {
 export function ApprovalsHome() {
   const queryClient = useQueryClient();
   const { can } = useAuth();
+  const { t } = useI18n();
   // The tenant's full approval record (Settings & trust → Audit) is for the audit desk, admins and Finance.
   const canReadRecord = can('view:audit') || can('manage:org') || can('process:payroll');
   // Pull down from the top = refetch everything on the page — the gesture
@@ -225,9 +255,18 @@ export function ApprovalsHome() {
   const pickups = useQuery(pickupsQuery);
   const proposals = useQuery(proposalsQuery);
   const requests = useQuery(requestsQuery);
+  const unconfirmed = useQuery(unconfirmedQuery);
 
   const timesheetCount = timesheetQuery.data?.count ?? null;
   const timesheetFailed = timesheetQuery.isError;
+  // The full queue opens on the rows the count counted: the oldest pending
+  // day through today (shared timesheetQueuePath — one link everywhere).
+  const today = ymdLocal();
+  const windowStart = ymdLocal(new Date(Date.now() - TIMESHEET_QUEUE_WINDOW_DAYS * 86_400_000));
+  const oldestPending = timesheetQuery.data?.oldestPendingAt ? ymdLocal(new Date(timesheetQuery.data.oldestPendingAt)) : null;
+  const timesheetLink = timesheetCount
+    ? timesheetQueuePath({ from: oldestPending ?? windowStart, to: today })
+    : '/time-attendance?tab=queue';
   const timeOff = timeOffQ.data ?? null;
   const timeOffError = timeOffQ.isError
     ? timeOffQ.error instanceof Error
@@ -261,45 +300,51 @@ export function ApprovalsHome() {
   const clear = loaded && decisions === 0 && !anyError;
 
   const subtitle = !loaded
-    ? 'Everything waiting on your decision, in one place.'
+    ? t('appr.subtitle')
     : decisions === 0
       ? timesheetCount
-        ? `No decisions waiting — ${timesheetCount} timesheet${timesheetCount === 1 ? '' : 's'} to review.`
-        : 'Nothing waiting on you.'
-      : `${decisions} decision${decisions === 1 ? '' : 's'} waiting${
-          oldestWalkIn ? ` — someone has been at the kiosk ${waitingSince(oldestWalkIn).replace('waiting ', '')}` : ''
+        ? t(timesheetCount === 1 ? 'appr.subNoDecisionsOneSheet' : 'appr.subNoDecisionsSheets', { n: timesheetCount })
+        : t('appr.subNothing')
+      : `${t(decisions === 1 ? 'appr.subOneDecision' : 'appr.subDecisions', { n: decisions })}${
+          oldestWalkIn ? ` — ${t('appr.subKiosk', { since: waitingSince(oldestWalkIn).replace('waiting ', '') })}` : ''
         }.`;
 
   // ---- The desk (design system §4.5, UX upgrade step 6): the queues on
   // the left with their counts, the open queue's worklist on the right with
   // the decisions inside it. On a phone the queue list is the page and the
   // worklist opens over it.
+  const unconfirmedCount = unconfirmed.data?.length;
+  const queueRow = (key: QueueKey, value: number | null | undefined, extra: { sub?: string; urgent?: boolean } = {}) => ({
+    key,
+    label: t(QUEUE_TEXT[key].label),
+    value,
+    sub: extra.sub ?? t(value ? QUEUE_TEXT[key].busy : QUEUE_TEXT[key].idle),
+    urgent: extra.urgent,
+  });
+  // The desk order, the order they are worked. Timesheets and the
+  // unconfirmed chase are queues like the rest (role walk HR 16, floor 7):
+  // counted, opened here, and folded with the zeros when empty.
   const queues: Array<{ key: QueueKey; label: string; value: number | null | undefined; sub: string; urgent?: boolean }> = [
     ...(counts.walkIns !== null
       ? [
-          {
-            key: 'walk-ins' as const,
-            label: 'Walk-ins',
-            value: counts.walkIns,
-            sub: counts.walkIns
-              ? oldestWalkIn
-                ? `Oldest ${waitingSince(oldestWalkIn)}`
-                : 'At the kiosk'
-              : 'No one at the kiosk',
+          queueRow('walk-ins', counts.walkIns, {
+            sub: counts.walkIns && oldestWalkIn ? t('appr.q.walkInsOldest', { since: waitingSince(oldestWalkIn) }) : undefined,
             urgent: !!counts.walkIns,
-          },
+          }),
         ]
       : []),
-    { key: 'time-off', label: 'Time off', value: timeOffError ? null : counts.timeOff, sub: counts.timeOff ? 'Decide before the dates' : 'Nothing pending' },
-    { key: 'swaps', label: 'Swaps', value: swaps.isError ? null : counts.swaps, sub: counts.swaps ? 'Peer already said yes' : 'Nothing pending' },
-    { key: 'pickups', label: 'Pickups', value: pickups.isError ? null : counts.pickups, sub: counts.pickups ? 'Approve to fill the shift' : 'Nothing pending' },
-    { key: 'proposals', label: 'Agent proposals', value: proposals.isError ? null : counts.proposals, sub: counts.proposals ? 'An agent proposes; you decide' : 'Nothing pending' },
-    { key: 'requests', label: 'Second person', value: requests.isError ? null : counts.requests, sub: counts.requests ? 'Pay, access and offboarding changes' : 'Nothing pending' },
+    queueRow('time-off', timeOffError ? null : counts.timeOff),
+    queueRow('swaps', swaps.isError ? null : counts.swaps),
+    queueRow('pickups', pickups.isError ? null : counts.pickups),
+    queueRow('proposals', proposals.isError ? null : counts.proposals),
+    queueRow('requests', requests.isError ? null : counts.requests),
+    queueRow('timesheets', timesheetFailed ? null : timesheetQuery.data ? timesheetCount : undefined),
+    queueRow('unconfirmed', unconfirmedCount),
   ];
   const firstWithWork = queues.find((q) => typeof q.value === 'number' && q.value > 0)?.key ?? null;
   const openQueue: QueueKey | null = picked ?? (loaded ? firstWithWork : null);
   const openCount = queues.find((q) => q.key === openQueue)?.value;
-  const openLabel = queues.find((q) => q.key === openQueue)?.label ?? 'Not confirmed yet';
+  const openLabel = queues.find((q) => q.key === openQueue)?.label ?? t('appr.q.unconfirmed');
 
   // When the queue being worked runs dry, move on to the next one with
   // work (in desk order, wrapping) instead of leaving an empty panel —
@@ -324,7 +369,7 @@ export function ApprovalsHome() {
     const next = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))]
       .map((k) => queues.find((q) => q.key === k)!)
       .find((q) => typeof q.value === 'number' && q.value > 0);
-    const doneLabel = queues.find((q) => q.key === picked)?.label ?? 'That queue';
+    const doneLabel = queues.find((q) => q.key === picked)?.label ?? t('appr.thatQueue');
     if (next) {
       toast.success(`${doneLabel} is clear — on to ${next.label.toLowerCase()}.`);
       setPicked(next.key);
@@ -336,57 +381,66 @@ export function ApprovalsHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picked, openCount, decisionsInFlight]);
 
+  // What has work first, in desk order; still loading or failed next (a
+  // count nobody knows is not "clear"); the zeros fold into one row of
+  // chips under "All clear" (role walk HR 16, floor 7) — still named, still
+  // a tap away, no longer a wall of tiles above the one queue with work.
+  const withWork = queues.filter((q) => typeof q.value === 'number' && q.value > 0);
+  const unknown = queues.filter((q) => q.value === null || q.value === undefined);
+  const quiet = queues.filter((q) => q.value === 0);
   const queue = (
     <div className="space-y-3 animate-enter">
-      {queues.map((q) => (
-        <QueueTile
-          key={q.key}
-          label={q.label}
-          value={q.value}
-          sub={q.sub}
-          urgent={q.urgent}
-          selected={openQueue === q.key}
-          onClick={() => setPicked(q.key)}
-        />
-      ))}
-      <button
-        type="button"
-        onClick={() => setPicked('unconfirmed')}
-        aria-pressed={openQueue === 'unconfirmed'}
-        className={cn(
-          'flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-          openQueue === 'unconfirmed' && 'border-gold/60 bg-gold/[0.04]',
-        )}
-      >
-        <span className="min-w-0">
-          <span className="block text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">Not confirmed yet</span>
-          <span className="mt-0.5 block truncate text-xs text-ink-muted">Shifts in the next 48h nobody has confirmed — chase by phone</span>
-        </span>
-        <BellRing className="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
-      </button>
-      {timesheetFailed ? (
-        <div className="rounded-lg border border-alert/40 bg-surface px-4 py-3">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">Timesheets</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
-            <span role="alert" className="text-alert">
-              Couldn't load
-            </span>
-            <Button size="xs" variant="outline" onClick={() => timesheetQuery.refetch()}>
-              Retry
-            </Button>
+      {[...withWork, ...unknown].map((q) =>
+        q.key === 'timesheets' && timesheetFailed ? (
+          <div key={q.key} className="rounded-lg border border-alert/40 bg-surface px-4 py-3">
+            <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">{q.label}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+              <span role="alert" className="text-alert">
+                {t('appr.couldNotLoad')}
+              </span>
+              <Button size="xs" variant="outline" onClick={() => timesheetQuery.refetch()}>
+                {t('common.retry')}
+              </Button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <Link
-          to="/time-attendance?tab=queue"
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-        >
-          <span className="min-w-0">
-            <span className="block text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">Timesheets</span>
-            <span className="mt-0.5 block truncate text-xs text-ink-muted">Review on Time & attendance</span>
-          </span>
-          <span className="shrink-0 text-2xl font-semibold tabular-nums text-ink">{timesheetCount ?? '—'}</span>
-        </Link>
+        ) : (
+          <QueueTile
+            key={q.key}
+            label={q.label}
+            value={q.value}
+            sub={q.sub}
+            urgent={q.urgent}
+            // A bell only when someone is still unconfirmed.
+            icon={q.key === 'unconfirmed' && (q.value ?? 0) > 0 ? BellRing : undefined}
+            selected={openQueue === q.key}
+            onClick={() => setPicked(q.key)}
+          />
+        ),
+      )}
+      {quiet.length > 0 && (
+        <section aria-labelledby="approvals-clear" data-testid="approvals-clear">
+          <h2 id="approvals-clear" className="mb-1.5 mt-1 text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">
+            {t('appr.allClear')}
+          </h2>
+          <ul className="flex flex-wrap gap-1.5" aria-label={t('appr.allClearAria')}>
+            {quiet.map((q) => (
+              <li key={q.key}>
+                <button
+                  type="button"
+                  onClick={() => setPicked(q.key)}
+                  aria-pressed={openQueue === q.key}
+                  className={cn(
+                    'inline-flex min-h-8 items-center gap-1.5 rounded-full border border-line px-3 text-xs text-ink-muted transition-colors hover:border-gold/40 hover:text-ink coarse:min-h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    openQueue === q.key && 'border-gold/60 text-ink',
+                  )}
+                >
+                  {q.label}
+                  <span className="tabular-nums text-ink-muted/70">0</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   );
@@ -400,6 +454,15 @@ export function ApprovalsHome() {
       <SwapsPanel />
     ) : key === 'pickups' ? (
       <PickupsPanel />
+    ) : key === 'timesheets' ? (
+      <div className="space-y-3">
+        {/* TIME's panel: the clean ones approve in one tap, the flagged ones
+            listed with their reason (pages/time/PendingTimesheetsPanel). */}
+        <PendingTimesheetsPanel />
+        <Link to={timesheetLink} className="inline-flex items-center gap-1 text-sm text-accent underline-offset-2 hover:underline">
+          {t('appr.openFullQueue')}
+        </Link>
+      </div>
     ) : key === 'requests' ? (
       <div className="space-y-3">
         <div className="flex justify-end">
@@ -436,7 +499,7 @@ export function ApprovalsHome() {
         emptyFallback={
           <EmptyState
             icon={CalendarCheck}
-            title="Everyone confirmed"
+            title={t('appr.q.unconfirmedIdle')}
             description="No shift in the next 48 hours is waiting on an “I’ll be there”."
           />
         }
@@ -453,26 +516,24 @@ export function ApprovalsHome() {
             <CalendarCheck className="h-5 w-5" aria-hidden="true" />
           </div>
           <div>
-            <div className="font-medium text-white">Nothing waiting on you</div>
-            <div className="text-sm text-silver">
-              No one at the kiosk, and no time off, swaps, pickups, agent proposals or second-person requests to decide.
-            </div>
+            <div className="font-medium text-white">{t('appr.clearTitle')}</div>
+            <div className="text-sm text-silver">{t('appr.clearBody')}</div>
           </div>
         </CardContent>
       </Card>
     ) : (
-      <EmptyState icon={ClipboardCheck} title="Pick a queue" description="Open a queue to work it here." />
+      <EmptyState icon={ClipboardCheck} title={t('appr.pickTitle')} description={t('appr.pickBody')} />
     )
   ) : (
     <div className="space-y-3">
       {picked && (
         <Button size="sm" variant="ghost" className="lg:hidden" onClick={() => setPicked(null)}>
           <ChevronLeft className="mr-1 h-4 w-4" aria-hidden="true" />
-          All queues
+          {t('appr.allQueues')}
         </Button>
       )}
       {openCount === 0 ? (
-        <EmptyState icon={CalendarCheck} title={`Nothing pending in ${openLabel.toLowerCase()}`} description="New requests land here as they arrive." />
+        <EmptyState icon={CalendarCheck} title={t('appr.nothingIn', { queue: openLabel.toLowerCase() })} description={t('appr.nothingInBody')} />
       ) : (
         panelFor(openQueue)
       )}
@@ -484,7 +545,7 @@ export function ApprovalsHome() {
       <PullToRefreshIndicator state={pullState} />
       <DelegationDialog open={coverOpen} onOpenChange={setCoverOpen} />
       <DeskTemplate
-        title="Approvals"
+        title={t('tabs.approvals')}
         subtitle={subtitle}
         className="mx-auto max-w-6xl"
         counts={
@@ -500,17 +561,19 @@ export function ApprovalsHome() {
                 void pickups.refetch();
                 void proposals.refetch();
                 void requests.refetch();
+                void unconfirmed.refetch();
+                void timesheetQuery.refetch();
               }}
             />
             {canReadRecord && (
               <Button size="sm" variant="outline" asChild>
-                <Link to="/audit/approvals">All requests</Link>
+                <Link to="/audit/approvals">{t('appr.allRequests')}</Link>
               </Button>
             )}
             <Button size="sm" variant="outline" asChild>
-              <Link to="/time-attendance?tab=queue">
+              <Link to={timesheetLink}>
                 <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Timesheets
+                {t('appr.q.timesheets')}
               </Link>
             </Button>
           </>
@@ -529,6 +592,7 @@ function QueueTile({
   value,
   sub,
   urgent = false,
+  icon: Icon,
   selected = false,
   onClick,
 }: {
@@ -536,6 +600,8 @@ function QueueTile({
   value: number | null | undefined;
   sub: string;
   urgent?: boolean;
+  /** A mark beside the count (the unconfirmed chase's bell, only above zero). */
+  icon?: LucideIcon;
   /** The queue open on the desk. */
   selected?: boolean;
   onClick?: () => void;
@@ -548,7 +614,8 @@ function QueueTile({
         <span className="block text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</span>
         {value !== undefined && value !== null && <span className="mt-0.5 block truncate text-xs text-ink-muted">{sub}</span>}
       </span>
-      <span className={cn('shrink-0 text-2xl font-semibold tabular-nums', urgent ? 'text-alert' : 'text-ink')}>
+      <span className={cn('flex shrink-0 items-center gap-2 text-2xl font-semibold tabular-nums', urgent ? 'text-alert' : 'text-ink')}>
+        {Icon && <Icon className="h-5 w-5 text-warning" aria-hidden="true" />}
         {value === undefined ? '…' : value === null ? '—' : value}
       </span>
     </>
@@ -747,6 +814,7 @@ function waitingSince(iso: string): string {
 }
 
 function WalkInClockInsPanel() {
+  const { t } = useI18n();
   const term = useTerm();
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -867,7 +935,7 @@ function WalkInClockInsPanel() {
     <QueueCard
       id="queue-walk-ins"
       icon={DoorOpen}
-      title="Walk-ins at the kiosk"
+      title={t('appr.walkInsTitle')}
       count={items?.length ?? null}
       urgent={!!items && items.length > 0}
       actions={
@@ -910,13 +978,13 @@ function WalkInClockInsPanel() {
           <>
             {items.length > 1 && (
             <SelectAll
-              label="Select all clock-in requests"
+              label={t('appr.selectAllWalkIns')}
               allSelected={allSelected}
               someSelected={someSelected}
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60" aria-label="People waiting at the kiosk" {...kb.listProps}>
+          <ul className="divide-y divide-navy-secondary/60" aria-label={t('appr.walkInsAria')} {...kb.listProps}>
             {items.map((r) => (
               <li
                 key={r.id}
@@ -1026,7 +1094,7 @@ function WalkInClockInsPanel() {
               onChange={(e) => setDenyReason(e.target.value)}
               rows={2}
               maxLength={300}
-              placeholder="Not scheduled today — check next week's schedule."
+              placeholder={t('appr.denyWalkInPlaceholder')}
             />
           </Field>
           <DialogFooter>
@@ -1080,6 +1148,7 @@ function PendingTimeOffPanel({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [denyTarget, setDenyTarget] = useState<TimeOffRequest | 'selected' | null>(null);
@@ -1257,7 +1326,7 @@ function PendingTimeOffPanel({
     <QueueCard
       id="queue-time-off"
       icon={CalendarOff}
-      title="Time off"
+      title={t('appr.q.timeOff')}
       count={items?.length ?? null}
       stagger={3}
       actions={
@@ -1286,13 +1355,13 @@ function PendingTimeOffPanel({
           <>
             {items.length > 1 && (
             <SelectAll
-              label="Select all time-off requests"
+              label={t('appr.selectAllTimeOff')}
               allSelected={allSelected}
               someSelected={someSelected}
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60" aria-label="Pending time-off requests" {...kb.listProps}>
+          <ul className="divide-y divide-navy-secondary/60" aria-label={t('appr.timeOffAria')} {...kb.listProps}>
             {items.map((r) => (
               <li
                 key={r.id}
@@ -1385,6 +1454,7 @@ function DenyDialog({
   onSubmit: (target: TimeOffRequest | 'selected', note: string) => Promise<unknown>;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const open = target !== null;
@@ -1432,12 +1502,12 @@ function DenyDialog({
               : 'The associate will see your note in their request history.'}
           </DialogDescription>
         </DialogHeader>
-        <Field label="Note" required>
+        <Field label={t('appr.note')} required>
           {(p) => (
             <Textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Coverage gap that week, etc."
+              placeholder={t('appr.denyTimeOffPlaceholder')}
               maxLength={500}
               rows={3}
               {...p}
@@ -1460,6 +1530,7 @@ function DenyDialog({
 /* --------------------------------------------------- swaps panel */
 
 function SwapsPanel() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const showClient = !useClientBounded();
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -1527,7 +1598,7 @@ function SwapsPanel() {
     <QueueCard
       id="queue-swaps"
       icon={ArrowLeftRight}
-      title="Swaps"
+      title={t('appr.q.swaps')}
       count={items?.length ?? null}
       stagger={4}
       actions={
@@ -1551,13 +1622,13 @@ function SwapsPanel() {
           <>
             {items.length > 1 && (
             <SelectAll
-              label="Select all swap requests"
+              label={t('appr.selectAllSwaps')}
               allSelected={allSelected}
               someSelected={someSelected}
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60" aria-label="Swap requests" {...kb.listProps}>
+          <ul className="divide-y divide-navy-secondary/60" aria-label={t('appr.swapsAria')} {...kb.listProps}>
             {items.map((s) => (
               <li
                 key={s.id}
@@ -1604,7 +1675,7 @@ function SwapsPanel() {
                 </div>
                 <div className="flex items-center gap-2">
                   {s.wouldExceed40h && (
-                    <Badge variant="destructive">Over 40h</Badge>
+                    <Badge variant="destructive">{t('appr.over40')}</Badge>
                   )}
                   <Button
                     size="sm"
@@ -1638,6 +1709,7 @@ function SwapsPanel() {
 /* --------------------------------------------------- pickups panel */
 
 function PickupsPanel() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const showClient = !useClientBounded();
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -1703,7 +1775,7 @@ function PickupsPanel() {
     <QueueCard
       id="queue-pickups"
       icon={Store}
-      title="Open-shift pickups"
+      title={t('appr.pickupsTitle')}
       count={items?.length ?? null}
       stagger={5}
       actions={
@@ -1727,13 +1799,13 @@ function PickupsPanel() {
           <>
             {items.length > 1 && (
             <SelectAll
-              label="Select all pickup requests"
+              label={t('appr.selectAllPickups')}
               allSelected={allSelected}
               someSelected={someSelected}
               onToggle={toggleAll}
             />
             )}
-          <ul className="divide-y divide-navy-secondary/60" aria-label="Pickup requests" {...kb.listProps}>
+          <ul className="divide-y divide-navy-secondary/60" aria-label={t('appr.pickupsAria')} {...kb.listProps}>
             {items.map((c) => (
               <li
                 key={c.id}
@@ -1765,7 +1837,7 @@ function PickupsPanel() {
                 </div>
                 <div className="flex items-center gap-2">
                   {c.wouldExceed40h && (
-                    <Badge variant="destructive">Over 40h</Badge>
+                    <Badge variant="destructive">{t('appr.over40')}</Badge>
                   )}
                   <Button
                     size="sm"

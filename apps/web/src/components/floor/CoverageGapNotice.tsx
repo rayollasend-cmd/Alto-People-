@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { minuteOfDayInZone } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { coverShift } from '@/lib/floorApi';
+import { useI18n, type Translate } from '@/lib/i18n';
 import type { MyShiftWindow } from '@/lib/shiftWindowsApi';
 import { windowOf } from '@/pages/portal/shiftFocus';
 import type { WaveRow } from '@/pages/portal/waves';
@@ -43,12 +44,13 @@ export function coverageGaps(roster: WaveRow[], windows: MyShiftWindow[], now: D
   return gaps;
 }
 
-function windowName(w: MyShiftWindow): string {
+function windowName(w: MyShiftWindow, t: Translate): string {
   // Evening windows read as "tonight" — the way the floor says it.
-  return w.startMinute >= 17 * 60 ? `Tonight's ${w.label}` : `Today's ${w.label}`;
+  return w.startMinute >= 17 * 60 ? t('floorUi.tonightsWindow', { label: w.label }) : t('floorUi.todaysWindow', { label: w.label });
 }
 
 export function CoverageGapNotice({ gaps, today }: { gaps: CoverageGap[]; today: string }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [asked, setAsked] = useState<Record<string, boolean>>({});
@@ -67,20 +69,20 @@ export function CoverageGapNotice({ gaps, today }: { gaps: CoverageGap[]; today:
       setAsked((a) => ({ ...a, [key]: true }));
       toast.success(
         g.openShiftIds.length === 1
-          ? 'The bench is asked and the shift is posted.'
-          : `The bench is asked for ${g.openShiftIds.length - failed.length} open shifts.`,
+          ? t('floorUi.benchAskedPosted')
+          : t('floorUi.benchAskedForN', { n: g.openShiftIds.length - failed.length }),
       );
       void qc.invalidateQueries({ queryKey: ['floor'] });
       void qc.invalidateQueries({ queryKey: ['inbox'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not ask the bench.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.askBenchFailed'));
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <ul className="mb-3 space-y-2" aria-label="Short-staffed shifts today">
+    <ul className="mb-3 space-y-2" aria-label={t('floorUi.shortStaffedToday')}>
       {gaps.map((g) => {
         const key = `${g.window.locationId}:${g.window.label}`;
         const short = g.window.targetCount - g.scheduled;
@@ -92,24 +94,24 @@ export function CoverageGapNotice({ gaps, today }: { gaps: CoverageGap[]; today:
             <UsersRound className="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-ink">
-                {windowName(g.window)}: {g.scheduled} of {g.window.targetCount} scheduled
+                {t('floorUi.windowScheduledOf', { window: windowName(g.window, t), scheduled: g.scheduled, target: g.window.targetCount })}
               </p>
               <p className="text-xs text-ink-muted">
-                {short} short
+                {t('floorUi.nShort', { n: short })}
                 {g.openShiftIds.length > 0
-                  ? ` · ${g.openShiftIds.length} open ${g.openShiftIds.length === 1 ? 'shift' : 'shifts'} posted`
-                  : ' · nothing posted for the rest'}
+                  ? ` · ${t(g.openShiftIds.length === 1 ? 'floorUi.openShiftPostedOne' : 'floorUi.openShiftsPostedMany', { n: g.openShiftIds.length })}`
+                  : ` · ${t('floorUi.nothingPostedRest')}`}
                 {` · ${g.window.locationName}`}
               </p>
             </div>
             {g.openShiftIds.length > 0 ? (
               <Button size="sm" onClick={() => void fill(g)} loading={busy === key} disabled={asked[key]}>
-                {asked[key] ? 'Bench asked' : 'Fill from bench'}
+                {asked[key] ? t('floorUi.benchAsked') : t('floorUi.fillFromBench')}
               </Button>
             ) : (
               <Button size="sm" variant="secondary" asChild>
                 <Link to={`/scheduling?view=day&date=${today}`}>
-                  Add shifts <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
+                  {t('floorUi.addShifts')} <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
                 </Link>
               </Button>
             )}

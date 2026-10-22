@@ -117,6 +117,14 @@ export function acknowledgeMyPayNotice(id: string, signedName: string) {
   return apiFetch<{ notice: PayNotice }>(`/me/pay-notices/${id}/acknowledge`, { method: 'POST', body: { signedName } });
 }
 
+/** How new hires get filed here today: an electronic service, or the CSV a person uploads at the state portal. */
+export interface NewHireFilingStatus {
+  kind: 'ELECTRONIC' | 'MANUAL_UPLOAD';
+  provider: { key: string; label: string };
+  configured: boolean;
+  note: string;
+}
+
 export interface NewHireReportRow {
   id: string;
   associateId: string;
@@ -136,7 +144,7 @@ export interface NewHireReportRow {
 }
 
 export function listNewHireReports() {
-  return apiFetch<{ reports: NewHireReportRow[]; truncated: boolean }>('/pay-compliance/new-hire-reports');
+  return apiFetch<{ reports: NewHireReportRow[]; truncated: boolean; filing: NewHireFilingStatus }>('/pay-compliance/new-hire-reports');
 }
 
 export function getNewHireSettings() {

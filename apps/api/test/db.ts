@@ -151,7 +151,6 @@ const TABLES = [
   // listed so a test never inherits another test's policy or advance.
   'TimeOffPolicyAssignment',
   'TimeOffPolicy',
-  'QuickbooksCostCenterMapping',
   'ClientStatementReminder',
   'RetroPayAdjustment',
   'EarnedWageAdvance',
@@ -159,6 +158,9 @@ const TABLES = [
   // next test that reuses an id; EmailSuppression's unique email likewise.
   'ResendWebhookEvent',
   'EmailSuppression',
+  'SmsOptOut',
+  // Collections notes key to a client and a statement by id only (no FK).
+  'ClientCollectionNote',
   'PolicyAcknowledgment',
   'EsignAgreement',
   'Signature',
@@ -297,6 +299,10 @@ const TABLES = [
   'PunchPhotoRule',
   // Attestation reminder snoozes (2027-01).
   'AttestationSnooze',
+  // Trust Center gated downloads and the three product-analytics events (audit 2026-10-21).
+  'TrustDocument',
+  'TrustDownloadRequest',
+  'ProductEventDaily',
 ] as const;
 
 /** Tables truncateAll clears (CASCADE reaches everything that references them). */

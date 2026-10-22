@@ -7,6 +7,7 @@ import {
   ASSISTANT_NAME_PROMPT,
   ASSISTANT_PLATFORM_NAME,
   HEX_COLOR_REGEX,
+  MFA_REQUIREMENT_VALUES,
   ORG_LOGO_ALLOWED_TYPES,
   ORG_LOGO_MAX_BYTES,
   PRODUCT_NAME,
@@ -30,7 +31,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { Input } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -72,6 +73,8 @@ export function BrandingHome() {
   const [financeMailbox, setFinanceMailbox] = useState('');
   const [unverifiedPayoutPolicy, setUnverifiedPayoutPolicy] = useState<UnverifiedPayoutPolicy>('PREVIOUS_VERIFIED');
   const [financeSaving, setFinanceSaving] = useState(false);
+  // Finance walk / audit #17: the remit-to printed on invoices and statements, and the cash floor the forecast draws.
+  const [remit, setRemit] = useState({ name: '', address: '', instructions: '', cashMinimum: '' });
   // Approval engine (2026-10): the maker-checker switches.
   const [approvals, setApprovals] = useState({ payChangeApprovalPct: 10, payChangeAlwaysApprove: false, billRateApproval: true, separationSecondPerson: true, selfServiceApproval: false, roleChangeApproval: true, requisitionApproval: true, payrollReviewRequired: true });
   const [approvalsSaving, setApprovalsSaving] = useState(false);
@@ -100,6 +103,7 @@ export function BrandingHome() {
     setMfaRequirement(b.mfaRequirement);
     setFinanceMailbox(b.financeMailbox ?? '');
     setUnverifiedPayoutPolicy(b.unverifiedPayoutPolicy);
+    setRemit({ name: b.remitToName ?? '', address: b.remitToAddress ?? '', instructions: b.remitToInstructions ?? '', cashMinimum: b.cashMinimum === null || b.cashMinimum === undefined ? '' : String(b.cashMinimum) });
     setApprovals({
       payChangeApprovalPct: b.payChangeApprovalPct,
       payChangeAlwaysApprove: b.payChangeAlwaysApprove,
@@ -123,12 +127,22 @@ export function BrandingHome() {
 
   const financeMailboxValid =
     financeMailbox.trim() === '' || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(financeMailbox.trim());
+  const cashMinimumValue = remit.cashMinimum.trim() === '' ? null : Number(remit.cashMinimum);
+  const cashMinimumValid = cashMinimumValue === null || (Number.isFinite(cashMinimumValue) && cashMinimumValue >= 0);
   const financeDirty =
     (branding?.financeMailbox ?? '') !== financeMailbox.trim() ||
-    (branding?.unverifiedPayoutPolicy ?? 'PREVIOUS_VERIFIED') !== unverifiedPayoutPolicy;
+    (branding?.unverifiedPayoutPolicy ?? 'PREVIOUS_VERIFIED') !== unverifiedPayoutPolicy ||
+    (branding?.remitToName ?? '') !== remit.name.trim() ||
+    (branding?.remitToAddress ?? '') !== remit.address.trim() ||
+    (branding?.remitToInstructions ?? '') !== remit.instructions.trim() ||
+    (branding?.cashMinimum ?? null) !== cashMinimumValue;
   const onSaveFinance = async () => {
     if (!financeMailboxValid) {
       toast.error('Finance mailbox must be a bare address like finance@example.com.');
+      return;
+    }
+    if (!cashMinimumValid) {
+      toast.error('The cash floor is an amount of zero or more.');
       return;
     }
     setFinanceSaving(true);
@@ -136,6 +150,10 @@ export function BrandingHome() {
       const updated = await patchOrgBranding({
         financeMailbox: financeMailbox.trim() === '' ? null : financeMailbox.trim(),
         unverifiedPayoutPolicy,
+        remitToName: remit.name.trim() || null,
+        remitToAddress: remit.address.trim() || null,
+        remitToInstructions: remit.instructions.trim() || null,
+        cashMinimum: cashMinimumValue,
       });
       setBranding(updated);
       toast.success('Finance settings saved.');
@@ -560,6 +578,20 @@ export function BrandingHome() {
                   />
                 )}
               </Field>
+              <Field label="Remit to — pay to the order of" hint="Printed on every invoice and statement, and on the stub returned with a check. Empty = the employer of record’s legal name.">
+                {(p) => <Input value={remit.name} maxLength={255} placeholder="Your company LLC" onChange={(e) => setRemit((r) => ({ ...r, name: e.target.value }))} {...p} />}
+              </Field>
+              <Field label="Remit-to address" hint="One line per row: where checks go. Empty = the employer of record’s address.">
+                {(p) => (
+                  <Textarea rows={3} maxLength={500} value={remit.address} placeholder={'PO Box 12\nSpringfield, IL 62701'} onChange={(e) => setRemit((r) => ({ ...r, address: e.target.value }))} {...p} />
+                )}
+              </Field>
+              <Field label="How to pay" hint="Printed under “How to pay” on each invoice — the bank and routing for ACH, for example.">
+                {(p) => <Input value={remit.instructions} maxLength={500} placeholder="ACH to Gulf Bank, routing 011000015, account ending 4410" onChange={(e) => setRemit((r) => ({ ...r, instructions: e.target.value }))} {...p} />}
+              </Field>
+              <Field label="Cash floor" hint="The cash forecast shades the band under this amount and says when the balance dips below it. Empty = no floor.">
+                {(p) => <Input type="number" inputMode="decimal" min="0" step="100" className="w-48" value={remit.cashMinimum} placeholder="25000" onChange={(e) => setRemit((r) => ({ ...r, cashMinimum: e.target.value }))} {...p} />}
+              </Field>
               <div>
                 <Button onClick={() => void onSaveFinance()} loading={financeSaving} disabled={!financeDirty}>
                   Save Finance settings
@@ -652,7 +684,7 @@ export function BrandingHome() {
               >
                 {() => (
                   <SegmentedControl<MfaRequirement>
-                    options={(['OFF', 'ADMINS', 'ALL'] as const).map((v) => ({
+                    options={MFA_REQUIREMENT_VALUES.map((v) => ({
                       value: v,
                       label: MFA_REQUIREMENT_LABELS[v],
                     }))}

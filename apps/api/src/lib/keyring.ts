@@ -1,5 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { decryptBytes, encryptBytes, encryptWithKey, fieldKeyring, keyIdOf } from './crypto.js';
+import { KeyringError, decryptBytes, encryptBytes, encryptWithKey, fieldKeyring, keyIdOf } from './crypto.js';
+
+export { KeyringError };
 
 /**
  * Brief 2-5 steps 3 and 4 — the field-encryption keyring at work.
@@ -24,6 +26,13 @@ export interface FieldColumn {
   label: string;
   /** The column that dates a row, to explain unreadable rows by the 2026-06-11 incident. */
   dated: 'updatedAt' | 'createdAt';
+  /**
+   * A boolean column that says whether the row is sealed yet. Columns that
+   * were plain before the SOC 2 seal (kiosk selfies, face templates) carry
+   * one; the inventory counts the unsealed rows as `plaintext` and rotation
+   * leaves them to the backfill (lib/biometricFields).
+   */
+  flag?: string;
 }
 
 export const FIELD_COLUMNS: readonly FieldColumn[] = [
@@ -32,10 +41,13 @@ export const FIELD_COLUMNS: readonly FieldColumn[] = [
   { model: 'payoutMethod', column: 'accountNumberEnc', label: 'Bank account numbers', dated: 'updatedAt' },
   { model: 'i9Verification', column: 'alienRegistrationNumberEnc', label: 'I-9 alien registration numbers', dated: 'updatedAt' },
   { model: 'kioskPin', column: 'pinEncrypted', label: 'Kiosk clock-in numbers', dated: 'createdAt' },
-  { model: 'quickbooksConnection', column: 'accessTokenEnc', label: 'QuickBooks access tokens', dated: 'updatedAt' },
-  { model: 'quickbooksConnection', column: 'refreshTokenEnc', label: 'QuickBooks refresh tokens', dated: 'updatedAt' },
+  { model: 'qboCompanyConnection', column: 'accessTokenEnc', label: 'QuickBooks access tokens', dated: 'updatedAt' },
+  { model: 'qboCompanyConnection', column: 'refreshTokenEnc', label: 'QuickBooks refresh tokens', dated: 'updatedAt' },
   { model: 'identityConnection', column: 'clientSecretEnc', label: 'Identity provider client secrets', dated: 'updatedAt' },
   { model: 'integrationConnection', column: 'credentialsEnc', label: 'HR and VMS integration credentials', dated: 'updatedAt' },
+  // SOC 2 decision 7 (audit 2026-10-21 item 13): biometrics join the ring.
+  { model: 'kioskPunch', column: 'selfie', label: 'Kiosk punch selfies', dated: 'createdAt', flag: 'selfieEncrypted' },
+  { model: 'kioskFaceReference', column: 'descriptor', label: 'Kiosk face templates', dated: 'updatedAt', flag: 'descriptorEncrypted' },
 ];
 
 /** The recorded incident that explains rows written before it (docs/access-cleanup-1a4.md). */
@@ -48,8 +60,6 @@ type Delegate = {
 const delegate = (db: Db, model: string) => (db as unknown as Record<string, Delegate>)[model]!;
 
 const CANARY = (id: number) => `alto-canary:${id}`;
-
-export class KeyringError extends Error {}
 
 /**
  * Every key in the ring decrypts its canary (written now for a key seen the
@@ -92,6 +102,8 @@ export interface ColumnInventory {
   readable: number;
   unreadable: number;
   unreadableAfterIncident: number;
+  /** Rows not yet sealed (flagged columns only) — the backfill's remaining work, never a secret. */
+  plaintext: number;
   byKeyId: Record<string, number>;
 }
 
@@ -106,12 +118,16 @@ export async function inventory(db: Db): Promise<ColumnInventory[]> {
   const out: ColumnInventory[] = [];
   for (const c of FIELD_COLUMNS) {
     // An empty value holds no secret (a SAML connection has no client secret).
-    const rows = (await delegate(db, c.model).findMany({ where: present(c.model, c.column), select: { [c.column]: true, [c.dated]: true } })).filter((r) => (r[c.column] as Uint8Array | null)?.length);
-    const t: ColumnInventory = { model: c.model, column: c.column, label: c.label, rows: 0, readable: 0, unreadable: 0, unreadableAfterIncident: 0, byKeyId: {} };
+    const rows = (await delegate(db, c.model).findMany({ where: present(c.model, c.column), select: { [c.column]: true, [c.dated]: true, ...(c.flag ? { [c.flag]: true } : {}) } })).filter((r) => (r[c.column] as Uint8Array | null)?.length);
+    const t: ColumnInventory = { model: c.model, column: c.column, label: c.label, rows: 0, readable: 0, unreadable: 0, unreadableAfterIncident: 0, plaintext: 0, byKeyId: {} };
     for (const r of rows) {
       const blob = r[c.column] as Uint8Array | null;
       if (!blob) continue;
       t.rows += 1;
+      if (c.flag && r[c.flag] === false) {
+        t.plaintext += 1;
+        continue;
+      }
       const k = String(keyIdOf(blob) ?? 'unknown');
       t.byKeyId[k] = (t.byKeyId[k] ?? 0) + 1;
       try {
@@ -142,18 +158,25 @@ export interface RotationResult {
   columns: Array<{ model: string; column: string; toRotate: number; rotated: number; unreadable: number; failed: number }>;
 }
 
-/** Re-encrypt every readable value not yet under the active key; each row verified before it is saved. */
+/**
+ * Re-encrypt every readable value not yet under the active key; each row
+ * verified before it is saved, each batch of `batch` rows written in one
+ * transaction (SOC 2 step 4: a crash mid-batch leaves the batch untouched,
+ * never half under each key). Unsealed rows of flagged columns are the
+ * backfill's job (lib/biometricFields) and are skipped here.
+ */
 export async function rotate(db: Db, opts: { dryRun: boolean; batch?: number } = { dryRun: true }): Promise<RotationResult> {
   const { active } = fieldKeyring();
   const batch = opts.batch ?? 500;
   const out: RotationResult = { dryRun: opts.dryRun, activeKey: active, columns: [] };
   for (const c of FIELD_COLUMNS) {
     const d = delegate(db, c.model);
-    const rows = (await d.findMany({ where: present(c.model, c.column), select: { id: true, [c.column]: true } })).filter((r) => (r[c.column] as Uint8Array | null)?.length);
+    const rows = (await d.findMany({ where: { ...present(c.model, c.column), ...(c.flag ? { [c.flag]: true } : {}) }, select: { id: true, [c.column]: true } })).filter((r) => (r[c.column] as Uint8Array | null)?.length);
     const pending = rows.filter((r) => keyIdOf(r[c.column] as Uint8Array) !== active);
     const col = { model: c.model, column: c.column, toRotate: pending.length, rotated: 0, unreadable: 0, failed: 0 };
     if (!opts.dryRun) {
       for (let i = 0; i < pending.length; i += batch) {
+        const writes: Array<{ id: unknown; next: Buffer }> = [];
         for (const r of pending.slice(i, i + batch)) {
           let plain: Buffer;
           try {
@@ -167,9 +190,14 @@ export async function rotate(db: Db, opts: { dryRun: boolean; batch?: number } =
             col.failed += 1;
             continue;
           }
-          await d.update({ where: { id: r.id }, data: { [c.column]: next } });
-          col.rotated += 1;
+          writes.push({ id: r.id, next });
         }
+        if (writes.length === 0) continue;
+        await db.$transaction(async (tx) => {
+          const td = delegate(tx as unknown as Db, c.model);
+          for (const w of writes) await td.update({ where: { id: w.id }, data: { [c.column]: w.next } });
+        });
+        col.rotated += writes.length;
       }
     }
     out.columns.push(col);

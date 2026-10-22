@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
+import { setSmsTransportForTests } from '../../lib/sms.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
 /**
@@ -159,10 +160,22 @@ describe('the crew and the handover', () => {
     const sup = await loginAs(w.lead.email);
     const res = await sup.post('/floor/crew-text').send({ shiftIds: [mine.id, noPhone.id, theirs.id], body: 'Dock 2 opens at 5:45 — side door.' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ sent: 1, noPhone: ['Ben Ray'] });
+    // With no SMS provider the text is NOT sent, the row says so, and the
+    // answer names why — never "sent: 1" for a text that went nowhere.
+    expect(res.body).toMatchObject({ sent: 0, failed: 0, optedOut: 0, noPhone: ['Ben Ray'], notConfigured: expect.stringMatching(/Texting isn’t connected/) });
     const logged = await prisma.notification.findMany({ where: { category: 'crew-text' } });
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toMatchObject({ channel: 'SMS', recipientPhone: '+1 555 010 0100', senderUserId: w.lead.id, status: 'SENT' });
+    expect(logged[0]).toMatchObject({ channel: 'SMS', recipientPhone: '+1 555 010 0100', senderUserId: w.lead.id, status: 'NOT_CONFIGURED' });
+    // With a provider, the same call sends and the row is SENT with the SID.
+    setSmsTransportForTests(async () => ({ sid: 'SM-crew', status: 'queued' }));
+    try {
+      const again = await sup.post('/floor/crew-text').send({ shiftIds: [mine.id], body: 'Dock 2 opens at 5:45 — side door.' });
+      expect(again.body).toMatchObject({ sent: 1, notConfigured: null });
+      const sentRow = await prisma.notification.findFirst({ where: { category: 'crew-text', status: 'SENT' } });
+      expect(sentRow).toMatchObject({ externalRef: 'SM-crew' });
+    } finally {
+      setSmsTransportForTests(null);
+    }
     // The floor lead holds no message:crew.
     const floor = await loginAs(w.floor.email);
     expect((await floor.post('/floor/crew-text').send({ shiftIds: [mine.id], body: 'x' })).status).toBe(403);

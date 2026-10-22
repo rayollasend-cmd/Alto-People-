@@ -158,3 +158,64 @@ describe('the billing page', () => {
     expect((await f.get('/billing')).body.plan).toBe('internal');
   });
 });
+
+describe('the Stripe customer and the billing contact (audit 2026-10-21, Tier 3)', () => {
+  it('stores the Stripe customer once made and never searches for it again', async () => {
+    await hotelTenant();
+    const { user: altoAdmin } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const alto = await loginAs(agent(), altoAdmin.email);
+    await alto.put('/billing/prices').send({ plan: 'standard', type: 'ROBOT', unitPriceCents: 9900, effectiveFrom: '2026-01-01' });
+    for (const day of ['2026-09-10', '2026-10-10']) await snapshotDay(prisma, T2, day, 'America/New_York');
+    await prisma.tenant.update({ where: { id: T2 }, data: { billingName: 'Acme Hotels LLC', billingEmail: 'ap@acme.test' } });
+    setEnv('STRIPE_SECRET_KEY', 'sk_test_fake');
+    const calls: Array<{ path: string; params: Record<string, string | number> }> = [];
+    setStripeForTests(async (_m, path, params) => {
+      calls.push({ path, params });
+      if (path === '/customers/search') return { data: [] };
+      if (path === '/customers') return { id: 'cus_7' };
+      if (path === '/invoices') return { id: `in_${calls.length}` };
+      if (path.endsWith('/finalize')) return { id: 'x', hosted_invoice_url: null };
+      return { id: 'ii' };
+    });
+    await invoiceMonth(prisma, T2, '2026-09');
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: T2 } })).stripeCustomerId).toBe('cus_7');
+    // The new customer carries the billing contact.
+    expect(calls.find((c) => c.path === '/customers')!.params).toMatchObject({ name: 'Acme Hotels LLC', email: 'ap@acme.test' });
+    calls.length = 0;
+    await invoiceMonth(prisma, T2, '2026-10');
+    expect(calls.some((c) => c.path === '/customers/search' || c.path === '/customers')).toBe(false);
+    expect(calls.find((c) => c.path === '/invoices')!.params.customer).toBe('cus_7');
+  });
+
+  it('the billing page shows the contact and the payment method on file; saving the contact updates Stripe too', async () => {
+    const { user } = await hotelTenant();
+    const admin = await loginAs(agent(), user.email);
+    setEnv('STRIPE_SECRET_KEY', undefined);
+    const off = await admin.get('/billing');
+    expect(off.body.contact).toMatchObject({ name: null, email: null, paymentMethod: null, paymentMethodNote: 'stripe_off' });
+
+    expect((await admin.put('/billing/contact').send({ name: 'Acme Hotels LLC', email: 'not an email' })).status).toBe(400);
+    const saved = await admin.put('/billing/contact').send({ name: 'Acme Hotels LLC', email: 'ap@acme.test' });
+    expect(saved.status).toBe(200);
+    expect(saved.body.stripeUpdated).toBe(false);
+
+    setEnv('STRIPE_SECRET_KEY', 'sk_test_fake');
+    expect((await admin.get('/billing')).body.contact.paymentMethodNote).toBe('no_customer');
+    await prisma.tenant.update({ where: { id: T2 }, data: { stripeCustomerId: 'cus_9' } });
+    const calls: Array<{ method: string; path: string; params: Record<string, string | number> }> = [];
+    setStripeForTests(async (method, path, params) => {
+      calls.push({ method, path, params });
+      return { id: 'cus_9', invoice_settings: { default_payment_method: { type: 'card', card: { brand: 'visa', last4: '4242', exp_month: 4, exp_year: 2028 } } } };
+    });
+    const on = await admin.get('/billing');
+    expect(on.body.contact).toMatchObject({ name: 'Acme Hotels LLC', email: 'ap@acme.test', paymentMethod: { kind: 'card', label: 'Visa ending 4242, expires 4/2028' }, paymentMethodNote: null });
+    const again = await admin.put('/billing/contact').send({ name: 'Acme Hotels', email: 'billing@acme.test' });
+    expect(again.body.stripeUpdated).toBe(true);
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/customers/cus_9')!.params).toMatchObject({ name: 'Acme Hotels', email: 'billing@acme.test' });
+
+    // Finance reads the page; only manage:org saves the contact.
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const f = await loginAs(agent(), fin.email);
+    expect((await f.put('/billing/contact').send({ name: 'x', email: null })).status).toBe(403);
+  });
+});

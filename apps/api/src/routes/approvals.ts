@@ -4,9 +4,9 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import {
   effectiveClientIdFilter,
   scopeShifts,
-  scopeTimeEntries,
   scopeTimeOffRequests,
 } from '../lib/scope.js';
+import { pendingTimeWhere } from '../lib/pendingTime.js';
 import { countDecidableApprovals, listDecidableApprovals, type Decider } from '../lib/proposalDecisions.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 
@@ -68,16 +68,10 @@ export async function countApprovalQueues(user: SessionUser): Promise<ApprovalQu
     prisma.timeOffRequest.count({
       where: { status: 'PENDING', ...scopeTimeOffRequests(user) },
     }),
-    // Bounded to a 90-day window: COMPLETED is a state entries can sit
-    // in forever, so an all-time count both grows unboundedly and
-    // stops matching what the queue page (recent-first, capped) shows.
-    prisma.timeEntry.count({
-      where: {
-        status: 'COMPLETED',
-        clockInAt: { gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) },
-        ...scopeTimeEntries(user),
-      },
-    }),
+    // The one pending-time predicate (lib/pendingTime): the same 90-day
+    // window the queue's link carries and the queue's list reads, so this
+    // number is what the person finds when they open it.
+    prisma.timeEntry.count({ where: pendingTimeWhere(user) }),
     // Walk-in clock-ins the schedule gate parked. Bounded to 48h — a
     // PENDING request older than that is past the approval age limit
     // anyway (see time.ts), so it shouldn't inflate the badge.

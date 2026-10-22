@@ -149,9 +149,10 @@ describe('GET /recruiting/home', () => {
       expect.objectContaining({ candidateName: 'Yes Test', clientName: 'Walmart', feedback: 'Send her Monday.' }),
     ]);
     expect(h.waitingOnYou.readyToHire.map((o: { candidateName: string }) => o.candidateName)).toEqual(['Signed Test']);
-    expect(h.waitingOnYou.offersToApprove).toEqual([
-      expect.objectContaining({ candidateName: 'Held Test', approvalNote: '$19.00/hr is above the band.' }),
-    ]);
+    // Approving pay outside the band is manage:comp's call, which the
+    // recruiter no longer holds (its own charter, audit #16): nothing to
+    // approve here — HR sees the held offer instead (below).
+    expect(h.waitingOnYou.offersToApprove).toEqual([]);
 
     expect(h.waitingOnOthers.withClients).toMatchObject({ total: 1, items: [{ candidateName: 'Waiting Test', days: 3 }] });
     expect(h.waitingOnOthers.awaitingSignature.items).toEqual([
@@ -168,6 +169,11 @@ describe('GET /recruiting/home', () => {
     ]);
     expect(h.numbers.hiresThisMonth + h.numbers.hiresLastMonth).toBeGreaterThanOrEqual(1);
     expect(h.activity[0]).toMatchObject({ kind: 'STAGE_CHANGED', candidateName: 'Kim Test', toStage: 'INTERVIEW' });
+
+    // The held offers wait on someone who can set pay — HR, who drafted neither.
+    const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrHome = (await (await loginAs(hrUser.email)).get('/recruiting/home')).body;
+    expect(hrHome.waitingOnYou.offersToApprove.map((o: { candidateName: string }) => o.candidateName).sort()).toEqual(['Held Test', 'HeldMine Test']);
   });
 
   it('is empty-handed, not wrong, on an empty pipeline', async () => {

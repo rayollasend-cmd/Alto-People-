@@ -241,7 +241,6 @@ export const listTaxAccounts = () => apiFetch<{ accounts: AgencyAccount[] }>(`${
 export type AccountInput = Partial<Omit<AgencyAccount, 'id' | 'kindLabel'>> & { kind?: AgencyKind; jurisdiction?: string };
 export const createTaxAccount = (body: AccountInput) => apiFetch<{ account: AgencyAccount }>(`${B}/accounts`, { method: 'POST', body });
 export const updateTaxAccount = (id: string, body: AccountInput) => apiFetch<{ account: AgencyAccount }>(`${B}/accounts/${id}`, { method: 'PATCH', body });
-export const listRegistrations = () => apiFetch<{ registrations: RegistrationNeed[] }>(`${B}/registrations`);
 
 export const listNotices = (status?: NoticeStatus | 'ACTIVE') => apiFetch<{ notices: NoticeListItem[]; dashboard: NoticeDashboard }>(`${B}/notices${status ? `?status=${status}` : ''}`);
 export const getNotice = (id: string) => apiFetch<{ notice: NoticeDetail }>(`${B}/notices/${id}`);

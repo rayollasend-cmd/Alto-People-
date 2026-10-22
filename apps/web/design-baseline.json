@@ -1,12 +1,12 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1507,
-    "raw-heading": 143,
+    "brand-text": 1484,
+    "raw-heading": 142,
     "pill": 37,
     "hex": 33,
     "loading-text": 4,
-    "empty-text": 19
+    "empty-text": 18
   },
   "files": {
     "src/pages/AcceptInvite.tsx": {
@@ -48,9 +48,6 @@
     },
     "src/pages/ManagerDashboard.tsx": {
       "brand-text": 3
-    },
-    "src/pages/ModulePlaceholder.tsx": {
-      "brand-text": 1
     },
     "src/pages/NotFound.tsx": {
       "brand-text": 1,
@@ -163,15 +160,13 @@
     "src/pages/approvals/ApprovalsHome.tsx": {
       "brand-text": 6,
       "pill": 1,
-      "empty-text": 1,
       "raw-heading": 1
     },
     "src/pages/assets/AssetsHome.tsx": {
       "brand-text": 1
     },
     "src/pages/associate/MyShiftHero.tsx": {
-      "brand-text": 7,
-      "raw-heading": 1
+      "brand-text": 5
     },
     "src/pages/audit/AuditHome.tsx": {
       "brand-text": 7,
@@ -218,9 +213,6 @@
     "src/pages/clients/PortalAccessSection.tsx": {
       "brand-text": 2
     },
-    "src/pages/clients/QuickbooksSection.tsx": {
-      "brand-text": 7
-    },
     "src/pages/clients/StatementsSection.tsx": {
       "brand-text": 6
     },
@@ -250,7 +242,7 @@
       "raw-heading": 1
     },
     "src/pages/compliance/DirectorateShell.tsx": {
-      "brand-text": 2,
+      "brand-text": 1,
       "raw-heading": 1
     },
     "src/pages/compliance/DrugTestTab.tsx": {
@@ -362,7 +354,7 @@
       "raw-heading": 1
     },
     "src/pages/me/MeHome.tsx": {
-      "brand-text": 10
+      "brand-text": 9
     },
     "src/pages/me/MyDiscipline.tsx": {
       "brand-text": 4
@@ -375,7 +367,7 @@
       "raw-heading": 3
     },
     "src/pages/onboarding/ApplicationDetail.tsx": {
-      "brand-text": 18,
+      "brand-text": 16,
       "raw-heading": 2
     },
     "src/pages/onboarding/ApplicationsList.tsx": {
@@ -493,7 +485,7 @@
       "raw-heading": 1
     },
     "src/pages/payroll/AdminPayrollView.tsx": {
-      "brand-text": 18,
+      "brand-text": 17,
       "pill": 1
     },
     "src/pages/payroll/AmendPayrollWizard.tsx": {
@@ -617,7 +609,7 @@
       "pill": 1
     },
     "src/pages/recruiting/CandidateWorkPanels.tsx": {
-      "brand-text": 8
+      "brand-text": 7
     },
     "src/pages/recruiting/RecruitingAnalytics.tsx": {
       "brand-text": 5,
@@ -625,7 +617,7 @@
       "raw-heading": 1
     },
     "src/pages/recruiting/RecruitingExtras.tsx": {
-      "brand-text": 11
+      "brand-text": 7
     },
     "src/pages/recruiting/RecruitingHome.tsx": {
       "brand-text": 1
@@ -680,7 +672,7 @@
       "raw-heading": 1
     },
     "src/pages/scheduling/AdminSchedulingView.tsx": {
-      "brand-text": 35
+      "brand-text": 34
     },
     "src/pages/scheduling/AssociateScheduleCalendar.tsx": {
       "brand-text": 3
@@ -818,7 +810,7 @@
       "brand-text": 1
     },
     "src/pages/transport/DriverHome.tsx": {
-      "brand-text": 31,
+      "brand-text": 30,
       "hex": 1,
       "pill": 4,
       "raw-heading": 2
@@ -863,7 +855,6 @@
       "brand-text": 2
     },
     "src/components/AuditTimeline.tsx": {
-      "brand-text": 1,
       "empty-text": 1
     },
     "src/components/CelebrationRibbon.tsx": {

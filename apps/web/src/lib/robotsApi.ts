@@ -58,8 +58,17 @@ export function listChecklistTemplates(locationId: string | null): Promise<{ tem
   return apiFetch(`/robots/checklists/templates${locationId ? `?locationId=${locationId}` : ''}`);
 }
 
+/** Every template, archived and per-site ones included: the editor's list. */
+export function listAllChecklistTemplates(): Promise<{ templates: RobotChecklistTemplateSummary[] }> {
+  return apiFetch(`/robots/checklists/templates?all=1`);
+}
+
 export function createChecklistTemplate(input: ChecklistTemplateInput): Promise<RobotChecklistTemplateSummary> {
   return apiFetch(`/robots/checklists/templates`, { method: 'POST', body: input });
+}
+
+export function updateChecklistTemplate(id: string, input: ChecklistTemplateInput): Promise<RobotChecklistTemplateSummary> {
+  return apiFetch(`/robots/checklists/templates/${id}`, { method: 'PUT', body: input });
 }
 
 export function listChecklistRuns(id: string): Promise<{ runs: RobotChecklistRunSummary[] }> {

@@ -1,5 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import { ChangeReasonSchema, noteScheduleChange } from '../lib/predictabilityPay.js';
+import { fairWorkweekNoticeDays, primeFairWorkweek } from '../lib/fairWorkweek.js';
+import { evaluateDraftsForPublish, hasBlock } from '../lib/schedulePublishGuard.js';
 import { Prisma } from '@prisma/client';
 import {
   AdminOpenShiftClaimListResponseSchema,
@@ -303,7 +305,7 @@ type RawShift = Prisma.ShiftGetPayload<{
   include: {
     client: { select: { name: true } };
     assignedAssociate: { select: { firstName: true; lastName: true } };
-    locationRel: { select: { id: true; name: true; timezone: true } };
+    locationRel: { select: { id: true; name: true; timezone: true; state: true; city: true } };
   };
 }>;
 
@@ -376,6 +378,9 @@ function toShift(row: RawShift, effectivePayRate?: number | null): Shift {
     // in the STORE's wall-clock time, not the viewer's browser zone. Falls
     // back to the deployment default for shifts without a Location yet.
     timezone: row.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+    // The site's fair-workweek notice window (lib/fairWorkweek): the web
+    // requires a changeReason on every change to a shift that has one.
+    fairWorkweekNoticeDays: fairWorkweekNoticeDays(row.tenantId ?? tenantIdForWrite(), row.locationRel, row.startsAt),
     assignedAssociateId: row.assignedAssociateId,
     assignedAssociateName: row.assignedAssociate
       ? `${row.assignedAssociate.firstName} ${row.assignedAssociate.lastName}`
@@ -444,6 +449,7 @@ async function loadRateResolver(
 /** Single-row variant for create/update responses: one indexed lookup so
  *  the grid's optimistic patch carries the resolved rate immediately. */
 async function withEffectiveRate(row: RawShift): Promise<Shift> {
+  await primeFairWorkweek(prisma, row.tenantId ?? tenantIdForWrite());
   const explicit = row.payRate ? Number(row.payRate) : null;
   if (explicit !== null) return toShift(row, explicit);
   // Brief 1A-2: the card in force on the shift's date.
@@ -454,7 +460,8 @@ async function withEffectiveRate(row: RawShift): Promise<Shift> {
 const SHIFT_INCLUDE = {
   client: { select: { name: true } },
   assignedAssociate: { select: { firstName: true, lastName: true } },
-  locationRel: { select: { id: true, name: true, timezone: true } },
+  // state + city: the site's labor-rules jurisdiction (lib/fairWorkweek).
+  locationRel: { select: { id: true, name: true, timezone: true, state: true, city: true } },
 } as const;
 
 /**
@@ -595,6 +602,9 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
     // Resolve (client, position) default rates in one query so the grid's
     // labor-cost footer lights up for shifts with no explicit rate.
     const resolveRate = await loadRateResolver(page.map((r) => r.clientId));
+    // The labor-rules pool, so each shift says whether its site owes
+    // predictability pay for changes (toShift → fairWorkweekNoticeDays).
+    await primeFairWorkweek(prisma, tenantIdForWrite());
     // The client portal reads the schedule but never a rate: pay is
     // Alto's business, bill rates live on the statement. Same nulling
     // the associate-facing responses do.
@@ -817,11 +827,109 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
       // keeps both, for the fill rate's base).
       openUpcoming,
       wentUnfilled: Math.max(0, openShifts - openUpcoming),
+      // Same number, the name the schedule page reads ("4 upcoming · 5
+      // unfilled"): OPEN shifts in the window that already ended.
+      unfilledPast: Math.max(0, openShifts - openUpcoming),
       fillRatePercent,
       totalScheduledMinutes,
       projectedLaborCost: showCost ? projectedLaborCost : null,
       shiftsWithoutRate: showCost ? shiftsWithoutRate : null,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/shifts/close-out-unfilled
+ * Body: { clientId?, locationId?, from?, to? }  →  { closed, shiftIds }
+ *
+ * A shift that ended still OPEN went unfilled; it is history, not work
+ * (isOpenShift in @alto-people/shared). Leaving it OPEN kept it in the
+ * open count, on the auto-schedule banner and under Assign buttons for
+ * days (role walk, ops 6 / HR 19). This closes every scoped one in the
+ * window as CANCELLED with reason UNFILLED, through the same path
+ * /shifts/:id/cancel takes (audited; nobody was assigned, so nobody is
+ * told), so fill-rate history stays honest. Idempotent: a second call
+ * finds nothing.
+ */
+schedulingRouter.post('/shifts/close-out-unfilled', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = z
+      .object({
+        clientId: z.string().uuid().optional(),
+        locationId: z.string().uuid().optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+      })
+      .safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const now = new Date();
+    const from = parseDateParam(parsed.data.from, 'from');
+    const to = parseDateParam(parsed.data.to, 'to');
+    // Tenant clamp FIRST (same as /kpis): a bounded caller closes its own client's only.
+    const clamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+    const clientId = clamped === null ? NO_MATCH_ID : clamped;
+    const rows = await prisma.shift.findMany({
+      where: {
+        ...scopeShifts(req.user!),
+        tenantId: tenantIdForWrite(),
+        status: 'OPEN',
+        // Ended already — and, with a `to`, ended inside the window asked for.
+        endsAt: { lte: to && to < now ? to : now },
+        ...(from ? { startsAt: { gte: from } } : {}),
+        ...(clientId ? { clientId } : {}),
+        ...(parsed.data.locationId ? { locationId: parsed.data.locationId } : {}),
+      },
+      select: { id: true, assignedAssociateId: true, publishedAt: true },
+      orderBy: { startsAt: 'asc' },
+      take: 500,
+    });
+    const shiftIds: string[] = [];
+    for (const row of rows) {
+      await cancelShiftWithinRules(prisma, row, 'UNFILLED', { userId: req.user!.id, req }, SHIFT_INCLUDE);
+      emitShiftEvent(row.id, 'cancelled');
+      shiftIds.push(row.id);
+    }
+    res.json({ closed: shiftIds.length, shiftIds });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/last-shift?clientId=&locationId=  →  { shift: Shift | null }
+ *
+ * The most recently created non-cancelled shift at a site (or, with only a
+ * client, at that client) — what the New shift dialog prefills from, so a
+ * scheduler enters times and nothing else (role walk, ops 15). Scoped like
+ * the list; a site the caller can't see answers null.
+ */
+schedulingRouter.get('/last-shift', MANAGE, async (req, res, next) => {
+  try {
+    const locationId = req.query.locationId?.toString();
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const clientId = clamped === null ? NO_MATCH_ID : clamped;
+    if (!locationId && !clientId) {
+      throw new HttpError(400, 'invalid_query', 'Name a clientId or a locationId.');
+    }
+    if (locationId && !z.string().uuid().safeParse(locationId).success) {
+      throw new HttpError(400, 'invalid_query', '`locationId` must be a site id');
+    }
+    const row = await prisma.shift.findFirst({
+      where: {
+        ...scopeShifts(req.user!),
+        tenantId: tenantIdForWrite(),
+        status: { not: 'CANCELLED' },
+        ...(locationId ? { locationId } : {}),
+        ...(clientId ? { clientId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      include: SHIFT_INCLUDE,
+    });
+    res.json({ shift: row ? forViewer(req.user!, await withEffectiveRate(row)) : null });
   } catch (err) {
     next(err);
   }
@@ -3534,6 +3642,16 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
     }
 
     emitShiftEvent(updated.id, 'unassigned');
+    // Predictability pay: taking a published shift away from someone inside
+    // the notice window is a cancellation for them — recorded like the
+    // other schedule writes, excused by a changeReason when the law allows.
+    void noteScheduleChange(prisma, {
+      tenantId: tenantIdForWrite(),
+      before: { id: shift.id, assignedAssociateId: shift.assignedAssociateId, locationId: shift.locationId, startsAt: shift.startsAt, endsAt: shift.endsAt, status: shift.status },
+      after: { id: updated.id, assignedAssociateId: null, locationId: updated.locationId, startsAt: updated.startsAt, endsAt: updated.endsAt, status: updated.status },
+      actorUserId: req.user!.id,
+      exemptReason: ChangeReasonSchema.parse((req.body as { changeReason?: unknown })?.changeReason),
+    });
     res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
@@ -3624,6 +3742,7 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
     // schedule" splits these into a Recent section) while guaranteeing all
     // future shifts fit; the calendar feed has its own wider window.
     const pastHorizon = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await primeFairWorkweek(prisma, tenantIdForWrite());
     const rows = await prisma.shift.findMany({
       where: {
         assignedAssociateId: user.associateId,
@@ -4635,7 +4754,7 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
   try {
     const target = await prisma.shift.findFirst({
       where: { id: req.params.id, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
-      include: { locationRel: { select: { timezone: true } } },
+      include: CANDIDATE_TARGET_INCLUDE,
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');
     const candidates = await rankAutoFillCandidates(req.user!, target);
@@ -4659,7 +4778,7 @@ schedulingRouter.post('/auto-fill/batch', MANAGE, async (req, res, next) => {
     }
     const targets = await prisma.shift.findMany({
       where: { id: { in: parsed.data.shiftIds }, ...scopeShifts(req.user!), tenantId: tenantIdForWrite() },
-      include: { locationRel: { select: { timezone: true } } },
+      include: CANDIDATE_TARGET_INCLUDE,
     });
     const byShift: Record<string, AutoFillCandidate[]> = {};
     // Sequential: each ranking is a handful of client-scoped queries, and
@@ -4678,9 +4797,35 @@ schedulingRouter.post('/auto-fill/batch', MANAGE, async (req, res, next) => {
  * they're scheduled for and what they've worked this week (scheduled hours
  * are the ones that will be paid), not counting this shift itself.
  */
+/** What the Assign dialog's facts need off the shift (lib: rankAutoFillCandidates). */
+const CANDIDATE_TARGET_INCLUDE = {
+  locationRel: { select: { timezone: true, latitude: true, longitude: true } },
+  qualReqs: { select: { qualification: { select: { id: true, name: true } } } },
+} as const;
+
+/** "4:00 PM" — a store-clock minute for the availability line. */
+function fmtMinuteOfDay(min: number): string {
+  const h24 = Math.floor(min / 60) % 24;
+  const m = min % 60;
+  const h = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h}:${String(m).padStart(2, '0')} ${h24 < 12 ? 'AM' : 'PM'}`;
+}
+
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 async function rankAutoFillCandidates(
   user: SessionUser,
-  target: { id: string; clientId: string | null; startsAt: Date; endsAt: Date; locationRel: { timezone: string | null } | null },
+  target: {
+    id: string;
+    clientId: string | null;
+    locationId?: string | null;
+    position?: string;
+    payRate?: Prisma.Decimal | null;
+    startsAt: Date;
+    endsAt: Date;
+    locationRel: { timezone: string | null; latitude?: Prisma.Decimal | null; longitude?: Prisma.Decimal | null } | null;
+    qualReqs?: { qualification: { id: string; name: string } }[];
+  },
 ): Promise<AutoFillCandidate[]> {
   // Availability is wall-clock at the STORE, so convert the shift's UTC
   // instant to the location's local day-of-week + minutes before matching.
@@ -4694,6 +4839,20 @@ async function rankAutoFillCandidates(
   const pool: Prisma.AssociateWhereInput = target.clientId
     ? { ...EMPLOYED, AND: [SCHEDULABLE_USER_FILTER, atClient(target.clientId, { approvedOnly: true })] }
     : ACTIVE_ASSOCIATE_FILTER;
+
+  // The facts a scheduler decides on (role walk, ops 7): the shift's cost
+  // rate — explicit, else the client's card for the position — reliability
+  // over the trailing 90 days, and site history over the same window.
+  const now = new Date();
+  const since90 = new Date(now.getTime() - 90 * 86_400_000);
+  const explicitRate = target.payRate != null ? Number(target.payRate) : null;
+  const cardRate =
+    explicitRate === null && target.position
+      ? (cardOn(await loadRateCards(prisma, [target.clientId]), target.clientId, target.position, target.startsAt)?.payRate ?? null)
+      : null;
+  const rate = explicitRate ?? cardRate;
+  const hourlyRateCents = rate === null ? null : Math.round(rate * 100);
+  const required = (target.qualReqs ?? []).map((q) => q.qualification);
 
   const [associates, ptoRows, exceptionRows] = await Promise.all([
     prisma.associate.findMany({
@@ -4713,6 +4872,12 @@ async function rankAutoFillCandidates(
           include: { breaks: true },
         },
         availability: true,
+        // Home store: the open placement (newest first).
+        assignments: { where: { endedAt: null }, orderBy: { startedAt: 'desc' }, take: 1, select: { location: { select: { name: true } } } },
+        qualifications: {
+          where: { deletedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gte: targetDayStart } }] },
+          select: { qualificationId: true },
+        },
       },
       take: 500,
     }),
@@ -4740,15 +4905,47 @@ async function rankAutoFillCandidates(
     ...exceptionRows.map((r) => r.associateId),
   ]);
 
+  // Reliability and site history for the whole pool in two queries.
+  const poolIds = associates.map((a) => a.id);
+  const [events, siteHistory] = await Promise.all([
+    poolIds.length
+      ? prisma.attendanceEvent.findMany({
+          where: { associateId: { in: poolIds }, excusedAt: null, occurredOn: { gte: since90 } },
+          select: { associateId: true, kind: true },
+          take: 10_000,
+        })
+      : Promise.resolve([]),
+    poolIds.length && target.locationId
+      ? prisma.shift.groupBy({
+          by: ['assignedAssociateId'],
+          where: {
+            locationId: target.locationId,
+            assignedAssociateId: { in: poolIds },
+            status: { in: ['ASSIGNED', 'COMPLETED'] },
+            startsAt: { gte: since90, lte: now },
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve([] as { assignedAssociateId: string | null; _count: { _all: number } }[]),
+  ]);
+  const reliabilityOf = new Map<string, { late: number; noShow: number; callOut: number; days: number }>();
+  for (const e of events) {
+    const r = reliabilityOf.get(e.associateId) ?? { late: 0, noShow: 0, callOut: 0, days: 90 };
+    if (e.kind === 'NO_CALL_NO_SHOW') r.noShow += 1;
+    else if (e.kind === 'CALL_OUT') r.callOut += 1;
+    else r.late += 1;
+    reliabilityOf.set(e.associateId, r);
+  }
+  const siteShiftsOf = new Map(siteHistory.map((g) => [g.assignedAssociateId!, g._count._all]));
+
   const targetDOW = zonedDayOfWeek(target.startsAt, targetTz);
   const startMin = zonedMinutes(target.startsAt, targetTz);
   const endMin = zonedMinutes(target.endsAt, targetTz);
   const targetMinutes = paidMinutesForRange(target.startsAt, target.endsAt);
 
   const candidates: AutoFillCandidate[] = associates.map((a) => {
-    const matchesAvailability = a.availability.some(
-      (w) => w.dayOfWeek === targetDOW && w.startMinute <= startMin && w.endMinute >= endMin,
-    );
+    const dayWindows = a.availability.filter((w) => w.dayOfWeek === targetDOW).sort((x, y) => x.startMinute - y.startMinute);
+    const matchesAvailability = dayWindows.some((w) => w.startMinute <= startMin && w.endMinute >= endMin);
     const noConflict = !a.assignedShifts.some((s) => s.startsAt < target.endsAt && s.endsAt > target.startsAt);
     const onApprovedTimeOff = ptoAssociateIds.has(a.id);
     const weeklyMinutesScheduled = a.assignedShifts.reduce((sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt), 0);
@@ -4757,6 +4954,19 @@ async function rankAutoFillCandidates(
 
     // The ranking is shared with the Workforce agent (lib/shiftAssign autoFillScore).
     const score = autoFillScore({ matchesAvailability, noConflict, wouldExceed40, onApprovedTimeOff });
+
+    // Hours after this shift, and the half-time premium on whatever lands past 40.
+    const projectedWeeklyMinutes = weeklyMinutesScheduled + targetMinutes;
+    const otMinutes = Math.min(targetMinutes, Math.max(0, projectedWeeklyMinutes - 40 * 60));
+    const otPremiumCents = hourlyRateCents === null ? 0 : Math.round((hourlyRateCents * 0.5 * otMinutes) / 60);
+    const shiftCostCents = hourlyRateCents === null ? null : Math.round((hourlyRateCents * targetMinutes) / 60);
+    const availabilityLabel = onApprovedTimeOff
+      ? 'Time off approved'
+      : dayWindows.length === 0
+        ? `No window on ${DOW_SHORT[targetDOW]}`
+        : `Avail ${DOW_SHORT[targetDOW]} ${dayWindows.map((w) => `${fmtMinuteOfDay(w.startMinute)}–${fmtMinuteOfDay(w.endMinute)}`).join(', ')}`;
+    const held = new Set(a.qualifications.map((q) => q.qualificationId));
+    const reliability = reliabilityOf.get(a.id) ?? { late: 0, noShow: 0, callOut: 0, days: 90 };
 
     return {
       associateId: a.id,
@@ -4767,6 +4977,20 @@ async function rankAutoFillCandidates(
       noConflict,
       onApprovedTimeOff,
       score,
+      homeLocationName: a.assignments[0]?.location.name ?? null,
+      projectedWeeklyMinutes,
+      hourlyRateCents,
+      shiftCostCents,
+      otPremiumCents,
+      reliability,
+      availabilityLabel,
+      siteShiftsWorked: siteShiftsOf.get(a.id) ?? 0,
+      // People carry an address, not coordinates (Associate has no lat/lng)
+      // — until they are geocoded the distance is honestly unknown, never
+      // a guess. The site's coordinates are fetched so the day it lands
+      // the haversine has one end already.
+      distanceMiles: null,
+      credentials: { required: required.map((q) => q.name), missing: required.filter((q) => !held.has(q.id)).map((q) => q.name) },
     };
   });
 
@@ -6727,26 +6951,51 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const clientId = clamped === null ? NO_MATCH_ID : clamped;
 
-    const rows = await prisma.shift.findMany({
-      where: {
-        ...scopeShifts(req.user!),
-        ...(clientId ? { clientId } : {}),
-        status: { notIn: ['CANCELLED'] },
-        startsAt: { gte: from, lt: to },
-      },
-      select: {
-        id: true,
-        status: true,
-        startsAt: true,
-        endsAt: true,
-        lateNoticeReason: true,
-        assignedAssociateId: true,
-        assignedAssociate: { select: { firstName: true, lastName: true } },
-        client: { select: { state: true } },
-      },
-      orderBy: { startsAt: 'asc' },
-      take: 3000,
-    });
+    const windowWhere = {
+      ...scopeShifts(req.user!),
+      ...(clientId ? { clientId } : {}),
+    };
+    const PREFLIGHT_SELECT = {
+      id: true,
+      status: true,
+      startsAt: true,
+      endsAt: true,
+      clientId: true,
+      locationId: true,
+      position: true,
+      payRate: true,
+      lateNoticeReason: true,
+      assignedAssociateId: true,
+      assignedAssociate: { select: { firstName: true, lastName: true } },
+      client: { select: { state: true } },
+    } as const;
+    const windowMs = to.getTime() - from.getTime();
+    const [rows, lastWeekRows] = await Promise.all([
+      prisma.shift.findMany({
+        where: { ...windowWhere, status: { notIn: ['CANCELLED'] }, startsAt: { gte: from, lt: to } },
+        select: PREFLIGHT_SELECT,
+        orderBy: { startsAt: 'asc' },
+        take: 3000,
+      }),
+      // The same-length window one week earlier, for "change vs last week".
+      prisma.shift.findMany({
+        where: {
+          ...windowWhere,
+          status: { notIn: ['CANCELLED', 'DRAFT'] },
+          startsAt: { gte: new Date(from.getTime() - 7 * 86_400_000), lt: new Date(from.getTime() - 7 * 86_400_000 + windowMs) },
+        },
+        select: { clientId: true, position: true, payRate: true, startsAt: true, endsAt: true },
+        take: 3000,
+      }),
+    ]);
+    // The same rate resolution the KPI strip and labor report use.
+    const resolveRate = await loadRateResolver([...rows, ...lastWeekRows].map((r) => r.clientId));
+    const costCentsOf = (s: { clientId: string | null; position: string; payRate: Prisma.Decimal | null; startsAt: Date; endsAt: Date }) => {
+      const rate = resolveRate(s.clientId, s.position, s.payRate ? Number(s.payRate) : null);
+      return rate === null ? 0 : Math.round((rate * paidMinutesForRange(s.startsAt, s.endsAt)) / 60 * 100);
+    };
+    const rateOf = (s: { clientId: string | null; position: string; payRate: Prisma.Decimal | null }) =>
+      resolveRate(s.clientId, s.position, s.payRate ? Number(s.payRate) : null);
 
     const drafts = rows.filter((s) => s.status === 'DRAFT').length;
     // Drafts publish-week would SKIP for lacking a late-notice reason —
@@ -6770,32 +7019,46 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
     // the window's assigned shifts.
     const byAssociate = new Map<
       string,
-      { name: string; minutes: number; shifts: { startsAt: Date; endsAt: Date }[] }
+      { name: string; minutes: number; costCents: number; shifts: { id: string; startsAt: Date; endsAt: Date; rate: number | null }[] }
     >();
     for (const s of rows) {
       if (!s.assignedAssociateId || !s.assignedAssociate) continue;
       const entry = byAssociate.get(s.assignedAssociateId) ?? {
         name: `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`,
         minutes: 0,
+        costCents: 0,
         shifts: [],
       };
       entry.minutes += paidMinutesForRange(s.startsAt, s.endsAt);
-      entry.shifts.push({ startsAt: s.startsAt, endsAt: s.endsAt });
+      entry.costCents += costCentsOf(s);
+      entry.shifts.push({ id: s.id, startsAt: s.startsAt, endsAt: s.endsAt, rate: rateOf(s) });
       byAssociate.set(s.assignedAssociateId, entry);
     }
-    const otProjected: { name: string; hours: number }[] = [];
-    const restGaps: { name: string; gapHours: number; startsAt: string }[] = [];
+    const otProjected: { name: string; hours: number; associateId: string; shiftIds: string[]; projectedCostCents: number }[] = [];
+    const restGaps: { name: string; gapHours: number; startsAt: string; associateId: string; shiftIds: string[] }[] = [];
     const restMs = REST_GAP_MIN_HOURS * 60 * 60 * 1000;
-    for (const entry of byAssociate.values()) {
-      if (entry.minutes > 40 * 60) {
-        otProjected.push({
-          name: entry.name,
-          hours: Math.round((entry.minutes / 60) * 10) / 10,
-        });
-      }
+    for (const [associateId, entry] of byAssociate) {
       const sorted = [...entry.shifts].sort(
         (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
       );
+      if (entry.minutes > 40 * 60) {
+        // The premium: half-time on the minutes past 40, at the rate of the
+        // shifts that land there (the week's last ones).
+        let past = entry.minutes - 40 * 60;
+        let premiumCents = 0;
+        for (let i = sorted.length - 1; i >= 0 && past > 0; i--) {
+          const mins = Math.min(past, paidMinutesForRange(sorted[i].startsAt, sorted[i].endsAt));
+          premiumCents += Math.round(((sorted[i].rate ?? 0) * 100 * 0.5 * mins) / 60);
+          past -= mins;
+        }
+        otProjected.push({
+          name: entry.name,
+          hours: Math.round((entry.minutes / 60) * 10) / 10,
+          associateId,
+          shiftIds: sorted.map((s) => s.id),
+          projectedCostCents: entry.costCents + premiumCents,
+        });
+      }
       for (let i = 1; i < sorted.length; i++) {
         const gap = sorted[i].startsAt.getTime() - sorted[i - 1].endsAt.getTime();
         if (gap > 0 && gap < restMs) {
@@ -6803,12 +7066,39 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
             name: entry.name,
             gapHours: Math.round((gap / 3_600_000) * 10) / 10,
             startsAt: sorted[i].startsAt.toISOString(),
+            associateId,
+            shiftIds: [sorted[i - 1].id, sorted[i].id],
           });
         }
       }
     }
     otProjected.sort((a, b) => b.hours - a.hours);
     restGaps.sort((a, b) => a.gapHours - b.gapHours);
+
+    // The labor-rules engine on the drafts about to go live — the same
+    // findings publish-week refuses on (lib/schedulePublishGuard).
+    const laborFindings = await evaluateDraftsForPublish(prisma, {
+      tenantId: tenantIdForWrite(),
+      drafts: rows.filter((s) => s.status === 'DRAFT'),
+      now: preflightNow,
+    });
+
+    // The review sheet's totals: what is on the board for the window
+    // (drafts included — they are what publish ships), against the week before.
+    const hoursOf = (list: { startsAt: Date; endsAt: Date }[]) => Math.round((list.reduce((a, s) => a + paidMinutesForRange(s.startsAt, s.endsAt), 0) / 60) * 10) / 10;
+    const totalHours = hoursOf(rows);
+    const totalCost = rows.reduce((a, s) => a + costCentsOf(s), 0);
+    const lastHours = hoursOf(lastWeekRows);
+    const lastCost = lastWeekRows.reduce((a, s) => a + costCentsOf(s), 0);
+    const totals = {
+      shifts: rows.length,
+      hours: totalHours,
+      costCents: totalCost,
+      deltaHoursVsLastWeek: lastWeekRows.length === 0 ? null : Math.round((totalHours - lastHours) * 10) / 10,
+      deltaCostCentsVsLastWeek: lastWeekRows.length === 0 ? null : totalCost - lastCost,
+    };
+    const notifyCount = new Set(rows.filter((s) => s.status === 'DRAFT' && s.assignedAssociateId).map((s) => s.assignedAssociateId!)).size;
+    const openShiftIds = rows.filter((s) => s.status === 'OPEN' || (s.status === 'DRAFT' && !s.assignedAssociateId)).map((s) => s.id);
 
     res.json(
       PublishPreflightResponseSchema.parse({
@@ -6817,6 +7107,10 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
         open,
         otProjected: otProjected.slice(0, 10),
         restGaps: restGaps.slice(0, 10),
+        laborFindings,
+        totals,
+        notifyCount,
+        openShiftIds,
       }),
     );
   } catch (err) {
@@ -6890,6 +7184,19 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     const drafts = truncated ? draftRows.slice(0, PUBLISH_CAP) : draftRows;
 
     const now = new Date();
+    // The labor-rules engine first (lib/schedulePublishGuard): a minor
+    // past their hours or a rest period the rules block on stops the whole
+    // batch — the review sheet names each shift — and warnings ride along.
+    const laborFindings = await evaluateDraftsForPublish(prisma, { tenantId: tenantIdForWrite(), drafts, now });
+    if (hasBlock(laborFindings)) {
+      const blocks = laborFindings.filter((f) => f.severity === 'block');
+      throw new HttpError(
+        409,
+        'labor_rules_block',
+        `${blocks.length} shift${blocks.length === 1 ? '' : 's'} can't be published: ${blocks[0]!.reason}`,
+        { findings: laborFindings },
+      );
+    }
     const skipped: PublishWeekSkip[] = [];
     const publishable: typeof drafts = [];
     // Batch late-notice reason: applied to every notice-window draft that
@@ -7080,10 +7387,12 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       });
     }
 
+    const publishedIds = new Set([...assignedIds, ...openIds]);
     const body: PublishWeekResponse = {
       published: publishedCount,
       skipped,
       ...(truncated ? { truncated: true } : {}),
+      ...(laborFindings.length > 0 ? { laborWarnings: laborFindings.filter((f) => publishedIds.has(f.shiftId)) } : {}),
     };
     for (const id of [...assignedIds, ...openIds]) emitShiftEvent(id, 'published');
     res.json(PublishWeekResponseSchema.parse(body));

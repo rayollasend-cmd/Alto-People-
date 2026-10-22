@@ -25,7 +25,7 @@ import {
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtMoneyCompact, fmtTime } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtMoneyCompact, fmtShiftTz, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -140,6 +140,8 @@ interface WorkforceOverview {
       clientName: string;
       position: string;
       startsAt: string;
+      /** The store's zone — times read on its wall clock (ops walk 2). Absent from an older server. */
+      timezone?: string;
     }>;
   };
 }
@@ -747,7 +749,7 @@ export function WorkforceDashboard() {
                     {data.dispatch.upcoming.map((s) => (
                       <li key={s.shiftId} className="py-2 text-xs">
                         <span className="font-medium text-white tabular-nums">
-                          {fmtDate(s.startsAt)}, {fmtTime(s.startsAt)}
+                          {fmtDateTz(s.startsAt, s.timezone)}, {fmtShiftTz(s.startsAt, s.timezone, { day: false })}
                         </span>
                         <span className="text-silver"> — {s.position}</span>
                         <span className="text-silver/60"> · {s.clientName}</span>

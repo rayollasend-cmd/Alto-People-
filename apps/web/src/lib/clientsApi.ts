@@ -110,6 +110,27 @@ export function markClientStatementPaid(
   });
 }
 
+/** One row of the statement week close (finance walk 6): the statement and what closing needs. */
+export type StatementRollupRow = ClientStatement & {
+  clientName: string;
+  dueOn: string | null;
+  daysLate: number;
+  /** What is still open on it (net of partial payments); 0 when paid or a draft. */
+  open: number;
+  /** The client's statement before this one, for the change in hours and dollars. */
+  previous: { statementId: string; periodStart: string; hours: number; amount: number } | null;
+};
+
+export interface StatementsRollup {
+  statements: StatementRollupRow[];
+  /** Weeks with approved, billable time that no statement covers. */
+  missingWeeks: Array<{ clientId: string; clientName: string; weekStart: string; hours: number }>;
+}
+
+export function getStatementsRollup(): Promise<StatementsRollup> {
+  return apiFetch('/clients/statements/rollup');
+}
+
 /** Invoicing: the PO one statement bills against and, once final, its due date. */
 export function updateClientStatementTerms(
   clientId: string,
@@ -122,11 +143,17 @@ export function updateClientStatementTerms(
 export interface ClientDunning {
   poNumber: string | null;
   paymentTermsDays: number;
+  /** Sales tax on this client's statements. */
+  salesTaxable?: boolean;
+  salesTaxRatePct?: number | null;
   paused: { at: string; note: string | null; byUserId: string | null } | null;
   reminders: Array<{ id: string; stage: number; sentAt: string; recipients: number; statementId: string; number: number | null; periodStart: string; periodEnd: string }>;
 }
 
-export function updateClientBillingTerms(clientId: string, body: { poNumber?: string | null; paymentTermsDays?: number }): Promise<{ poNumber: string | null; paymentTermsDays: number }> {
+export function updateClientBillingTerms(
+  clientId: string,
+  body: { poNumber?: string | null; paymentTermsDays?: number; salesTaxable?: boolean; salesTaxRatePct?: number | null },
+): Promise<{ poNumber: string | null; paymentTermsDays: number; salesTaxable: boolean; salesTaxRatePct: number | null }> {
   return apiFetch(`/clients/${clientId}/billing-terms`, { method: 'PATCH', body });
 }
 

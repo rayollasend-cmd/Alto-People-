@@ -310,8 +310,8 @@ export function ProfileInfoTask() {
 
 /* Shared bits exported so the other task forms reuse them ---------------- */
 
-// Task kinds with a real associate-facing page — mirrors the checklist's
-// REAL_KINDS set. Chaining must never land on the StubTask placeholder.
+// Task kinds the associate flow chains through in order (every kind has
+// its own page; a kind outside this set ends the chain at the checklist).
 const CHAINABLE_KINDS = new Set([
   'PROFILE_INFO',
   'PROFILE_PHOTO',

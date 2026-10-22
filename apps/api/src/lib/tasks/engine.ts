@@ -42,19 +42,41 @@ export async function policyFor(db: Db, locationId: string | null): Promise<Work
   const rows = await db.workTaskPolicy.findMany({ where: { tenantId, OR: [{ locationId: null }, ...(locationId ? [{ locationId }] : [])] } });
   const site = locationId ? rows.find((r) => r.locationId === locationId) : undefined;
   const tenant = rows.find((r) => r.locationId === null);
-  const row = site ?? tenant;
-  if (!row) return { ...DEFAULT_WORK_TASK_POLICY, locationId };
+  return mergePolicies(locationId, site ?? null, tenant ?? null);
+}
+
+type PolicyRow = Pick<
+  Prisma.WorkTaskPolicyGetPayload<Record<string, never>>,
+  'handoffSeconds' | 'maxAutoAssignCents' | 'highRiskPolicy' | 'robotCostPerTaskCents' | 'robotDefaultCostCents' | 'agentCostPerTaskCents' | 'maxRobotsPerCrewLead' | 'robotUtilizationPct' | 'backupCrewRatioPct'
+>;
+
+/**
+ * The policy in force at a site, field by field: the site's own value when it
+ * set one, else the company's, else the shared default. A site row used to
+ * replace the company row whole, so a site that only set its handoff seconds
+ * silently fell back to the schema defaults for cost and cap (audit 2026-10-21).
+ * The cap is the one field a null cannot lift: a site inherits the company's.
+ */
+export function mergePolicies(locationId: string | null, site: PolicyRow | null, tenant: PolicyRow | null): WorkTaskPolicyView {
+  const pick = <K extends keyof PolicyRow>(k: K): NonNullable<PolicyRow[K]> | null => {
+    const s = site?.[k];
+    if (s !== null && s !== undefined) return s as NonNullable<PolicyRow[K]>;
+    const t = tenant?.[k];
+    if (t !== null && t !== undefined) return t as NonNullable<PolicyRow[K]>;
+    return null;
+  };
+  const d = DEFAULT_WORK_TASK_POLICY;
   return {
-    locationId: row.locationId,
-    handoffSeconds: row.handoffSeconds,
-    maxAutoAssignCents: row.maxAutoAssignCents,
-    highRiskPolicy: row.highRiskPolicy,
-    robotCostPerTaskCents: (row.robotCostPerTaskCents ?? {}) as Record<string, number>,
-    robotDefaultCostCents: row.robotDefaultCostCents,
-    agentCostPerTaskCents: row.agentCostPerTaskCents,
-    maxRobotsPerCrewLead: row.maxRobotsPerCrewLead,
-    robotUtilizationPct: row.robotUtilizationPct,
-    backupCrewRatioPct: row.backupCrewRatioPct,
+    locationId,
+    handoffSeconds: pick('handoffSeconds') ?? d.handoffSeconds,
+    maxAutoAssignCents: pick('maxAutoAssignCents') ?? d.maxAutoAssignCents,
+    highRiskPolicy: pick('highRiskPolicy') ?? d.highRiskPolicy,
+    robotCostPerTaskCents: { ...d.robotCostPerTaskCents, ...((tenant?.robotCostPerTaskCents ?? {}) as Record<string, number>), ...((site?.robotCostPerTaskCents ?? {}) as Record<string, number>) },
+    robotDefaultCostCents: pick('robotDefaultCostCents') ?? d.robotDefaultCostCents,
+    agentCostPerTaskCents: pick('agentCostPerTaskCents') ?? d.agentCostPerTaskCents,
+    maxRobotsPerCrewLead: pick('maxRobotsPerCrewLead') ?? d.maxRobotsPerCrewLead,
+    robotUtilizationPct: pick('robotUtilizationPct') ?? d.robotUtilizationPct,
+    backupCrewRatioPct: pick('backupCrewRatioPct') ?? d.backupCrewRatioPct,
   };
 }
 
@@ -123,10 +145,21 @@ export async function candidatesFor(db: Db, task: TaskLike, policy: WorkTaskPoli
 
   // Agents and robots: the tenant's non-person workers, certified or not (the ranking says which).
   const machines = await db.worker.findMany({ where: { tenantId, type: { in: ['AGENT', 'ROBOT'] }, status: { in: ['ACTIVE', 'SUSPENDED', 'ONBOARDING'] } }, select: { id: true, name: true, type: true, status: true, capabilities: true } });
+  // A robot works where it is placed: the candidates are the robots at the task's
+  // site. One placed elsewhere stays in the ranking, ineligible, with the reason —
+  // "why not the robot" is half of explainability (audit 2026-10-21).
+  const robotIds = machines.filter((m) => m.type === 'ROBOT').map((m) => m.id);
+  const placements = robotIds.length
+    ? await db.workerAssignment.findMany({ where: { workerId: { in: robotIds }, endedAt: null }, orderBy: { startedAt: 'desc' }, select: { workerId: true, locationId: true, location: { select: { name: true } } } })
+    : [];
+  const placedAt = new Map<string, { locationId: string; name: string }>();
+  for (const p of placements) if (!placedAt.has(p.workerId)) placedAt.set(p.workerId, { locationId: p.locationId, name: p.location.name });
   for (const m of machines) {
     if (excludeWorkerIds.includes(m.id)) continue;
     if (m.type === 'ROBOT') {
-      const r = await robotAvailability(db, m.id);
+      const placement = placedAt.get(m.id) ?? null;
+      const elsewhere = placement !== null && placement.locationId !== task.locationId;
+      const r = elsewhere ? { available: false, note: `Placed at ${placement!.name}, not ${task.location.name}`, batteryPct: null } : await robotAvailability(db, m.id);
       out.push({
         workerId: m.id,
         workerType: 'ROBOT',

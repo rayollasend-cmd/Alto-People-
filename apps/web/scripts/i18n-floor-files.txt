@@ -1,0 +1,34 @@
+# Screens the floor, the supervisors and the drivers read (role walk floor 10):
+# held to English + Spanish keys, and to a hard-coded-text baseline that only
+# shrinks (scripts/i18n-floor-baseline.json). The associate app's six-language
+# rule is i18n-associate-files.txt; a file can be in both.
+#
+# The app shell everyone sees
+src/components/Topbar.tsx
+src/components/Sidebar.tsx
+src/components/NotificationsBell.tsx
+src/pages/inbox/InboxHome.tsx
+src/pages/approvals/ApprovalsHome.tsx
+# The supervisor's floor
+src/pages/SupervisorDashboard.tsx
+src/pages/portal/PortalToday.tsx
+src/components/RoleDecisionQueue.tsx
+src/components/attendance/NotInYetCard.tsx
+src/components/attendance/FillRateTrendCard.tsx
+src/components/FloorTeam.tsx
+src/components/MyPlanCard.tsx
+src/components/VanArrivals.tsx
+src/components/ReadyToScheduleCard.tsx
+src/components/floor/CoverShiftCard.tsx
+src/components/floor/CoverageGapNotice.tsx
+src/components/floor/CrewTextDialog.tsx
+src/components/floor/FloorFlagDialog.tsx
+src/components/floor/FloorFlagsCard.tsx
+src/components/floor/FloorWeekStrip.tsx
+src/components/floor/HandoverBanner.tsx
+src/components/floor/IncidentReportDialog.tsx
+# The driver
+src/pages/transport/DriverHome.tsx
+src/pages/transport/DriverTools.tsx
+# Availability, read by every associate (owned with the scheduling work)
+src/pages/scheduling/AvailabilityEditor.tsx

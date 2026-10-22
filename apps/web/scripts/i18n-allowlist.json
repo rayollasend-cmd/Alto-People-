@@ -10,5 +10,6 @@
   "^\\d",
   "^[A-Z][A-Za-z]+@",
   "^(http|https)://",
-  "^People$"
+  "^People$",
+  "^Promise$"
 ]

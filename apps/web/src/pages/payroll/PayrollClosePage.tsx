@@ -18,6 +18,8 @@ import { statusTone } from '@/lib/status';
 import { RunFundingCard } from '@/pages/payrollBanking/FundingCard';
 import { centsToMoney, downloadAchFile, markAchFileUploaded } from '@/lib/bankingApi';
 import { useConfirm } from '@/lib/confirm';
+import { createRunTaxDeposit } from '@/lib/payrollDeskApi';
+import { markTaxDepositPaid } from '@/lib/payrollApi';
 
 /**
  * The guided close: one payroll run, step by step, each with what blocks it
@@ -55,8 +57,6 @@ export interface PayrollClose {
     approvedAt: string | null;
     approvedByEmail: string | null;
     disbursedAt: string | null;
-    qboJournalEntryId: string | null;
-    qboSyncError: string | null;
   };
   approvalRequired: boolean;
   review?: {
@@ -77,7 +77,8 @@ export interface PayrollClose {
   exceptions: { counts: { blocking: number; warning: number; info: number }; rows: Array<{ associateName: string; kind: string; severity: string; message: string }> } | null;
   deposit: { id: string; status: 'PENDING' | 'PAID'; dueDate: string; amount: number; confirmationNumber: string | null } | null;
   remittances: Array<{ id: string; status: string; payeeName: string; amount: number }>;
-  quickbooks: { connected: boolean; glByCostCenter: boolean };
+  /** The company's own QuickBooks (Books → QuickBooks sync); the run's entries go over through the books outbox. */
+  quickbooks: { connected: boolean; status: string | null; companyName: string | null };
   /** Paid by paper check this time, and the run's checks once issued (lib/paperChecks). */
   payByCheck?: Array<{ itemId: string; name: string; reason: string; source: 'PAYROLL' | 'ASSOCIATE' }>;
   checks?: { issued: number; printed: number; voided: number };
@@ -93,7 +94,7 @@ const STEP_HINT: Record<string, string> = {
   review: 'Read the review report: totals, cash, taxes and every paycheck that moved. Sign off on these exact numbers.',
   disburse: 'Send every payment. Held and failed items need a decision before the run completes.',
   deposits: 'The withheld taxes became trust-fund money on a deadline the moment the run paid out.',
-  quickbooks: 'Post the journal entry — split by cost center when the client has it on.',
+  quickbooks: 'The run’s entries are in the books; they go over to QuickBooks through the sync when the company is connected.',
 };
 
 function StepIcon({ state }: { state: StepState }) {
@@ -280,7 +281,9 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
         </ul>
       );
     case 'approve':
-      return <p className="mt-2 text-xs text-ink-muted">{r.finalizedAt ? `Finalized ${fmtDateTime(r.finalizedAt)}` : 'Not finalized yet'}</p>;
+      // The text follows the step's own state (finance walk 3): a done step never reads "not yet".
+      if (step.state === 'done') return <p className="mt-2 text-xs text-ink-muted">{r.finalizedAt ? `Finalized ${fmtDateTime(r.finalizedAt)}` : 'Finalized'}</p>;
+      return <p className="mt-2 text-xs text-ink-muted">Not finalized yet</p>;
     case 'review': {
       const rv = data.review;
       if (!rv) return null;
@@ -293,7 +296,9 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
         );
       }
       if (rv.staleSignedAt) return null; // The step's note says it.
-      return rv.required ? <p className="mt-2 text-xs text-ink-muted">No sign-off yet. The run can’t pay out without one.</p> : null;
+      if (step.state === 'skip' || !rv.required) return <p className="mt-2 text-xs text-ink-muted">Not required for this run.</p>;
+      if (step.state === 'done') return <p className="mt-2 text-xs text-warning">Paid out with no sign-off on record.</p>;
+      return <p className="mt-2 text-xs text-ink-muted">No sign-off yet. The run can’t pay out without one.</p>;
     }
     case 'disburse':
       return (
@@ -329,14 +334,7 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
         </div>
       );
     case 'deposits':
-      if (!data.deposit) return r.status === 'DISBURSED' ? <p className="mt-2 text-xs text-warning">No deposit accrued for this run — check the tax desk.</p> : null;
-      return (
-        <p className="mt-2 text-xs text-ink-muted tabular-nums">
-          {fmtMoney(data.deposit.amount)} due {fmtDate(data.deposit.dueDate)} ·{' '}
-          {data.deposit.status === 'PAID' ? `paid${data.deposit.confirmationNumber ? ` (EFTPS ${data.deposit.confirmationNumber})` : ''}` : 'pending'}
-          {data.remittances.length > 0 && ` · ${data.remittances.filter((x) => x.status !== 'SENT').length} of ${data.remittances.length} garnishment remittances to send`}
-        </p>
-      );
+      return r.status === 'DISBURSED' || data.deposit ? <DepositStep runId={r.id} deposit={data.deposit} remittances={data.remittances} /> : null;
     case 'payPreview':
       return data.payPreview ? (
         <p className="mt-2 text-xs text-ink-muted tabular-nums">
@@ -344,11 +342,17 @@ function StepDetail({ step, data }: { step: CloseStep; data: PayrollClose }) {
         </p>
       ) : null;
     case 'quickbooks':
-      if (!data.quickbooks.connected) return <p className="mt-2 text-xs text-ink-muted">{r.clientName ? 'This client has no QuickBooks connection.' : 'A cross-client run posts to no single QuickBooks company.'}</p>;
+      if (!data.quickbooks.connected) {
+        return (
+          <p className="mt-2 text-xs text-ink-muted">
+            {data.quickbooks.status ? `The QuickBooks connection is ${data.quickbooks.status.toLowerCase().replace(/_/g, ' ')} — reconnect it under Books → QuickBooks sync.` : 'QuickBooks isn’t connected; the books here are complete on their own.'}
+          </p>
+        );
+      }
       return (
         <p className="mt-2 text-xs text-ink-muted">
-          {r.qboJournalEntryId ? `Journal entry ${r.qboJournalEntryId}` : r.qboSyncError ? `Last sync error: ${r.qboSyncError}` : 'Posts when the run disburses'}
-          {data.quickbooks.glByCostCenter && ' · split by cost center'}
+          {data.quickbooks.companyName ? `Connected to ${data.quickbooks.companyName} — ` : ''}
+          {r.disbursedAt ? 'the run’s entries went to the sync outbox when it disbursed.' : 'the run’s entries go over when it disburses.'}
         </p>
       );
     default:
@@ -463,5 +467,70 @@ function RecordReturn({ runId, items }: { runId: string; items: Array<{ id: stri
         Cancel
       </Button>
     </form>
+  );
+}
+
+/**
+ * The tax deposit, done on the step itself (finance walk 18): a paid run
+ * with withholding and no deposit on record gets "Create the deposit"; a
+ * pending one shows its due date with the EFTPS confirmation field.
+ */
+function DepositStep({ runId, deposit, remittances }: { runId: string; deposit: PayrollClose['deposit']; remittances: PayrollClose['remittances'] }) {
+  const qc = useQueryClient();
+  const [confirmation, setConfirmation] = useState('');
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['payroll', 'close', runId] });
+  const create = useMutation({
+    mutationFn: () => createRunTaxDeposit(runId),
+    onSuccess: (r) => {
+      toast.success(r.created ? `Deposit created: ${fmtMoney(r.deposit.amount)} due ${fmtDate(r.deposit.dueDate)}.` : 'The deposit was already on record.');
+      refresh();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not create the deposit.'),
+  });
+  const pay = useMutation({
+    mutationFn: (id: string) => markTaxDepositPaid(id, confirmation.trim() || null),
+    onSuccess: () => {
+      toast.success('Deposit recorded as paid.');
+      setConfirmation('');
+      refresh();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not record the payment.'),
+  });
+  const openRemits = remittances.filter((x) => x.status !== 'SENT').length;
+  if (!deposit) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-warning">This run withheld taxes and no deposit is on record.</span>
+        <Button size="xs" onClick={() => create.mutate()} loading={create.isPending}>
+          Create the deposit
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 space-y-2 text-xs">
+      <p className="tabular-nums text-ink-muted">
+        {fmtMoney(deposit.amount)} due {fmtDate(deposit.dueDate)} ·{' '}
+        {deposit.status === 'PAID' ? `paid${deposit.confirmationNumber ? ` (EFTPS ${deposit.confirmationNumber})` : ''}` : 'not paid yet'}
+        {remittances.length > 0 && ` · ${openRemits} of ${remittances.length} garnishment remittances to send`}
+      </p>
+      {deposit.status !== 'PAID' && (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            pay.mutate(deposit.id);
+          }}
+        >
+          <label htmlFor={`eftps-${deposit.id}`} className="text-ink-muted">
+            EFTPS confirmation
+          </label>
+          <Input id={`eftps-${deposit.id}`} value={confirmation} onChange={(e) => setConfirmation(e.target.value)} placeholder="15-digit number" className="h-8 w-44" inputMode="numeric" />
+          <Button size="xs" type="submit" loading={pay.isPending}>
+            Record as paid
+          </Button>
+        </form>
+      )}
+    </div>
   );
 }

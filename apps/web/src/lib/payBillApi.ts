@@ -87,6 +87,20 @@ export interface ReconReport {
   totals: { wages: number; cost: number; billed: number; pending: number; margin: number; marginPct: number | null; gapPay: number };
   paychecks: PaycheckMargin[];
   unbilled: UnbilledRow[];
+  /** Hours a final statement billed that no paystub paid, by person and week (finance walk 11). */
+  billedNotPaid?: BilledNotPaidRow[];
+  billedNotPaidHours?: number;
+}
+
+export interface BilledNotPaidRow {
+  associateId: string;
+  associateName: string;
+  clientId: string;
+  clientName: string;
+  weekStart: string;
+  hours: number;
+  statementId: string;
+  statementNumber: number | null;
 }
 
 export interface BillingAdjustmentRow {

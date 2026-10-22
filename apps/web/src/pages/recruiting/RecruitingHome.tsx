@@ -26,14 +26,14 @@ import {
   getRecruitingSummary,
   listAllCandidates,
   listCandidates,
+  bulkRemoveCandidates,
   listRemovedCandidates,
-  removeCandidate,
   restoreCandidate,
   undoHire,
 } from '@/lib/recruitingApi';
 import { secondsUntil, undoWindowToast } from '@/lib/undoToast';
 import { usePrompt } from '@/lib/confirm';
-import { listJobPostings, listOffers, type OfferRecord } from '@/lib/recruiting90Api';
+import { listJobPostings, listOffers, type JobPostingRecord, type OfferRecord } from '@/lib/recruiting90Api';
 import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 import { listPositions } from '@/lib/positionsApi';
 import { downloadCsv } from '@/lib/csv';
@@ -367,8 +367,22 @@ export function RecruitingHome() {
   const postingsQuery = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings(), staleTime: 60_000 });
   const postings = postingsQuery.data?.postings ?? [];
 
-  const advance = async (c: Candidate, target: CandidateStage) => {
-    if (pendingId) return;
+  // The order on screen — list rows, or the board's columns left to right —
+  // for the drawer's next/previous (j/k).
+  const navOrder = useMemo<Candidate[]>(
+    () => (view === 'board' ? (boardColumns ?? []).flatMap((col) => col.candidates) : (candidates ?? [])),
+    [view, boardColumns, candidates],
+  );
+  const navIds = useMemo(() => navOrder.map((c) => c.id), [navOrder]);
+  /** The next candidate in the same stage, as the page shows them — read before a move changes the lists. */
+  const nextInStage = (c: Candidate): string | null => {
+    const same = navOrder.filter((x) => x.stage === c.stage);
+    const i = same.findIndex((x) => x.id === c.id);
+    return i >= 0 ? (same[i + 1]?.id ?? null) : null;
+  };
+
+  const advance = async (c: Candidate, target: CandidateStage): Promise<boolean> => {
+    if (pendingId) return false;
     setPendingId(c.id);
     try {
       await advanceCandidate(c.id, { stage: target });
@@ -376,11 +390,20 @@ export function RecruitingHome() {
         `Moved ${c.firstName} ${c.lastName} to ${STAGE_LABEL[target]}.`,
       );
       await refresh();
+      return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Advance failed.');
+      return false;
     } finally {
       setPendingId(null);
     }
+  };
+
+  /** Advance from the drawer, then open the next one waiting in that stage — the screening line. */
+  const advanceFromDrawer = async (c: Candidate, target: CandidateStage) => {
+    const next = nextInStage(c);
+    const ok = await advance(c, target);
+    if (ok && next) setDetailId(next);
   };
 
   /** A move from the board: outcomes open their dialogs. */
@@ -394,6 +417,8 @@ export function RecruitingHome() {
   const onConfirmReject = async (reason: string) => {
     if (!dialog || dialog.kind !== 'reject') return;
     setPendingId(dialog.candidate.id);
+    // Rejected from the open drawer: the next one in the stage opens after.
+    const next = detailId === dialog.candidate.id ? nextInStage(dialog.candidate) : null;
     try {
       await advanceCandidate(dialog.candidate.id, {
         stage: 'REJECTED',
@@ -403,6 +428,7 @@ export function RecruitingHome() {
         `${dialog.candidate.firstName} ${dialog.candidate.lastName} rejected.`,
       );
       setDialog(null);
+      if (next) setDetailId(next);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Reject failed.');
@@ -607,16 +633,24 @@ export function RecruitingHome() {
     });
     if (reason === null) return;
     setBulkBusy(true);
-    const targets = selectedRows;
-    const results = await Promise.allSettled(targets.map((c) => removeCandidate(c.id, reason.trim() || null)));
-    const ok = results.filter((r) => r.status === 'fulfilled').length;
-    results.forEach((res, i) => {
-      if (res.status === 'rejected') {
-        const c = targets[i]!;
-        toast.error(`${c.firstName} ${c.lastName}: ${res.reason instanceof ApiError ? res.reason.message : 'could not remove.'}`);
+    try {
+      // One call for the list: hired candidates come back skipped, with why.
+      const r = await bulkRemoveCandidates(
+        selectedRows.map((c) => c.id),
+        reason.trim() || null,
+      );
+      const skipped = r.skipped.length;
+      if (r.removed > 0 || skipped > 0) {
+        const msg = `${r.removed} removed${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
+        if (skipped > 0) {
+          toast.warning(msg, { description: r.skipped.map((x) => x.reason).filter((v, i, a) => a.indexOf(v) === i).join(' · ') });
+        } else {
+          toast.success(`${msg} Restore them from Recently removed.`);
+        }
       }
-    });
-    if (ok > 0) toast.success(`Removed ${ok} candidate${ok === 1 ? '' : 's'} — restore them from Recently removed.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not remove the candidates.');
+    }
     clearSelection();
     setBulkBusy(false);
     await refresh();
@@ -1049,7 +1083,7 @@ export function RecruitingHome() {
             Reject selected ({selectedRows.length})
           </Button>
           <Button size="sm" variant="ghost" onClick={() => void bulkRemove()} disabled={bulkBusy}>
-            Remove selected
+            Remove selected…
           </Button>
           <Button size="sm" variant="ghost" onClick={clearSelection} disabled={bulkBusy}>
             Clear
@@ -1075,6 +1109,8 @@ export function RecruitingHome() {
       <CreateCandidateDialog
         open={showCreate}
         onOpenChange={setShowCreate}
+        postings={postings}
+        defaultPostingId={postingFilter}
         onCreated={() => {
           setShowCreate(false);
           void refresh();
@@ -1129,12 +1165,14 @@ export function RecruitingHome() {
         candidate={detailCandidate}
         onOpenChange={(o) => !o && setDetailId(null)}
         onChanged={() => void refresh()}
+        order={navIds}
+        onNavigate={setDetailId}
         actions={
           canManage && detailCandidate ? (
             <CandidateActions
               c={detailCandidate}
               pendingId={pendingId}
-              onAdvance={advance}
+              onAdvance={(c, t) => void advanceFromDrawer(c, t)}
               onRequest={(kind) =>
                 setDialog({ kind, candidate: detailCandidate })
               }
@@ -1405,12 +1443,18 @@ interface CreateCandidateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
+  /** The job postings they could be added against (only OPEN ones are offered). */
+  postings?: JobPostingRecord[];
+  /** The board's current ?posting= filter — a candidate added there belongs to it. */
+  defaultPostingId?: string;
 }
 
 function CreateCandidateDialog({
   open,
   onOpenChange,
   onCreated,
+  postings = [],
+  defaultPostingId = '',
 }: CreateCandidateDialogProps) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -1418,8 +1462,12 @@ function CreateCandidateDialog({
   const [phone, setPhone] = useState('');
   const [position, setPosition] = useState('');
   const [source, setSource] = useState('');
+  const [jobPostingId, setJobPostingId] = useState('');
+  const [resumeUrl, setResumeUrl] = useState('');
+  const [linkedinUrl, setLinkedinUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const openPostings = postings.filter((p) => p.status === 'OPEN' || p.id === defaultPostingId);
   // Distinct position titles for the Select. null = not loaded / failed —
   // in that case we fall back to the free-text input rather than blocking.
   const positionsQuery = useQuery({
@@ -1442,9 +1490,12 @@ function CreateCandidateDialog({
       setPhone('');
       setPosition('');
       setSource('');
+      setJobPostingId(defaultPostingId);
+      setResumeUrl('');
+      setLinkedinUrl('');
       setError(null);
     }
-  }, [open]);
+  }, [open, defaultPostingId]);
 
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1460,6 +1511,10 @@ function CreateCandidateDialog({
         phone: phone || undefined,
         position: position || undefined,
         source: source || undefined,
+        // Counts toward the posting's fill rate from the start, not after an edit.
+        jobPostingId: jobPostingId || null,
+        resumeUrl: resumeUrl.trim() || undefined,
+        linkedinUrl: linkedinUrl.trim() || undefined,
       });
       onCreated();
     } catch (err) {
@@ -1541,6 +1596,33 @@ function CreateCandidateDialog({
                   </option>
                 ))}
               </Select>
+            </Field>
+            <Field
+              label="Job posting"
+              hint="The opening they'd fill — hiring them counts toward its fill rate."
+              className="md:col-span-2"
+            >
+              <Select value={jobPostingId} onChange={(e) => {
+                const id = e.target.value;
+                setJobPostingId(id);
+                // A blank position takes the posting's title.
+                const po = postings.find((p) => p.id === id);
+                if (po && !position) setPosition(po.title);
+              }}>
+                <option value="">None</option>
+                {openPostings.map((po) => (
+                  <option key={po.id} value={po.id}>
+                    {po.title}
+                    {po.clientName ? ` · ${po.clientName}` : ''}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Resume link" hint="A link to their resume (Drive, Dropbox, a job board). There is no file upload here yet.">
+              <Input type="url" inputMode="url" placeholder="https://" value={resumeUrl} onChange={(e) => setResumeUrl(e.target.value)} />
+            </Field>
+            <Field label="LinkedIn">
+              <Input type="url" inputMode="url" placeholder="https://www.linkedin.com/in/…" value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} />
             </Field>
           </div>
           {error && (

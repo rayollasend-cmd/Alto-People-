@@ -2,6 +2,7 @@ import type { AgentDecisionProfile, Prisma, PrismaClient } from '@prisma/client'
 import { z } from 'zod';
 import { capabilityDef } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
+import { notifyUser } from './notify.js';
 import { enqueueAudit, recordCriticalAudit } from './audit.js';
 import { ALTO_TENANT_ID } from './tenant.js';
 
@@ -232,16 +233,52 @@ const EVENT_COLUMN: Record<(typeof DECISION_EVENTS)[number], 'noticeGivenAt' | '
   data_sent: 'dataSentAt',
 };
 
+/** The notice texts, versioned: what the person is told when a decision about them involved an automated system. */
+export const NOTICE_TEXT_VERSION = 1;
+export function noticeText(kind: 'notice_given' | 'explanation_sent', row: { summary: string; outcome: string; decisionType: string; humanDecidedAt: Date | null }): { subject: string; body: string } {
+  const type = row.decisionType.toLowerCase();
+  const what = row.summary.trim().replace(/\.+$/, '');
+  if (kind === 'explanation_sent') {
+    return {
+      subject: 'How a decision about you was made',
+      body: `You asked how a ${type} decision about you was made. An automated system took part, and a person made the final call${row.humanDecidedAt ? ` on ${row.humanDecidedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}` : ''}. The decision: ${what}. You can ask for the data that was used, and for a person to review it again. Reply to this notice or contact HR.`,
+    };
+  }
+  return {
+    subject: 'A decision about you involved an automated system',
+    body: `An automated system helped make a ${type} decision about you: ${what}.${row.outcome === 'ADVERSE' ? ' The outcome was not in your favor.' : ''} A person decided. You have the right to ask how it was made, to ask for the data used, and to ask for a human review. Reply to this notice or contact HR.`,
+  };
+}
+
+/**
+ * A lifecycle date on a record, set once. "Notice given" and "explanation
+ * sent" are not just stamped: the notice goes to the person through the
+ * notifications dispatch (bell, email) when they have a login, and the
+ * record says which channel carried it. A subject with no login (an
+ * applicant) is stamped with the channel the person used by hand and
+ * `delivered: false` says the product did not send it.
+ */
 export async function markDecisionEvent(db: Db, tenantId: string, id: string, event: (typeof DECISION_EVENTS)[number], actorUserId: string, opts: { channel?: string; at?: Date } = {}) {
   const row = await db.automatedDecisionRecord.findFirst({ where: { id, tenantId } });
   if (!row) throw new HttpError(404, 'decision_not_found', 'No such decision.');
   const column = EVENT_COLUMN[event];
   if (row[column]) throw new HttpError(409, 'already_recorded', 'That date is already on the record.');
   const at = opts.at ?? new Date();
+  let delivered = false;
+  let channel = opts.channel ?? null;
+  if (event === 'notice_given' || event === 'explanation_sent') {
+    const user = row.subjectAssociateId ? await db.user.findFirst({ where: { associateId: row.subjectAssociateId, status: 'ACTIVE', deletedAt: null }, select: { id: true } }) : null;
+    if (user) {
+      const text = noticeText(event, row);
+      await notifyUser(user.id, { ...text, category: 'mandatory_notice', linkUrl: '/me' });
+      delivered = true;
+      channel = channel ?? 'IN_APP';
+    }
+  }
   const updated = await db.automatedDecisionRecord.update({
     where: { id },
-    data: { [column]: at, ...(event === 'notice_given' ? { noticeChannel: opts.channel ?? 'EMAIL', noticeTextVersion: 1 } : {}) },
+    data: { [column]: at, ...(event === 'notice_given' ? { noticeChannel: channel ?? 'EMAIL', noticeTextVersion: NOTICE_TEXT_VERSION } : {}) },
   });
-  enqueueAudit({ actorUserId, clientId: null, tenantId, workerId: row.workerId, action: `agent.decision_${event}`, entityType: 'AutomatedDecisionRecord', entityId: id, metadata: { at: at.toISOString() } }, 'decisionRecord');
-  return updated;
+  enqueueAudit({ actorUserId, clientId: null, tenantId, workerId: row.workerId, action: `agent.decision_${event}`, entityType: 'AutomatedDecisionRecord', entityId: id, metadata: { at: at.toISOString(), delivered, channel } }, 'decisionRecord');
+  return { ...updated, delivered };
 }

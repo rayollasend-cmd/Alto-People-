@@ -8,6 +8,7 @@ import { accountFingerprint, notifyFinance } from '../financialChanges.js';
 import { readRoutingNumber } from '../payoutMethod.js';
 import { rerouteReturnedItem } from '../payoutReroute.js';
 import { sendPaystubEmail } from '../sendPaystubEmail.js';
+import { afterRunSettled } from '../payrollSettled.js';
 import { describeBranchFailure } from '../achReturnCodes.js';
 import { tenantIdForWrite } from '../tenant.js';
 import type { DisbursementAdapter, DisbursementInput, DisbursementResult } from '../disbursement.js';
@@ -339,7 +340,12 @@ export async function markFileUploaded(db: PrismaClient, fileId: string, actorUs
     const open = await db.payrollItem.count({ where: { payrollRunId: runId, status: { in: ['PENDING', 'HELD'] } } });
     if (open > 0) continue;
     const r = await db.payrollRun.updateMany({ where: { id: runId, status: 'FINALIZED' }, data: { status: 'DISBURSED', disbursedAt: now } });
-    if (r.count > 0) runsSettled.push(runId);
+    if (r.count > 0) {
+      runsSettled.push(runId);
+      // Paid by file is paid: the run owes its tax deposit, liabilities and
+      // garnishment remittances exactly as one the bank partner settled.
+      await afterRunSettled(db, runId);
+    }
   }
   enqueueAudit({ actorUserId, action: 'payroll.ach_file_uploaded', entityType: 'AchFile', entityId: file.id, metadata: { paid: paidItems.length, runsSettled, sha256: file.sha256 } }, 'banking');
   return { fileId, paid: paidItems.length, runsSettled, already: false };

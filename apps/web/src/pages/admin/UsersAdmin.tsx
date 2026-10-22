@@ -1,4 +1,5 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Clock, KeyRound, Lock, MapPin, RefreshCw, Repeat, ShieldAlert, ShieldCheck, Unlock, UserRound, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { ROLES, type Role } from '@/lib/roles';
@@ -50,8 +51,6 @@ import { BreakGlassDialog, ScopeDialog } from '@/components/admin/AccessBindingD
 import { AccessReport, DeactivateDialog } from './AccessReport';
 import { deactivateUsers, reactivateUser } from '@/lib/usersAdminApi';
 
-// Brief 2-3 step 3: its own chunk, fetched when the tab opens.
-const RolesMatrix = lazy(() => import('./RolesMatrix').then((m) => ({ default: m.RolesMatrix })));
 
 const STATUS_OPTIONS: UserStatus[] = ['ACTIVE', 'INVITED', 'DISABLED'];
 
@@ -128,7 +127,7 @@ export function UsersAdmin() {
   const [bulkBusy, setBulkBusy] = useState(false);
   // Brief 1A-4: the accounts list, or the access report (flags, bulk
   // deactivation reversible for 30 days).
-  const [view, setView] = useState<'accounts' | 'report' | 'roles'>('accounts');
+  const [view, setView] = useState<'accounts' | 'report'>('accounts');
   // Whose temporary-access dialog is open (approval engine: a role until a date).
   const [elevateFor, setElevateFor] = useState<AdminUser | null>(null);
   // A region binding waits here for its named approver.
@@ -904,23 +903,22 @@ export function UsersAdmin() {
       {/* Shifts nobody leads / supervisors with no shift — only when any. */}
       <ShiftLeadsCard hideWhenClear onChanged={() => void load()} />
 
-      <SegmentedControl
-        options={[
-          { value: 'accounts', label: 'Accounts' },
-          { value: 'report', label: 'Access report' },
-          { value: 'roles', label: 'Roles & permissions' },
-        ]}
-        value={view}
-        onChange={setView}
-      />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SegmentedControl
+          options={[
+            { value: 'accounts', label: 'Accounts' },
+            { value: 'report', label: 'Access report' },
+          ]}
+          value={view}
+          onChange={setView}
+        />
+        {/* Roles & permissions is its own Settings entry now (audit Tier 3). */}
+        <Link to="/admin/roles" className="text-sm text-accent underline-offset-2 hover:underline">
+          Roles & permissions →
+        </Link>
+      </div>
 
       {view === 'report' && <AccessReport />}
-
-      {view === 'roles' && (
-        <Suspense fallback={null}>
-          <RolesMatrix />
-        </Suspense>
-      )}
 
       {view === 'accounts' && (<>
       <Card>

@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import {
   AlarmClock,
   ArrowRight,
+  Briefcase,
   Calendar,
   CalendarClock,
   FileSignature,
@@ -29,6 +30,9 @@ import { fmtDate, fmtRelativeDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { getRecruiterHome } from '@/lib/recruitingApi';
+import { listJobPostings } from '@/lib/recruiting90Api';
+import { gapsWithoutPosting, getStaffingPlan } from '@/pages/recruiting/staffingGaps';
+import { postingForGapHref } from '@/pages/recruiting/postingSeed';
 import { resendInvite } from '@/lib/onboardingApi';
 import { RecruiterCalendarFeed } from '@/pages/recruiting/RecruiterCalendarFeed';
 import { Badge } from '@/components/ui/Badge';
@@ -658,6 +662,55 @@ function Requisitions({ reqs }: { reqs: NonNullable<RecruiterHome['requisitions'
   );
 }
 
+/**
+ * Stores the staffing plan says are short, with no open posting hiring for
+ * them — the gap the pipeline should be filling, one click from a posting.
+ * Quiet when every short store already has one.
+ */
+export function StaffingGaps({ canPost }: { canPost: boolean }) {
+  const { t } = useI18n();
+  const plan = useQuery({ queryKey: ['headcount', 'staffing-plan', 12, ''], queryFn: () => getStaffingPlan({ weeks: 12 }), staleTime: 5 * 60_000 });
+  const postings = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings(), staleTime: 60_000 });
+  if (plan.isError) {
+    return <p className="text-xs text-ink-muted">{t('recruiterHome.gapsError')}</p>;
+  }
+  if (!plan.data || !postings.data) return null;
+  const gaps = gapsWithoutPosting(plan.data, postings.data.postings);
+  if (gaps.length === 0) return null;
+  return (
+    <section aria-labelledby="staffing-gaps">
+      <SectionTitle count={gaps.length} action={<MoreLink to="/headcount/plan">{t('recruiterHome.gapsPlan')}</MoreLink>}>
+        <span id="staffing-gaps">{t('recruiterHome.gapsTitle')}</span>
+      </SectionTitle>
+      <Card>
+        <CardContent>
+          <ul className="divide-y divide-line">
+            {gaps.slice(0, 6).map((g) => (
+              <li key={g.storeId} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm first:pt-0 last:pb-0">
+                <span className="min-w-0 flex-1 truncate text-ink">
+                  {g.storeName}
+                  {g.clientName ? <span className="text-ink-muted"> · {g.clientName}</span> : null}
+                </span>
+                <span className="text-xs tabular-nums text-alert">
+                  {t('recruiterHome.gapsShort', { n: g.short, date: g.from ? fmtDate(g.from) : '—' })}
+                </span>
+                {canPost && (
+                  <Button asChild size="sm" variant="outline">
+                    <Link to={postingForGapHref({ clientId: g.clientId, storeName: g.storeName, openings: g.short })}>
+                      <Briefcase className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('recruiterHome.gapsOpen', { n: g.short })}
+                    </Link>
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
 function Numbers({ home }: { home: RecruiterHome }) {
   const { t } = useI18n();
   const n = home.numbers;
@@ -839,6 +892,7 @@ export function RecruiterDashboard() {
             <WaitingOnOthers home={home} />
             <PipelineAndPostings home={home} />
             {home.requisitions && <Requisitions reqs={home.requisitions} />}
+            <StaffingGaps canPost={can('manage:recruiting')} />
             <Numbers home={home} />
             <Activity home={home} />
           </>

@@ -16,6 +16,8 @@ const api = vi.hoisted(() => ({
   listAccruals: vi.fn(),
   createAccrual: vi.fn(),
   listAccountOptions: vi.fn(),
+  finalizeCloseStatements: vi.fn(),
+  postCloseHistory: vi.fn(),
 }));
 vi.mock('@/lib/books/closeApi', () => api);
 
@@ -125,6 +127,26 @@ describe('ClosePeriodPage', () => {
     await user.click(screen.getByRole('button', { name: 'Mark done' }));
     await waitFor(() => expect(api.updateCloseTask).toHaveBeenCalledWith('2026-09', 'budget_review', { status: 'DONE', note: 'Within 2%' }));
     expect(await screen.findByText('Within 2%')).toBeInTheDocument();
+  });
+
+  it('finalizes the month’s statements from the checklist itself, with no page change (finance walk 16)', async () => {
+    const statements = task({ key: 'statements_final', title: 'Finalize the month’s statements', auto: true, passing: false, summary: '2 statements for the month still in draft.', items: [{ label: 'Harbor Grill — draft statement', link: '/clients/c1?tab=statements' }], link: '/clients/statements', action: { kind: 'finalize_statements', label: 'Finalize 2 statements' } });
+    const after = detail({ tasksDone: 1, tasks: [task({ key: 'statements_final', title: 'Finalize the month’s statements', auto: true, status: 'DONE', passing: true, summary: 'Every statement for the month is final.', action: null }), task({})] });
+    api.getCloseMonth.mockResolvedValueOnce(detail({ tasks: [statements, task({})] })).mockResolvedValue(after);
+    api.finalizeCloseStatements.mockResolvedValue({ finalized: 2, failed: [], month: after });
+    const user = userEvent.setup();
+    atMonth();
+    await user.click(await screen.findByRole('button', { name: 'Finalize 2 statements' }));
+    await waitFor(() => expect(api.finalizeCloseStatements).toHaveBeenCalledWith('2026-09'));
+    expect(await screen.findByText('Every statement for the month is final.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Finalize 2 statements' })).toBeNull();
+  });
+
+  it('the executive sees the step but not its button', async () => {
+    api.getCloseMonth.mockResolvedValue(detail({ can: { edit: false, ready: false, unready: false, signOff: false, reopen: false, why: 'Only someone who keeps the books can work the close.' }, tasks: [task({ key: 'nothing_to_post', auto: true, passing: false, summary: '1 item not posted to the ledger yet.', action: { kind: 'post_history', label: 'Post history' } })] }));
+    atMonth('EXECUTIVE_CHAIRMAN');
+    expect(await screen.findByText('1 item not posted to the ledger yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Post history' })).toBeNull();
   });
 
   it('marks a hand step done in one click', async () => {

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, Mail, UserPlus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { CalendarClock, Copy, Mail, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   Candidate,
@@ -17,6 +18,7 @@ import {
   cancelApplication,
   createApplication,
   listClients,
+  payScheduleForHire,
   listTemplates,
 } from '@/lib/onboardingApi';
 import { listClientLocations } from '@/lib/clientsApi';
@@ -38,7 +40,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { usePersistentState } from '@/lib/usePersistentState';
-import { useTenant, useTerm } from '@/lib/auth';
+import { AuthContext, useTenant, useTerm } from '@/lib/auth';
 import { useOrgSites } from '@/lib/useOrgSites';
 import {
   EMPTY_INVITE_LAST_USED,
@@ -278,6 +280,21 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
     // anyway; this keeps the form's required check in agreement).
     if (locations.length === 1) setLocationId((cur) => cur || locations[0]!.id);
   }, [locations]);
+
+  // Which pay schedule will pay this hire (role walk HR 23) — the same rules
+  // the approval uses, read before the hire exists, so "no schedule covers
+  // this hire" is found here and not on payday.
+  // Read softly: the dialog is also rendered on its own, outside the auth provider.
+  const auth = useContext(AuthContext);
+  const canSeeSchedule = auth?.can('manage:onboarding') ?? false;
+  const payScheduleQuery = useQuery({
+    queryKey: ['onboarding', 'pay-schedule-for-hire', clientId, locationId],
+    queryFn: () => payScheduleForHire({ clientId: clientId || null, locationId: locationId || null }),
+    enabled: open && canSeeSchedule && Boolean(clientId || locationId),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const hireSchedule = payScheduleQuery.data ?? null;
 
   // The client's position catalog feeds the Position field as typeahead
   // suggestions — free text still allowed for one-off titles.
@@ -627,6 +644,27 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
                 </Select>
               )}
             </Field>
+
+            {hireSchedule && (
+              <p role="status" className="-mt-1 flex items-start gap-2 text-xs text-ink-muted">
+                <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {hireSchedule.conflict ? (
+                  <span className="text-warning">
+                    {hireSchedule.conflict}. You choose one at approval, or fix the rules in{' '}
+                    <Link to="/payroll/schedules" className="text-accent hover:underline">Pay schedules</Link>.
+                  </span>
+                ) : hireSchedule.schedule ? (
+                  <span>
+                    Paid on: <span className="text-ink">{hireSchedule.schedule.name}</span> ({hireSchedule.schedule.because})
+                  </span>
+                ) : (
+                  <span className="text-warning">
+                    No pay schedule covers this hire — you choose one at approval.{' '}
+                    <Link to="/payroll/schedules" className="text-accent hover:underline">Pay schedules</Link>
+                  </span>
+                )}
+              </p>
+            )}
 
             <Field
               label="Onboarding template"

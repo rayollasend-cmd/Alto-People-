@@ -46,26 +46,30 @@ function StoreScopeBar() {
 
 function StoreScopeControl() {
   const { clients, clientId, setClientId } = useStoreScope();
+  const { t } = useI18n();
 
-  if (clients.length > 6) {
-    return (
-      <div className="hidden lg:block">
-        <Select
-          size="sm"
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          aria-label="Store scope"
-        >
-          <option value="">All stores</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {shortStoreName(c.name)}
-            </option>
-          ))}
-        </Select>
-      </div>
-    );
-  }
+  // One dropdown. Below 1280px the segmented bar took ~510px of a 1024px
+  // tablet and pushed Help and the bell off the right edge (role walk ops
+  // 5), so it is the dropdown there; the segments come back at xl.
+  const dropdown = (className: string) => (
+    <div className={className} data-testid="store-scope-select">
+      <Select
+        size="sm"
+        value={clientId}
+        onChange={(e) => setClientId(e.target.value)}
+        aria-label={t('top.storeScope')}
+      >
+        <option value="">{t('nav.allClients')}</option>
+        {clients.map((c) => (
+          <option key={c.id} value={c.id}>
+            {shortStoreName(c.name)}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+
+  if (clients.length > 6) return dropdown('hidden lg:block');
 
   const seg = (active: boolean) =>
     cn(
@@ -75,10 +79,13 @@ function StoreScopeControl() {
         : 'text-silver hover:text-white hover:bg-navy-secondary/60',
     );
   return (
+    <>
+    {dropdown('hidden lg:block xl:hidden')}
     <div
       role="group"
-      aria-label="Store scope"
-      className="hidden lg:inline-flex items-center gap-0.5 rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5"
+      aria-label={t('top.storeScope')}
+      className="hidden xl:inline-flex items-center gap-0.5 rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5"
+      data-testid="store-scope-segments"
     >
       <button
         type="button"
@@ -86,7 +93,7 @@ function StoreScopeControl() {
         aria-pressed={clientId === ''}
         onClick={() => setClientId('')}
       >
-        All
+        {t('top.all')}
       </button>
       {clients.map((c) => (
         <button
@@ -101,10 +108,12 @@ function StoreScopeControl() {
         </button>
       ))}
     </div>
+    </>
   );
 }
 
 export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
+  const { t } = useI18n();
   const roleLabel = useRoleLabel();
   const { user, signOut, isOffline } = useAuth();
   const navigate = useNavigate();
@@ -123,7 +132,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
   const showBack = !isSectionRoot(location.pathname) && location.pathname !== '/';
   const parentCrumb =
     breadcrumbs && breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2] : null;
-  const backLabel = parentCrumb?.label ?? 'Back';
+  const backLabel = parentCrumb?.label ?? t('top.back');
 
   const goBack = () => {
     // react-router stamps an index on each entry. Zero means this is the
@@ -189,7 +198,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
           <span className="text-sm max-w-[7rem] truncate">{backLabel}</span>
         </button>
       ) : (
-        <Logo size="xs" className="md:hidden" alt="Company logo" />
+        <Logo size="xs" className="md:hidden" alt={t('top.logo')} />
       )}
 
       {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives
@@ -214,7 +223,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
       >
       {breadcrumbs && breadcrumbs.length > 0 ? (
         <nav
-          aria-label="Breadcrumb"
+          aria-label={t('top.breadcrumb')}
           className="flex items-center gap-1 min-w-0 text-sm overflow-hidden"
         >
           {breadcrumbs.map((seg, i) => {
@@ -281,11 +290,11 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
         type="button"
         onClick={onOpenCommandPalette}
         className="hidden md:inline-flex items-center gap-2 w-72 min-w-[9rem] shrink h-9 px-3 rounded-md border border-navy-secondary bg-navy-secondary/30 text-silver/80 hover:text-white hover:border-silver/40 transition-colors text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-        aria-label="Open command palette"
+        aria-label={t('top.palette')}
         data-tour="search"
       >
         <Search className="h-3.5 w-3.5" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate whitespace-nowrap text-left">Search or jump to…</span>
+        <span className="min-w-0 flex-1 truncate whitespace-nowrap text-left">{t('top.search')}</span>
         <kbd className="hidden lg:inline-flex items-center gap-0.5 h-5 px-1.5 rounded border border-navy-secondary bg-navy-secondary/40 font-mono text-3xs text-silver">
           ⌘K
         </kbd>
@@ -295,7 +304,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
         size="icon-sm"
         className="md:hidden"
         onClick={onOpenCommandPalette}
-        aria-label="Open command palette"
+        aria-label={t('top.palette')}
       >
         <Search className="h-5 w-5" />
       </Button>
@@ -308,7 +317,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
               role="status"
             >
               <WifiOff className="h-3 w-3" aria-hidden="true" />
-              <span className="hidden sm:inline">Reconnecting…</span>
+              <span className="hidden sm:inline">{t('top.reconnecting')}</span>
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom">
@@ -317,8 +326,8 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                 fill from the saved cache, and a number nobody can date is
                 worse than a number labelled "from this morning". */}
             {savedAt
-              ? `Lost connection. Showing what was saved ${fmtRelativeDate(new Date(savedAt))} — still trying.`
-              : 'Lost connection. Trying again.'}
+              ? t('top.offlineSaved', { when: fmtRelativeDate(new Date(savedAt)) })
+              : t('top.offline')}
           </TooltipContent>
         </Tooltip>
       )}
@@ -351,14 +360,15 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
           <Button
             variant="ghost"
             size="icon-sm"
+            className="shrink-0"
             onClick={onOpenHelp}
-            aria-label="Help for this page"
-            title="Help for this page"
+            aria-label={t('top.help')}
+            title={t('top.help')}
             data-tour="help"
           >
             <CircleHelp className="h-5 w-5" aria-hidden="true" />
           </Button>
-          <span data-tour="bell" className="inline-flex">
+          <span data-tour="bell" className="inline-flex shrink-0">
             <NotificationsBell />
           </span>
 
@@ -370,7 +380,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
               <button
                 type="button"
                 className="md:hidden grid place-items-center h-11 w-11 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                aria-label="Account menu"
+                aria-label={t('top.account')}
               >
                 <Avatar
                   src={user.photoUrl}
@@ -401,7 +411,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                 }}
               >
                 <IdCard className="h-4 w-4" />
-                My profile
+                {t('top.profile')}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -410,7 +420,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                 }}
               >
                 <User className="h-4 w-4" />
-                Account settings
+                {t('top.settings')}
               </DropdownMenuItem>
               {/* Only for the few accounts that do two jobs. On a phone the
                   choice opens as a sheet — a submenu beside this menu has no
@@ -425,7 +435,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                 disabled={signingOut}
               >
                 <LogOut className="h-4 w-4" />
-                {signingOut ? 'Signing out…' : 'Sign out'}
+                {signingOut ? t('top.signingOut') : t('top.signOut')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

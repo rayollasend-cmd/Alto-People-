@@ -10,8 +10,9 @@ import { requireModule } from '../lib/tenantProfile.js';
 import { isInternallyScoped, scopeClients, scopePayrollRuns, scopeTimeEntries, scopeWhere } from '../lib/scope.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { reconcilePayPeriod, runningPayrollCost } from '../lib/payBillRecon.js';
+import { billedNotPaid } from '../lib/payBillGaps.js';
 import { normalizeRules, onPayrollFinalized, PREMIUM_KEYS, readyAdjustments, termsFor } from '../lib/payBillLink.js';
-import type { StatementSnapshot } from '../lib/clientStatement.js';
+import { clientSalesTaxRate, totalsWithTax, type StatementSnapshot } from '../lib/clientStatement.js';
 import { runPayrollPrep } from '../lib/payrollAgent.js';
 
 /**
@@ -93,7 +94,14 @@ payBillRouter.get('/reconciliation', BILLING, FINANCE_READ, async (req, res, nex
       report.paychecks = report.paychecks.filter((p) => p.clientId === q.data.clientId);
       report.unbilled = report.unbilled.filter((u) => u.clientId === q.data.clientId);
     }
-    res.json(report);
+    // The other direction (finance walk 11): hours a final statement billed that no paystub paid.
+    const billed = await billedNotPaid(prisma, {
+      periodStart: dateOnly(q.data.periodStart),
+      periodEnd: dateOnly(q.data.periodEnd),
+      clientId: q.data.clientId ?? null,
+      runWhere: scopeWhere<Prisma.PayrollRunWhereInput>({ tenantId: tenantIdForWrite() }, scopePayrollRuns(user)),
+    });
+    res.json({ ...report, billedNotPaid: billed.rows, billedNotPaidHours: billed.hours });
   } catch (err) {
     next(err);
   }
@@ -177,14 +185,14 @@ payBillRouter.post('/clients/:id/adjustment-statement', BILLING, FINANCE_WRITE, 
       lines: [],
       stores: [],
       adjustments,
-      totals: { hours: 0, regularHours: 0, otHours: 0, amount: total, hoursAmount: 0, adjustmentsAmount: total },
+      totals: { hours: 0, regularHours: 0, otHours: 0, ...totalsWithTax({ hoursAmount: 0, adjustmentsAmount: total, salesTaxRatePct: await clientSalesTaxRate(prisma, client.id) }) },
       sla: { publishedShifts: 0, assignedShifts: 0, fillRatePct: null, punctualPct: null, noShows: 0, pendingEntries: 0 },
     };
     const row = existing
       ? await prisma.clientStatement.update({ where: { id: existing.id }, data: { snapshot: snapshot as unknown as Prisma.InputJsonValue } })
       : await prisma.clientStatement.create({ data: { clientId: client.id, periodStart: today, periodEnd: today, snapshot: snapshot as unknown as Prisma.InputJsonValue } });
     enqueueAudit({ actorUserId: user.id, clientId: client.id, action: 'billing.adjustment_statement_drafted', entityType: 'ClientStatement', entityId: row.id, metadata: { adjustments: adjustments.length, amount: total } }, 'payBill');
-    res.status(existing ? 200 : 201).json({ statementId: row.id, clientId: client.id, amount: total, adjustments: adjustments.length });
+    res.status(existing ? 200 : 201).json({ statementId: row.id, clientId: client.id, amount: snapshot.totals.amount, adjustments: adjustments.length });
   } catch (err) {
     next(err);
   }

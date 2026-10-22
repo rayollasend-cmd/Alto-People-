@@ -63,6 +63,7 @@ import { downloadCsv } from '@/lib/csv';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { SlaChip, SlaTargetsDialog } from './SlaTargetsDialog';
+import { OnBehalfCaseDrawer } from './OnBehalfCaseDrawer';
 
 // Deliberate departures from the shared vocabulary: an OPEN case is unclaimed
 // work awaiting triage (amber, not the vocabulary's actionable gold — gold is
@@ -128,6 +129,10 @@ export function HrCasesHome() {
     canManage && !user?.associateId ? 'queue' : 'mine',
   );
   const [showNew, setShowNew] = useState(false);
+  // HR opens a case for someone who called or walked in (HR walk 13).
+  // The whole-desk role only — Finance works the payroll desk, it doesn't file.
+  const canFileOnBehalf = user ? hasCapability(user.role, 'manage:onboarding') : false;
+  const [showOnBehalf, setShowOnBehalf] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<CaseStatus | 'ALL'>('OPEN');
   const [categoryFilter, setCategoryFilter] = useState<CaseCategory | 'ALL'>(
@@ -369,6 +374,11 @@ export function HrCasesHome() {
           )}
           {/* Filing needs an associate record — desk-only staff (Finance)
               work cases, they don't file them. */}
+          {canFileOnBehalf && (
+            <Button variant={user?.associateId ? 'secondary' : 'primary'} onClick={() => setShowOnBehalf(true)}>
+              <Plus className="mr-2 h-4 w-4" /> {user?.associateId ? t('hrc.onBehalf.button') : t('hrc.newCase')}
+            </Button>
+          )}
           {user?.associateId && (
             <Button onClick={() => setShowNew(true)}>
               <Plus className="mr-2 h-4 w-4" /> {t('hrc.newCase')}
@@ -488,7 +498,16 @@ export function HrCasesHome() {
                     cell: (c) => (
                       <>
                         <div className="font-medium text-white">{c.subject}</div>
-                        {c.commentCount > 0 && <div className="text-xs text-silver">{c.commentCount} replies</div>}
+                        {(c.channel || c.commentCount > 0) && (
+                          <div className="flex items-center gap-1.5 text-xs text-silver">
+                            {c.channel && (
+                              <Badge size="sm" variant="outline" title={c.filedByEmail ? `Taken by ${c.filedByEmail}` : undefined}>
+                                {t(`hrc.channel.${c.channel}` as MessageKey)}
+                              </Badge>
+                            )}
+                            {c.commentCount > 0 && <span>{c.commentCount} replies</span>}
+                          </div>
+                        )}
                       </>
                     ),
                   },
@@ -555,6 +574,18 @@ export function HrCasesHome() {
       )}
 
       {canManage && <SlaTargetsDialog open={showSla} canManage={user ? hasCapability(user.role, 'manage:org') : false} onClose={() => setShowSla(false)} />}
+      {showOnBehalf && (
+        <OnBehalfCaseDrawer
+          onClose={() => setShowOnBehalf(false)}
+          onSaved={(id) => {
+            setShowOnBehalf(false);
+            setTab('queue');
+            setOpenId(id);
+            refresh({ soft: true });
+            refreshSummary();
+          }}
+        />
+      )}
       {showNew && (
         <NewCaseDrawer
           onClose={() => setShowNew(false)}

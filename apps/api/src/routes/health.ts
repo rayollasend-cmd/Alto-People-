@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { HealthResponse } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { env } from '../config/env.js';
 
 export const healthRouter = Router();
 
@@ -48,7 +49,7 @@ healthRouter.get('/ready', async (_req, res) => {
 // on every deploy/restart — at worst the kiosk reloads once after a bare
 // restart, which is harmless on the idle screen.
 export const BUILD_VERSION =
-  process.env.RAILWAY_GIT_COMMIT_SHA ?? `boot-${Date.now()}`;
+  env.RAILWAY_GIT_COMMIT_SHA ?? `boot-${Date.now()}`;
 
 healthRouter.get('/version', (_req, res) => {
   res.json({ version: BUILD_VERSION });

@@ -10,7 +10,6 @@ const api = vi.hoisted(() => ({
   getBudget: vi.fn(),
   createBudget: vi.fn(),
   updateBudget: vi.fn(),
-  deleteBudget: vi.fn(),
   saveBudgetLines: vi.fn(),
   budgetFromActuals: vi.fn(),
   getBudgetVsActual: vi.fn(),

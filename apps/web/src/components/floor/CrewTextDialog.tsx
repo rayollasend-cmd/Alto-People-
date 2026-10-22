@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { MessageSquareText } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { textCrew } from '@/lib/floorApi';
+import { textCrew, type CrewTextResult } from '@/lib/floorApi';
 import { Button } from '@/components/ui/Button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
@@ -27,7 +27,7 @@ export function CrewTextDialog({
   label: string;
   count: number;
   /** Send it some other way (e.g. one text per client); defaults to one /floor/crew-text call. */
-  send?: (body: string) => Promise<{ sent: number; noPhone: string[] }>;
+  send?: (body: string) => Promise<CrewTextResult>;
 }) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -36,7 +36,18 @@ export function CrewTextDialog({
     setBusy(true);
     try {
       const r = sendOverride ? await sendOverride(body.trim()) : await textCrew({ shiftIds, body: body.trim() });
-      toast.success(r.noPhone.length ? `Sent to ${r.sent}. No phone on file: ${r.noPhone.join(', ')}.` : `Sent to ${r.sent}.`);
+      // Honest outcome: a text with no provider behind it was never sent.
+      if (r.notConfigured) {
+        toast.error(`Nothing was sent — ${r.notConfigured}`);
+        return;
+      }
+      const notes: string[] = [];
+      if (r.noPhone.length) notes.push(`No phone on file: ${r.noPhone.join(', ')}.`);
+      if (r.optedOut > 0) notes.push(`${r.optedOut} opted out of texts.`);
+      if (r.failed > 0) notes.push(`${r.failed} could not be delivered — see the communications log.`);
+      const summary = `Sent to ${r.sent}.${notes.length ? ` ${notes.join(' ')}` : ''}`;
+      if (r.sent === 0 && (r.failed > 0 || r.optedOut > 0)) toast.error(summary);
+      else toast.success(summary);
       setBody('');
       onOpenChange(false);
     } catch (err) {

@@ -333,7 +333,8 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
     routes((path, init) => {
       if (path === '/transport/driver/runs') return { today: zonedDayKey(new Date(), tz), runs: [run()] };
       if (path === '/transport/driver/runs/run1/live') return { run: null };
-      if (path === '/transport/driver/runs/run1/arrived' && init?.method === 'POST') return { run: run() };
+      if (path === '/transport/driver/runs/run1/arrived' && init?.method === 'POST') return { run: run(), evidence: null };
+      if (path === '/transport/driver/runs/run1/board-all' && init?.method === 'POST') return { run: run(), boarded: ['r1', 'r2'], already: [] };
       if (path.startsWith('/transport/driver/rides/') && init?.method === 'POST') return { ride: ride({ id: 'x' }) };
     });
     renderAs('DRIVER', <DriverHome />);
@@ -345,11 +346,16 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
     for (const b of within(stop).getAllByRole('button', { name: 'No-show' })) expect(b).toBeDisabled();
 
     await userEvent.click(within(stop).getByRole('button', { name: 'Arrived' }));
-    expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/arrived', { method: 'POST', body: { rideIds: ['r1', 'r2'] } });
+    // Every tap carries an idempotency key (and the phone's position, when it has one).
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/arrived', { method: 'POST', body: expect.objectContaining({ rideIds: ['r1', 'r2'], idempotencyKey: expect.any(String) }) }),
+    );
 
+    // All on board is one request for the whole stop (floor walk 18).
     await userEvent.click(within(stop).getByRole('button', { name: 'All on board' }));
-    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r2/board', { method: 'POST' }));
-    expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r1/board', { method: 'POST' });
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/board-all', { method: 'POST', body: expect.objectContaining({ rideIds: ['r1', 'r2'] }) }),
+    );
     // The next stop is still to come.
     expect(screen.getByText('Later stops')).toBeInTheDocument();
   });
@@ -382,7 +388,7 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
     expect(confirm).toHaveTextContent('Mark Ben Ray a no-show?');
     expect(confirm).toHaveTextContent('$1.00 no-show fee');
     await userEvent.click(within(confirm).getByRole('button', { name: 'No-show' }));
-    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r2/no-show', { method: 'POST' }));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/rides/r2/no-show', { method: 'POST', body: expect.objectContaining({ idempotencyKey: expect.any(String) }) }));
   });
 
   it('everyone picked up: the drop-off, and Finish', async () => {
@@ -397,7 +403,7 @@ describe('<DriverHome> — driver mode, stop by stop', () => {
     expect(await screen.findByText('Everyone’s picked up')).toBeInTheDocument();
     expect(screen.getByText('Drop off at Front Beach 218')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Finish run/ }));
-    expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/complete', { method: 'POST' });
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/driver/runs/run1/complete', { method: 'POST', body: expect.objectContaining({ idempotencyKey: expect.any(String) }) }));
   });
 });
 
@@ -434,7 +440,8 @@ describe('<TransportHome> — the command center', () => {
     expect(await screen.findByText(/To Front Beach 218/)).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /Issues/ })).toHaveTextContent('1');
     await userEvent.click(screen.getByRole('checkbox', { name: 'Pick all 2' }));
-    await userEvent.click(screen.getByRole('button', { name: /Dispatch 2/ }));
+    // The bar's Dispatch — not the van timeline's "Dispatch 2 waiting…" ghost.
+    await userEvent.click(screen.getByRole('button', { name: /^Dispatch 2$/ }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Maria Lopez')).toBeInTheDocument();
     expect(within(dialog).getByText('Kim Nguyen')).toBeInTheDocument();

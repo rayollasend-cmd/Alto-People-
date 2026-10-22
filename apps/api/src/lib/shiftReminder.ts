@@ -12,6 +12,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { armJob, stopJob } from './jobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { formatShiftLine, notifyShift, shiftWa } from './notifyShift.js';
@@ -517,26 +518,19 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
   return alerts;
 }
 
-let timer: NodeJS.Timeout | null = null;
+export const SHIFT_REMINDER_JOB = 'shiftReminder';
 
+/** On by default (SHIFT_REMINDER_INTERVAL_SECONDS=1800); listed on the jobs panel either way. */
 export function startShiftReminderCron(): void {
-  if (timer) return;
-  const seconds = env.SHIFT_REMINDER_INTERVAL_SECONDS;
-  if (seconds <= 0) return;
-  void tenantJob('shiftReminder', runShiftReminderSweep)().catch((err) => {
-    console.error('[alto-people/api] shift reminder sweep failed:', err);
+  armJob({
+    name: SHIFT_REMINDER_JOB,
+    label: 'Shift reminders (day before, confirm asks, no-shows)',
+    intervalSeconds: env.SHIFT_REMINDER_INTERVAL_SECONDS,
+    run: tenantJob(SHIFT_REMINDER_JOB, runShiftReminderSweep),
+    note: 'SHIFT_REMINDER_INTERVAL_SECONDS; each shift is reminded once (Shift.reminderSentAt).',
   });
-  timer = setInterval(() => {
-    void tenantJob('shiftReminder', runShiftReminderSweep)().catch((err) => {
-      console.error('[alto-people/api] shift reminder sweep failed:', err);
-    });
-  }, seconds * 1000);
-  timer.unref();
-  console.log(`[alto-people/api] shift reminder cron armed (every ${seconds}s)`);
 }
 
 export function stopShiftReminderCron(): void {
-  if (!timer) return;
-  clearInterval(timer);
-  timer = null;
+  stopJob(SHIFT_REMINDER_JOB);
 }

@@ -63,10 +63,10 @@ describe('connecting', () => {
     const company = await agent().get('/quickbooks/connect/callback').query({ code: 'C', state: 'company.t.u.n.sig', realmId: 'R1' });
     expect(company.status).toBe(302);
     expect(company.headers.location).toBe(`${env.APP_BASE_URL}/api/books/quickbooks/callback?code=C&state=company.t.u.n.sig&realmId=R1`);
-    // A client's payroll connection still lands on its own handler (a bad state there → back to Clients).
-    const client = await agent().get('/quickbooks/connect/callback').query({ code: 'C', state: 'not-a-company-state', realmId: 'R1' });
-    expect(client.status).toBe(302);
-    expect(client.headers.location).toMatch(/\/clients\?qbo_error=/);
+    // The per-client payroll connection is retired: every return goes on to the books, which verify the state.
+    const other = await agent().get('/quickbooks/connect/callback').query({ code: 'C', state: 'not-a-company-state', realmId: 'R1' });
+    expect(other.status).toBe(302);
+    expect(other.headers.location).toBe(`${env.APP_BASE_URL}/api/books/quickbooks/callback?code=C&state=not-a-company-state&realmId=R1`);
   });
 
   it('connects in stub mode through the callback, matches the charts by number and by name, creates the rest there, and brings QuickBooks’ own accounts and vendors over', async () => {

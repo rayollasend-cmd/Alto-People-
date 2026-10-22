@@ -43,7 +43,7 @@ A store login is the default: `POST /clients/:id/portal-users` needs `locationId
 
 The "needs reconnection" state and the reconnect flow already exist (shipped with the Sentry weekly fixes): `GET /quickbooks/status` returns `needsReconnect` when the stored tokens cannot be read under the current key; the client page shows "QuickBooks needs to be reconnected" with a Reconnect button; `POST /quickbooks/connect/start` → Intuit → `GET /quickbooks/connect/callback` stores the fresh token pair with the current `PAYOUT_ENCRYPTION_KEY` (`saveConnection`), keeping the account mapping; any read that meets unreadable tokens answers 409 `quickbooks_reconnect_required` instead of a raw decryption error.
 
-What is left for a person with the Intuit login: open the client's QuickBooks section in production, choose Reconnect, sign in to Intuit, then confirm `GET /api/quickbooks/accounts/list` returns the chart of accounts. That is the acceptance step; it cannot be done from the repository.
+2026-10-21: the per-client QuickBooks connection (Phase 44, `/quickbooks/*`) was retired with its tokens; the company's own books connection (`/books/quickbooks`) is the one QuickBooks integration, reconnected from Books → QuickBooks sync.
 
 ## Written confirmation: what the key change touched
 

@@ -1,8 +1,10 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { tenantIdForWrite } from './tenant.js';
 import { z } from 'zod';
 import {
   ReportPeriodTokenSchema,
+  can,
+  type Capability,
   type ReportPeriodToken,
 } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
@@ -17,6 +19,7 @@ import {
 import {
   scopeApplications,
   scopeAssociates,
+  scopeAssociatesIncludingFormer,
   scopeCandidates,
   scopePayrollItems,
   scopePayrollRuns,
@@ -81,11 +84,60 @@ export const ENTITY_COLUMNS: Record<string, Record<string, string>> = {
     status: 'status',
     createdAt: 'createdAt',
   },
+  // Reimbursements (expense reports): the Reimbursement model's public columns.
   EXPENSE: {
     id: 'id',
-    amount: 'amount',
+    associateId: 'associateId',
+    title: 'title',
+    amount: 'totalAmount',
     status: 'status',
     submittedAt: 'submittedAt',
+    paidAt: 'paidAt',
+    createdAt: 'createdAt',
+  },
+  // HR events (HR walk 17): terminations by reason, open leave, cases,
+  // offer acceptance. No free text (case subjects, leave notes) — counts
+  // and dates only; each is further gated by ENTITY_CAPABILITY below.
+  SEPARATION: {
+    id: 'id',
+    associateId: 'associateId',
+    reason: 'reason',
+    status: 'status',
+    lastDayWorked: 'lastDayWorked',
+    finalPaycheckDate: 'finalPaycheckDate',
+    createdAt: 'createdAt',
+  },
+  LEAVE_CASE: {
+    id: 'id',
+    associateId: 'associateId',
+    type: 'type',
+    reason: 'reason',
+    status: 'status',
+    startDate: 'startDate',
+    endDate: 'endDate',
+    createdAt: 'createdAt',
+  },
+  HR_CASE: {
+    id: 'id',
+    associateId: 'associateId',
+    category: 'category',
+    status: 'status',
+    priority: 'priority',
+    createdAt: 'createdAt',
+    resolvedAt: 'resolvedAt',
+  },
+  OFFER: {
+    id: 'id',
+    candidateId: 'candidateId',
+    clientId: 'clientId',
+    jobTitle: 'jobTitle',
+    status: 'status',
+    startDate: 'startDate',
+    hourlyRate: 'hourlyRate',
+    salary: 'salary',
+    sentAt: 'sentAt',
+    decidedAt: 'decidedAt',
+    createdAt: 'createdAt',
   },
   CANDIDATE: {
     id: 'id',
@@ -135,12 +187,51 @@ export const SpecSchema = z.object({
 
 export type ReportSpec = z.infer<typeof SpecSchema>;
 
+/** Reimbursements: an associate's own rows; otherwise the people in the caller's reach (routes/reimbursements97). */
+function scopeReimbursements(user: SessionUser): Prisma.ReimbursementWhereInput {
+  if (user.role === 'ASSOCIATE') return { associateId: user.associateId ?? NO_ASSOCIATE };
+  return { associate: { is: scopeAssociates(user) } };
+}
+const NO_ASSOCIATE = '00000000-0000-0000-0000-000000000000';
+
+/** Separations, leave and HR cases: about people in the caller's reach,
+ *  including those who have since left (the event outlives the job). */
+function hrEventScope(user: SessionUser): { associate: Prisma.AssociateWhereInput } {
+  return { associate: scopeAssociatesIncludingFormer(user) };
+}
+
+/** Offers: on candidates the caller may see. */
+function offerScope(user: SessionUser): Prisma.OfferWhereInput {
+  return { candidate: { is: scopeCandidates(user) } };
+}
+
 /** Numeric columns per entity — the only legal targets of sum/avg/min/max. */
 const NUMERIC_COLUMNS: Record<string, ReadonlySet<string>> = {
   PAYROLL_ITEM: new Set(['grossAmount', 'netAmount']),
   PAYROLL_RUN: new Set(['totalGross', 'totalNet']),
   EXPENSE: new Set(['amount']),
+  OFFER: new Set(['hourlyRate', 'salary']),
 };
+
+/**
+ * Entities that carry an HR file's facts need more than view:analytics:
+ * separations are the HR admin lists', leave is medical (manage:leave),
+ * cases are the desk's (manage:onboarding), offers are recruiting's.
+ * Checked on every run and on schema discovery.
+ */
+export const ENTITY_CAPABILITY: Partial<Record<string, Capability>> = {
+  SEPARATION: 'view:hr-admin',
+  LEAVE_CASE: 'manage:leave',
+  HR_CASE: 'manage:onboarding',
+  OFFER: 'view:recruiting',
+};
+
+export function assertEntityAllowed(entity: string, user: SessionUser): void {
+  const cap = ENTITY_CAPABILITY[entity];
+  if (cap && !can(user, cap)) {
+    throw new HttpError(403, 'forbidden', `Missing capability: ${cap}`);
+  }
+}
 
 export function aggregateAlias(a: z.infer<typeof AggregateSchema>): string {
   return a.alias?.trim() || (a.fn === 'count' ? 'count' : `${a.fn}_${a.column ?? ''}`);
@@ -184,7 +275,13 @@ const ORG_TZ = 'America/New_York';
 /** Columns holding instants — the only legal targets for `period` filters.
  *  Mirrors the web builder's isDateColumn heuristic over the PUBLIC keys. */
 const isDateColumnKey = (c: string) =>
-  /At$/.test(c) || c === 'periodStart' || c === 'periodEnd' || c === 'clockIn' || c === 'clockOut';
+  /At$/.test(c) ||
+  /Date$/.test(c) ||
+  c === 'periodStart' ||
+  c === 'periodEnd' ||
+  c === 'clockIn' ||
+  c === 'clockOut' ||
+  c === 'lastDayWorked';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -332,6 +429,7 @@ export async function runReport(
   // Injectable so tests can pin the instant `period` tokens resolve against.
   now: Date = new Date(),
 ): Promise<unknown[]> {
+  assertEntityAllowed(entity, user);
   const specWhere = buildWhere(entity, spec.filters, now);
   const select = buildSelect(entity, spec.columns);
   const orderBy = buildOrderBy(entity, spec.sort);
@@ -381,12 +479,12 @@ export async function runReport(
         take: spec.limit,
       });
     case 'EXPENSE':
-      // Expense table doesn't exist yet (Phase 97 — punted to /reimbursements).
-      throw new HttpError(
-        501,
-        'not_implemented',
-        'EXPENSE reports require Phase 97 to ship reimbursements.',
-      );
+      return db.reimbursement.findMany({
+        where: scoped(scopeReimbursements(user)),
+        select,
+        orderBy,
+        take: spec.limit,
+      });
     case 'CANDIDATE':
       return db.candidate.findMany({
         where: scoped(scopeCandidates(user)),
@@ -394,6 +492,14 @@ export async function runReport(
         orderBy,
         take: spec.limit,
       });
+    case 'SEPARATION':
+      return db.separation.findMany({ where: scoped(hrEventScope(user)), select, orderBy, take: spec.limit });
+    case 'LEAVE_CASE':
+      return db.leaveCase.findMany({ where: scoped(hrEventScope(user)), select, orderBy, take: spec.limit });
+    case 'HR_CASE':
+      return db.hrCase.findMany({ where: scoped(hrEventScope(user)), select, orderBy, take: spec.limit });
+    case 'OFFER':
+      return db.offer.findMany({ where: scoped(offerScope(user)), select, orderBy, take: spec.limit });
     default:
       throw new HttpError(400, 'invalid_entity', 'Unknown report entity.');
   }
@@ -445,7 +551,20 @@ async function runAggregate(
       groups = (await db.candidate.groupBy(argsFor(scopeCandidates(user)) as never)) as never;
       break;
     case 'EXPENSE':
-      throw new HttpError(501, 'not_implemented', 'EXPENSE reports require Phase 97 to ship reimbursements.');
+      groups = (await db.reimbursement.groupBy(argsFor(scopeReimbursements(user)) as never)) as never;
+      break;
+    case 'SEPARATION':
+      groups = (await db.separation.groupBy(argsFor(hrEventScope(user)) as never)) as never;
+      break;
+    case 'LEAVE_CASE':
+      groups = (await db.leaveCase.groupBy(argsFor(hrEventScope(user)) as never)) as never;
+      break;
+    case 'HR_CASE':
+      groups = (await db.hrCase.groupBy(argsFor(hrEventScope(user)) as never)) as never;
+      break;
+    case 'OFFER':
+      groups = (await db.offer.groupBy(argsFor(offerScope(user)) as never)) as never;
+      break;
     default:
       throw new HttpError(400, 'invalid_entity', 'Unknown report entity.');
   }

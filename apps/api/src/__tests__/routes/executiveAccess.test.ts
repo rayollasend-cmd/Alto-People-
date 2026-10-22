@@ -122,7 +122,8 @@ describe('executive read unlocks', () => {
     const execAgent = await loginAs(exec.email);
     const hrAgent = await loginAs(hr.email);
 
-    // An old unpaid FINAL statement lands in receivables aged 60+.
+    // An old unpaid FINAL statement (no due date: due the day it was finalized, 70 days ago)
+    // lands in the 61–90 days-past-due bucket — the one aging definition (lib/books/aging).
     const stmt = await prisma.clientStatement.create({
       data: {
         clientId: client.id,
@@ -137,7 +138,8 @@ describe('executive read unlocks', () => {
     const recv = await execAgent.get('/executive/receivables');
     expect(recv.status).toBe(200);
     expect(recv.body.totals.outstandingCount).toBe(1);
-    expect(recv.body.totals.aging.days60plus).toBeCloseTo(1234.56, 2);
+    expect(recv.body.totals.aging.days61to90).toBeCloseTo(1234.56, 2);
+    expect(recv.body.outstanding[0].ageDays).toBe(70);
 
     // Exec cannot record payment; payroll can — and it clears the AR.
     expect(

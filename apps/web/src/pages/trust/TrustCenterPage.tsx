@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
+import { useAuth } from '@/lib/auth';
 import { getTrust } from '@/lib/trustApi';
+import { TrustRequestsSection } from './TrustRequestsSection';
 import { fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -10,7 +12,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
-import { Commitments, ControlsTable, SubProcessors, TrustHero, statusBadge } from '@/components/trust/TrustBlocks';
+import { Commitments, ControlsTable, Soc2Block, SubProcessors, TrustHero, statusBadge } from '@/components/trust/TrustBlocks';
 
 /**
  * Trust Center, signed in (UX upgrade step 4; design system §4.4 area
@@ -19,6 +21,7 @@ import { Commitments, ControlsTable, SubProcessors, TrustHero, statusBadge } fro
  * access review — each linking to the page where it is managed.
  */
 export function TrustCenterPage() {
+  const { can } = useAuth();
   const q = useQuery({ queryKey: ['trust', 'summary'], queryFn: getTrust, staleTime: 60_000 });
   if (q.isLoading) return <SkeletonRows count={6} />;
   if (q.isError || !q.data) return <QueryError what="the trust center" query={q} />;
@@ -58,6 +61,8 @@ export function TrustCenterPage() {
         }
       />
       <TrustHero data={d} />
+      <Soc2Block soc2={d.soc2} />
+      {can('manage:org') && <TrustRequestsSection reportIssuedOn={d.soc2.reportIssuedOn} />}
       <section aria-labelledby="trust-tenant">
         <SectionTitle id="trust-tenant" title="Your organization" description="Each line opens where it is managed." />
         <Card>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowRight, Download, FileSpreadsheet, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Download, FileSearch, FileSpreadsheet, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtHours, fmtMoney, fmtMoneyCompact, fmtPercent } from '@/lib/format';
@@ -171,7 +171,12 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
       </div>
 
       {(report.payByCheck?.length ?? 0) > 0 && <PaperChecks rows={report.payByCheck!} runId={r.id} />}
-      <LookAt rows={flagged} previous={report.previous} />
+      {report.totals.people === 0 && (report.run.storedGross ?? 0) > 0 && (
+        <div role="alert" className="rounded-md border border-alert/40 bg-alert/10 p-3 text-sm text-alert">
+          This run records {fmtMoney(report.run.storedGross ?? 0)} gross but has no paychecks — the totals and the paychecks disagree. Don’t sign off; reopen the run or ask payroll support.
+        </div>
+      )}
+      <LookAt rows={flagged} previous={report.previous} checked={report.rows.length} />
       <Breakdown report={report} />
       <Register rows={report.rows} totals={report.totals} />
       {open && <SignoffPanel report={report} signoff={signoff} />}
@@ -417,7 +422,7 @@ function PaperChecks({ rows, runId }: { rows: NonNullable<PayrollReviewReport['p
 
 /* ---- Paychecks to look at --------------------------------------------- */
 
-function LookAt({ rows, previous }: { rows: ReviewRow[]; previous: PayrollReviewReport['previous'] }) {
+function LookAt({ rows, previous, checked }: { rows: ReviewRow[]; previous: PayrollReviewReport['previous']; checked: number }) {
   const [all, setAll] = useState(false);
   const shown = all ? rows : rows.slice(0, 8);
   return (
@@ -431,7 +436,10 @@ function LookAt({ rows, previous }: { rows: ReviewRow[]; previous: PayrollReview
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {rows.length === 0 ? (
+        {checked === 0 ? (
+          // Nothing to check is not the same as all clear (finance walk 11).
+          <EmptyState size="sm" icon={FileSearch} title="Nothing to check" description="This run has no paychecks, so there is nothing to compare or flag." />
+        ) : rows.length === 0 ? (
           <EmptyState size="sm" icon={ShieldCheck} title="Nothing unusual" description="No first paychecks, no sharp swings, and every W-2 check withholds tax." />
         ) : (
           <>

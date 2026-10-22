@@ -89,6 +89,7 @@ export const STATUS_TONES: Readonly<Record<string, BadgeVariant>> = {
   EXPIRED: 'destructive',
   BOUNCED: 'destructive',
   SUPPRESSED: 'destructive', // deliverability block — grouped with BOUNCED.
+  NOT_CONFIGURED: 'pending', // the channel has no provider behind it — nothing left; amber, not the message's fault.
 
   // --- Deliberately ended / switched off -> outline (muted) -------------
   CANCELLED: 'outline', // a cancellation is not an error; must not read red.

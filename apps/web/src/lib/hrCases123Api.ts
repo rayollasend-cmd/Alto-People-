@@ -63,7 +63,13 @@ export interface QueueCaseRow {
   createdAt: string;
   updatedAt: string;
   sla: SlaView;
+  /** How it reached HR when HR filed it for the person; null when self-filed. */
+  channel?: CaseChannel | null;
+  filedByEmail?: string | null;
 }
+
+/** How a case HR filed on someone's behalf came in. */
+export type CaseChannel = 'PHONE' | 'WALK_IN' | 'EMAIL';
 
 export interface CaseDetail {
   id: string;
@@ -82,6 +88,8 @@ export interface CaseDetail {
   updatedAt: string;
   sla: SlaView;
   comments: CaseComment[];
+  channel?: CaseChannel | null;
+  filedByEmail?: string | null;
 }
 
 export interface CaseComment {
@@ -131,6 +139,17 @@ export const fileCase = (input: {
   description: string;
   priority?: CasePriority;
 }) => apiFetch<{ id: string }>('/hr-cases', { method: 'POST', body: input });
+
+/** HR files a case for a person who called, walked in or emailed — the way a
+ *  complaint that never touched the app gets into the system. */
+export const fileCaseOnBehalf = (input: {
+  associateId: string;
+  channel: CaseChannel;
+  category: CaseCategory;
+  subject: string;
+  description: string;
+  priority: CasePriority;
+}) => apiFetch<{ id: string }>('/hr-cases/on-behalf', { method: 'POST', body: input });
 
 export const listMyCases = () =>
   apiFetch<{ cases: MyCaseRow[] }>('/my/hr-cases');

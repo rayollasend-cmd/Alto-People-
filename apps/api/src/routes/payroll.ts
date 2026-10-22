@@ -61,7 +61,6 @@ import { reconcileDailySettlements, releaseDailyReconciliation } from '../lib/da
 import { addGrossedUpAddOn, quoteGrossUp } from '../lib/grossUpRun.js';
 import { payPreviewStats } from '../lib/payPreview.js';
 import { rerouteReturnedItem } from '../lib/payoutReroute.js';
-import { expenseSplitsForItems } from '../lib/quickbooks.js';
 import { hashPdf, renderPaystubPdf } from '../lib/paystub.js';
 import {
   buildPaystubDataById,
@@ -73,15 +72,10 @@ import { checkAdapter, resolveAdapter, type DisbursementInput } from '../lib/dis
 import { activeOverrides, closePendingCheckRequests, drawerAccount, overridesForRun } from '../lib/paperChecks.js';
 import { loadBrand } from '../lib/docKit/index.js';
 import { assertRunFunded } from '../lib/banking/funding.js';
-import { bankingProfile, ownAccount } from '../lib/banking/ach.js';
+import { bankingProfile, ownAccount, usesOurAch } from '../lib/banking/ach.js';
 import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
-import { accrueDepositsForRun } from '../lib/taxDeposits.js';
-import { postLiabilitiesForRun } from '../lib/payrollTaxLedger.js';
 import { renderEftpsWorksheetPdf } from '../lib/eftpsWorksheet.js';
-import {
-  accrueRemittancesForRun,
-  renderRemittanceAdvicePdf,
-} from '../lib/garnishmentRemittance.js';
+import { renderRemittanceAdvicePdf } from '../lib/garnishmentRemittance.js';
 import { decryptString, tryDecryptString } from '../lib/crypto.js';
 import { readRoutingNumber } from '../lib/payoutMethod.js';
 import type { PayoutMethod } from '@prisma/client';
@@ -98,15 +92,10 @@ import {
 } from '../lib/financialChanges.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
-import {
-  isStubMode as qboIsStubMode,
-  postPayrollJournalEntry,
-  postReversingJournalEntry,
-} from '../lib/quickbooks.js';
 import { notifyAssociatesOfRunVoid } from '../lib/payrollVoidNotify.js';
 import { env } from '../config/env.js';
 import { listW2EligibleAssociates } from '../lib/w2Aggregator.js';
-import { scopeAssociates } from '../lib/scope.js';
+import { assertAssociateInScope, scopeAssociates } from '../lib/scope.js';
 import { listF1099NecEligibleAssociates } from '../lib/f1099NecAggregator.js';
 import { listF1099MiscEligibleAssociates } from '../lib/f1099MiscAggregator.js';
 import { ZipArchive } from 'archiver';
@@ -114,8 +103,22 @@ import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { booksAfterGarnishmentRemittance, booksAfterPayrollRun, booksAfterRunDeleted, booksAfterTaxDeposit } from '../lib/books/posting/hooks.js';
+import { settleRunObligations } from '../lib/payrollSettled.js';
+import { PAYROLL_NO_MONEY_PATHS, payrollMoneyGate } from '../lib/payrollMoney.js';
+import { lifecycleForRuns } from '../lib/payrollLifecycle.js';
+import { periodLedger, unpaidAssociatesFor } from '../lib/payrollPeriodLedger.js';
+import { afterRunSettled } from '../lib/payrollSettled.js';
+import { notifyUser } from '../lib/notify.js';
+import { achTimeline } from '../lib/banking/holidays.js';
+import { creditEffectiveDate } from '../lib/banking/directDeposit.js';
+import { computeFunding } from '../lib/banking/funding.js';
+import { associateSchedule, countUnassigned } from './paySchedules.js';
 
 export const payrollRouter = Router();
+
+// Payroll amounts are the whole company's: a site-bound office account is
+// refused on every money-bearing path (lib/payrollMoney).
+payrollRouter.use(payrollMoneyGate(PAYROLL_NO_MONEY_PATHS));
 
 const PROCESS = requireCapability('process:payroll');
 const VOID = requireCapability('void:payroll');
@@ -230,20 +233,17 @@ function toSummary(r: RawRun): PayrollRunSummary {
     finalizedAt: r.finalizedAt ? r.finalizedAt.toISOString() : null,
     disbursedAt: r.disbursedAt ? r.disbursedAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
-    qboJournalEntryId: r.qboJournalEntryId,
-    qboSyncedAt: r.qboSyncedAt ? r.qboSyncedAt.toISOString() : null,
-    qboSyncError: r.qboSyncError,
     kind: r.kind,
     amendsRunId: r.amendsRunId,
     amendmentReason: r.amendmentReason,
     cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : null,
     cancelledById: r.cancelledById,
     cancelReason: r.cancelReason,
-    voidJournalEntryId: r.voidJournalEntryId,
     approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
     approverEmail: r.approvedBy?.email ?? null,
     payrollScheduleId: r.payrollScheduleId ?? null,
     payrollScheduleName: r.payrollSchedule?.name ?? null,
+    includesApprovedTime: r.includesApprovedTime,
   };
 }
 
@@ -275,6 +275,66 @@ async function assertScheduleInReach(user: NonNullable<Express.Request['user']>,
   return s;
 }
 
+/**
+ * What the last REGULAR run on the same schedule (or client) paid, per
+ * person, against a projection — the review's comparison, before the run
+ * exists (finance walk 9). Null without an earlier locked run.
+ */
+async function previousRunComparison(
+  db: Prisma.TransactionClient | typeof prisma,
+  input: { payrollScheduleId: string | null; clientId: string | null; periodStart: Date },
+  now: Array<{ associateId: string; associateName: string; hours: number; gross: number; net: number }>,
+): Promise<PayrollRunPreviewResponse['previous']> {
+  const prev = await db.payrollRun.findFirst({
+    where: {
+      tenantId: tenantIdForWrite(),
+      kind: 'REGULAR',
+      status: { in: ['FINALIZED', 'DISBURSED'] },
+      periodEnd: { lt: input.periodStart },
+      ...(input.payrollScheduleId ? { payrollScheduleId: input.payrollScheduleId } : { clientId: input.clientId }),
+    },
+    orderBy: { periodEnd: 'desc' },
+    select: {
+      id: true,
+      periodStart: true,
+      periodEnd: true,
+      items: { where: { status: { not: 'VOIDED' } }, select: { associateId: true, hoursWorked: true, grossPay: true, netPay: true, associate: { select: { firstName: true, lastName: true } } } },
+    },
+  });
+  if (!prev) return null;
+  const byAssociate = prev.items.map((i) => ({
+    associateId: i.associateId,
+    associateName: `${i.associate.firstName} ${i.associate.lastName}`.trim(),
+    hours: Number(i.hoursWorked),
+    gross: Number(i.grossPay),
+    net: Number(i.netPay),
+  }));
+  const then = new Map(byAssociate.map((b) => [b.associateId, b]));
+  const nowIds = new Set(now.map((n) => n.associateId));
+  const moved: NonNullable<PayrollRunPreviewResponse['previous']>['moved'] = [];
+  for (const n of now) {
+    const t = then.get(n.associateId);
+    if (!t) continue;
+    const netDelta = round2(n.net - t.net);
+    const netDeltaPct = t.net !== 0 ? Math.round((netDelta / Math.abs(t.net)) * 1000) / 10 : null;
+    if (netDeltaPct !== null && Math.abs(netDeltaPct) > 15) moved.push({ associateId: n.associateId, associateName: n.associateName, netDelta, netDeltaPct });
+  }
+  moved.sort((a, b) => Math.abs(b.netDelta) - Math.abs(a.netDelta));
+  return {
+    runId: prev.id,
+    periodStart: ymd(prev.periodStart),
+    periodEnd: ymd(prev.periodEnd),
+    people: byAssociate.length,
+    gross: round2(byAssociate.reduce((sum, b) => sum + b.gross, 0)),
+    net: round2(byAssociate.reduce((sum, b) => sum + b.net, 0)),
+    hours: round2(byAssociate.reduce((sum, b) => sum + b.hours, 0)),
+    byAssociate,
+    missing: byAssociate.filter((b) => !nowIds.has(b.associateId)).map((b) => ({ associateId: b.associateId, associateName: b.associateName, net: b.net })),
+    newPeople: now.filter((n) => !then.has(n.associateId)).map((n) => ({ associateId: n.associateId, associateName: n.associateName })),
+    moved,
+  };
+}
+
 /* ===== HR/Finance reads ================================================= */
 
 payrollRouter.get('/runs', async (req, res, next) => {
@@ -282,7 +342,8 @@ payrollRouter.get('/runs', async (req, res, next) => {
     const status = req.query.status?.toString();
     const where: Prisma.PayrollRunWhereInput = {
       ...scopePayrollRuns(req.user!),
-      ...(status ? { status: status as Prisma.PayrollRunWhereInput['status'] } : {}),
+      // ?status=OPEN: the runs still moving (draft or finalized) — the home's default view.
+      ...(status === 'OPEN' ? { status: { in: ['DRAFT', 'FINALIZED'] } } : status ? { status: status as Prisma.PayrollRunWhereInput['status'] } : {}),
       // Daily settlements (one per worker per day) live on the Daily pay desk; ?kind=DAILY lists them here.
       kind: req.query.kind === 'DAILY' ? 'DAILY' : { not: 'DAILY' },
     };
@@ -292,8 +353,10 @@ payrollRouter.get('/runs', async (req, res, next) => {
       take: RUN_LIST_PAGE_SIZE,
       include: RUN_INCLUDE,
     });
+    // The same lifecycle the guided close shows: payday, sign-off, next step (lib/payrollLifecycle).
+    const lifecycle = await lifecycleForRuns(prisma, rows);
     const payload: PayrollRunListResponse = PayrollRunListResponseSchema.parse({
-      runs: rows.map(toSummary),
+      runs: rows.map((r) => ({ ...toSummary(r), ...(lifecycle.get(r.id) ?? {}) })),
     });
     res.json(payload);
   } catch (err) {
@@ -324,6 +387,82 @@ payrollRouter.get('/runs/:id', async (req, res, next) => {
  * account is on file (we never expose the actual decrypted numbers),
  * and the Branch card id if any.
  */
+/**
+ * GET /payroll/associates/:id/pay-summary — the person record's Pay tab for
+ * in-house payroll (finance walk 19): schedule membership, the pay account,
+ * the last six paystubs and year-to-date, plus how many external payments
+ * were recorded before in-house payroll.
+ */
+payrollRouter.get('/associates/:id/pay-summary', PROCESS, async (req, res, next) => {
+  try {
+    const associateId = z.string().uuid().parse(req.params.id);
+    await assertAssociateInScope(prisma, req.user!, associateId, { former: true });
+    const year = new Date().getUTCFullYear();
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const [schedule, method, stubs, ytd, externalPayments] = await Promise.all([
+      associateSchedule(associateId).catch(() => null),
+      prisma.payoutMethod.findFirst({ where: { associateId, isPrimary: true, retiredAt: null }, select: { type: true, branchCardId: true, accountNumberEnc: true, accountLast4: true, accountType: true, verifiedAt: true, prenoteStatus: true } }),
+      prisma.payrollItem.findMany({
+        where: { associateId, status: { not: 'VOIDED' }, payrollRun: { status: { in: ['FINALIZED', 'DISBURSED'] }, kind: { not: 'DAILY' } } },
+        orderBy: { payrollRun: { periodEnd: 'desc' } },
+        take: 6,
+        select: { id: true, status: true, grossPay: true, netPay: true, hoursWorked: true, disbursedAt: true, payrollRun: { select: { id: true, periodStart: true, periodEnd: true, status: true, kind: true } } },
+      }),
+      prisma.payrollItem.aggregate({
+        where: { associateId, status: 'DISBURSED', payrollRun: { status: 'DISBURSED', disbursedAt: { gte: yearStart } } },
+        _sum: { grossPay: true, netPay: true, federalWithholding: true, fica: true, medicare: true, stateWithholding: true, localWithholding: true, preTaxDeductions: true, postTaxDeductions: true },
+        _count: { _all: true },
+      }),
+      prisma.externalPayment.count({ where: { associateId, deletedAt: null } }),
+    ]);
+    const localRule = await prisma.associate.findUnique({ where: { id: associateId }, select: { localTaxRuleId: true } });
+    const n = (v: Prisma.Decimal | null | undefined) => Number(v ?? 0);
+    res.json({
+      associateId,
+      localTaxRuleId: localRule?.localTaxRuleId ?? null,
+      schedule,
+      payAccount: method
+        ? {
+            rail: method.branchCardId ? 'PAY_CARD' : method.accountNumberEnc ? 'BANK_ACCOUNT' : 'NONE',
+            last4: method.accountLast4,
+            accountType: method.accountType,
+            verified: !!method.verifiedAt,
+            prenoteStatus: method.prenoteStatus,
+          }
+        : { rail: 'NONE', last4: null, accountType: null, verified: false, prenoteStatus: null },
+      paystubs: stubs.map((i) => ({
+        itemId: i.id,
+        runId: i.payrollRun.id,
+        periodStart: ymd(i.payrollRun.periodStart),
+        periodEnd: ymd(i.payrollRun.periodEnd),
+        runStatus: i.payrollRun.status,
+        runKind: i.payrollRun.kind,
+        status: i.status,
+        hours: Number(i.hoursWorked),
+        gross: Number(i.grossPay),
+        net: Number(i.netPay),
+        paidAt: i.disbursedAt?.toISOString() ?? null,
+      })),
+      ytd: {
+        year,
+        paystubs: ytd._count._all,
+        gross: n(ytd._sum.grossPay),
+        net: n(ytd._sum.netPay),
+        federalWithholding: n(ytd._sum.federalWithholding),
+        socialSecurity: n(ytd._sum.fica),
+        medicare: n(ytd._sum.medicare),
+        stateWithholding: n(ytd._sum.stateWithholding),
+        localWithholding: n(ytd._sum.localWithholding),
+        preTaxDeductions: n(ytd._sum.preTaxDeductions),
+        postTaxDeductions: n(ytd._sum.postTaxDeductions),
+      },
+      externalPayments,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 payrollRouter.get(
   '/associates/:id/branch-enrollment',
   PROCESS,
@@ -475,9 +614,14 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
 
     // Use the top-level prisma client (no transaction); aggregator does
     // reads only, so we don't need transactional consistency here.
-    const scheduleFilter = input.payrollScheduleId
+    let scheduleFilter = input.payrollScheduleId
       ? await scheduleFilterFor(prisma, (await assertScheduleInReach(req.user!, input.payrollScheduleId)).id, periodStart, new Date(`${input.periodEnd}T00:00:00.000Z`))
       : undefined;
+    // An off-cycle run from the period ledger previews only the people whose approved time is on no paystub.
+    if (input.kind === 'OFF_CYCLE' && input.includesApprovedTime && scheduleFilter) {
+      const unpaid = await unpaidAssociatesFor(prisma, null, input.periodStart, input.periodEnd);
+      scheduleFilter = { ...scheduleFilter, windows: new Map([...scheduleFilter.windows].filter(([id]) => unpaid.has(id))) };
+    }
     const projection = await aggregatePayrollProjection(prisma, {
       periodStart,
       periodEndExclusive,
@@ -510,7 +654,10 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
         }),
       ),
     );
+    // Changes against the last REGULAR run on the same schedule (or client), before this run exists (finance walk 9).
+    const previous = await previousRunComparison(prisma, { payrollScheduleId: input.payrollScheduleId ?? null, clientId: input.clientId ?? null, periodStart }, projection.items.map((p) => ({ associateId: p.associateId, associateName: p.associateName, hours: p.hoursWorked, gross: p.grossPay, net: round2(p.netPay - (ridePlans.get(p.associateId)?.totalCents ?? 0) / 100) })));
     const body: PayrollRunPreviewResponse = PayrollRunPreviewResponseSchema.parse({
+      previous,
       items: projection.items.map((p) => ({
         associateId: p.associateId,
         associateName: p.associateName,
@@ -711,6 +858,21 @@ payrollRouter.post('/runs/approve-clean-time', PROCESS, requireCapability('manag
  * counts) plus the most recent run the user can see. Mirrors QuickBooks
  * Online's "Run payroll" landing card — one fetch, one render.
  */
+/**
+ * GET /payroll/period-ledger?scheduleId=&from= — every scheduled period for
+ * each pay schedule in reach: its pay date, the run that paid it or none,
+ * and the approved hours on no paystub (lib/payrollPeriodLedger; finance
+ * walk 1). Hours only, no amounts: a site-bound office account may read it.
+ */
+payrollRouter.get('/period-ledger', PROCESS, async (req, res, next) => {
+  try {
+    const q = z.object({ scheduleId: z.string().uuid().optional(), from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).parse(req.query);
+    res.json(await periodLedger(prisma, req.user!, { scheduleId: q.scheduleId ?? null, from: q.from }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 payrollRouter.get('/upcoming', async (req, res, next) => {
   try {
     // Pick the schedule with the SOONEST nextPeriodEnd among the ones the
@@ -760,17 +922,19 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       runProbes.length > 0
         ? await prisma.payrollRun.findMany({
             where: { OR: runProbes },
-            select: { id: true, status: true, clientId: true, periodStart: true, payrollScheduleId: true },
+            select: { id: true, status: true, clientId: true, periodStart: true, payrollScheduleId: true, kind: true, includesApprovedTime: true },
           })
         : [];
     // This schedule's own run first; otherwise a run not tied to any
     // schedule for the same client (how runs were made before schedules).
+    // An off-cycle run made from the period ledger counts as the period's run.
     const findExistingRun = (clientId: string | null, periodStartMs: number, scheduleId?: string) =>
-      (scheduleId ? existingRuns.find((r) => r.periodStart.getTime() === periodStartMs && r.payrollScheduleId === scheduleId) : undefined) ??
+      (scheduleId ? existingRuns.find((r) => r.periodStart.getTime() === periodStartMs && r.payrollScheduleId === scheduleId && (r.kind === 'REGULAR' || r.includesApprovedTime)) : undefined) ??
       existingRuns.find(
         (r) =>
           r.periodStart.getTime() === periodStartMs &&
           r.payrollScheduleId === null &&
+          (r.kind === 'REGULAR' || r.includesApprovedTime) &&
           (clientId === null || r.clientId === clientId),
       ) ??
       null;
@@ -851,10 +1015,13 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       };
     }
 
+    // One source for the last run's figures: its paychecks. The count and
+    // the net both come from the same non-voided items (finance walk 3).
     const lastRunRow = await prisma.payrollRun.findFirst({
-      where: scopePayrollRuns(req.user!),
+      // The last run that locked its numbers: a draft has paid nothing yet.
+      where: { ...scopePayrollRuns(req.user!), kind: { not: 'DAILY' }, status: { in: ['FINALIZED', 'DISBURSED'] } },
       orderBy: { periodEnd: 'desc' },
-      include: { _count: { select: { items: true } } },
+      include: { items: { where: { status: { not: 'VOIDED' } }, select: { netPay: true } } },
     });
 
     const lastRun: PayrollUpcomingSummary['lastRun'] = lastRunRow
@@ -863,8 +1030,8 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
           periodStart: ymd(lastRunRow.periodStart),
           periodEnd: ymd(lastRunRow.periodEnd),
           status: lastRunRow.status,
-          itemCount: lastRunRow._count.items,
-          totalNet: Number(lastRunRow.totalNet),
+          itemCount: lastRunRow.items.length,
+          totalNet: round2(lastRunRow.items.reduce((sum, i) => sum + Number(i.netPay), 0)),
           finalizedAt: lastRunRow.finalizedAt
             ? lastRunRow.finalizedAt.toISOString()
             : null,
@@ -899,6 +1066,8 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       nextRun,
       lastRun,
       bySchedule,
+      // The hero's blocker: people no run will pay (finance walk 10).
+      peopleOnNoSchedule: await countUnassigned(req.user!),
     });
     res.json(body);
   } catch (err) {
@@ -933,6 +1102,10 @@ payrollRouter.post('/runs', PROCESS, idempotent, async (req, res, next) => {
     // without creating a run row.
     // A run for one pay schedule pays only its people, for their days on it.
     const schedule = input.payrollScheduleId ? await assertScheduleInReach(req.user!, input.payrollScheduleId) : null;
+    // Paying a missed period's hours off-cycle needs the schedule: it decides whose time it is.
+    if (input.includesApprovedTime && (input.kind !== 'OFF_CYCLE' || !schedule)) {
+      throw new HttpError(400, 'schedule_required', 'Paying a missed period’s hours is an off-cycle run on one pay schedule — pick the schedule.');
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const run = await tx.payrollRun.create({
@@ -946,8 +1119,11 @@ payrollRouter.post('/runs', PROCESS, idempotent, async (req, res, next) => {
           createdById: req.user!.id,
           // OFF_CYCLE = bonus / terminal-pay run: the aggregation still
           // runs (it picks up add-on lines) but starts from an empty
-          // period on purpose — paychecks are built from add-ons.
+          // period on purpose — paychecks are built from add-ons. Made from
+          // the period ledger ("Pay these hours now"), it pays the period's
+          // approved time that is on no paystub yet instead.
           ...(input.kind ? { kind: input.kind } : {}),
+          includesApprovedTime: input.kind === 'OFF_CYCLE' && !!input.includesApprovedTime,
         },
       });
       await aggregateAndPersistRun(tx, run, defaultRate);
@@ -1060,8 +1236,15 @@ export async function aggregateAndPersistRun(
   }
 
   // A run for one pay schedule: only its people, their days on it, its frequency.
-  const runSchedule = (await tx.payrollRun.findUnique({ where: { id: run.id }, select: { payrollScheduleId: true } }))?.payrollScheduleId ?? null;
-  const scheduleFilter = runSchedule ? await scheduleFilterFor(tx, runSchedule, run.periodStart, run.periodEnd) : undefined;
+  const runRow = await tx.payrollRun.findUnique({ where: { id: run.id }, select: { payrollScheduleId: true, includesApprovedTime: true } });
+  const runSchedule = runRow?.payrollScheduleId ?? null;
+  let scheduleFilter = runSchedule ? await scheduleFilterFor(tx, runSchedule, run.periodStart, run.periodEnd) : undefined;
+  // An off-cycle run from the period ledger pays only the people whose
+  // approved time in the period is on no other paystub — never twice.
+  if (runRow?.includesApprovedTime && scheduleFilter) {
+    const unpaid = await unpaidAssociatesFor(tx, run.id, ymd(run.periodStart), ymd(run.periodEnd));
+    scheduleFilter = { ...scheduleFilter, windows: new Map([...scheduleFilter.windows].filter(([id]) => unpaid.has(id))) };
+  }
   const projection = await aggregatePayrollProjection(tx, {
     ...(scheduleFilter ? { scheduleFilter } : {}),
     periodStart,
@@ -2326,17 +2509,9 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
     // Tier-1 — the withheld taxes just became trust-fund money on an IRS
     // deadline. Accrue the deposit obligation now (fire-and-forget:
     // bookkeeping must never fail a disbursement).
-    if (allSucceeded) {
-      void accrueDepositsForRun(prisma, run.id).catch((err) =>
-        console.warn('[payroll] tax-deposit accrual failed (advisory):', err),
-      );
-      void postLiabilitiesForRun(prisma, run.id).catch((err) =>
-        console.warn('[payroll] tax-liability posting failed (advisory):', err),
-      );
-      void accrueRemittancesForRun(prisma, run.id).catch((err) =>
-        console.warn('[payroll] garnishment-remittance accrual failed (advisory):', err),
-      );
-    }
+    // One function for every path that settles a run (lib/payrollSettled):
+    // the deposit, the liabilities and the garnishment remittances.
+    if (allSucceeded) settleRunObligations(prisma, run.id);
 
     await recordPayrollEvent({
       actorUserId: req.user!.id,
@@ -2354,62 +2529,10 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
       critical: true,
     });
 
-    // Best-effort QBO journal-entry sync. Only attempt when the run fully
-    // disbursed against a single client AND a QuickbooksConnection exists.
-    // Failures are stamped on the run (qboSyncError) and audited but never
-    // block the disbursement response — accounting drift is a workable
-    // problem, a 502 from /disburse is not.
-    if (allSucceeded && updated.clientId) {
-      const conn = await prisma.quickbooksConnection.findUnique({
-        where: { clientId: updated.clientId },
-      });
-      if (conn) {
-        // No cap — a journal entry over a subset of the run books the
-        // wrong totals into the ledger.
-        const allItems = await prisma.payrollItem.findMany({
-          take: 10_000,
-          where: { payrollRunId: updated.id },
-          include: { associate: { select: { costCenterId: true } } },
-        });
-        const totals = aggregateForQbo(allItems);
-        try {
-          const result = await postPayrollJournalEntry(prisma, updated.clientId, {
-            txnDate: updated.disbursedAt ?? now,
-            memo: `Payroll ${updated.periodStart.toISOString().slice(0, 10)} – ${updated.periodEnd
-              .toISOString()
-              .slice(0, 10)}`,
-            ...totals,
-            expenseSplits: await expenseSplitsForItems(prisma, conn, allItems),
-          });
-          await prisma.payrollRun.update({
-            where: { id: updated.id },
-            data: {
-              qboJournalEntryId: result.journalEntryId,
-              qboSyncedAt: new Date(),
-              qboSyncError: null,
-            },
-          });
-          await recordPayrollEvent({
-            actorUserId: req.user!.id,
-            action: 'payroll.qbo_synced',
-            payrollRunId: updated.id,
-            clientId: updated.clientId,
-            metadata: {
-              journalEntryId: result.journalEntryId,
-              stubMode: qboIsStubMode(),
-              auto: true,
-            },
-            req,
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          await prisma.payrollRun.update({
-            where: { id: updated.id },
-            data: { qboSyncError: msg.slice(0, 500) },
-          });
-        }
-      }
-    }
+    // The books: the run's accrual and disbursement entries post through
+    // lib/books/posting/payroll (idempotent by sourceKey) and reach the
+    // company's QuickBooks through the books outbox — no per-client
+    // journal entry is posted from here any more.
 
     res.json(toDetail(updated));
   } catch (err) {
@@ -2423,6 +2546,94 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
  * approve → disburse → deposits → QuickBooks. The page is a stepper over
  * this; the actions stay where they live.
  */
+/**
+ * POST /payroll/runs/:id/tax-deposit — a paid run with withholding and no
+ * deposit on record (the accrual failed, or the run was settled before it
+ * existed): create the deposit and post the liabilities now (finance walk 18).
+ */
+payrollRouter.post('/runs/:id/tax-deposit', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, ...scopePayrollRuns(req.user!) }, select: { id: true, status: true, clientId: true } });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    if (run.status !== 'DISBURSED') throw new HttpError(409, 'not_disbursed', 'The deposit accrues when the run pays out — this run has not.');
+    const existing = await prisma.taxDeposit.findUnique({ where: { payrollRunId: run.id } });
+    if (existing) {
+      res.json({ created: false, deposit: { id: existing.id, status: existing.status, dueDate: ymd(existing.dueDate), amount: Number(existing.amount), confirmationNumber: existing.confirmationNumber } });
+      return;
+    }
+    const withheld = await prisma.payrollItem.aggregate({ where: { payrollRunId: run.id, status: 'DISBURSED' }, _sum: { federalWithholding: true, fica: true, medicare: true, employerFica: true, employerMedicare: true } });
+    const total = ['federalWithholding', 'fica', 'medicare', 'employerFica', 'employerMedicare'].reduce((sum, k) => sum + Number(withheld._sum[k as keyof typeof withheld._sum] ?? 0), 0);
+    if (total <= 0) throw new HttpError(409, 'nothing_withheld', 'This run withheld no federal tax, so there is no deposit to make.');
+    const out = await afterRunSettled(prisma, run.id);
+    const deposit = await prisma.taxDeposit.findUnique({ where: { payrollRunId: run.id } });
+    if (!deposit) throw new HttpError(500, 'deposit_failed', `The deposit could not be created (${out.deposits}). Check the tax desk.`);
+    await recordPayrollEvent({ actorUserId: req.user!.id, action: 'payroll.tax_deposit_created', payrollRunId: run.id, clientId: run.clientId, metadata: { taxDepositId: deposit.id, amount: Number(deposit.amount), dueDate: ymd(deposit.dueDate) }, req });
+    res.status(201).json({ created: true, deposit: { id: deposit.id, status: deposit.status, dueDate: ymd(deposit.dueDate), amount: Number(deposit.amount), confirmationNumber: deposit.confirmationNumber } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /payroll/runs/:id/disburse-preview — what matters at the moment of
+ * paying (finance walk 12): the payout provider's health, the split by
+ * payment method, when the money lands against the ACH cutoff, and the
+ * funding account it leaves.
+ */
+payrollRouter.get('/runs/:id/disburse-preview', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, ...scopePayrollRuns(req.user!) }, select: { id: true, status: true, periodStart: true, periodEnd: true, payrollScheduleId: true } });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    const [items, profile, provider, lifecycle] = await Promise.all([
+      prisma.payrollItem.findMany({
+        where: { payrollRunId: run.id, status: { in: ['PENDING', 'HELD'] } },
+        select: { id: true, netPay: true, status: true, associate: { select: { payoutMethods: { where: { isPrimary: true, retiredAt: null }, take: 1, select: { branchCardId: true, accountNumberEnc: true, verifiedAt: true } } } } },
+      }),
+      bankingProfile(prisma),
+      disbursementHealth(),
+      lifecycleForRuns(prisma, [{ id: run.id, status: run.status, kind: 'REGULAR', periodStart: run.periodStart, periodEnd: run.periodEnd, payrollScheduleId: run.payrollScheduleId }]),
+    ]);
+    const byCheck = await activeOverrides(prisma, items.map((i) => i.id));
+    const split = { DIRECT_DEPOSIT: { count: 0, amount: 0 }, PAY_CARD: { count: 0, amount: 0 }, CHECK: { count: 0, amount: 0 }, NONE: { count: 0, amount: 0 } };
+    for (const i of items) {
+      const m = i.associate.payoutMethods[0] ?? null;
+      const key = byCheck.has(i.id) ? 'CHECK' : m?.branchCardId ? 'PAY_CARD' : m?.accountNumberEnc ? 'DIRECT_DEPOSIT' : 'NONE';
+      split[key].count += 1;
+      split[key].amount = round2(split[key].amount + Number(i.netPay));
+    }
+    const ourAch = usesOurAch(profile);
+    const payDate = lifecycle.get(run.id)?.payDate ?? null;
+    const now = new Date();
+    let arrival: { payDate: string | null; arrivesOn: string; sameDay: boolean; cutoffEt: string | null; submitBy: string | null; late: boolean } | null = null;
+    if (ourAch) {
+      const eff = await creditEffectiveDate(prisma, run.id, now);
+      const timeline = payDate ? achTimeline(payDate, profile.achSpeed as 'SAME_DAY' | 'NEXT_DAY' | 'TWO_DAY', profile.submitCutoffEt) : null;
+      arrival = { payDate, arrivesOn: eff.effectiveDate, sameDay: eff.sameDay, cutoffEt: profile.submitCutoffEt, submitBy: timeline?.creditSubmitDate ?? null, late: !!payDate && eff.effectiveDate > payDate };
+    }
+    let funding: { accountLabel: string | null; last4: string | null; status: string | null; amount: number | null } | null = null;
+    if (ourAch && !ownAccount(profile)) {
+      const [account, f, computed] = await Promise.all([
+        profile.fundingAccountId ? prisma.employerBankAccount.findFirst({ where: { id: profile.fundingAccountId }, select: { label: true, accountLast4: true } }) : Promise.resolve(null),
+        prisma.payrollFunding.findUnique({ where: { payrollRunId: run.id }, select: { status: true } }),
+        computeFunding(prisma, run.id, profile).catch(() => null),
+      ]);
+      funding = { accountLabel: account?.label ?? null, last4: account?.accountLast4 ?? null, status: f?.status ?? null, amount: computed ? computed.amountCents / 100 : null };
+    } else if (ourAch) {
+      funding = { accountLabel: profile.immediateDestinationName ?? null, last4: null, status: 'OWN_ACCOUNT', amount: null };
+    }
+    res.json({
+      runId: run.id,
+      provider: { name: provider.provider, health: provider.health, detail: provider.detail, blocked: provider.health === 'erroring' },
+      split: Object.entries(split).map(([method, v]) => ({ method, ...v })).filter((x) => x.count > 0),
+      arrival,
+      funding,
+      nextStep: lifecycle.get(run.id)?.nextStep ?? null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
   try {
     const run = await prisma.payrollRun.findFirst({
@@ -2442,7 +2653,8 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         : Promise.resolve(null),
       prisma.taxDeposit.findUnique({ where: { payrollRunId: run.id }, select: { id: true, status: true, dueDate: true, amount: true, confirmationNumber: true } }),
       prisma.garnishmentRemittance.findMany({ where: { payrollRunId: run.id }, select: { id: true, status: true, payeeName: true, amount: true } }),
-      run.clientId ? prisma.quickbooksConnection.findUnique({ where: { clientId: run.clientId }, select: { id: true, glByCostCenter: true } }) : Promise.resolve(null),
+      // The company's own QuickBooks (lib/books/qbo): the run's ledger entries reach it through the books outbox.
+      prisma.qboCompanyConnection.findFirst({ where: { tenantId: tenantIdForWrite() }, select: { status: true, companyName: true } }),
     ]);
     // Paid by our own ACH, a run can't go out until the employer's money arrives.
     let unfunded: string | null = null;
@@ -2562,15 +2774,17 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         state: run.status !== 'DISBURSED' ? 'todo' : !deposit ? 'warn' : deposit.status === 'PAID' ? 'done' : 'current',
         blockers: 0,
         warnings: run.status === 'DISBURSED' && deposit && deposit.status !== 'PAID' && deposit.dueDate < new Date() ? 1 : 0,
-        to: '/payroll/tax',
+        to: '/payroll/taxes?tab=deposits',
       },
       {
         key: 'quickbooks',
         label: 'QuickBooks',
-        state: !run.clientId || !conn ? 'skip' : run.qboJournalEntryId ? 'done' : run.status === 'DISBURSED' ? (run.qboSyncError ? 'blocked' : 'current') : 'todo',
-        blockers: run.qboSyncError ? 1 : 0,
+        // The books post the run's entries themselves (lib/books/posting/payroll)
+        // and the outbox carries them to QuickBooks when the company is connected.
+        state: !conn ? 'skip' : conn.status !== 'CONNECTED' ? 'blocked' : run.status === 'DISBURSED' ? 'done' : 'todo',
+        blockers: conn && conn.status !== 'CONNECTED' ? 1 : 0,
         warnings: 0,
-        to: run.clientId ? `/clients/${run.clientId}?tab=quickbooks` : '/clients',
+        to: '/books/quickbooks',
       },
     ];
     res.json({
@@ -2588,8 +2802,6 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
         approvedAt: run.approvedAt?.toISOString() ?? null,
         approvedByEmail: run.approvedBy?.email ?? null,
         disbursedAt: run.disbursedAt?.toISOString() ?? null,
-        qboJournalEntryId: run.qboJournalEntryId,
-        qboSyncError: run.qboSyncError,
       },
       approvalRequired,
       payByCheck: payByCheck.map((o) => ({ itemId: o.itemId, name: o.name, reason: o.reason, source: o.source })),
@@ -2614,7 +2826,7 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
       exceptions: exceptions ? { counts: exceptions.counts, rows: exceptions.exceptions.slice(0, 50) } : null,
       deposit: deposit ? { id: deposit.id, status: deposit.status, dueDate: ymd(deposit.dueDate), amount: Number(deposit.amount), confirmationNumber: deposit.confirmationNumber } : null,
       remittances: remittances.map((r) => ({ id: r.id, status: r.status, payeeName: r.payeeName, amount: Number(r.amount) })),
-      quickbooks: conn ? { connected: true, glByCostCenter: conn.glByCostCenter } : { connected: false, glByCostCenter: false },
+      quickbooks: conn ? { connected: conn.status === 'CONNECTED', status: conn.status, companyName: conn.companyName } : { connected: false, status: null, companyName: null },
       payPreview: payPreview ? { people: payPreview.people, confirmed: payPreview.confirmed, flagged: payPreview.flagged, openFlags: payPreview.openFlags, unanswered: payPreview.unanswered, confirmationRate: payPreview.confirmationRate } : null,
       steps,
     });
@@ -2876,8 +3088,9 @@ payrollRouter.post('/associates/:id/local-tax-rule', PROCESS, async (req, res, n
       req.body?.ruleId === null
         ? null
         : z.string().uuid().parse(req.body?.ruleId);
+    await assertAssociateInScope(prisma, req.user!, req.params.id, { former: false });
     const associate = await prisma.associate.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() },
       select: { id: true },
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
@@ -3309,6 +3522,8 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, idempotent, async (req, 
         where: { id: run.id },
         data: { status: 'DISBURSED', disbursedAt: now },
       });
+      // The last held paycheck cleared: the run is paid and owes its taxes.
+      settleRunObligations(prisma, run.id);
     }
 
     await recordPayrollEvent({
@@ -3432,38 +3647,8 @@ payrollRouter.post('/runs/:id/void', VOID, async (req, res, next) => {
       });
     }, TX_OPTS);
 
-    // Best-effort reversing JE — same posture as forward-sync on
-    // disburse: failures stamp qboSyncError but never fail the void.
-    if (run.qboJournalEntryId && updated.clientId) {
-      const conn = await prisma.quickbooksConnection.findUnique({
-        where: { clientId: updated.clientId },
-      });
-      if (conn) {
-        const totals = aggregateForQbo(run.items);
-        try {
-          const result = await postReversingJournalEntry(prisma, updated.clientId, {
-            txnDate: now,
-            memo: `Payroll ${ymd(updated.periodStart)}–${ymd(updated.periodEnd)} (REVERSAL)`,
-            ...totals,
-            originalJournalEntryId: run.qboJournalEntryId,
-            periodStart: run.periodStart,
-            periodEnd: run.periodEnd,
-            voidDate: now,
-            reason,
-          });
-          await prisma.payrollRun.update({
-            where: { id: updated.id },
-            data: { voidJournalEntryId: result.journalEntryId, qboSyncError: null },
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          await prisma.payrollRun.update({
-            where: { id: updated.id },
-            data: { qboSyncError: msg.slice(0, 500) },
-          });
-        }
-      }
-    }
+    // The books reverse the run's entries themselves (lib/books/posting/payroll
+    // on void); QuickBooks follows through the books outbox.
 
     // Audit at the run scope. Metadata captures the reason so audit-log
     // viewers see why without joining the run row.
@@ -3748,52 +3933,6 @@ export function recipientFromPayoutMethod(
   return { associateId: associate.id, fullName, ...address };
 }
 
-function aggregateForQbo(items: Array<{
-  grossPay: Prisma.Decimal;
-  federalWithholding: Prisma.Decimal;
-  stateWithholding: Prisma.Decimal;
-  fica: Prisma.Decimal;
-  medicare: Prisma.Decimal;
-  preTaxDeductions: Prisma.Decimal;
-  netPay: Prisma.Decimal;
-  employerFica: Prisma.Decimal;
-  employerMedicare: Prisma.Decimal;
-  employerFuta: Prisma.Decimal;
-  employerSuta: Prisma.Decimal;
-}>) {
-  let totalGross = 0;
-  let totalFederal = 0;
-  let totalState = 0;
-  let totalFica = 0;
-  let totalMedicare = 0;
-  let totalBenefits = 0;
-  let totalNet = 0;
-  let totalEmployerTax = 0;
-  for (const i of items) {
-    totalGross += Number(i.grossPay);
-    totalFederal += Number(i.federalWithholding);
-    totalState += Number(i.stateWithholding);
-    totalFica += Number(i.fica) + Number(i.employerFica);
-    totalMedicare += Number(i.medicare) + Number(i.employerMedicare);
-    totalBenefits += Number(i.preTaxDeductions);
-    totalNet += Number(i.netPay);
-    totalEmployerTax +=
-      Number(i.employerFica) +
-      Number(i.employerMedicare) +
-      Number(i.employerFuta) +
-      Number(i.employerSuta);
-  }
-  return {
-    totalGross,
-    totalEmployerTax,
-    totalFederal,
-    totalState,
-    totalFica,
-    totalMedicare,
-    totalBenefits,
-    totalNet,
-  };
-}
 
 /* ===== Bulk paystubs ZIP (HR/Finance) ================================ */
 //
@@ -4504,6 +4643,12 @@ payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
     });
 
     await primeStateAcknowledgments(prisma);
+    // The latest request to each person (finance walk 4): "Requested Oct 21".
+    const requests = associates.length
+      ? await prisma.payrollReadinessRequest.findMany({ where: { associateId: { in: associates.map((a) => a.id) } }, orderBy: { requestedAt: 'desc' }, select: { associateId: true, items: true, requestedAt: true } })
+      : [];
+    const requestedBy = new Map<string, { at: string; items: string[] }>();
+    for (const r of requests) if (!requestedBy.has(r.associateId)) requestedBy.set(r.associateId, { at: r.requestedAt.toISOString(), items: r.items });
     const rows = associates.map((a) => {
       const primary = a.payoutMethods[0] ?? null;
       const w4OnFile =
@@ -4531,6 +4676,7 @@ payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
           userLinked,
         },
         ready,
+        requested: requestedBy.get(a.id) ?? null,
       };
     });
 
@@ -4541,6 +4687,74 @@ payrollRouter.get('/readiness', PROCESS, async (req, res, next) => {
       missingCount: rows.length - readyCount,
       rows,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /payroll/readiness/request { associateIds, items: ['w4'|'payout'|'address'] }
+ * Ask many people at once for what a paycheck needs (finance walk 4): the
+ * existing onboarding tasks reopen (W-4, direct deposit, profile), each
+ * person is told, and the request is on record so the grid can say
+ * "Requested Oct 21". People out of reach or with no sign-in are skipped
+ * and named.
+ */
+const READINESS_ITEMS = ['w4', 'payout', 'address'] as const;
+const READINESS_TASK: Record<(typeof READINESS_ITEMS)[number], { kind: 'W4' | 'DIRECT_DEPOSIT' | 'PROFILE_INFO'; title: string; line: string }> = {
+  w4: { kind: 'W4', title: 'Complete your W-4', line: 'your W-4 (how much federal tax to withhold)' },
+  payout: { kind: 'DIRECT_DEPOSIT', title: 'Set up direct deposit', line: 'where to send your pay (a bank account or pay card)' },
+  address: { kind: 'PROFILE_INFO', title: 'Confirm your address', line: 'your home address (it decides your state taxes)' },
+};
+payrollRouter.post('/readiness/request', PROCESS, async (req, res, next) => {
+  try {
+    const body = z.object({ associateIds: z.array(z.string().uuid()).min(1).max(500), items: z.array(z.enum(READINESS_ITEMS)).min(1) }).parse(req.body ?? {});
+    const items = [...new Set(body.items)];
+    const people = await prisma.associate.findMany({
+      where: { id: { in: body.associateIds }, deletedAt: null, tenantId: tenantIdForWrite(), AND: [scopeAssociates(req.user!)] },
+      select: {
+        id: true,
+        firstName: true,
+        user: { select: { id: true } },
+        applications: { where: { deletedAt: null, status: 'APPROVED' }, orderBy: { updatedAt: 'desc' }, take: 1, select: { id: true, checklist: { select: { id: true, tasks: { select: { id: true, kind: true, status: true, order: true } } } } } },
+      },
+    });
+    const found = new Set(people.map((p) => p.id));
+    const skipped: Array<{ associateId: string; reason: string }> = body.associateIds.filter((id) => !found.has(id)).map((id) => ({ associateId: id, reason: 'Not in your reach, or no longer employed.' }));
+    let requested = 0;
+    for (const p of people) {
+      if (!p.user) {
+        skipped.push({ associateId: p.id, reason: 'No sign-in yet — invite them first.' });
+        continue;
+      }
+      const checklist = p.applications[0]?.checklist ?? null;
+      await prisma.$transaction(async (tx) => {
+        if (checklist) {
+          let order = Math.max(0, ...checklist.tasks.map((t) => t.order)) + 1;
+          for (const item of items) {
+            const spec = READINESS_TASK[item];
+            const existing = checklist.tasks.find((t) => t.kind === spec.kind);
+            if (existing) {
+              if (existing.status === 'DONE' || existing.status === 'SKIPPED') await tx.onboardingTask.update({ where: { id: existing.id }, data: { status: 'PENDING', completedAt: null } });
+            } else {
+              await tx.onboardingTask.create({ data: { checklistId: checklist.id, kind: spec.kind, title: spec.title, status: 'PENDING', order: order++ } });
+            }
+          }
+        }
+        await tx.payrollReadinessRequest.create({ data: { associateId: p.id, items, requestedById: req.user!.id } });
+      });
+      const lines = items.map((i) => READINESS_TASK[i].line);
+      await notifyUser(p.user.id, {
+        subject: 'Payroll needs something from you',
+        body: `Before your next paycheck, payroll needs ${lines.length === 1 ? lines[0] : `${lines.slice(0, -1).join(', ')} and ${lines[lines.length - 1]}`}. It takes a few minutes.`,
+        category: 'payroll',
+        linkUrl: '/onboarding/me',
+        urgent: true,
+      });
+      requested += 1;
+    }
+    enqueueAudit({ actorUserId: req.user!.id, action: 'payroll.readiness_requested', entityType: 'PayrollReadinessRequest', entityId: req.user!.id, metadata: { requested, items, skipped: skipped.length } }, 'payroll');
+    res.json({ requested, skipped });
   } catch (err) {
     next(err);
   }
@@ -4914,8 +5128,21 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
  * tile polls this endpoint and turns red if the webhook has gone silent
  * while we still have FINALIZED-but-not-DISBURSED items waiting.
  */
-payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, next) => {
-  try {
+interface DisbursementHealth {
+  provider: string;
+  health: 'healthy' | 'idle' | 'stale' | 'erroring' | 'unconfigured' | 'stub';
+  detail: string;
+  lastEventAt: string | null;
+  minutesSinceLastEvent: number | null;
+  eventsLast24h: number;
+  errorsLast7d: number;
+  pendingFinalizedItems: number;
+  latestError: { at: string; eventType: string; notes: string | null } | null;
+}
+
+/** The payout rail's health — the webhook-status tile and the disburse dialog read the same answer. */
+async function disbursementHealth(): Promise<DisbursementHealth> {
+  {
     const provider = env.PAYROLL_DISBURSEMENT_PROVIDER;
 
     const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -4959,7 +5186,7 @@ payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, nex
     const ownPayout = await activeConnection('PAYOUT');
     if (ownPayout) {
       const failing = (ownPayout.lastErrorAt?.getTime() ?? 0) > (ownPayout.lastSuccessAt?.getTime() ?? 0);
-      res.json({
+      return {
         provider: ownPayout.provider,
         health: failing ? 'erroring' : 'healthy',
         detail: failing
@@ -4971,8 +5198,7 @@ payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, nex
         errorsLast7d: failing ? 1 : 0,
         pendingFinalizedItems: pendingFinalizedCount,
         latestError: failing && ownPayout.lastErrorAt ? { at: ownPayout.lastErrorAt.toISOString(), eventType: 'connection', notes: ownPayout.lastError } : null,
-      });
-      return;
+      };
     }
     if (provider === 'STUB') {
       health = 'stub';
@@ -5002,7 +5228,7 @@ payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, nex
         : 'No events yet.';
     }
 
-    res.json({
+    return {
       provider,
       health,
       detail,
@@ -5018,7 +5244,13 @@ payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, nex
             notes: latestError.notes,
           }
         : null,
-    });
+    };
+  }
+}
+
+payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, next) => {
+  try {
+    res.json(await disbursementHealth());
   } catch (err) {
     next(err);
   }

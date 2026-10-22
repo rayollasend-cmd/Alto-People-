@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -26,9 +26,15 @@ vi.mock('@/lib/schedulingApi', () => ({
   managerRejectSwap: vi.fn(),
   approveOpenShiftClaim: vi.fn(),
   rejectOpenShiftClaim: vi.fn(),
+  listUnconfirmedShifts: vi.fn(async () => ({ shifts: [] })),
 }));
 vi.mock('@/lib/timeApi', () => ({
   countAdminTimeEntries: vi.fn(),
+  // TIME's inline panel (pages/time/PendingTimesheetsPanel) on the Timesheets queue.
+  listAdminTimeEntries: vi.fn(async () => ({ entries: [] })),
+  approveTimeEntry: vi.fn(),
+  rejectTimeEntry: vi.fn(),
+  bulkApproveTimeEntries: vi.fn(),
   listClockInRequests: vi.fn(async () => ({ requests: [] })),
   approveClockInRequest: vi.fn(),
   denyClockInRequest: vi.fn(),
@@ -55,7 +61,7 @@ import {
   listAdminRequests,
 } from '@/lib/timeOffApi';
 import { decideApprovalRequest, listApprovalRequests } from '@/lib/approvalRequestsApi';
-import { listAdminSwaps, listOpenShiftClaims, managerApproveSwap } from '@/lib/schedulingApi';
+import { listAdminSwaps, listOpenShiftClaims, listUnconfirmedShifts, managerApproveSwap } from '@/lib/schedulingApi';
 import { countAdminTimeEntries } from '@/lib/timeApi';
 import { listMyProposals } from '@/lib/agentProposalsApi';
 import { ApprovalsHome } from '@/pages/approvals/ApprovalsHome';
@@ -143,7 +149,8 @@ beforeEach(() => {
   vi.mocked(listOpenShiftClaims).mockResolvedValue({
     claims: [],
   } as unknown as Awaited<ReturnType<typeof listOpenShiftClaims>>);
-  vi.mocked(countAdminTimeEntries).mockResolvedValue({ count: 3 });
+  vi.mocked(countAdminTimeEntries).mockResolvedValue({ count: 0, oldestPendingAt: null } as never);
+  vi.mocked(listUnconfirmedShifts).mockResolvedValue({ shifts: [] });
   vi.mocked(listMyProposals).mockResolvedValue({ approvals: [] });
   vi.mocked(listApprovalRequests).mockResolvedValue({ requests: [] });
 });
@@ -245,19 +252,40 @@ describe('<ApprovalsHome> agent proposals', () => {
 });
 
 describe('<ApprovalsHome>', () => {
-  it('with every queue empty: one clear state, the tiles, and no empty cards', async () => {
+  it('with every queue empty: one clear state, and every queue folded under All clear — no wall of zero tiles', async () => {
     renderPage();
     expect(screen.getByText('Approvals')).toBeInTheDocument();
     expect(await screen.findByText('Nothing waiting on you')).toBeInTheDocument();
-    // The timesheet tile still carries its count and opens the review queue.
-    expect(await screen.findByText('3')).toBeInTheDocument();
-    expect(screen.getByText('Review on Time & attendance').closest('a')).toHaveAttribute(
-      'href',
-      '/time-attendance?tab=queue',
+    const clear = await screen.findByTestId('approvals-clear');
+    const chips = within(within(clear).getByRole('list', { name: 'Queues with nothing waiting' })).getAllByRole('button');
+    // Walk-ins hide when the kiosk queue is not this person's; the rest fold.
+    expect(chips.map((c) => c.textContent)).toEqual(
+      expect.arrayContaining(['Time off0', 'Swaps0', 'Pickups0', 'Timesheets0', 'Not confirmed yet0']),
     );
-    // Empty queues don't render a card of their own.
+    // No tile pressed for an empty queue, and no bell while everyone has confirmed.
+    expect(screen.queryByRole('button', { name: /Not confirmed yet.*Next 48 hours/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /^Swaps/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /Open-shift pickups/ })).not.toBeInTheDocument();
+  });
+
+  it('timesheets are a queue like the rest: counted on top, opened here with TIME’s panel, and the full queue a link on the counted window', async () => {
+    vi.mocked(countAdminTimeEntries).mockResolvedValue({ count: 3, oldestPendingAt: '2026-09-18T14:00:00.000Z' } as never);
+    renderPage();
+    const tile = await screen.findByRole('button', { name: /Timesheets.*Approve the clean ones in one tap.*3/ });
+    // The only queue with work is first and open on the desk.
+    expect(tile).toHaveAttribute('aria-pressed', 'true');
+    const full = await screen.findByRole('link', { name: /Open the full queue/ });
+    expect(full.getAttribute('href')).toMatch(/^\/time-attendance\?tab=queue&status=COMPLETED&from=2026-09-1[78]&to=\d{4}-\d{2}-\d{2}$/);
+    // Timesheets left the All clear row.
+    const chips = within(screen.getByTestId('approvals-clear')).getAllByRole('button').map((c) => c.textContent);
+    expect(chips).not.toContain('Timesheets0');
+  });
+
+  it('a supervisor’s unconfirmed shifts are counted, with the bell only when someone is unconfirmed', async () => {
+    vi.mocked(listUnconfirmedShifts).mockResolvedValue({ shifts: [{ id: 's1' }, { id: 's2' }] } as never);
+    renderPage('SHIFT_SUPERVISOR');
+    const tile = await screen.findByRole('button', { name: /Not confirmed yet.*Next 48 hours.*2/ });
+    expect(tile.querySelector('svg')).not.toBeNull();
   });
 
   it('a queue with work renders as a card with the face, the count and a relative time', async () => {

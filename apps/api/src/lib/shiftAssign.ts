@@ -183,7 +183,9 @@ export async function blockedForWindow(
 const ASSIGN_INCLUDE = {
   client: { select: { name: true } },
   assignedAssociate: { select: { firstName: true, lastName: true } },
-  locationRel: { select: { id: true, name: true, timezone: true } },
+  // state + city: the site's labor-rules jurisdiction (lib/fairWorkweek), so the
+  // assigned row serializes like every other shift.
+  locationRel: { select: { id: true, name: true, timezone: true, state: true, city: true } },
 } as const;
 
 export type AssignedShift = Prisma.ShiftGetPayload<{ include: typeof ASSIGN_INCLUDE }>;

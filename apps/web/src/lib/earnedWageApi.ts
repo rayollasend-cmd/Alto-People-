@@ -43,10 +43,6 @@ export function requestEarnedWage(amount: number): Promise<{ id: string; status:
   return apiFetch('/me/earned-wage', { method: 'POST', body: { amount } });
 }
 
-export function listMyEarnedWage(): Promise<{ advances: EwaAdvance[] }> {
-  return apiFetch('/me/earned-wage/history');
-}
-
 export interface EwaDesk {
   settings: { enabled: boolean; capPct: number; fee: number; maxPerPeriod: number };
   outstanding: { count: number; amount: number };

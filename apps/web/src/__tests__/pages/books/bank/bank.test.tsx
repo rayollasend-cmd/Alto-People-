@@ -11,12 +11,10 @@ const api = vi.hoisted(() => ({
   listBankAccounts: vi.fn(),
   getBankAccount: vi.fn(),
   createBankAccount: vi.fn(),
-  updateBankAccount: vi.fn(),
   listBankTransactions: vi.fn(),
   previewBankImport: vi.fn(),
   importBankFile: vi.fn(),
   syncBankAccount: vi.fn(),
-  getTxnSuggestions: vi.fn(),
   getTxnSuggestionsBatch: vi.fn(),
   bulkDecideTxns: vi.fn(),
   categorizeTxn: vi.fn(),
@@ -49,7 +47,7 @@ vi.mock('@/lib/books/receivablesApi', async (orig) => ({ ...(await orig<typeof i
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock('@/components/ui/Toaster', () => ({ toast }));
 
-type Sugg = Awaited<ReturnType<typeof import('@/lib/books/bankApi').getTxnSuggestions>>;
+type Sugg = Awaited<ReturnType<typeof import('@/lib/books/bankApi').getTxnSuggestionsBatch>>['suggestions'][string];
 /** The page asks for its suggestions in one call: answer it from a per-transaction function. */
 function suggest(fn: (id: string) => Sugg) {
   api.getTxnSuggestionsBatch.mockImplementation(async (ids: string[]) => ({ suggestions: Object.fromEntries(ids.map((id) => [id, fn(id)])) }));
@@ -189,7 +187,6 @@ describe('reviewing an account’s transactions', () => {
     expect(screen.getByRole('tab', { name: /Categorized/ })).toHaveTextContent('4');
     // One request for the page's suggestions, not one per row.
     expect(api.getTxnSuggestionsBatch).toHaveBeenCalledWith(['t1', 't2', 't3']);
-    expect(api.getTxnSuggestions).not.toHaveBeenCalled();
   });
 
   it('accepts every suggestion and matches every exact one in one click — or just the selection', async () => {

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts';
 import { CalendarRange, LineChart, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ForecastResponse, ForecastSignalKind, ForecastSiteSummary, ForecastWeek } from '@alto-people/shared';
+import { FORECAST_SIGNAL_KINDS, FORECAST_SIGNAL_LABELS, type ForecastResponse, type ForecastSignalKind, type ForecastSiteSummary, type ForecastWeek } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { listClients } from '@/lib/clientsApi';
@@ -33,13 +33,8 @@ import { DetailsTable, PALETTE, ChartTooltipContent as PortalTooltip, TICK as KI
  * has done so far. The planner starts from it with one click.
  */
 
-const SIGNAL_KINDS: ReadonlyArray<{ value: ForecastSignalKind; label: string }> = [
-  { value: 'TRUCKS', label: 'Truck schedule' },
-  { value: 'OCCUPANCY', label: 'Occupancy' },
-  { value: 'EVENT', label: 'Event' },
-  { value: 'OTHER', label: 'Other' },
-];
-const kindLabel = (k: ForecastSignalKind) => SIGNAL_KINDS.find((s) => s.value === k)?.label ?? k;
+const SIGNAL_KINDS: ReadonlyArray<{ value: ForecastSignalKind; label: string }> = FORECAST_SIGNAL_KINDS.map((value) => ({ value, label: FORECAST_SIGNAL_LABELS[value] }));
+const kindLabel = (k: ForecastSignalKind) => FORECAST_SIGNAL_LABELS[k] ?? k;
 
 // The kit's grid, ticks and reference color — one look across every chart.
 const GRID = PALETTE.grid;

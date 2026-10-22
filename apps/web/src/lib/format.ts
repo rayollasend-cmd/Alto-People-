@@ -1,4 +1,4 @@
-import { isDateOnly, parseDateOnly } from '@alto-people/shared';
+import { formatBytes, isDateOnly, parseDateOnly } from '@alto-people/shared';
 /**
  * Centralized formatters. Pages have spawned ~3 implementations of money
  * (`toLocaleString(currency)`, custom `fmtPay`, bare `$${n}`) and a
@@ -803,7 +803,28 @@ export function fmtSize(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) {
     return DASH;
   }
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  return formatBytes(bytes);
+}
+
+/**
+ * A shift's start (or end) the way the floor reads it: the store's day and
+ * wall-clock, with the zone's abbreviation when the viewer isn't sitting
+ * in it. "Tue, Oct 21 · 9:00 AM CDT" for a Chicago store seen from New
+ * York; "Tue, Oct 21 · 9:00 AM" at the store. One shift used to show three
+ * start times (list in the store zone, dialogs in the browser zone, the
+ * decision room in New York) — every display goes through here now.
+ */
+export function fmtShiftTz(
+  value: string | Date | null | undefined,
+  timeZone?: string | null,
+  opts: { day?: boolean } = {},
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  const zone = timeZone || null;
+  const time = fmtTimeTz(d, zone);
+  const suffix = zone && zone !== displayTimeZone() ? ` ${tzAbbrev(zone, d)}` : '';
+  if (opts.day === false) return `${time}${suffix}`;
+  return `${fmtDayHeaderTz(d, zone)} · ${time}${suffix}`;
 }

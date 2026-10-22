@@ -179,6 +179,17 @@ export function removeCandidate(id: string, reason?: string | null): Promise<voi
   return apiFetch<void>(`/recruiting/candidates/${id}/remove`, { method: 'POST', body: reason ? { reason } : {} });
 }
 
+/** Remove several at once — hired candidates are skipped, not removed. */
+export function bulkRemoveCandidates(
+  candidateIds: string[],
+  reason?: string | null,
+): Promise<{ removed: number; skipped: { id: string; reason: string }[] }> {
+  return apiFetch('/recruiting/candidates/bulk-remove', {
+    method: 'POST',
+    body: { candidateIds, ...(reason ? { reason } : {}) },
+  });
+}
+
 export function restoreCandidate(id: string): Promise<Candidate> {
   return apiFetch<Candidate>(`/recruiting/candidates/${id}/restore`, { method: 'POST' });
 }

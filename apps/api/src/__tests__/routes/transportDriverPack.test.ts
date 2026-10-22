@@ -382,11 +382,19 @@ describe('the fleet record, drivers and hours of service', () => {
     });
     expect(dispatch.status).toBe(409);
     expect(dispatch.body.error.code).toBe('driver_credentials');
-    // The plan skips them too.
+    // The plan never offers them a new van; Bo tops up the fixture's run
+    // (transport walk 3), which keeps its driver — and the proposal says
+    // that driver can't drive it now.
     const plan = await f.directorAgent.post('/transport/plan').send({ date: f.serviceDate });
-    expect(plan.body.proposals[0].driverUserId).not.toBe(f.driver.id);
-    // Current again: the dispatch goes through.
+    for (const p of plan.body.proposals.filter((x: { kind: string }) => x.kind === 'new')) expect(p.driverUserId).not.toBe(f.driver.id);
+    const topUp = plan.body.proposals.find((x: { kind: string }) => x.kind === 'topUp');
+    expect(topUp).toMatchObject({ runId: f.run.id });
+    expect(topUp.warnings.join(' ')).toMatch(/can't drive it now/);
+    // Current again: the dispatch goes through — once the fixture's run on
+    // the same van at the same time is called off (one run at a time per
+    // van and driver, transport walk 1).
     await f.directorAgent.patch(`/transport/drivers/${f.driver.id}/profile`).send({ licenceExpiresAt: '2030-01-01' });
+    await prisma.rideRun.update({ where: { id: f.run.id }, data: { status: 'CANCELLED' } });
     const ok = await f.directorAgent.post('/transport/runs').send({
       vanId: f.van.id,
       driverUserId: f.driver.id,

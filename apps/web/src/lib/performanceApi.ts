@@ -3,7 +3,6 @@ import type {
   PerformanceReviewCreateInput,
   PerformanceReviewListResponse,
   PerformanceReviewStatus,
-  PerformanceReviewUpdateInput,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -18,10 +17,6 @@ export function listMyReviews(): Promise<PerformanceReviewListResponse> {
 
 export function createReview(body: PerformanceReviewCreateInput): Promise<PerformanceReview> {
   return apiFetch<PerformanceReview>('/performance/reviews', { method: 'POST', body });
-}
-
-export function updateReview(id: string, body: PerformanceReviewUpdateInput): Promise<PerformanceReview> {
-  return apiFetch<PerformanceReview>(`/performance/reviews/${id}`, { method: 'PATCH', body });
 }
 
 export function submitReview(id: string): Promise<PerformanceReview> {

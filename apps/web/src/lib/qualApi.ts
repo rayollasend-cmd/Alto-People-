@@ -63,10 +63,6 @@ export const createQualification = (input: {
 export const deleteQualification = (id: string) =>
   apiFetch<void>(`/qualifications/${id}`, { method: 'DELETE' });
 
-export const listAssociateQuals = (associateId: string) =>
-  apiFetch<{ qualifications: AssociateQualification[] }>(
-    `/qualifications/associates/${associateId}`,
-  );
 export const grantAssociateQual = (
   associateId: string,
   input: {
@@ -80,22 +76,6 @@ export const grantAssociateQual = (
     method: 'POST',
     body: input,
   });
-export const revokeAssociateQual = (associateId: string, assocQualId: string) =>
-  apiFetch<void>(`/qualifications/associates/${associateId}/${assocQualId}`, {
-    method: 'DELETE',
-  });
-
-export const listShiftRequirements = (shiftId: string) =>
-  apiFetch<{ requirements: { id: string; qualificationId: string; code: string; name: string }[] }>(
-    `/shifts/${shiftId}/qualifications`,
-  );
-export const addShiftRequirement = (shiftId: string, qualificationId: string) =>
-  apiFetch<{ id: string }>(`/shifts/${shiftId}/qualifications`, {
-    method: 'POST',
-    body: { qualificationId },
-  });
-export const removeShiftRequirement = (shiftId: string, reqId: string) =>
-  apiFetch<void>(`/shifts/${shiftId}/qualifications/${reqId}`, { method: 'DELETE' });
 
 export const listOpenShifts = () =>
   apiFetch<{ shifts: OpenShiftListItem[] }>('/shifts/open');

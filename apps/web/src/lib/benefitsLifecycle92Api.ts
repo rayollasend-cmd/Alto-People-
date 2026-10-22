@@ -149,12 +149,3 @@ export const generate1095cForms = (year: number) =>
 /** The 1094-C/1095-C AIR transmission file for the year. */
 export const acaAirUrl = (year: number): string => `/api/aca/air.xml?year=${year}`;
 
-export const upsertAcaMonth = (input: {
-  associateId: string;
-  year: number;
-  month: number;
-  offerOfCoverage?: string | null;
-  lowestPremiumCents?: number | null;
-  safeHarbor?: string | null;
-  isFullTime?: boolean;
-}) => apiFetch<{ ok: true }>('/aca/months', { method: 'POST', body: input });

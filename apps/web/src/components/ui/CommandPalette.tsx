@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Command } from 'cmdk';
 import {
@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { personRecordTabs } from '@/lib/personTabs';
+import { noteSearchLanded } from '@/lib/productEvents';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DASHBOARD_NAV, visibleModules, applyTerms, roleNavLabels } from '@/lib/modules';
@@ -156,7 +157,7 @@ export function CommandPalette({
   onOpenChange,
   onShowKeyboardShortcuts,
 }: CommandPaletteProps) {
-  const navigate = useNavigate();
+  const rawNavigate = useNavigate();
   const { signOut, can, user } = useAuth();
   const assistant = useAssistant();
   const tenant = useTenant();
@@ -171,10 +172,20 @@ export function CommandPalette({
         : []),
       ...(tabs.includes('pay') ? [{ key: 'pay', label: can('manage:comp') ? 'Change pay' : 'Pay', to: `/people/${id}?tab=pay`, icon: Banknote }] : []),
       { key: 'documents', label: 'Documents', to: `/people/${id}?tab=documents`, icon: FileText },
+      ...(can('manage:org') ? [{ key: 'separate', label: 'Separate…', to: `/separations?associateId=${id}`, icon: LogOut }] : []),
     ];
   };
   const term = useTerm();
   const [search, setSearch] = useState('');
+  // Every result goes through here, so a search that ends on a settings page
+  // is counted once (ux-upgrade §6: the "I could not find it" proxy).
+  const navigate = useCallback(
+    ((to, options) => {
+      if (typeof to === 'string') noteSearchLanded(search, to);
+      return rawNavigate(to as never, options as never);
+    }) as typeof rawNavigate,
+    [rawNavigate, search],
+  );
 
   // Reset search when reopening so the user always starts on a clean list.
   useEffect(() => {

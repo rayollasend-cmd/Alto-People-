@@ -85,8 +85,8 @@ async function main() {
   for (const r of await prisma.kioskPin.findMany({ where: { pinEncrypted: { not: null } }, select: { pinEncrypted: true, createdAt: true } })) count(pins, r.pinEncrypted, r.createdAt, tryDecryptString);
   out.push(pins);
 
-  const qbo = tally('QuickbooksConnection', 'accessTokenEnc / refreshTokenEnc', 'QuickBooks OAuth tokens');
-  for (const r of await prisma.quickbooksConnection.findMany({ select: { accessTokenEnc: true, refreshTokenEnc: true, lastRefreshedAt: true, updatedAt: true, clientId: true } })) {
+  const qbo = tally('QboCompanyConnection', 'accessTokenEnc / refreshTokenEnc', 'QuickBooks OAuth tokens');
+  for (const r of await prisma.qboCompanyConnection.findMany({ select: { accessTokenEnc: true, refreshTokenEnc: true, lastRefreshedAt: true, updatedAt: true } })) {
     const at = r.lastRefreshedAt ?? r.updatedAt;
     count(qbo, r.accessTokenEnc, at, tryDecryptString);
     count(qbo, r.refreshTokenEnc, at, tryDecryptString);
@@ -121,7 +121,7 @@ async function main() {
     console.log('  Bank accounts       → the external payroll sheet reports them as "missing bank details"; the associate re-enters direct deposit.');
     console.log('  I-9 A-numbers       → re-enter from the I-9 document on file.');
     console.log('  Kiosk numbers       → Kiosk admin → Rotate (new number issued and emailed).');
-    console.log('  QuickBooks tokens   → Reconnect QuickBooks from the client page.');
+    console.log('  QuickBooks tokens   → Reconnect QuickBooks from Books → QuickBooks sync.');
     console.log('  MFA secrets         → the user re-enrolls two-step sign-in.');
   }
 

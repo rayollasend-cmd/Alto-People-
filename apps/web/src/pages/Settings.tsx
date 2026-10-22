@@ -6,7 +6,7 @@ import { DevicesCard } from '@/components/settings/DevicesCard';
 import { PhonesCard } from '@/components/settings/PhonesCard';
 import { WhatsAppCard } from '@/components/WhatsAppCard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -63,12 +63,14 @@ import {
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
-import { isLang, useI18n } from '@/lib/i18n';
+import { isLang, useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { SectionTitle } from '@/components/ui/SectionTitle';
+import { cn } from '@/lib/cn';
 import { DataGrid } from '@/components/ui/DataGrid';
 
 /**
@@ -80,76 +82,188 @@ import { DataGrid } from '@/components/ui/DataGrid';
 export function Settings() {
   const roleLabel = useRoleLabel();
   const { user } = useAuth();
+  // Which sections are unfolded on a phone (desktop shows them all).
+  const [open, setOpen] = useState<Set<SectionKey>>(() => new Set<SectionKey>(['profile']));
+  const toggle = (k: SectionKey) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  const jump = (k: SectionKey) => {
+    setOpen((prev) => new Set(prev).add(k));
+    // After the fold opens, so the section's height is real.
+    requestAnimationFrame(() => document.getElementById(`settings-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  const { t } = useI18n();
 
   return (
     <div className="mx-auto space-y-6">
       <PageHeader
-        title="Account settings"
+        title={t('settingsPage.title')}
         subtitle={
           user
-            ? `Signed in as ${user.email} · ${roleLabel(user.role)}`
-            : 'Sign in to manage your account.'
+            ? t('settingsPage.signedInAs', { email: user.email, role: roleLabel(user.role) })
+            : t('settingsPage.signInToManage')
         }
         breadcrumbs={[
-          { label: 'Home', to: '/' },
-          { label: 'Settings' },
+          { label: t('tabs.home'), to: '/' },
+          { label: t('settingsPage.crumbSettings') },
         ]}
         secondaryActions={
           user?.associateId ? (
             <Button asChild variant="outline" size="sm">
-              <Link to="/me">My profile &amp; documents</Link>
+              <Link to="/me">{t('settingsPage.profileAndDocs')}</Link>
             </Button>
           ) : undefined
         }
       />
 
-      {/* Two-column layout at xl+. The profile/identity column on the
-          left, account-security on the right. Sessions, login history,
-          and the data export flow across both columns below because
-          they're wider tables. The phone layout stacks everything. */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="space-y-6">
-          {user?.associateId && <ProfileCard />}
-          {/* Everyone gets a photo: an associate's headshot, or the photo on
-              a staff account (HR, recruiters, managers have no associate). */}
-          <ProfilePhotoCard />
-          <EmailCard />
-          <TimezoneCard />
-          <LanguageCard />
-          <OutOfOfficeCard />
-          <NotificationsCard />
-          <DeliveryCard />
-          {user?.associateId && <WhatsAppCard />}
-        </div>
-        <div className="space-y-6">
-          <PasswordCard />
-          <PasskeysCard />
-          <MfaCard />
-          <DevicesCard />
-          {/* Phones with the native app: notifications, the Face ID lock, remove a phone. */}
-          <PhonesCard />
-        </div>
-      </div>
+      {/* Five sections instead of one long column of cards (floor walk 26:
+          the page was twelve phone screens tall). A sticky row of links
+          jumps between them; on a phone each section folds, and only
+          Profile starts open. */}
+      <SettingsNav open={open} onJump={jump} hasAssociate={!!user?.associateId} />
 
-      <div className="space-y-6">
+      <SettingsSection id="profile" title={t('settings.sec.profile')} icon={UserIcon} open={open.has('profile')} onToggle={toggle}>
+        {user?.associateId && <ProfileCard />}
+        {/* Everyone gets a photo: an associate's headshot, or the photo on
+            a staff account (HR, recruiters, managers have no associate). */}
+        <ProfilePhotoCard />
+        <EmailCard />
+        <TimezoneCard />
+        <LanguageCard />
+        <OutOfOfficeCard />
+      </SettingsSection>
+
+      <SettingsSection id="notifications" title={t('settings.sec.notifications')} icon={Bell} open={open.has('notifications')} onToggle={toggle}>
+        <NotificationsCard />
+        <DeliveryCard />
+        {user?.associateId && <WhatsAppCard />}
+      </SettingsSection>
+
+      <SettingsSection id="security" title={t('settings.sec.security')} icon={Lock} open={open.has('security')} onToggle={toggle}>
+        <PasswordCard />
+        <PasskeysCard />
+        <MfaCard />
+      </SettingsSection>
+
+      <SettingsSection id="devices" title={t('settings.sec.devices')} icon={Smartphone} open={open.has('devices')} onToggle={toggle} wide>
+        <DevicesCard />
+        {/* Phones with the native app: notifications, the Face ID lock, remove a phone. */}
+        <PhonesCard />
         <SessionsCard />
         <LoginHistoryCard />
+      </SettingsSection>
+
+      <SettingsSection id="data" title={t('settings.sec.data')} icon={Download} open={open.has('data')} onToggle={toggle}>
         <DataExportCard />
-      </div>
+      </SettingsSection>
     </div>
   );
 }
 
+type SectionKey = 'profile' | 'notifications' | 'security' | 'devices' | 'data';
+const SECTION_KEYS: SectionKey[] = ['profile', 'notifications', 'security', 'devices', 'data'];
+const SECTION_LABEL: Record<SectionKey, MessageKey> = {
+  profile: 'settings.sec.profile',
+  notifications: 'settings.sec.notifications',
+  security: 'settings.sec.security',
+  devices: 'settings.sec.devices',
+  data: 'settings.sec.data',
+};
+
+/** The in-page section links, sticky under the top bar while the page scrolls. */
+function SettingsNav({ open, onJump }: { open: ReadonlySet<SectionKey>; onJump: (k: SectionKey) => void; hasAssociate: boolean }) {
+  const { t } = useI18n();
+  return (
+    <nav
+      aria-label={t('settings.sec.nav')}
+      className="sticky top-0 z-10 -mx-4 overflow-x-auto border-b border-line bg-surface/95 px-4 py-2 backdrop-blur print:hidden"
+    >
+      <ul className="flex gap-1.5">
+        {SECTION_KEYS.map((k) => (
+          <li key={k}>
+            <a
+              href={`#settings-${k}`}
+              onClick={(e) => {
+                e.preventDefault();
+                onJump(k);
+              }}
+              aria-current={open.has(k) ? 'true' : undefined}
+              className="inline-flex whitespace-nowrap rounded-md px-3 py-1.5 text-sm text-ink-muted hover:bg-surface-raised hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11 coarse:items-center"
+            >
+              {t(SECTION_LABEL[k])}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+/**
+ * One section: a heading, and its cards in two columns on a wide screen.
+ * Below `md` it folds behind its heading — the fold control hides from
+ * `md` up, where every section is always open.
+ */
+function SettingsSection({
+  id,
+  title,
+  icon,
+  open,
+  onToggle,
+  wide = false,
+  children,
+}: {
+  id: SectionKey;
+  title: string;
+  icon: LucideIcon;
+  open: boolean;
+  onToggle: (k: SectionKey) => void;
+  /** Wide tables (sessions, sign-in history): one column. */
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <section id={`settings-${id}`} aria-labelledby={`settings-${id}-title`} className="scroll-mt-16">
+      <div className="flex items-center justify-between gap-3">
+        <SectionTitle id={`settings-${id}-title`} icon={icon} title={title} className="mb-0" />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="md:hidden"
+          aria-expanded={open}
+          aria-controls={`settings-${id}-body`}
+          onClick={() => onToggle(id)}
+        >
+          {open ? t('settings.sec.hide') : t('settings.sec.show')}
+          {open ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+        </Button>
+      </div>
+      <div
+        id={`settings-${id}-body`}
+        className={cn('mt-3 gap-6', open ? 'grid' : 'hidden md:grid', wide ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2', '[&>*]:min-w-0 items-start')}
+      >
+        {children}
+      </div>
+    </section>
+  );
+}
+
 function DataExportCard() {
+  const { t } = useI18n();
   const [submitting, setSubmitting] = useState(false);
 
   const onDownload = async () => {
     setSubmitting(true);
     try {
       await downloadDataExport();
-      toast.success('Your data export is downloading.');
+      toast.success(t('settingsPage.export.downloading'));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not download your data.');
+      toast.error(err instanceof Error ? err.message : t('settingsPage.export.failed'));
     } finally {
       setSubmitting(false);
     }
@@ -160,17 +274,16 @@ function DataExportCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Download className="h-4 w-4 text-gold" />
-          Download your data
+          {t('settingsPage.export.title')}
         </CardTitle>
         <CardDescription>
-          Bundle your profile, login history, notification preferences,
-          time entries, paystubs, and document records into a ZIP archive.
+          {t('settingsPage.export.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex justify-end">
           <Button onClick={onDownload} loading={submitting} variant="ghost">
-            Download my data
+            {t('settingsPage.export.button')}
           </Button>
         </div>
       </CardContent>
@@ -185,6 +298,7 @@ function DataExportCard() {
  * a card that can only apologize.
  */
 function PasskeysCard() {
+  const { t } = useI18n();
   const [passkeys, setPasskeys] = useState<PasskeySummary[] | null>(null);
   const [busy, setBusy] = useState(false);
   const supported = passkeysSupported();
@@ -211,12 +325,12 @@ function PasskeysCard() {
     try {
       const created = await registerPasskey();
       setPasskeys((cur) => [...(cur ?? []), created]);
-      toast.success('Passkey added — you can now sign in with Face ID / Touch ID / your device PIN.');
+      toast.success(t('settingsPage.passkeys.added'));
     } catch (err) {
       // NotAllowedError = the user closed the system sheet; not an error
       // worth a red toast.
       if (err instanceof Error && err.name === 'NotAllowedError') return;
-      toast.error(err instanceof Error ? err.message : 'Could not add a passkey.');
+      toast.error(err instanceof Error ? err.message : t('settingsPage.passkeys.addFailed'));
     } finally {
       setBusy(false);
     }
@@ -227,9 +341,9 @@ function PasskeysCard() {
     try {
       await removePasskey(p.id);
       setPasskeys((cur) => (cur ?? []).filter((x) => x.id !== p.id));
-      toast.success('Passkey removed.');
+      toast.success(t('settingsPage.passkeys.removed'));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not remove the passkey.');
+      toast.error(err instanceof Error ? err.message : t('settingsPage.passkeys.removeFailed'));
     } finally {
       setBusy(false);
     }
@@ -240,18 +354,17 @@ function PasskeysCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Fingerprint className="h-4 w-4 text-gold" />
-          Passkeys
+          {t('settingsPage.passkeys.title')}
         </CardTitle>
         <CardDescription>
-          Sign in with Face ID, Touch ID, or your device PIN — no password to
-          type, nothing to phish. A passkey also counts as your second step.
+          {t('settingsPage.passkeys.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {passkeys === null ? (
           <Skeleton className="h-10" />
         ) : passkeys.length === 0 ? (
-          <EmptyState size="sm" title={"No passkeys on this account yet."} />
+          <EmptyState size="sm" title={t('settingsPage.passkeys.empty')} />
         ) : (
           <ul className="space-y-2">
             {passkeys.map((p) => (
@@ -261,11 +374,11 @@ function PasskeysCard() {
               >
                 <div className="min-w-0">
                   <div className="text-white truncate">
-                    {p.deviceName ?? 'Passkey'}
+                    {p.deviceName ?? t('settingsPage.passkeys.fallbackName')}
                   </div>
                   <div className="text-xs text-silver/70">
-                    Added {fmtDate(p.createdAt)}
-                    {p.lastUsedAt ? ` · last used ${fmtDate(p.lastUsedAt)}` : ''}
+                    {t('settingsPage.passkeys.addedOn', { date: fmtDate(p.createdAt) })}
+                    {p.lastUsedAt ? ` · ${t('settingsPage.passkeys.lastUsed', { date: fmtDate(p.lastUsedAt) })}` : ''}
                   </div>
                 </div>
                 <Button
@@ -275,7 +388,7 @@ function PasskeysCard() {
                   onClick={() => void onRemove(p)}
                   disabled={busy}
                 >
-                  Remove
+                  {t('settingsPage.remove')}
                 </Button>
               </li>
             ))}
@@ -283,7 +396,7 @@ function PasskeysCard() {
         )}
         <Button onClick={() => void onAdd()} loading={busy} disabled={busy}>
           <Fingerprint className="h-4 w-4" />
-          Add a passkey
+          {t('settingsPage.passkeys.add')}
         </Button>
       </CardContent>
     </Card>
@@ -292,6 +405,7 @@ function PasskeysCard() {
 
 function MfaCard() {
   const { user, refreshUser } = useAuth();
+  const { t } = useI18n();
   const [enroll, setEnroll] = useState<MfaEnrollStartResponse | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -344,7 +458,7 @@ function MfaCard() {
       });
       setQrDataUrl(dataUrl);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not start enrollment.');
+      toast.error(err instanceof ApiError ? err.message : t('settingsPage.mfa.startFailed'));
     } finally {
       setBusy(false);
     }
@@ -352,7 +466,7 @@ function MfaCard() {
 
   const onConfirm = async () => {
     if (!/^\d{6}$/.test(code)) {
-      toast.error('Enter the 6-digit code from your authenticator app.');
+      toast.error(t('settingsPage.mfa.enterCode'));
       return;
     }
     setBusy(true);
@@ -368,13 +482,13 @@ function MfaCard() {
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
       if (apiErr?.code === 'invalid_code') {
-        toast.error('That code is incorrect or expired.');
+        toast.error(t('settingsPage.mfa.badCode'));
       } else if (apiErr?.code === 'no_pending_enrollment') {
-        toast.error('Enrollment expired — start again.');
+        toast.error(t('settingsPage.mfa.enrollExpired'));
         setEnroll(null);
         setQrDataUrl(null);
       } else {
-        toast.error(apiErr?.message ?? 'Could not confirm enrollment.');
+        toast.error(apiErr?.message ?? t('settingsPage.mfa.confirmFailed'));
       }
     } finally {
       setBusy(false);
@@ -390,13 +504,13 @@ function MfaCard() {
 
   const onDisable = async () => {
     if (disablePassword.length < 1) {
-      toast.error('Enter your current password.');
+      toast.error(t('settingsPage.enterCurrentPassword'));
       return;
     }
     setBusy(true);
     try {
       await disableMfa({ currentPassword: disablePassword });
-      toast.success('Two-step sign-in is off.');
+      toast.success(t('settingsPage.mfa.offToast'));
       setShowDisable(false);
       setDisablePassword('');
       setRegeneratedCodes(null);
@@ -404,9 +518,9 @@ function MfaCard() {
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
       if (apiErr?.code === 'invalid_credentials') {
-        toast.error('Current password is incorrect.');
+        toast.error(t('settingsPage.wrongPassword'));
       } else {
-        toast.error(apiErr?.message ?? 'Could not disable.');
+        toast.error(apiErr?.message ?? t('settingsPage.mfa.disableFailed'));
       }
     } finally {
       setBusy(false);
@@ -415,7 +529,7 @@ function MfaCard() {
 
   const onRegenerate = async () => {
     if (regeneratePassword.length < 1) {
-      toast.error('Enter your current password.');
+      toast.error(t('settingsPage.enterCurrentPassword'));
       return;
     }
     setBusy(true);
@@ -424,27 +538,27 @@ function MfaCard() {
       setRegeneratedCodes(res.recoveryCodes);
       setShowRegenerate(false);
       setRegeneratePassword('');
-      toast.success('Recovery codes regenerated.');
+      toast.success(t('settingsPage.mfa.regenerated'));
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
       if (apiErr?.code === 'invalid_credentials') {
-        toast.error('Current password is incorrect.');
+        toast.error(t('settingsPage.wrongPassword'));
       } else if (apiErr?.code === 'mfa_not_enrolled') {
-        toast.error('Two-step sign-in is not turned on.');
+        toast.error(t('settingsPage.mfa.notOn'));
       } else {
-        toast.error(apiErr?.message ?? 'Could not regenerate codes.');
+        toast.error(apiErr?.message ?? t('settingsPage.mfa.regenerateFailed'));
       }
     } finally {
       setBusy(false);
     }
   };
 
-  const copy = async (value: string, label: string) => {
+  const copy = async (value: string, copiedMessage: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      toast.success(`${label} copied.`);
+      toast.success(copiedMessage);
     } catch {
-      toast.error('Copy failed — select and copy manually.');
+      toast.error(t('settingsPage.mfa.copyFailed'));
     }
   };
 
@@ -453,28 +567,27 @@ function MfaCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-gold" />
-          Two-step sign-in
+          {t('settingsPage.mfa.title')}
         </CardTitle>
         <CardDescription>
           {enabled
-            ? 'Adds a 6-digit code from your phone on top of your password. Already on for this account.'
-            : 'Adds a 6-digit code from your phone on top of your password. We strongly recommend turning this on.'}
+            ? t('settingsPage.mfa.descOn')
+            : t('settingsPage.mfa.descOff')}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {enroll ? (
           <div className="space-y-4">
             <div className="rounded-md border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-white">
-              <strong className="text-gold">Save your recovery codes first.</strong>{' '}
-              They are the only way to sign in if you lose your phone. Each code
-              works once.
+              <strong className="text-gold">{t('settingsPage.mfa.saveCodesFirst')}</strong>{' '}
+              {t('settingsPage.mfa.saveCodesFirstBody')}
             </div>
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="shrink-0">
                 {qrDataUrl ? (
                   <img
                     src={qrDataUrl}
-                    alt="Scan with your authenticator app"
+                    alt={t('settingsPage.mfa.qrAlt')}
                     className="rounded-md border border-navy-secondary bg-white p-2"
                     width={192}
                     height={192}
@@ -485,42 +598,40 @@ function MfaCard() {
               </div>
               <div className="flex-1 space-y-3">
                 <div>
-                  <Label>Manual entry secret</Label>
+                  <Label>{t('settingsPage.mfa.manualSecret')}</Label>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 rounded-md bg-navy-secondary/60 px-3 py-2 font-mono text-xs text-white break-all">
                       {enroll.secret}
                     </code>
                     <Button
                       variant="ghost"
-                      aria-label="Copy secret"
-                      onClick={() => copy(enroll.secret, 'Secret')}
+                      aria-label={t('settingsPage.mfa.copySecret')}
+                      onClick={() => copy(enroll.secret, t('settingsPage.mfa.secretCopied'))}
                       type="button"
                     >
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>
                   <FormHint>
-                    Scan the QR with Google Authenticator, 1Password, Authy, or
-                    similar. Or paste the secret if your app supports manual
-                    entry.
+                    {t('settingsPage.mfa.scanHint')}
                   </FormHint>
                 </div>
                 <div>
-                  <Label>Recovery codes</Label>
+                  <Label>{t('settingsPage.mfa.recoveryCodes')}</Label>
                   <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
                     {enroll.recoveryCodes.map((c) => (
                       <li key={c}>{c}</li>
                     ))}
                   </ul>
                   <div className="flex items-center justify-between mt-1.5">
-                    <FormHint>Print or store in a password manager.</FormHint>
+                    <FormHint>{t('settingsPage.mfa.printHint')}</FormHint>
                     <Button
                       variant="ghost"
-                      onClick={() => copy(enroll.recoveryCodes.join('\n'), 'Codes')}
+                      onClick={() => copy(enroll.recoveryCodes.join('\n'), t('settingsPage.mfa.codesCopied'))}
                       type="button"
                     >
                       <Copy className="mr-1.5 h-3.5 w-3.5" />
-                      Copy all
+                      {t('settingsPage.mfa.copyAll')}
                     </Button>
                   </div>
                 </div>
@@ -533,11 +644,11 @@ function MfaCard() {
                 checked={acknowledged}
                 onChange={(e) => setAcknowledged(e.target.checked)}
               />
-              <span>I've saved my recovery codes somewhere safe.</span>
+              <span>{t('settingsPage.mfa.ackSaved')}</span>
             </label>
             <div>
               <Label htmlFor="mfa-code" required>
-                6-digit code from your authenticator app
+                {t('settingsPage.mfa.codeLabel')}
               </Label>
               <Input
                 id="mfa-code"
@@ -552,14 +663,14 @@ function MfaCard() {
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={onCancel} disabled={busy}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button
                 onClick={onConfirm}
                 loading={busy}
                 disabled={!acknowledged || code.length !== 6}
               >
-                Turn on two-step sign-in
+                {t('settingsPage.mfa.turnOn')}
               </Button>
             </div>
           </div>
@@ -586,13 +697,13 @@ function MfaCard() {
                   </div>
                   <div>
                     <div className="text-2xs uppercase tracking-widest text-success">
-                      Protected
+                      {t('settingsPage.mfa.protected')}
                     </div>
                     <div className="text-2xl md:text-3xl text-white leading-tight">
-                      Two-step sign-in is on.
+                      {t('settingsPage.mfa.isOn')}
                     </div>
                     <div className="text-sm text-silver mt-0.5">
-                      Your account just got a lot harder to break into.
+                      {t('settingsPage.mfa.celebrate')}
                     </div>
                   </div>
                 </div>
@@ -601,7 +712,7 @@ function MfaCard() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm text-white">
                 <CheckCircle2 className="h-4 w-4 text-success" />
-                Two-step sign-in is on.
+                {t('settingsPage.mfa.isOn')}
               </div>
               {remaining !== null && (
                 <span
@@ -609,16 +720,15 @@ function MfaCard() {
                     remaining <= 2 ? 'text-warning' : 'text-silver'
                   }`}
                 >
-                  {remaining} of {MFA_RECOVERY_CODE_COUNT} recovery codes remaining
+                  {t('settingsPage.mfa.remaining', { remaining, total: MFA_RECOVERY_CODE_COUNT })}
                 </span>
               )}
             </div>
             {regeneratedCodes && (
               <div className="space-y-2 rounded-md border border-gold/40 bg-gold/10 p-3">
                 <div className="text-xs text-white">
-                  <strong className="text-gold">Save these codes now.</strong>{' '}
-                  Your previous codes have been invalidated. Each new code works
-                  once.
+                  <strong className="text-gold">{t('settingsPage.mfa.saveNow')}</strong>{' '}
+                  {t('settingsPage.mfa.saveNowBody')}
                 </div>
                 <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
                   {regeneratedCodes.map((c) => (
@@ -626,22 +736,22 @@ function MfaCard() {
                   ))}
                 </ul>
                 <div className="flex items-center justify-between">
-                  <FormHint>Print or store in a password manager.</FormHint>
+                  <FormHint>{t('settingsPage.mfa.printHint')}</FormHint>
                   <div className="flex items-center gap-2">
                     <Button
                       variant="ghost"
-                      onClick={() => copy(regeneratedCodes.join('\n'), 'Codes')}
+                      onClick={() => copy(regeneratedCodes.join('\n'), t('settingsPage.mfa.codesCopied'))}
                       type="button"
                     >
                       <Copy className="mr-1.5 h-3.5 w-3.5" />
-                      Copy all
+                      {t('settingsPage.mfa.copyAll')}
                     </Button>
                     <Button
                       variant="ghost"
                       onClick={() => setRegeneratedCodes(null)}
                       type="button"
                     >
-                      I've saved them
+                      {t('settingsPage.mfa.savedThem')}
                     </Button>
                   </div>
                 </div>
@@ -651,7 +761,7 @@ function MfaCard() {
               <div className="space-y-3 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
                 <div>
                   <Label htmlFor="mfa-disable-pw" required>
-                    Current password
+                    {t('settingsPage.currentPassword')}
                   </Label>
                   <Input
                     id="mfa-disable-pw"
@@ -661,8 +771,7 @@ function MfaCard() {
                     onChange={(e) => setDisablePassword(e.target.value)}
                   />
                   <FormHint>
-                    We re-check your password before disabling two-step
-                    sign-in.
+                    {t('settingsPage.mfa.disableHint')}
                   </FormHint>
                 </div>
                 <div className="flex justify-end gap-2">
@@ -674,10 +783,10 @@ function MfaCard() {
                     }}
                     disabled={busy}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                   <Button onClick={onDisable} loading={busy}>
-                    Turn off two-step sign-in
+                    {t('settingsPage.mfa.turnOff')}
                   </Button>
                 </div>
               </div>
@@ -685,7 +794,7 @@ function MfaCard() {
               <div className="space-y-3 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
                 <div>
                   <Label htmlFor="mfa-regen-pw" required>
-                    Current password
+                    {t('settingsPage.currentPassword')}
                   </Label>
                   <Input
                     id="mfa-regen-pw"
@@ -695,8 +804,7 @@ function MfaCard() {
                     onChange={(e) => setRegeneratePassword(e.target.value)}
                   />
                   <FormHint>
-                    Regenerating issues 8 fresh codes and invalidates every
-                    code currently on your printout.
+                    {t('settingsPage.mfa.regenerateHint')}
                   </FormHint>
                 </div>
                 <div className="flex justify-end gap-2">
@@ -708,10 +816,10 @@ function MfaCard() {
                     }}
                     disabled={busy}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                   <Button onClick={onRegenerate} loading={busy}>
-                    Regenerate codes
+                    {t('settingsPage.mfa.regenerate')}
                   </Button>
                 </div>
               </div>
@@ -725,10 +833,10 @@ function MfaCard() {
                   }}
                 >
                   <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                  Regenerate codes
+                  {t('settingsPage.mfa.regenerate')}
                 </Button>
                 <Button variant="ghost" onClick={() => setShowDisable(true)}>
-                  Turn off two-step sign-in
+                  {t('settingsPage.mfa.turnOff')}
                 </Button>
               </div>
             )}
@@ -736,7 +844,7 @@ function MfaCard() {
         ) : (
           <div className="flex justify-end">
             <Button onClick={onEnable} loading={busy}>
-              Set up two-step sign-in
+              {t('settingsPage.mfa.setUp')}
             </Button>
           </div>
         )}
@@ -747,6 +855,7 @@ function MfaCard() {
 
 function EmailCard() {
   const { user } = useAuth();
+  const { t } = useI18n();
   const [newEmail, setNewEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -755,15 +864,15 @@ function EmailCard() {
   const submit = async () => {
     const target = newEmail.trim().toLowerCase();
     if (!target) {
-      toast.error('Enter a new email address.');
+      toast.error(t('settingsPage.email.enterNew'));
       return;
     }
     if (target === user?.email.toLowerCase()) {
-      toast.error('That is already your email.');
+      toast.error(t('settingsPage.email.alreadyYours'));
       return;
     }
     if (currentPassword.length < 12) {
-      toast.error('Enter your current password to confirm.');
+      toast.error(t('settingsPage.email.enterPassword'));
       return;
     }
     setSubmitting(true);
@@ -772,18 +881,18 @@ function EmailCard() {
       setSentTo(target);
       setNewEmail('');
       setCurrentPassword('');
-      toast.success(`Confirmation link sent to ${target}.`);
+      toast.success(t('settingsPage.email.sentToast', { email: target }));
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'invalid_credentials') {
-        toast.error('Current password is incorrect.');
+        toast.error(t('settingsPage.wrongPassword'));
       } else if (code === 'email_in_use') {
-        toast.error('That email already belongs to another account.');
+        toast.error(t('settingsPage.email.inUse'));
       } else if (code === 'same_email') {
-        toast.error('That is already your email.');
+        toast.error(t('settingsPage.email.alreadyYours'));
       } else {
-        toast.error('Could not request email change.', {
-          description: err instanceof Error ? err.message : 'Something went wrong.',
+        toast.error(t('settingsPage.email.requestFailed'), {
+          description: err instanceof Error ? err.message : t('common.wentWrong'),
         });
       }
     } finally {
@@ -796,24 +905,22 @@ function EmailCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <AtSign className="h-4 w-4 text-gold" />
-          Email address
+          {t('settingsPage.email.title')}
         </CardTitle>
         <CardDescription>
-          Current: <span className="text-white">{user?.email}</span>. Changing
-          your email signs you out of every session and emails the old
-          address as a security alert.
+          {t('settingsPage.email.currentLabel')} <span className="text-white">{user?.email}</span>.{' '}
+          {t('settingsPage.email.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {sentTo && (
           <div className="mb-4 rounded-md border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-white">
-            Confirmation link sent to <span className="font-mono">{sentTo}</span>.
-            It expires in 1 hour. Click the link from that inbox to finish
-            the change.
+            {t('settingsPage.email.sentPrefix')} <span className="font-mono">{sentTo}</span>.{' '}
+            {t('settingsPage.email.sentBody')}
           </div>
         )}
         <div className="space-y-3">
-          <Field label="New email" required>
+          <Field label={t('settingsPage.email.newEmail')} required>
             {(p) => (
               <Input
                 type="email"
@@ -827,9 +934,9 @@ function EmailCard() {
             )}
           </Field>
           <Field
-            label="Current password"
+            label={t('settingsPage.currentPassword')}
             required
-            hint="We re-check your password before sending the confirmation link."
+            hint={t('settingsPage.email.passwordHint')}
           >
             {(p) => (
               <Input
@@ -848,7 +955,7 @@ function EmailCard() {
             loading={submitting}
             disabled={!newEmail || !currentPassword}
           >
-            Send confirmation link
+            {t('settingsPage.email.send')}
           </Button>
         </div>
       </CardContent>
@@ -864,6 +971,7 @@ type PushRowStatus =
   | 'available';
 
 function NotificationsCard() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const term = useTerm();
   const { user } = useAuth();
@@ -892,10 +1000,10 @@ function NotificationsCard() {
     try {
       await subscribeToPush();
       setPushStatus('subscribed');
-      toast.success("Push notifications are on for this device.");
+      toast.success(t('settingsPage.notif.pushOnToast'));
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : 'Could not enable push notifications.',
+        err instanceof Error ? err.message : t('settingsPage.notif.pushEnableFailed'),
       );
       // Permission may have just been denied — re-read the real state.
       getPushStatus().then(setPushStatus);
@@ -909,7 +1017,7 @@ function NotificationsCard() {
     try {
       await unsubscribeFromPush();
       setPushStatus('available');
-      toast.success('Push notifications are off for this device.');
+      toast.success(t('settingsPage.notif.pushOffToast'));
     } finally {
       setPushBusy(false);
     }
@@ -922,7 +1030,7 @@ function NotificationsCard() {
   const error = entriesError
     ? entriesError instanceof Error
       ? entriesError.message
-      : 'Failed to load preferences.'
+      : t('settingsPage.notif.loadFailed')
     : null;
 
   const setEntries = (
@@ -968,7 +1076,7 @@ function NotificationsCard() {
             )
           : prev,
       );
-      toast.error(err instanceof ApiError ? err.message : 'Failed to update.');
+      toast.error(err instanceof ApiError ? err.message : t('settingsPage.updateFailed'));
     } finally {
       setPending(null);
     }
@@ -990,7 +1098,7 @@ function NotificationsCard() {
         className="sr-only peer"
         checked={e[channel]}
         disabled={e.mandatory || pending === `${e.category}:${channel}`}
-        aria-label={`${label} for ${e.label}`}
+        aria-label={t('settingsPage.notif.toggleAria', { channel: label, category: e.label })}
         onChange={() => onToggle(e, channel)}
       />
       <div className="w-11 h-6 bg-navy-secondary peer-focus-visible:ring-2 peer-focus-visible:ring-gold rounded-full peer peer-checked:bg-gold/80 transition relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition peer-checked:after:translate-x-5" />
@@ -1002,12 +1110,10 @@ function NotificationsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Bell className="h-4 w-4 text-gold" />
-          Notifications
+          {t('settingsPage.notif.title')}
         </CardTitle>
         <CardDescription>
-          Choose what reaches you outside the app. The bell on the topbar
-          always shows everything; switching a type off stops its email and
-          push alert.
+          {t('settingsPage.notif.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1032,15 +1138,15 @@ function NotificationsCard() {
                     {e.mandatory && (
                       <span className="inline-flex items-center gap-1 text-xs text-silver">
                         <Lock className="h-3 w-3" />
-                        Required
+                        {t('settingsPage.notif.required')}
                       </span>
                     )}
                   </div>
                   <div className="text-xs text-silver mt-0.5">{termizeText(e.description, term)}</div>
                 </div>
                 <span className="flex shrink-0 items-start gap-3">
-                  {channelToggle(e, 'inAppEnabled', 'Bell')}
-                  {channelToggle(e, 'emailEnabled', 'Email')}
+                  {channelToggle(e, 'inAppEnabled', t('settingsPage.notif.bell'))}
+                  {channelToggle(e, 'emailEnabled', t('settingsPage.notif.email'))}
                 </span>
               </li>
             ))}
@@ -1053,38 +1159,38 @@ function NotificationsCard() {
           <div className="flex-1 min-w-48">
             <div className="text-sm text-white flex items-center gap-2">
               <Smartphone className="h-3.5 w-3.5 text-gold" />
-              Push notifications
+              {t('settingsPage.notif.pushTitle')}
               {pushStatus === 'subscribed' && (
                 <span className="inline-flex items-center gap-1 text-xs text-success">
                   <CheckCircle2 className="h-3 w-3" />
-                  on
+                  {t('settingsPage.notif.pushOn')}
                 </span>
               )}
             </div>
             <div className="text-xs text-silver mt-0.5">
               {pushStatus === 'subscribed'
                 ? isPortal
-                  ? 'Short-staffing alerts, replies and messages reach this device even when the app is closed.'
-                  : 'Shift alerts reach this device even when the app is closed.'
+                  ? t('settingsPage.notif.pushSubscribedPortal')
+                  : t('settingsPage.notif.pushSubscribed')
                 : pushStatus === 'available'
                   ? isPortal
-                    ? 'Get short-staffing alerts, replies and messages on this device even when the app is closed.'
-                    : 'Get shift alerts on this device even when the app is closed.'
+                    ? t('settingsPage.notif.pushAvailablePortal')
+                    : t('settingsPage.notif.pushAvailable')
                   : pushStatus === 'denied'
-                    ? 'Blocked in your browser settings — allow notifications for this site, then come back here.'
+                    ? t('settingsPage.notif.pushDenied')
                     : pushStatus === 'unsupported'
-                      ? 'Not supported in this browser. On iPhone, install the app to your home screen first.'
-                      : 'Checking this device…'}
+                      ? t('settingsPage.notif.pushUnsupported')
+                      : t('settingsPage.notif.pushChecking')}
             </div>
           </div>
           {pushStatus === 'subscribed' && (
             <Button variant="ghost" onClick={onDisablePush} loading={pushBusy}>
-              Disable
+              {t('settingsPage.notif.disable')}
             </Button>
           )}
           {pushStatus === 'available' && (
             <Button onClick={onEnablePush} loading={pushBusy}>
-              Enable push notifications
+              {t('settingsPage.notif.enable')}
             </Button>
           )}
         </div>
@@ -1095,6 +1201,7 @@ function NotificationsCard() {
 
 function TimezoneCard() {
   const { user, refreshUser } = useAuth();
+  const { t } = useI18n();
   const [tz, setTz] = useState<SupportedTimezone | ''>(
     (user?.timezone as SupportedTimezone | undefined) ?? '',
   );
@@ -1112,12 +1219,12 @@ function TimezoneCard() {
       await updateTimezone(tz === '' ? null : tz);
       toast.success(
         tz === ''
-          ? 'Timezone preference cleared.'
-          : 'Timezone updated.',
+          ? t('settingsPage.tz.cleared')
+          : t('settingsPage.tz.updated'),
       );
       await refreshUser();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to update.');
+      toast.error(err instanceof ApiError ? err.message : t('settingsPage.updateFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -1128,23 +1235,22 @@ function TimezoneCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Clock className="h-4 w-4 text-gold" />
-          Timezone
+          {t('settingsPage.tz.title')}
         </CardTitle>
         <CardDescription>
-          Used to display dates and times across the app. Leave blank to
-          follow this device ({browserTz}).
+          {t('settingsPage.tz.desc', { tz: browserTz })}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Preferred timezone" className="flex-1 min-w-[240px]">
+          <Field label={t('settingsPage.tz.label')} className="flex-1 min-w-[240px]">
             {(p) => (
               <Select
                 value={tz}
                 onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
                 {...p}
               >
-                <option value="">Follow this device ({browserTz})</option>
+                <option value="">{t('settingsPage.tz.followDevice', { tz: browserTz })}</option>
                 {SUPPORTED_TIMEZONES.map((z) => (
                   <option key={z} value={z}>
                     {TIMEZONE_LABELS[z]}
@@ -1154,7 +1260,7 @@ function TimezoneCard() {
             )}
           </Field>
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
-            Save timezone
+            {t('settingsPage.tz.save')}
           </Button>
         </div>
       </CardContent>
@@ -1164,7 +1270,7 @@ function TimezoneCard() {
 
 function LanguageCard() {
   const { user, refreshUser } = useAuth();
-  const { setLang } = useI18n();
+  const { setLang, t } = useI18n();
   const [language, setLanguage] = useState<EmailLanguage | ''>(user?.language ?? '');
   const [submitting, setSubmitting] = useState(false);
   const dirty = (user?.language ?? '') !== language;
@@ -1176,10 +1282,10 @@ function LanguageCard() {
       // The UI follows the choice (Brief 2-1b: Turkish is a UI language too, English where a string is not yet translated).
       if (isLang(language)) setLang(language);
       if (language === '') setLang('en');
-      toast.success(language === '' ? 'Language preference cleared.' : 'Language updated.');
+      toast.success(language === '' ? t('settingsPage.lang.cleared') : t('settingsPage.lang.updated'));
       await refreshUser();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to update.');
+      toast.error(err instanceof ApiError ? err.message : t('settingsPage.updateFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -1190,23 +1296,22 @@ function LanguageCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Languages className="h-4 w-4 text-gold" />
-          Language
+          {t('common.language')}
         </CardTitle>
         <CardDescription>
-          The language we write to you in — emails, reminders and the app
-          where it is translated. Leave blank for English.
+          {t('settingsPage.lang.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Preferred language" className="flex-1 min-w-[240px]">
+          <Field label={t('settingsPage.lang.label')} className="flex-1 min-w-[240px]">
             {(p) => (
               <Select
                 value={language}
                 onChange={(e) => setLanguage(e.target.value as EmailLanguage | '')}
                 {...p}
               >
-                <option value="">English (default)</option>
+                <option value="">{t('settingsPage.lang.englishDefault')}</option>
                 {EMAIL_LANGUAGES.map((l) => (
                   <option key={l} value={l}>
                     {EMAIL_LANGUAGE_LABELS[l]}
@@ -1216,7 +1321,7 @@ function LanguageCard() {
             )}
           </Field>
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
-            Save language
+            {t('settingsPage.lang.save')}
           </Button>
         </div>
       </CardContent>
@@ -1225,15 +1330,15 @@ function LanguageCard() {
 }
 
 function SessionsCard() {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [submitting, setSubmitting] = useState(false);
 
   const onRevoke = async () => {
     if (
       !(await confirm({
-        title: 'Sign out everywhere else?',
-        description:
-          'Every other device or browser signed in to your account will be signed out immediately. This device stays signed in.',
+        title: t('settingsPage.sessions.confirmTitle'),
+        description: t('settingsPage.sessions.confirmDesc'),
         destructive: true,
       }))
     ) {
@@ -1242,9 +1347,9 @@ function SessionsCard() {
     setSubmitting(true);
     try {
       await revokeOtherSessions();
-      toast.success('Other sessions revoked.');
+      toast.success(t('settingsPage.sessions.revoked'));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to revoke sessions.');
+      toast.error(err instanceof ApiError ? err.message : t('settingsPage.sessions.revokeFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -1255,19 +1360,16 @@ function SessionsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <LogOut className="h-4 w-4 text-gold" />
-          Active sessions
+          {t('settingsPage.sessions.title')}
         </CardTitle>
         <CardDescription>
-          Signs your account out of every other device and browser in one go
-          — this device keeps its session. Use it if you left yourself signed
-          in somewhere or spot unfamiliar activity in the sign-in history
-          below.
+          {t('settingsPage.sessions.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex justify-end">
           <Button onClick={onRevoke} loading={submitting} variant="ghost">
-            Sign out everywhere else
+            {t('settingsPage.sessions.button')}
           </Button>
         </div>
       </CardContent>
@@ -1277,6 +1379,7 @@ function SessionsCard() {
 
 function ProfileCard() {
   const { user, refreshUser } = useAuth();
+  const { t } = useI18n();
   const [firstName, setFirstName] = useState(user?.firstName ?? '');
   const [lastName, setLastName] = useState(user?.lastName ?? '');
   const [submitting, setSubmitting] = useState(false);
@@ -1289,7 +1392,7 @@ function ProfileCard() {
     const f = firstName.trim();
     const l = lastName.trim();
     if (!dirty) {
-      toast.error('Make a change first.');
+      toast.error(t('settingsPage.profile.noChange'));
       return;
     }
     setSubmitting(true);
@@ -1298,14 +1401,14 @@ function ProfileCard() {
         firstName: f,
         lastName: l,
       });
-      toast.success('Profile updated.', {
-        description: `Display name is now ${updated.firstName} ${updated.lastName}.`,
+      toast.success(t('settingsPage.profile.updated'), {
+        description: t('settingsPage.profile.nowName', { name: `${updated.firstName} ${updated.lastName}` }),
       });
       // Re-fetch /auth/me so the chrome avatar/name update without reload.
       await refreshUser();
     } catch (err) {
-      toast.error('Could not update profile.', {
-        description: err instanceof Error ? err.message : 'Something went wrong.',
+      toast.error(t('settingsPage.profile.updateFailed'), {
+        description: err instanceof Error ? err.message : t('common.wentWrong'),
       });
     } finally {
       setSubmitting(false);
@@ -1317,15 +1420,15 @@ function ProfileCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <UserIcon className="h-4 w-4 text-gold" />
-          Display name
+          {t('settingsPage.profile.title')}
         </CardTitle>
         <CardDescription>
-          How your name appears on shifts, paystubs, and inbox messages.
+          {t('settingsPage.profile.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="First name">
+          <Field label={t('settingsPage.profile.firstName')}>
             {(p) => (
               <Input
                 value={firstName}
@@ -1335,7 +1438,7 @@ function ProfileCard() {
               />
             )}
           </Field>
-          <Field label="Last name">
+          <Field label={t('settingsPage.profile.lastName')}>
             {(p) => (
               <Input
                 value={lastName}
@@ -1348,7 +1451,7 @@ function ProfileCard() {
         </div>
         <div className="mt-4 flex justify-end">
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
-            Save profile
+            {t('settingsPage.profile.save')}
           </Button>
         </div>
       </CardContent>
@@ -1358,6 +1461,7 @@ function ProfileCard() {
 
 function ProfilePhotoCard() {
   const { user, refreshUser } = useAuth();
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [busy, setBusy] = useState<'upload' | 'remove' | null>(null);
   // Picked file awaiting the crop step — the upload happens on the
@@ -1372,11 +1476,11 @@ function ProfilePhotoCard() {
     e.target.value = '';
     if (!file) return;
     if (file.size > 15 * 1024 * 1024) {
-      toast.error('Photo must be 15MB or smaller.');
+      toast.error(t('settingsPage.photo.tooBig'));
       return;
     }
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-      toast.error('Photo must be PNG, JPEG, or WebP.');
+      toast.error(t('settingsPage.photo.badType'));
       return;
     }
     setCropFile(file);
@@ -1389,24 +1493,24 @@ function ProfilePhotoCard() {
       await uploadProfilePhoto(
         new File([blob], 'photo.jpg', { type: 'image/jpeg' }),
       );
-      toast.success('Photo updated.');
+      toast.success(t('settingsPage.photo.updated'));
       await refreshUser();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to upload.');
+      toast.error(err instanceof ApiError ? err.message : t('settingsPage.photo.uploadFailed'));
     } finally {
       setBusy(null);
     }
   };
 
   const onRemove = async () => {
-    if (!(await confirm({ title: 'Remove your profile photo?', destructive: true }))) return;
+    if (!(await confirm({ title: t('settingsPage.photo.removeConfirm'), destructive: true }))) return;
     setBusy('remove');
     try {
       await deleteProfilePhoto();
-      toast.success('Photo removed.');
+      toast.success(t('settingsPage.photo.removed'));
       await refreshUser();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to remove.');
+      toast.error(err instanceof ApiError ? err.message : t('settingsPage.photo.removeFailed'));
     } finally {
       setBusy(null);
     }
@@ -1417,11 +1521,10 @@ function ProfilePhotoCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Camera className="h-4 w-4 text-gold" />
-          Profile photo
+          {t('settingsPage.photo.title')}
         </CardTitle>
         <CardDescription>
-          Shown on the directory and next to your name across the app. PNG,
-          JPEG, or WebP — you&rsquo;ll position and zoom it before it saves.
+          {t('settingsPage.photo.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1440,7 +1543,7 @@ function ProfilePhotoCard() {
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={onPick} disabled={busy !== null}>
               <Upload className="mr-2 h-4 w-4" />
-              {user?.photoUrl ? 'Replace photo' : 'Upload photo'}
+              {user?.photoUrl ? t('settingsPage.photo.replace') : t('settingsPage.photo.upload')}
             </Button>
             {user?.photoUrl && (
               <Button
@@ -1448,7 +1551,7 @@ function ProfilePhotoCard() {
                 onClick={onRemove}
                 disabled={busy !== null}
               >
-                Remove
+                {t('settingsPage.remove')}
               </Button>
             )}
             <input
@@ -1473,6 +1576,7 @@ function ProfilePhotoCard() {
 }
 
 function PasswordCard() {
+  const { t } = useI18n();
   const [currentPassword, setCurrent] = useState('');
   const [newPassword, setNew] = useState('');
   const [confirmPassword, setConfirm] = useState('');
@@ -1480,22 +1584,22 @@ function PasswordCard() {
 
   const submit = async () => {
     if (newPassword !== confirmPassword) {
-      toast.error('New password and confirmation must match.');
+      toast.error(t('settingsPage.password.mustMatch'));
       return;
     }
     if (newPassword.length < 12) {
-      toast.error('New password must be at least 12 characters.');
+      toast.error(t('settingsPage.password.tooShort'));
       return;
     }
     if (newPassword === currentPassword) {
-      toast.error('New password must differ from your current password.');
+      toast.error(t('settingsPage.password.mustDiffer'));
       return;
     }
     setSubmitting(true);
     try {
       await changePassword({ currentPassword, newPassword });
-      toast.success('Password updated.', {
-        description: 'Other devices have been signed out.',
+      toast.success(t('settingsPage.password.updated'), {
+        description: t('settingsPage.password.othersSignedOut'),
       });
       setCurrent('');
       setNew('');
@@ -1503,12 +1607,12 @@ function PasswordCard() {
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'invalid_credentials') {
-        toast.error('Current password is incorrect.');
+        toast.error(t('settingsPage.wrongPassword'));
       } else if (code === 'invalid_body') {
-        toast.error('Password does not meet requirements.');
+        toast.error(t('settingsPage.password.requirements'));
       } else {
-        toast.error('Could not change password.', {
-          description: err instanceof Error ? err.message : 'Something went wrong.',
+        toast.error(t('settingsPage.password.changeFailed'), {
+          description: err instanceof Error ? err.message : t('common.wentWrong'),
         });
       }
     } finally {
@@ -1521,16 +1625,15 @@ function PasswordCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <KeyRound className="h-4 w-4 text-gold" />
-          Password
+          {t('settingsPage.password.title')}
         </CardTitle>
         <CardDescription>
-          Changing your password signs out every other device. Minimum 12
-          characters.
+          {t('settingsPage.password.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
-          <Field label="Current password" required>
+          <Field label={t('settingsPage.currentPassword')} required>
             {(p) => (
               <Input
                 type="password"
@@ -1542,7 +1645,7 @@ function PasswordCard() {
             )}
           </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="New password" required hint="At least 12 characters.">
+            <Field label={t('settingsPage.password.new')} required hint={t('settingsPage.password.newHint')}>
               {(p) => (
                 <Input
                   type="password"
@@ -1555,11 +1658,11 @@ function PasswordCard() {
               )}
             </Field>
             <Field
-              label="Confirm new password"
+              label={t('settingsPage.password.confirm')}
               required
               error={
                 confirmPassword && newPassword !== confirmPassword
-                  ? "Passwords don't match."
+                  ? t('settingsPage.password.noMatch')
                   : undefined
               }
             >
@@ -1582,7 +1685,7 @@ function PasswordCard() {
             loading={submitting}
             disabled={!currentPassword || !newPassword || !confirmPassword}
           >
-            Change password
+            {t('settingsPage.password.change')}
           </Button>
         </div>
       </CardContent>
@@ -1590,16 +1693,16 @@ function PasswordCard() {
   );
 }
 
-const ACTION_LABEL: Record<LoginEvent['action'], string> = {
-  'auth.login': 'Signed in',
-  'auth.logout': 'Signed out',
-  'auth.password_changed': 'Password changed',
-  'auth.password_reset_completed': 'Password reset',
-  'auth.sessions_revoked': 'Other sessions revoked',
+const ACTION_LABEL: Record<LoginEvent['action'], MessageKey> = {
+  'auth.login': 'settingsPage.history.action.login',
+  'auth.logout': 'settingsPage.history.action.logout',
+  'auth.password_changed': 'settingsPage.history.action.passwordChanged',
+  'auth.password_reset_completed': 'settingsPage.history.action.passwordReset',
+  'auth.sessions_revoked': 'settingsPage.history.action.sessionsRevoked',
 };
 
-function shortenAgent(ua: string | null): string {
-  if (!ua) return 'Unknown device';
+function shortenAgent(ua: string | null, t: Translate): string {
+  if (!ua) return t('settingsPage.history.unknownDevice');
   // Crude UA → "Chrome on Windows" sniff. Good enough for the bell view;
   // a real "active sessions" feature would parse the full UA.
   const browser =
@@ -1611,7 +1714,7 @@ function shortenAgent(ua: string | null): string {
           ? 'Firefox'
           : /Safari\//i.test(ua) && !/Chrome\//i.test(ua)
             ? 'Safari'
-            : 'Browser';
+            : t('settingsPage.history.browser');
   const os =
     /Windows/i.test(ua)
       ? 'Windows'
@@ -1623,13 +1726,14 @@ function shortenAgent(ua: string | null): string {
             ? 'Android'
             : /Linux/i.test(ua)
               ? 'Linux'
-              : 'Unknown OS';
-  return `${browser} on ${os}`;
+              : t('settingsPage.history.unknownOs');
+  return t('settingsPage.history.browserOnOs', { browser, os });
 }
 
 const LOGIN_HISTORY_PREVIEW = 5;
 
 function LoginHistoryCard() {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
 
   const { data: events, error: eventsError } = useQuery({
@@ -1639,7 +1743,7 @@ function LoginHistoryCard() {
   const error = eventsError
     ? eventsError instanceof Error
       ? eventsError.message
-      : 'Failed to load activity.'
+      : t('settingsPage.history.loadFailed')
     : null;
 
   return (
@@ -1647,14 +1751,13 @@ function LoginHistoryCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <History className="h-4 w-4 text-gold" />
-          Recent sign-in activity
+          {t('settingsPage.history.title')}
         </CardTitle>
         <CardDescription>
-          Last 25 sign-ins, sign-outs, and password changes on your account.
-          Spot something you don't recognise?{' '}
+          {t('settingsPage.history.desc')}{' '}
           <span className="inline-flex items-center gap-1 text-warning">
             <ShieldAlert className="h-3 w-3" />
-            change your password and notify HR.
+            {t('settingsPage.history.descWarn')}
           </span>
         </CardDescription>
       </CardHeader>
@@ -1668,12 +1771,12 @@ function LoginHistoryCard() {
             <Skeleton className="h-6 w-3/4" />
           </div>
         ) : events.length === 0 ? (
-          <EmptyState size="sm" title={"No activity recorded yet."} />
+          <EmptyState size="sm" title={t('settingsPage.history.empty')} />
         ) : (
           <>
             <DataGrid<(typeof events)[number]>
               id="login-history"
-              caption="Login history"
+              caption={t('settingsPage.history.caption')}
               rows={expanded ? events : events.slice(0, LOGIN_HISTORY_PREVIEW)}
               rowKey={(ev) => ev.id}
               search={false}
@@ -1681,9 +1784,9 @@ function LoginHistoryCard() {
               exportCsv={false}
               columnChooser={false}
               columns={[
-                { key: 'event', header: 'Event', accessor: (ev) => ACTION_LABEL[ev.action], sortable: true, primary: true, className: 'text-white' },
-                { key: 'when', header: 'When', accessor: (ev) => ev.at, sortable: true, searchable: false, cardMeta: true, className: 'text-silver', cell: (ev) => fmtDateTime(ev.at) },
-                { key: 'device', header: 'Device', accessor: (ev) => shortenAgent(ev.userAgent), sortable: true, cardMeta: true, className: 'text-silver' },
+                { key: 'event', header: t('settingsPage.history.colEvent'), accessor: (ev) => t(ACTION_LABEL[ev.action]), sortable: true, primary: true, className: 'text-white' },
+                { key: 'when', header: t('settingsPage.history.colWhen'), accessor: (ev) => ev.at, sortable: true, searchable: false, cardMeta: true, className: 'text-silver', cell: (ev) => fmtDateTime(ev.at) },
+                { key: 'device', header: t('settingsPage.history.colDevice'), accessor: (ev) => shortenAgent(ev.userAgent, t), sortable: true, cardMeta: true, className: 'text-silver' },
                 { key: 'ip', header: 'IP', accessor: (ev) => ev.ip, sortable: true, className: 'text-silver font-mono text-xs', cell: (ev) => ev.ip ?? '—' },
               ]}
             />
@@ -1698,12 +1801,12 @@ function LoginHistoryCard() {
                   {expanded ? (
                     <>
                       <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
-                      Show fewer
+                      {t('settingsPage.history.showFewer')}
                     </>
                   ) : (
                     <>
                       <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-                      Show all {events.length}
+                      {t('settingsPage.history.showAll', { count: events.length })}
                     </>
                   )}
                 </button>

@@ -12,6 +12,7 @@ import { backfillPosting, postingGaps } from '../../lib/books/posting/gaps.js';
 import { cents, ymd } from '../../lib/books/posting/common.js';
 import { accountByKey } from '../../lib/books/ledger.js';
 import { paymentFromDeposit } from '../../lib/books/bank/service.js';
+import { nextReminderOn } from '../../lib/statementDunning.js';
 
 /**
  * /books/receivables — what clients owe and the money they pay (contract:
@@ -146,6 +147,93 @@ booksReceivablesRouter.delete('/payments/:id', MANAGE, async (req, res, next) =>
     await undoClientPayment(prisma, id, { reason, userId: req.user!.id });
     enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'books.client_payment_undone', entityType: 'ClientPayment', entityId: id, metadata: { reason } }, 'books.receivables');
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Finance walk 7 — the collections worklist: every open statement with where
+ * the reminder cadence stands (stage, last sent, next scheduled), the
+ * latest promise or note, whether the client is paused, and the day the
+ * next action falls due — the sort the page opens on.
+ */
+booksReceivablesRouter.get('/worklist', async (_req, res, next) => {
+  try {
+    const tenantId = tenantIdForWrite();
+    const today = ymd(new Date());
+    const r = await agingReport(prisma, today);
+    const ids = r.statements.map((s) => s.statementId);
+    const clientIds = [...new Set(r.statements.map((s) => s.clientId))];
+    const [rows, clients, notes] = await Promise.all([
+      ids.length ? prisma.clientStatement.findMany({ where: { id: { in: ids } }, select: { id: true, dueAt: true, reminderStage: true, lastReminderAt: true } }) : [],
+      clientIds.length ? prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, dunningPausedAt: true, dunningPauseNote: true, contactEmail: true } }) : [],
+      clientIds.length ? prisma.clientCollectionNote.findMany({ where: { tenantId, clientId: { in: clientIds } }, orderBy: { createdAt: 'desc' }, take: 2000 }) : [],
+    ]);
+    const stmt = new Map(rows.map((x) => [x.id, x]));
+    const client = new Map(clients.map((c) => [c.id, c]));
+    // The latest note per statement, else per client.
+    const latestFor = (clientId: string, statementId: string) => notes.find((n) => n.statementId === statementId) ?? notes.find((n) => n.clientId === clientId && !n.statementId) ?? null;
+    const items = r.statements.map((s) => {
+      const x = stmt.get(s.statementId);
+      const c = client.get(s.clientId);
+      const paused = !!c?.dunningPausedAt;
+      const next = paused ? null : nextReminderOn(x?.dueAt ?? null, x?.reminderStage ?? 0);
+      const note = latestFor(s.clientId, s.statementId);
+      const promise = note?.kind === 'PROMISE' && note.promisedOn ? ymd(note.promisedOn) : null;
+      // What to do next, and when: keep a promise's date, else the cadence's next send, else today (it is late).
+      const nextActionOn = promise && promise >= today ? promise : next && next >= today ? next : s.daysPastDue > 0 ? today : (next ?? promise ?? today);
+      return {
+        ...statementDto(s),
+        reminderStage: x?.reminderStage ?? 0,
+        lastReminderAt: x?.lastReminderAt?.toISOString() ?? null,
+        nextReminderOn: next,
+        paused,
+        pauseNote: c?.dunningPauseNote ?? null,
+        contactEmail: c?.contactEmail ?? null,
+        lastNote: note
+          ? { id: note.id, kind: note.kind as 'PROMISE' | 'CALL' | 'NOTE', note: note.note, promisedOn: note.promisedOn ? ymd(note.promisedOn) : null, promisedAmount: note.promisedAmount === null ? null : Number(note.promisedAmount), createdAt: note.createdAt.toISOString() }
+          : null,
+        nextActionOn,
+      };
+    });
+    items.sort((a, b) => a.nextActionOn.localeCompare(b.nextActionOn) || b.daysPastDue - a.daysPastDue);
+    res.json({ asOf: today, items, totals: { open: dollars(r.totals.open), statements: items.length } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Days to collect, month by month (finance walk 7's DSO trend): for the
+ * statements paid in each month, the average days from finalized to paid,
+ * with how many and how much were collected.
+ */
+booksReceivablesRouter.get('/dso', async (req, res, next) => {
+  try {
+    const q = z.object({ months: z.coerce.number().int().min(1).max(24).default(6) }).parse(req.query);
+    const now = new Date();
+    const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (q.months - 1), 1));
+    const paid = await prisma.clientStatement.findMany({
+      where: { tenantId: tenantIdForWrite(), status: 'FINAL', paidAt: { gte: first }, finalizedAt: { not: null } },
+      select: { paidAt: true, finalizedAt: true, snapshot: true },
+      take: 10_000,
+    });
+    const months: Array<{ key: string; label: string; days: number | null; statements: number; collected: number }> = [];
+    for (let i = 0; i < q.months; i++) {
+      const d = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + i, 1));
+      const key = d.toISOString().slice(0, 7);
+      const mine = paid.filter((s) => s.paidAt!.toISOString().slice(0, 7) === key);
+      const lags = mine.map((s) => (s.paidAt!.getTime() - s.finalizedAt!.getTime()) / 86_400_000);
+      months.push({
+        key,
+        label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' }),
+        days: lags.length ? Math.round(lags.reduce((a, b) => a + b, 0) / lags.length) : null,
+        statements: mine.length,
+        collected: Math.round(mine.reduce((a, s) => a + Number((s.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0), 0) * 100) / 100,
+      });
+    }
+    res.json({ months });
   } catch (err) {
     next(err);
   }

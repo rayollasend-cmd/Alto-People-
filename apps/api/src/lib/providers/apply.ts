@@ -157,7 +157,7 @@ const bgLedger = (r: Pick<ScreeningReport, 'complete' | 'result' | 'rawStatus'>)
 
 export async function applyScreeningReport(checkId: string, r: ScreeningReport): Promise<void> {
   const status = bgLedger(r);
-  await prisma.backgroundCheck.update({
+  const row = await prisma.backgroundCheck.update({
     where: { id: checkId },
     data: {
       externalId: r.externalId || undefined,
@@ -168,6 +168,9 @@ export async function applyScreeningReport(checkId: string, r: ScreeningReport):
       ...(status === 'PASSED' ? { status: 'PASSED', completedAt: new Date(), adjudication: 'ENGAGED' } : { status }),
     },
   });
+  // A clear report completes the onboarding task the consent left in progress
+  // (lib/backgroundCheckConsent.ts; imported lazily — that module orders through this one).
+  if (status === 'PASSED') await (await import('../backgroundCheckConsent.js')).markBackgroundTaskDone(prisma, row.associateId);
 }
 
 export async function orderBackgroundCheck(conn: ProviderConnection, checkId: string, opts: { packageCode?: string | null; position?: string | null }): Promise<void> {

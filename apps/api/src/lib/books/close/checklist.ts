@@ -1,8 +1,10 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { CloseCheckItem } from '@alto-people/shared';
 import { tenantIdForWrite } from '../../tenant.js';
+import type { CloseTaskAction } from '@alto-people/shared';
 import { depreciationSchedule, monthEnd } from '../assets/depreciation.js';
 import { postingGaps } from '../posting/gaps.js';
+import { fromCents, toCents } from '../ledger.js';
 
 /**
  * A month's close checklist. Every month gets the same steps (CloseTask
@@ -15,11 +17,16 @@ import { postingGaps } from '../posting/gaps.js';
  *   bills_approved       no bill dated in the month stuck in approval
  *   statements_final     every client statement for the month finalized
  *   depreciation_posted  every asset's depreciation for the month posted
+ *   payroll_liabilities  the tax liability on the books at month end equals
+ *                        the deposits still owed (finance walk 16)
  *   quickbooks_in_sync   no sync conflict open, nothing waiting to go over
  *
- * and three are a person's judgment, ticked by hand with a note:
+ * and two are a person's judgment, ticked by hand with a note:
  *
- *   accruals_reviewed, payroll_liabilities, budget_review.
+ *   accruals_reviewed, budget_review.
+ *
+ * Two steps carry their own button (finance walk 16): "Finalize N
+ * statements" and "Post history" run from the checklist itself.
  *
  * An auto step can still be skipped by hand with a note (an account the
  * bank closed mid-month) — the skip is on the record.
@@ -43,7 +50,7 @@ export const CLOSE_TASKS: readonly TaskTemplate[] = [
   { key: 'statements_final', title: 'Finalize the month’s statements', detail: 'Every statement ending in the month is final, so revenue is booked.', auto: true, link: () => '/clients/statements' },
   { key: 'depreciation_posted', title: 'Post depreciation', detail: 'Every fixed asset’s depreciation for the month is on the books.', auto: true, link: () => '/books/assets' },
   { key: 'accruals_reviewed', title: 'Record accruals', detail: 'Expenses incurred but not yet billed (and wages earned but not yet paid) entered as accruals that reverse next month.', auto: false, link: (p) => `/books/close/${p}#accruals` },
-  { key: 'payroll_liabilities', title: 'Tie payroll liabilities to deposits', detail: 'Withholding and payroll liability balances at month end match the deposits and filings due.', auto: false, link: () => '/payroll/taxes?tab=deposits' },
+  { key: 'payroll_liabilities', title: 'Tie payroll liabilities to deposits', detail: 'The tax liability on the books at month end equals the tax deposits still owed; the payroll liabilities are listed beside it.', auto: true, link: () => '/payroll/taxes?tab=deposits' },
   { key: 'quickbooks_in_sync', title: 'QuickBooks in step', detail: 'No sync conflict waiting for a decision and nothing waiting to go to QuickBooks.', auto: true, link: () => '/books/quickbooks' },
   { key: 'budget_review', title: 'Review the month against budget', detail: 'Profit and loss read against the budget; big variances explained.', auto: false, link: () => '/books/budgets' },
 ];
@@ -73,6 +80,8 @@ export interface CheckResult {
   passing: boolean;
   summary: string;
   items: CloseCheckItem[];
+  /** The step's own button (finalize the drafts, post history), when it can be done from the checklist. */
+  action?: CloseTaskAction | null;
 }
 
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
@@ -114,6 +123,7 @@ export async function runChecks(db: Db, periodKey: string): Promise<Map<string, 
     passing: gaps.length === 0,
     summary: gaps.length === 0 ? 'Everything the platform produced for the month is in the ledger.' : `${plural(gaps.length, 'item')} not posted to the ledger yet.`,
     items: gaps.slice(0, 25).map((g) => ({ label: g.label, link: g.link ?? null })),
+    action: gaps.length ? { kind: 'post_history', label: 'Post history' } : null,
   });
 
   // Bills stuck in approval.
@@ -130,6 +140,29 @@ export async function runChecks(db: Db, periodKey: string): Promise<Map<string, 
     passing: drafts.length === 0,
     summary: drafts.length === 0 ? 'Every statement for the month is final.' : `${plural(drafts.length, 'statement')} for the month still in draft.`,
     items: drafts.map((d) => ({ label: `${d.client.name} — draft statement`, link: `/clients/${d.clientId}?tab=statements` })),
+    action: drafts.length ? { kind: 'finalize_statements', label: `Finalize ${plural(drafts.length, 'statement')}` } : null,
+  });
+
+  // Payroll liabilities tie to deposits: the tax liability accounts' balance at month end
+  // against the tax deposits still owed (PENDING, for liabilities up to month end).
+  const taxAccounts = await db.ledgerAccount.findMany({ where: { tenantId, subtype: 'TAX_LIABILITY' }, select: { id: true } });
+  const taxSums = taxAccounts.length
+    ? await db.journalLine.groupBy({ by: ['accountId'], where: { tenantId, accountId: { in: taxAccounts.map((a) => a.id) }, entry: { status: 'POSTED', entryDate: { lte: end } } }, _sum: { debit: true, credit: true } })
+    : [];
+  const onBooks = taxSums.reduce((n, r) => n + toCents(r._sum.credit) - toCents(r._sum.debit), 0);
+  const owed = await db.taxDeposit.findMany({ where: { tenantId, status: 'PENDING', liabilityDate: { lte: end } }, select: { id: true, amount: true, kind: true, periodLabel: true, dueDate: true } });
+  const owedCents = owed.reduce((n, d) => n + toCents(d.amount), 0);
+  const diff = onBooks - owedCents;
+  const money = (c: number) => fromCents(c).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const nothing = taxAccounts.length === 0 && owed.length === 0;
+  out.set('payroll_liabilities', {
+    passing: nothing || Math.abs(diff) < 100,
+    summary: nothing
+      ? 'No payroll tax liabilities on the books and no deposits owed.'
+      : Math.abs(diff) < 100
+        ? `Tax liability on the books ${money(onBooks)} equals the ${plural(owed.length, 'deposit')} still owed (${money(owedCents)}).`
+        : `Tax liability on the books ${money(onBooks)}; deposits still owed ${money(owedCents)} — ${money(Math.abs(diff))} ${diff > 0 ? 'on the books with no deposit accrued' : 'owed with no liability on the books'}.`,
+    items: Math.abs(diff) < 100 ? [] : [{ label: diff > 0 ? `Accrue the deposit for ${money(diff)} on the tax desk` : `Post the payroll behind ${money(-diff)} of deposits`, link: diff > 0 ? '/payroll/taxes?tab=deposits' : '/books/receivables' }],
   });
 
   // Depreciation due in the month and not posted.

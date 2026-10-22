@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+import { useI18n, type Translate } from '@/lib/i18n';
 
 /**
  * "My plan" — the personal week, finished to the standard of the rest of
@@ -59,9 +60,9 @@ function weekDays(): Array<{
   return out;
 }
 
-function dayName(key: string, todayKey: string, tomorrowKey: string): string {
-  if (key === todayKey) return 'Today';
-  if (key === tomorrowKey) return 'Tomorrow';
+function dayName(key: string, todayKey: string, tomorrowKey: string, t: Translate): string {
+  if (key === todayKey) return t('portal.todayNav');
+  if (key === tomorrowKey) return t('portal.tomorrow');
   return DAY_NAME_UTC_FMT.format(new Date(`${key}T12:00:00Z`));
 }
 
@@ -105,6 +106,7 @@ function CheckCircle({
 }
 
 export function MyPlanCard() {
+  const { t } = useI18n();
   const [items, setItems] = useState<PlanItem[] | null>(null);
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -144,7 +146,7 @@ export function MyPlanCard() {
       setTitle('');
       load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not add the task.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.planAddFailed'));
     } finally {
       setBusy(null);
     }
@@ -158,7 +160,7 @@ export function MyPlanCard() {
     try {
       await apiFetch(`/me/plan/${item.id}`, { method: 'PATCH', body: { done: !item.done } });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not update the task.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.planUpdateFailed'));
       load();
     } finally {
       setBusy(null);
@@ -169,11 +171,11 @@ export function MyPlanCard() {
     setBusy(item.id);
     try {
       await apiFetch(`/me/plan/${item.id}`, { method: 'PATCH', body: { day } });
-      toast.success(`Moved to ${dayName(day, todayKey, tomorrowKey)}.`);
+      toast.success(t('floorUi.planMovedTo', { day: dayName(day, todayKey, tomorrowKey, t) }));
       setMovingId(null);
       load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not move the task.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.planMoveFailed'));
     } finally {
       setBusy(null);
     }
@@ -185,7 +187,7 @@ export function MyPlanCard() {
       await apiFetch(`/me/plan/${item.id}`, { method: 'DELETE' });
       load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not remove the task.');
+      toast.error(err instanceof ApiError ? err.message : t('floorUi.planRemoveFailed'));
     } finally {
       setBusy(null);
     }
@@ -206,9 +208,9 @@ export function MyPlanCard() {
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="flex items-baseline gap-2.5">
-            <CardTitle className="text-base">My plan</CardTitle>
+            <CardTitle className="text-base">{t('floorUi.myPlan')}</CardTitle>
             <span className="text-xs text-silver/70">
-              {dayName(selectedDay, todayKey, tomorrowKey)}
+              {dayName(selectedDay, todayKey, tomorrowKey, t)}
             </span>
           </div>
           {dayItems.length > 0 && (
@@ -241,7 +243,7 @@ export function MyPlanCard() {
                 key={d.key}
                 type="button"
                 onClick={() => setSelectedDay(d.key)}
-                aria-label={dayName(d.key, todayKey, tomorrowKey)}
+                aria-label={dayName(d.key, todayKey, tomorrowKey, t)}
                 aria-pressed={selected}
                 className={cn(
                   'relative flex h-11 w-10 flex-col items-center justify-center rounded-lg transition-all duration-150',
@@ -287,17 +289,17 @@ export function MyPlanCard() {
             {dayComplete && (
               <p className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-success">
                 <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-                Day complete — everything you planned is done.
+                {t('floorUi.planDayComplete')}
               </p>
             )}
             {dayItems.length === 0 ? (
               <div className="flex flex-col items-center gap-1.5 rounded-md border border-dashed border-navy-secondary py-5 text-center">
                 <CalendarDays className="h-5 w-5 text-silver/40" aria-hidden="true" />
                 <p className="text-sm text-silver">
-                  Nothing planned{selectedDay === todayKey ? ' for today' : ''} yet.
+                  {selectedDay === todayKey ? t('floorUi.planNothingToday') : t('floorUi.planNothing')}
                 </p>
                 <p className="text-2xs text-silver/60">
-                  Add a task below, or pull queue items in with “+ My day”.
+                  {t('floorUi.planEmptyHint')}
                 </p>
               </div>
             ) : (
@@ -312,7 +314,7 @@ export function MyPlanCard() {
                         done={item.done}
                         disabled={busy !== null}
                         onToggle={() => void toggle(item)}
-                        label={`Mark "${item.title}" ${item.done ? 'not done' : 'done'}`}
+                        label={t(item.done ? 'floorUi.planMarkNotDone' : 'floorUi.planMarkDone', { title: item.title })}
                       />
                       {item.linkUrl ? (
                         <Link
@@ -351,7 +353,7 @@ export function MyPlanCard() {
                           onClick={() => setMovingId(movingId === item.id ? null : item.id)}
                           aria-expanded={movingId === item.id}
                         >
-                          Move <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                          {t('floorUi.planMove')} <ArrowRight className="h-3 w-3" aria-hidden="true" />
                         </button>
                       )}
                       <button
@@ -359,7 +361,7 @@ export function MyPlanCard() {
                         className="shrink-0 rounded p-0.5 text-silver/40 opacity-0 transition-opacity hover:text-alert group-focus-within:opacity-100 group-hover:opacity-100"
                         disabled={busy !== null}
                         onClick={() => void remove(item)}
-                        aria-label={`Remove "${item.title}"`}
+                        aria-label={t('floorUi.planRemoveItem', { title: item.title })}
                       >
                         <X className="h-3.5 w-3.5" aria-hidden="true" />
                       </button>
@@ -375,7 +377,7 @@ export function MyPlanCard() {
                               type="button"
                               disabled={busy !== null}
                               onClick={() => void reschedule(item, d.key)}
-                              aria-label={`Move to ${dayName(d.key, todayKey, tomorrowKey)}`}
+                              aria-label={t('floorUi.planMoveTo', { day: dayName(d.key, todayKey, tomorrowKey, t) })}
                               className="flex h-8 w-8 flex-col items-center justify-center rounded-md bg-navy-secondary/60 text-silver transition-colors hover:bg-gold/20 hover:text-gold"
                             >
                               <span className="text-2xs uppercase leading-none opacity-70">
@@ -396,16 +398,16 @@ export function MyPlanCard() {
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder={`Add a task for ${dayName(selectedDay, todayKey, tomorrowKey).toLowerCase()}…`}
+                placeholder={t('floorUi.planAddFor', { day: dayName(selectedDay, todayKey, tomorrowKey, t).toLowerCase() })}
                 className="h-8 flex-1 text-sm"
-                aria-label="New plan task"
+                aria-label={t('floorUi.planNewTask')}
               />
               <Button
                 type="submit"
                 size="sm"
                 loading={busy === 'add'}
                 disabled={busy !== null || title.trim().length === 0}
-                aria-label="Add task"
+                aria-label={t('floorUi.planAddTask')}
               >
                 <Plus className="h-3.5 w-3.5" />
               </Button>

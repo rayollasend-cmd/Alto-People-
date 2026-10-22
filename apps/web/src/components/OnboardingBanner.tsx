@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useI18n } from '@/lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Sparkles } from 'lucide-react';
@@ -54,6 +55,7 @@ export function useOpenOnboarding(): ApplicationSummary | null | undefined {
  * is the nudge it always was.
  */
 export function OnboardingBanner({ hero = false }: { hero?: boolean }) {
+  const { t } = useI18n();
   const item = useOpenOnboarding();
 
   if (!item) return null;
@@ -64,7 +66,7 @@ export function OnboardingBanner({ hero = false }: { hero?: boolean }) {
     <Link
       to={`/onboarding/me/${item.id}`}
       className={`group block rounded-lg border border-gold/40 bg-gradient-to-br from-gold/10 via-navy to-navy p-5 transition-all hover:border-gold hover:from-gold/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright ${hero ? '' : 'mb-6'}`}
-      aria-label="Continue onboarding"
+      aria-label={t('onbBanner.continue')}
     >
       <div className="flex items-start gap-4">
         <div className="hidden sm:grid h-10 w-10 rounded-lg bg-gold/20 place-items-center text-gold shrink-0">
@@ -73,16 +75,16 @@ export function OnboardingBanner({ hero = false }: { hero?: boolean }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-3">
             <div className="text-lg text-gold">
-              {isFresh ? 'Welcome — let\'s get you set up' : 'Finish your onboarding'}
+              {isFresh ? t('onbBanner.welcome') : t('onbBanner.finish')}
             </div>
             <div className="text-sm text-silver tabular-nums shrink-0">
-              {item.percentComplete}% complete
+              {t('onbBanner.percent', { n: item.percentComplete })}
             </div>
           </div>
           <p className="text-sm text-silver mt-1">
             {isFresh
-              ? `Your onboarding tasks for ${item.clientName} are ready. Most associates finish in about 15 minutes.`
-              : `Pick up where you left off — ${item.clientName}.`}
+              ? t('onbBanner.freshBody', { client: item.clientName })
+              : t('onbBanner.resumeBody', { client: item.clientName })}
           </p>
           <div className="mt-3">
             <ProgressBar percent={item.percentComplete} hideLabel />

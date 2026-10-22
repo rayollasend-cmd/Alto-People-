@@ -169,7 +169,7 @@ export function CelebrationsHome() {
               description={
                 term
                   ? `No upcoming celebrations match “${search.trim()}”.`
-                  : "Birthdays show up here once associates fill in their date of birth, and anniversaries appear once they've been on the team for a year."
+                  : `Birthdays show up here once {termWord('workers').toLowerCase()} fill in their date of birth, and anniversaries appear once they've been on the team for a year.`
               }
             />
           </CardContent>

@@ -157,6 +157,9 @@ workforceOverviewRouter.get(
               position: true,
               startsAt: true,
               client: { select: { name: true } },
+              // One time zone per shift (role walk, ops 2): the card shows
+              // the store's wall clock, never the reader's browser zone.
+              locationRel: { select: { name: true, timezone: true } },
             },
           }),
           // SEAM: the money cycle. Completed-but-unapproved timesheets are
@@ -589,9 +592,11 @@ workforceOverviewRouter.get(
           openNext48h,
           upcoming: upcomingOpen.map((s) => ({
             shiftId: s.id,
-            clientName: s.client?.name ?? '—',
+            // A company's own shift has no client: name the store instead of "—".
+            clientName: s.client?.name ?? s.locationRel?.name ?? '—',
             position: s.position,
             startsAt: s.startsAt.toISOString(),
+            timezone: s.locationRel?.timezone ?? ORG_TZ,
           })),
         },
       });

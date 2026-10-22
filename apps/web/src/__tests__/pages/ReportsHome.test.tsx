@@ -113,3 +113,21 @@ describe('<ReportsHome> — summarize', () => {
     expect(previewReport).not.toHaveBeenCalled();
   });
 });
+
+describe('<ReportsHome> — templates (HR walk 17)', () => {
+  it('a template opens the builder pre-filled with its entity, name and summary', async () => {
+    const user = userEvent.setup();
+    vi.mocked(listColumns).mockResolvedValue({ entity: 'SEPARATION', columns: ['id', 'associateId', 'reason', 'status', 'lastDayWorked', 'finalPaycheckDate', 'createdAt'] });
+    renderPage();
+    const gallery = await screen.findByRole('region', { name: 'Start from a template' });
+    expect(within(gallery).getAllByRole('button').length).toBeGreaterThanOrEqual(10);
+    await user.click(within(gallery).getByRole('button', { name: /Terminations by reason/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByRole('textbox')[0]).toHaveValue('Terminations by reason');
+    expect(within(dialog).getAllByRole('combobox')[0]).toHaveValue('SEPARATION');
+    expect(within(dialog).getByRole('checkbox', { name: 'Summarize' })).toBeChecked();
+    // Nothing saved by opening a template.
+    expect(createReport).not.toHaveBeenCalled();
+  });
+});

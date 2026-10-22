@@ -1,6 +1,9 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import {
+  AdverseActionListResponseSchema,
+  EeoApplicantReportSchema,
   BackgroundBulkInitiateInputSchema,
   BackgroundBulkInitiateResponseSchema,
   BackgroundCheckDetailSchema,
@@ -17,18 +20,33 @@ import {
   type J1Profile,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { env } from '../config/env.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeAssociates, scopeBackgroundChecks } from '../lib/scope.js';
-import { blobExistsForListing } from '../lib/blobStore.js';
+import { scopeAssociates, scopeAssociatesIncludingFormer, scopeBackgroundChecks } from '../lib/scope.js';
+import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
+import {
+  adverseStageOf,
+  buildEeoReport,
+  finalAdverseNotice,
+  i9ReverificationWhere,
+  i9ReverifyDueAt,
+  i9RetainUntil,
+  i9RetentionWhere,
+  preAdverseNotice,
+  type AdverseStage,
+} from '../lib/hiringCompliance.js';
+import { markBackgroundTaskDone } from '../lib/backgroundCheckConsent.js';
+import { send, type SendAttachment } from '../lib/notifications.js';
+import { getBrandingSync } from '../lib/branding.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 import { syncProgramFromJ1 } from '../lib/programs.js';
 import {
   clientNamesById,
   primaryClientsForAssociates,
 } from '../lib/associateClients.js';
-import { notifyHrOnApplicationComplete } from '../lib/notify.js';
+import { notifyAssociate, notifyHrOnApplicationComplete } from '../lib/notify.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
 
@@ -60,6 +78,8 @@ type RawI9 = Prisma.I9VerificationGetPayload<{
         firstName: true;
         lastName: true;
         email: true;
+        hireDate: true;
+        separatedAt: true;
         applications: {
           select: { id: true; invitedAt: true; startDate: true };
           orderBy: { invitedAt: 'desc' };
@@ -100,8 +120,14 @@ function toI9(
     workAuthExpiresAt: row.workAuthExpiresAt
       ? row.workAuthExpiresAt.toISOString().slice(0, 10)
       : null,
+    // Retention and reverification (audit 2026-10-21 #14, lib/hiringCompliance).
+    retainUntil: dateOrNull(i9RetainUntil(row.associate.hireDate, row.associate.separatedAt)),
+    reverifyDueAt: dateOrNull(i9ReverifyDueAt(row.workAuthExpiresAt)),
+    separatedAt: row.associate.separatedAt ? row.associate.separatedAt.toISOString() : null,
   };
 }
+
+const dateOrNull = (d: Date | null) => (d ? ymd(d) : null);
 
 const I9_INCLUDE = {
   associate: {
@@ -109,6 +135,8 @@ const I9_INCLUDE = {
       firstName: true,
       lastName: true,
       email: true,
+      hireDate: true,
+      separatedAt: true,
       applications: {
         select: { id: true, invitedAt: true, startDate: true },
         orderBy: { invitedAt: 'desc' as const },
@@ -125,9 +153,17 @@ complianceRouter.get('/i9', async (req, res, next) => {
     const filter: Prisma.I9VerificationWhereInput = {};
     if (status === 'pending') filter.section2CompletedAt = null;
     if (status === 'complete') filter.section2CompletedAt = { not: null };
-    // This tenant's people, inside the caller's reach.
+    // Reverification (Supplement B) due: work authorization expired or
+    // expiring within REVERIFY_WINDOW_DAYS, for people still working.
+    if (status === 'reverification') Object.assign(filter, i9ReverificationWhere());
+    // Past retention: separated, and both the 3-years-from-hire and the
+    // 1-year-from-separation marks are behind us — the I-9 may be destroyed.
+    if (status === 'retention') Object.assign(filter, i9RetentionWhere());
+    // This tenant's people, inside the caller's reach. Retention is about
+    // people who left, so it reaches by past placement as well.
+    const reach = status === 'retention' ? scopeAssociatesIncludingFormer(req.user!) : scopeAssociates(req.user!);
     const where: Prisma.I9VerificationWhereInput = {
-      AND: [filter, { tenantId: tenantIdForWrite() }, { associate: { AND: [{ deletedAt: null }, scopeAssociates(req.user!)] } }],
+      AND: [filter, { tenantId: tenantIdForWrite() }, { associate: { AND: [{ deletedAt: null }, reach] } }],
     };
     const fetched = await prisma.i9Verification.findMany({
       where,
@@ -268,8 +304,17 @@ function toBg(
     initiatedAt: row.initiatedAt.toISOString(),
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
     ...(reportCount !== undefined ? { reportCount } : {}),
+    adjudication: row.adjudication,
+    preAdverseSentAt: row.preAdverseSentAt?.toISOString() ?? null,
+    adverseWaitUntil: row.adverseWaitUntil?.toISOString() ?? null,
+    adverseSentAt: row.adverseSentAt?.toISOString() ?? null,
+    result: row.result,
+    viaProvider: viaProvider(row),
   };
 }
+
+/** Ordered through a connected provider: its adverse action runs in the provider panel. */
+const viaProvider = (c: { externalId: string | null; connectionId: string | null }) => !!(c.externalId && c.connectionId);
 
 /** Provider report PDFs are stored as documents of this kind, keyed by
  *  associate — the same pattern as E-Verify closure packets. */
@@ -598,7 +643,297 @@ complianceRouter.post('/background/:id/update', MANAGE, async (req, res, next) =
       metadata: { status: updated.status },
       req,
     });
+    // A pass recorded by hand completes the onboarding task the consent left open.
+    if (updated.status === 'PASSED') await markBackgroundTaskDone(prisma, updated.associateId);
     res.json(toBg(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== FCRA adverse action (audit 2026-10-21 #14) ======================= */
+//
+// Before acting on a background report against someone, the FCRA asks for a
+// pre-adverse notice carrying a copy of the report and the CFPB "Summary of
+// Your Rights", a waiting period for them to respond or dispute, and then
+// the final adverse action notice. Checks ordered through a connected
+// provider run these steps in the provider panel (/provider-actions); these
+// routes cover the checks recorded by hand.
+
+const DEFAULT_WAIT_DAYS = 7;
+const MIN_WAIT_DAYS = 5;
+
+async function manualCheckFor(req: Request) {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) throw new HttpError(404, 'background_check_not_found', 'Background check not found');
+  const c = await prisma.backgroundCheck.findFirst({
+    where: { AND: [{ id: id.data }, { tenantId: tenantIdForWrite() }, scopeBackgroundChecks(req.user!)] },
+    include: { associate: { select: { id: true, firstName: true, lastName: true, email: true } } },
+  });
+  if (!c) throw new HttpError(404, 'background_check_not_found', 'Background check not found');
+  if (viaProvider(c)) {
+    throw new HttpError(
+      409,
+      'use_provider_flow',
+      `This check was ordered through ${c.provider} — send the notices from the provider panel on the check, so the provider runs them with the report.`,
+    );
+  }
+  return c;
+}
+
+/** The newest report on file for the person, as an attachment — the notice must carry a copy. */
+async function reportAttachment(associateId: string): Promise<SendAttachment | null> {
+  const doc = await prisma.documentRecord.findFirst({
+    where: { associateId, kind: BG_REPORT_KIND, deletedAt: null, s3Key: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    select: { s3Key: true, filename: true, mimeType: true },
+  });
+  if (!doc?.s3Key) return null;
+  const bytes = await getBlobStore().get(doc.s3Key);
+  if (!bytes) return null;
+  return { filename: doc.filename || 'background-report.pdf', content: bytes, contentType: doc.mimeType || 'application/pdf' };
+}
+
+/** Deliver a notice: the bell and email for a person with a login, the email on file otherwise — with the report attached. */
+async function deliverNotice(
+  associate: { id: string; email: string },
+  notice: { subject: string; text: string; html: string },
+  attachment: SendAttachment,
+): Promise<void> {
+  const user = await prisma.user.findFirst({ where: { associateId: associate.id, status: 'ACTIVE' }, select: { id: true } });
+  if (user) {
+    await notifyAssociate(associate.id, {
+      subject: notice.subject,
+      body: 'An important notice about your background check — please read it and the enclosed report.',
+      html: notice.html,
+      text: notice.text,
+      category: 'compliance',
+      attachments: [attachment],
+    });
+    return;
+  }
+  await send({
+    channel: 'EMAIL',
+    recipient: { userId: null, phone: null, email: associate.email },
+    subject: notice.subject,
+    body: notice.text,
+    html: notice.html,
+    attachments: [attachment],
+    category: 'compliance',
+  });
+}
+
+const noticeInput = (c: { provider: string; associate: { firstName: string; lastName: string } }, reportFileName: string, waitUntil?: Date) => ({
+  personName: `${c.associate.firstName} ${c.associate.lastName}`,
+  orgName: getBrandingSync().orgName,
+  providerName: c.provider && !['none', 'stub', 'alto-stub'].includes(c.provider) ? c.provider : null,
+  reportFileName,
+  waitUntil,
+  contactEmail: env.RESEND_FROM ? (env.RESEND_FROM.match(/<([^>]+)>/)?.[1] ?? env.RESEND_FROM) : null,
+});
+
+complianceRouter.post('/background/:id/pre-adverse', MANAGE, async (req, res, next) => {
+  try {
+    const { waitDays } = z
+      .object({ waitDays: z.number().int().min(MIN_WAIT_DAYS).max(30).optional() })
+      .parse(req.body ?? {});
+    const c = await manualCheckFor(req);
+    if (c.adjudication === 'PRE_ADVERSE' || c.adjudication === 'ADVERSE') {
+      throw new HttpError(409, 'already_started', 'Adverse action has already started for this check.');
+    }
+    if (c.result === 'clear' || c.status === 'PASSED') {
+      throw new HttpError(409, 'report_clear', 'This check cleared — there is nothing to take adverse action on.');
+    }
+    if (c.status !== 'NEEDS_REVIEW' && c.status !== 'FAILED' && c.result !== 'consider') {
+      throw new HttpError(409, 'not_decidable', 'Adverse action starts from a report that needs review. Record the result first.');
+    }
+    const attachment = await reportAttachment(c.associateId);
+    if (!attachment) {
+      throw new HttpError(
+        409,
+        'no_report_on_file',
+        'Upload the background report first — the pre-adverse notice has to include a copy of it.',
+      );
+    }
+    const waitUntil = new Date(Date.now() + (waitDays ?? DEFAULT_WAIT_DAYS) * 86_400_000);
+    await deliverNotice(c.associate, preAdverseNotice(noticeInput(c, attachment.filename, waitUntil)), attachment);
+    const updated = await prisma.backgroundCheck.update({
+      where: { id: c.id },
+      data: { adjudication: 'PRE_ADVERSE', preAdverseSentAt: new Date(), adverseWaitUntil: waitUntil, status: 'NEEDS_REVIEW' },
+      include: BG_INCLUDE,
+    });
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_pre_adverse',
+      entityType: 'BackgroundCheck',
+      entityId: c.id,
+      associateId: c.associateId,
+      clientId: c.clientId,
+      metadata: { waitUntil: waitUntil.toISOString(), report: attachment.filename },
+      req,
+    });
+    res.json(toBg(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+complianceRouter.post('/background/:id/final-adverse', MANAGE, async (req, res, next) => {
+  try {
+    const c = await manualCheckFor(req);
+    if (c.adjudication !== 'PRE_ADVERSE') {
+      throw new HttpError(409, 'no_pre_adverse', 'Send the pre-adverse notice first.');
+    }
+    if (!c.adverseWaitUntil || c.adverseWaitUntil.getTime() > Date.now()) {
+      throw new HttpError(
+        409,
+        'waiting_period',
+        `They still have until ${c.adverseWaitUntil ? ymd(c.adverseWaitUntil) : 'the end of the waiting period'} to respond to the pre-adverse notice.`,
+      );
+    }
+    const attachment = await reportAttachment(c.associateId);
+    if (!attachment) {
+      throw new HttpError(409, 'no_report_on_file', 'The background report is no longer on file — upload it again before sending the final notice.');
+    }
+    await deliverNotice(c.associate, finalAdverseNotice(noticeInput(c, attachment.filename)), attachment);
+    const now = new Date();
+    const updated = await prisma.backgroundCheck.update({
+      where: { id: c.id },
+      data: { adjudication: 'ADVERSE', adverseSentAt: now, status: 'FAILED', completedAt: now },
+      include: BG_INCLUDE,
+    });
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_adverse',
+      entityType: 'BackgroundCheck',
+      entityId: c.id,
+      associateId: c.associateId,
+      clientId: c.clientId,
+      req,
+    });
+    res.json(toBg(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+complianceRouter.post('/background/:id/withdraw-adverse', MANAGE, async (req, res, next) => {
+  try {
+    const c = await manualCheckFor(req);
+    if (c.adjudication !== 'PRE_ADVERSE') {
+      throw new HttpError(409, 'not_pending', 'Only a pending adverse action can be withdrawn.');
+    }
+    const updated = await prisma.backgroundCheck.update({
+      where: { id: c.id },
+      data: { adjudication: 'ENGAGED', status: 'PASSED', completedAt: new Date(), adverseWaitUntil: null },
+      include: BG_INCLUDE,
+    });
+    await markBackgroundTaskDone(prisma, c.associateId);
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_adverse_withdrawn',
+      entityType: 'BackgroundCheck',
+      entityId: c.id,
+      associateId: c.associateId,
+      clientId: c.clientId,
+      req,
+    });
+    res.json(toBg(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const STAGE_ORDER: Record<AdverseStage, number> = { FINAL_DUE: 0, DECIDE: 1, WAITING: 2, DONE: 3 };
+
+/**
+ * GET /compliance/adverse-actions — the FCRA worklist: reports to decide,
+ * notices waiting out their period, final notices now due, and those sent
+ * in the last 90 days. Provider-ordered and hand-recorded checks alike.
+ */
+complianceRouter.get('/adverse-actions', async (req, res, next) => {
+  try {
+    const now = new Date();
+    const rows = await prisma.backgroundCheck.findMany({
+      where: {
+        AND: [
+          { tenantId: tenantIdForWrite() },
+          scopeBackgroundChecks(req.user!),
+          {
+            OR: [
+              { adjudication: 'PRE_ADVERSE' },
+              { adjudication: 'ADVERSE', adverseSentAt: { gte: new Date(now.getTime() - 90 * 86_400_000) } },
+              { adjudication: null, OR: [{ status: 'NEEDS_REVIEW' }, { result: 'consider' }] },
+            ],
+          },
+        ],
+      },
+      include: BG_INCLUDE,
+      take: 500,
+    });
+    const out = rows
+      .map((r) => ({ r, stage: adverseStageOf(r, now) }))
+      .filter((x): x is { r: (typeof rows)[number]; stage: AdverseStage } => x.stage !== null)
+      .sort((a, b) => STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage] || (a.r.adverseWaitUntil?.getTime() ?? 0) - (b.r.adverseWaitUntil?.getTime() ?? 0))
+      .map(({ r, stage }) => ({
+        checkId: r.id,
+        associateId: r.associateId,
+        associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+        stage,
+        waitUntil: r.adverseWaitUntil?.toISOString() ?? null,
+        preAdverseSentAt: r.preAdverseSentAt?.toISOString() ?? null,
+        adverseSentAt: r.adverseSentAt?.toISOString() ?? null,
+        result: r.result,
+        status: r.status,
+        viaProvider: viaProvider(r),
+      }));
+    res.json(AdverseActionListResponseSchema.parse({ rows: out }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Applicant EEO self-identification (audit 2026-10-21 #14) ========= */
+
+/**
+ * GET /compliance/eeo/applicant-report?from&to — counts only. Never a row,
+ * never a name: buckets under five read '<5'. The answers are stored apart
+ * from candidates and applications (EeoSelfIdentification) and this is
+ * their only reader.
+ */
+complianceRouter.get('/eeo/applicant-report', MANAGE, async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      })
+      .parse(req.query);
+    const to = q.to ?? ymd(new Date());
+    const from = q.from ?? ymd(new Date(new Date(`${to}T00:00:00.000Z`).getTime() - 365 * 86_400_000));
+    const start = new Date(`${from}T00:00:00.000Z`);
+    const end = new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 86_400_000);
+    const tenantId = tenantIdForWrite();
+    const [rows, candidates, applications] = await Promise.all([
+      prisma.eeoSelfIdentification.findMany({
+        where: { tenantId, submittedAt: { gte: start, lt: end } },
+        select: { declined: true, gender: true, ethnicity: true, veteranStatus: true, disabilityStatus: true },
+        take: 50_000,
+      }),
+      prisma.candidate.count({ where: { tenantId, createdAt: { gte: start, lt: end } } }),
+      prisma.application.count({ where: { tenantId, invitedAt: { gte: start, lt: end } } }),
+    ]);
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.eeo_report_viewed',
+      // A view of aggregate counts, about no one — so no associate is named.
+      entityType: 'Associate',
+      entityId: 'aggregate',
+      associateId: 'aggregate',
+      metadata: { from, to, report: 'eeo-applicant-self-id' },
+      req,
+    });
+    res.json(EeoApplicantReportSchema.parse(buildEeoReport(rows, candidates + applications, from, to)));
   } catch (err) {
     next(err);
   }

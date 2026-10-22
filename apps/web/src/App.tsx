@@ -15,8 +15,6 @@ import { ConfirmEmailChange } from '@/pages/ConfirmEmailChange';
 import { Install } from '@/pages/Install';
 import { AcceptInvite } from '@/pages/AcceptInvite';
 import { Dashboard } from '@/pages/Dashboard';
-import { ModulePlaceholder } from '@/pages/ModulePlaceholder';
-import { MODULES } from '@/lib/modules';
 import { RequireAuth } from '@/lib/auth';
 import { RequireCapability } from '@/lib/RequireCapability';
 import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
@@ -36,7 +34,9 @@ import { RouterErrorPage } from '@/pages/RouterErrorPage';
 //   - Login / AcceptInvite / RouterErrorPage — first paint, must be instant
 //   - Layout / RequireAuth — chrome that wraps every authed route
 //   - Dashboard — index route, shown immediately after login
-//   - ModulePlaceholder — used by ~50 placeholder routes (not worth chunking)
+//
+// Every module in lib/modules has an explicit route below (navCoverage.test
+// keeps it that way); there are no placeholder routes.
 //
 // Page modules use named exports (`export function FooPage`), so we adapt them
 // for React.lazy() (which expects a default export) via `.then(m => ({ default: m.X }))`.
@@ -76,7 +76,6 @@ const BackgroundCheckTask = lazyNamed(() => import('@/pages/onboarding/tasks/Bac
 const J1DocsTask = lazyNamed(() => import('@/pages/onboarding/tasks/J1DocsTask'), 'J1DocsTask');
 const EsignTask = lazyNamed(() => import('@/pages/onboarding/tasks/EsignTask'), 'EsignTask');
 const ProfilePhotoTask = lazyNamed(() => import('@/pages/onboarding/tasks/ProfilePhotoTask'), 'ProfilePhotoTask');
-const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'StubTask');
 
 // Time / scheduling / payroll
 const TimeHome = lazyNamed(() => import('@/pages/time/TimeHome'), 'TimeHome');
@@ -268,6 +267,7 @@ const VtoHome = lazyNamed(() => import('@/pages/vto/VtoHome'), 'VtoHome');
 const Settings = lazyNamed(() => import('@/pages/Settings'), 'Settings');
 const WhatsNewPage = lazyNamed(() => import('@/pages/WhatsNewPage'), 'WhatsNewPage');
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
+const RolesPage = lazyNamed(() => import('@/pages/admin/RolesPage'), 'RolesPage');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
 const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
 const SettingsHome = lazyNamed(() => import('@/pages/admin/SettingsHome'), 'SettingsHome');
@@ -299,6 +299,7 @@ const ReliabilityHome = lazyNamed(() => import('@/pages/analytics/ReliabilityHom
 const RobotsHome = lazyNamed(() => import('@/pages/robots/RobotsHome'), 'RobotsHome');
 const RobotRecord = lazyNamed(() => import('@/pages/robots/RobotRecord'), 'RobotRecord');
 const SiteSafetyZones = lazyNamed(() => import('@/pages/robots/SiteSafetyZones'), 'SiteSafetyZones');
+const RobotChecklistTemplates = lazyNamed(() => import('@/pages/robots/RobotChecklistTemplates'), 'RobotChecklistTemplates');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
 const PayNotices = lazyNamed(() => import('@/pages/me/PayNotices'), 'PayNotices');
 const MyWallet = lazyNamed(() => import('@/pages/me/MyWallet'), 'MyWallet');
@@ -495,20 +496,14 @@ const ONBOARDING_ROUTES = [
     path: 'onboarding/me/:applicationId/tasks/profile_photo',
     element: <ProfilePhotoTask />,
   },
-  // Catch-all for any kind we still haven't wired.
+  // Every TaskKind has a page above; a bogus kind in the URL is a 404.
   {
     path: 'onboarding/me/:applicationId/tasks/:taskKind',
-    element: <StubTask />,
+    element: <NotFound />,
   },
 ];
 
-// Authenticated routes that live under the Layout shell. Extracted to a
-// named const so we can compute PLACEHOLDER_MODULES below by checking
-// "does this module key already have an explicit route?" instead of
-// hand-maintaining a giant exclusion block list (which silently fell
-// out of sync — placeholder duplicates of real routes were registered
-// alongside the real ones; React Router picked the first match so the
-// duplicates were dead weight).
+// Authenticated routes that live under the Layout shell.
 const LAYOUT_ROUTES = [
   { index: true, element: <Dashboard /> },
   { path: 'time-attendance', element: <TimeHome /> },
@@ -578,6 +573,7 @@ const LAYOUT_ROUTES = [
   // Brief 3-1: the robot fleet (Operations), one robot's record, a site's safety zones.
   { path: 'robots', element: <RequireCapability cap="view:org"><RobotsHome /></RequireCapability> },
   { path: 'robots/sites/:locationId/zones', element: <RequireCapability cap="view:org"><SiteSafetyZones /></RequireCapability> },
+  { path: 'robots/checklists', element: <RequireCapability cap="view:org"><RobotChecklistTemplates /></RequireCapability> },
   { path: 'robots/:id', element: <RequireCapability cap="view:org"><RobotRecord /></RequireCapability> },
   // UX upgrade step 3: Settings & Trust — one area (rail + eyebrow) around the pages
   // an organization configures and an auditor checks. Paths unchanged.
@@ -590,6 +586,8 @@ const LAYOUT_ROUTES = [
     // Settings & trust — the one door to the admin pages below (SettingsHome).
     { path: 'admin', element: <RequireCapability cap="view:hr-admin"><SettingsHome /></RequireCapability> },
     { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
+    // Roles & permissions: its own Settings entry, out of Users (audit Tier 3).
+    { path: 'admin/roles', element: <RequireCapability cap="view:hr-admin"><RolesPage /></RequireCapability> },
     // Regions are edited in the Org chart's field view now; old links land there.
     { path: 'admin/regions', element: <Navigate to="/org/chart?view=field" replace /> },
     // Agents & gates: who approves what, certification, credentials, the MCP tools,
@@ -765,20 +763,6 @@ const LAYOUT_ROUTES = [
   { path: 'time-attendance/timesheets/history/:associateId', element: <RequireCapability cap="manage:time"><TimesheetHistory /></RequireCapability> },
   { path: 'fieldglass', element: <RequireCapability cap="process:payroll"><FieldglassSetup /></RequireCapability> },
 ];
-
-// Modules whose key has no explicit route above get a generic
-// ModulePlaceholder route auto-registered. Self-maintaining — adding a
-// real route to LAYOUT_ROUTES is enough to take its module out of the
-// placeholder list.
-const EXPLICIT_PATHS = new Set<string>(
-  LAYOUT_ROUTES.flatMap((r) => ('path' in r && r.path ? [r.path] : []))
-);
-// onboarding has its own home page via ONBOARDING_ROUTES spread, not
-// LAYOUT_ROUTES — exclude its module from placeholders manually.
-EXPLICIT_PATHS.add('onboarding');
-const PLACEHOLDER_MODULES = MODULES.filter(
-  (m) => !EXPLICIT_PATHS.has(m.path.replace(/^\//, ''))
-);
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login />, errorElement: <RouterErrorPage /> },
@@ -970,16 +954,6 @@ export const router = createBrowserRouter([
     children: [
       ...LAYOUT_ROUTES,
       ...ONBOARDING_ROUTES,
-      ...PLACEHOLDER_MODULES.map((m) => ({
-        path: m.path.replace(/^\//, ''),
-        element: (
-          <ModulePlaceholder
-            moduleKey={m.key}
-            title={m.label}
-            description={m.description}
-          />
-        ),
-      })),
       // Catch-all for unmatched authenticated routes — render a styled
       // 404 inside the Layout so the user keeps sidebar/topbar context
       // and can navigate away. Previously this silently bounced to "/",

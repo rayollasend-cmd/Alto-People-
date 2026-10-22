@@ -35,7 +35,7 @@ describe('observe mode', () => {
   it('covers every tenant-scoped model and none of the shared or platform-wide ones', () => {
     expect(TENANT_SCOPED_MODELS.has('User')).toBe(true);
     expect(TENANT_SCOPED_MODELS.has('Ride')).toBe(true);
-    for (const m of ['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache', 'ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ReliabilityWeek']) {
+    for (const m of ['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache', 'ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ProductEventDaily', 'ReliabilityWeek']) {
       expect(TENANT_SCOPED_MODELS.has(m), m).toBe(false);
     }
     expect(TENANT_SCOPED_MODELS.size).toBeGreaterThan(250);

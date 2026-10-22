@@ -40,11 +40,6 @@ export const listHolidays = (params: {
   );
 };
 
-export const listUpcomingHolidays = (days = 30) =>
-  apiFetch<{ days: number; holidays: UpcomingHoliday[] }>(
-    `/holidays/upcoming?days=${days}`,
-  );
-
 export const createHoliday = (input: {
   clientId?: string | null;
   name: string;
@@ -68,12 +63,6 @@ export const updateHoliday = (
 
 export const deleteHoliday = (id: string) =>
   apiFetch<void>(`/holidays/${id}`, { method: 'DELETE' });
-
-export const importUsFederalHolidays2026 = () =>
-  apiFetch<{ inserted: number; skipped: number }>(
-    '/holidays/import-us-federal-2026',
-    { method: 'POST', body: {} },
-  );
 
 /** Server-side import of the 11 US federal holidays for any year.
  *  Floating holidays (MLK Day, Thanksgiving, …) are computed server-side;

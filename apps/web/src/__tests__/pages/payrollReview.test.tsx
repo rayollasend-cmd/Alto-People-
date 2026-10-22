@@ -80,6 +80,15 @@ beforeEach(() => {
 });
 
 describe('<PayrollReviewPage>', () => {
+  it('a run with gross on record and no paychecks raises an alert; with nothing to check it says so, not "all clear"', async () => {
+    const empty: PayrollReviewReport = { ...REPORT, run: { ...REPORT.run, storedGross: 4054.5 }, totals: { ...REPORT.totals, people: 0, gross: 0, net: 0 }, rows: [], flagCounts: {} };
+    getPayrollReview.mockResolvedValue({ report: empty, signoff: state() });
+    renderReview();
+    expect(await screen.findByText(/records \$4,054\.50 gross but has no paychecks/)).toBeInTheDocument();
+    expect(screen.getByText('Nothing to check')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing unusual')).not.toBeInTheDocument();
+  });
+
   it('reads like a register: totals against last payroll, cash, taxes, and the paychecks that moved', async () => {
     getPayrollReview.mockResolvedValue({ report: REPORT, signoff: state() });
     renderReview();

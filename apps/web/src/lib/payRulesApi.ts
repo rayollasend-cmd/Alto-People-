@@ -95,8 +95,6 @@ export const createPremiumPayRule = (input: {
   endMinute?: number | null;
   dowMask?: number | null;
 }) => apiFetch<{ id: string }>('/premium-pay-rules', { method: 'POST', body: input });
-export const updatePremiumPayRule = (id: string, input: Partial<Parameters<typeof createPremiumPayRule>[0]> & { isActive?: boolean }) =>
-  apiFetch<{ ok: true }>(`/premium-pay-rules/${id}`, { method: 'PUT', body: input });
 export const deletePremiumPayRule = (id: string) =>
   apiFetch<void>(`/premium-pay-rules/${id}`, { method: 'DELETE' });
 

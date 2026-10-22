@@ -77,6 +77,8 @@ import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
 import { renderPayrollSheetPdf } from '../lib/payrollSheetPdf.js';
 import { renderPayrollSheetXlsx } from '../lib/payrollSheetXlsx.js';
 import { listPayPeriods } from '../lib/payPeriods.js';
+import { pendingTimeWhere, pendingTimeWindow } from '../lib/pendingTime.js';
+import { companyWorkweek } from '../lib/timeAnomalies.js';
 import {
   buildTimesheetWeek,
   buildAssociateTimesheetDetail,
@@ -943,28 +945,82 @@ timeRouter.get('/admin/pay-periods', MANAGE, async (_req, res, next) => {
 // Cheap COUNT for the "Pending review" KPI — the UI used to fetch up to
 // 500 full rows (serializer and all) just to read .length, and the KPI
 // could never show more than the cap.
+const EntriesCountResponseSchema = z.object({
+  count: z.number().int().nonnegative(),
+  /** ISO clock-in of the oldest pending entry; null when none is pending or the status isn't COMPLETED. */
+  oldestPendingAt: z.string().datetime().nullable(),
+  /** With `groupBy=payPeriod`: pending rows per pay period (the queue's own
+   *  dropdown periods). An entry outside every known period gets a bucket
+   *  of its own clock-in day. */
+  byPeriod: z
+    .array(z.object({ start: z.string(), end: z.string(), count: z.number().int().nonnegative(), hasRun: z.boolean() }))
+    .optional(),
+});
+
 timeRouter.get('/admin/entries/count', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     // Optional client/site scoping so the pending-review badge can follow
     // the page's filters — an org-wide "47 pending" over a client-filtered
-    // queue showing 3 read as a bug. Deliberately still all-time: the KPI
-    // is the total backlog, not the visible date window. Clamped (tenant
-    // clamp FIRST) — the spread below would let a bounded caller override
-    // scopeTimeEntries' clientId key.
+    // queue showing 3 read as a bug. Clamped (tenant clamp FIRST) — the
+    // spread below would let a bounded caller override scopeTimeEntries'
+    // clientId key.
     const clientId =
       effectiveClientIdFilter(req.user!, req.query.clientId?.toString()) ??
       undefined;
     const locationId = req.query.locationId?.toString();
-    const count = await prisma.timeEntry.count({
-      where: {
-        ...scopeTimeEntries(req.user!),
-        ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
-        ...(clientId ? { clientId } : {}),
-        ...(locationId ? { locationId } : {}),
-      },
-    });
-    res.json({ count });
+    const narrow = {
+      ...(clientId ? { clientId } : {}),
+      ...(locationId ? { locationId } : {}),
+    };
+    // Pending (COMPLETED) is counted with the one pending-time predicate —
+    // the same 90-day window the Inbox, the sidebar badge and the queue's
+    // link use, so the number here is what the queue opens on. Other
+    // statuses stay all-time.
+    const pending = status === 'COMPLETED';
+    const where: Prisma.TimeEntryWhereInput = pending
+      ? { ...pendingTimeWhere(req.user!), ...narrow }
+      : {
+          ...scopeTimeEntries(req.user!),
+          ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
+          ...narrow,
+        };
+    const count = await prisma.timeEntry.count({ where });
+    if (!pending) {
+      res.json(EntriesCountResponseSchema.parse({ count, oldestPendingAt: null }));
+      return;
+    }
+    const oldest =
+      count > 0
+        ? await prisma.timeEntry.findFirst({ where, orderBy: { clockInAt: 'asc' }, select: { clockInAt: true } })
+        : null;
+    let byPeriod: Array<{ start: string; end: string; count: number; hasRun: boolean }> | undefined;
+    if (req.query.groupBy?.toString() === 'payPeriod') {
+      const [periods, rows] = await Promise.all([
+        listPayPeriods(prisma),
+        count > 0 ? prisma.timeEntry.findMany({ where, select: { clockInAt: true }, take: 5000 }) : [],
+      ]);
+      const tz = companyWorkweek().timezone;
+      const buckets = new Map<string, { start: string; end: string; count: number; hasRun: boolean }>();
+      for (const row of rows) {
+        const day = localDateKey(row.clockInAt, tz);
+        const period = periods.find((p) => p.start <= day && day <= p.end);
+        const start = period?.start ?? day;
+        const end = period?.end ?? day;
+        const key = `${start}|${end}`;
+        const b = buckets.get(key) ?? { start, end, count: 0, hasRun: period?.hasRun ?? false };
+        b.count += 1;
+        buckets.set(key, b);
+      }
+      byPeriod = [...buckets.values()].sort((a, b) => a.start.localeCompare(b.start));
+    }
+    res.json(
+      EntriesCountResponseSchema.parse({
+        count,
+        oldestPendingAt: oldest?.clockInAt.toISOString() ?? null,
+        ...(byPeriod ? { byPeriod } : {}),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -990,24 +1046,40 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
     // still tenant-scoped by the spread below, so a bounded caller can't
     // read another client's entry by guessing an id.
     const entryId = req.query.entryId?.toString();
+    // Oldest first, for a queue that works the backlog from the top.
+    const oldestFirst = req.query.order?.toString() === 'asc';
 
+    // The pending filter (status=COMPLETED, no exact id) reads the one
+    // pending-time predicate the counts use: the window a caller names,
+    // else the same 90 days the count covers — so the list never shows
+    // fewer rows than the badge said.
+    const pendingWindow = pendingTimeWindow();
+    const base: Prisma.TimeEntryWhereInput =
+      status === 'COMPLETED' && !entryId
+        ? pendingTimeWhere(req.user!, {
+            from: fromStr ? new Date(fromStr) : pendingWindow.from,
+            to: toStr ? new Date(toStr) : pendingWindow.to,
+          })
+        : {
+            ...scopeTimeEntries(req.user!),
+            ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
+            ...(fromStr || toStr
+              ? {
+                  clockInAt: {
+                    ...(fromStr ? { gte: new Date(fromStr) } : {}),
+                    ...(toStr ? { lt: new Date(toStr) } : {}),
+                  },
+                }
+              : {}),
+          };
     const where: Prisma.TimeEntryWhereInput = {
-      ...scopeTimeEntries(req.user!),
+      ...base,
       // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
       tenantId: tenantIdForWrite(),
       ...(entryId ? { id: entryId } : {}),
-      ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
       ...(associateId ? { associateId } : {}),
       ...(clientId ? { clientId } : {}),
       ...(locationId ? { locationId } : {}),
-      ...(fromStr || toStr
-        ? {
-            clockInAt: {
-              ...(fromStr ? { gte: new Date(fromStr) } : {}),
-              ...(toStr ? { lt: new Date(toStr) } : {}),
-            },
-          }
-        : {}),
       AND: associateNameSearchClauses(search),
     };
 
@@ -1016,7 +1088,7 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
     const PAGE_CAP = 500;
     const rows = await prisma.timeEntry.findMany({
       where,
-      orderBy: { clockInAt: 'desc' },
+      orderBy: { clockInAt: oldestFirst ? 'asc' : 'desc' },
       take: PAGE_CAP + 1,
       include: ENTRY_INCLUDE,
     });
@@ -1355,6 +1427,7 @@ timeRouter.post('/admin/entries/:id/approve', MANAGE, async (req, res, next) => 
     if (!existing) {
       throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
     }
+    assertNotOwnEntry(user, existing);
     if (existing.status === 'ACTIVE') {
       throw new HttpError(409, 'still_active', 'Cannot approve an entry that has not been clocked out');
     }
@@ -1984,6 +2057,18 @@ timeRouter.delete('/admin/breaks/:breakId', MANAGE, async (req, res, next) => {
 
 type TimeUser = NonNullable<import('express').Request['user']>;
 
+/**
+ * Someone else approves your own time. A shift supervisor with an associate
+ * record saw her own FORGOT_CLOCKOUT entry in her queue and could have
+ * approved it; time corrections already refuse this (lib/timeCorrections
+ * decideCorrection), and approval is the same decision.
+ */
+export function assertNotOwnEntry(user: { associateId: string | null }, entry: { associateId: string }): void {
+  if (user.associateId && user.associateId === entry.associateId) {
+    throw new HttpError(403, 'own_entry', 'Someone else approves your own time.');
+  }
+}
+
 async function approveOneEntry(
   user: TimeUser,
   entryId: string,
@@ -1997,6 +2082,7 @@ async function approveOneEntry(
   if (!existing) {
     throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
   }
+  assertNotOwnEntry(user, existing);
   if (existing.status === 'ACTIVE') {
     throw new HttpError(409, 'still_active', 'Cannot approve an entry that has not been clocked out');
   }

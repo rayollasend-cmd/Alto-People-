@@ -10,6 +10,7 @@ import {
   type WebVitalMetric,
 } from '../lib/webVitals.js';
 import { computeReliability } from '../lib/reliability.js';
+import { productEventsReport } from '../lib/productEvents.js';
 
 export const productAnalyticsRouter = Router();
 
@@ -371,6 +372,21 @@ productAnalyticsRouter.get('/web-vitals', VIEW, async (req, res, next) => {
         .sort((a, b) => b.samples - a.samples)
         .slice(0, limit),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /product-analytics/product-events?days=30
+ *
+ * The three behaviour measures the UX upgrade asked for (§6): time from
+ * sign-in to the first decision, decisions per session by role, and palette
+ * searches that ended on a settings page. Served from the daily rollup.
+ */
+productAnalyticsRouter.get('/product-events', VIEW, async (req, res, next) => {
+  try {
+    res.json(await productEventsReport(parseDays(req.query.days)));
   } catch (err) {
     next(err);
   }

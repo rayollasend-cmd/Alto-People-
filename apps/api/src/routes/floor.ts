@@ -12,7 +12,8 @@ import { enqueueAudit } from '../lib/audit.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyAllAdmins, notifyClientSupervisors, notifyUser, trackNotificationWork } from '../lib/notify.js';
-import { sendStubbed } from '../lib/notifications.js';
+import { send, statusForSendError } from '../lib/notifications.js';
+import { smsAvailability } from '../lib/sms.js';
 import { effectiveClientIdFilter } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { ledWindows } from '../lib/shiftWindows.js';
@@ -368,7 +369,13 @@ floorRouter.post('/floor/crew-text', requireCapability('message:crew'), async (r
     if (people.size === 0) throw new HttpError(404, 'nobody_on_shift', 'Nobody is assigned to those shifts.');
     const from = user.email.split('@')[0]!;
     let sent = 0;
+    let failed = 0;
+    let optedOut = 0;
     const noPhone: string[] = [];
+    // Texting with no provider behind it is said once, up front — every row
+    // below is still written (NOT_CONFIGURED) so the log shows who was meant
+    // to get the text, and nothing is counted as sent.
+    const availability = smsAvailability();
     for (const p of people.values()) {
       if (!p.phone) {
         noPhone.push(p.name);
@@ -380,18 +387,21 @@ floorRouter.post('/floor/crew-text', requireCapability('message:crew'), async (r
         data: { channel: 'SMS', status: 'QUEUED', recipientPhone: p.phone, body: i.body, subject: null, category: 'crew-text', senderUserId: user.id },
       });
       try {
-        const { externalRef } = await sendStubbed('SMS', { userId: null, phone: p.phone, email: null });
+        const { externalRef } = await send({ channel: 'SMS', recipient: { userId: null, phone: p.phone, email: null }, subject: null, body: i.body, category: 'crew-text', audit: false });
         await prisma.notification.update({ where: { id: row.id }, data: { status: 'SENT', sentAt: new Date(), externalRef } });
         sent += 1;
       } catch (err) {
-        await prisma.notification.update({ where: { id: row.id }, data: { status: 'FAILED', failureReason: err instanceof Error ? err.message : 'unknown error' } });
+        const status = statusForSendError(err);
+        if (status === 'SUPPRESSED') optedOut += 1;
+        else if (status === 'FAILED') failed += 1;
+        await prisma.notification.update({ where: { id: row.id }, data: { status, failureReason: err instanceof Error ? err.message : 'unknown error' } });
       }
     }
     enqueueAudit(
-      { actorUserId: user.id, clientId: client.id, action: 'floor.crew_text', entityType: 'Client', entityId: client.id, metadata: { shifts: i.shiftIds.length, people: people.size, sent, from } },
+      { actorUserId: user.id, clientId: client.id, action: 'floor.crew_text', entityType: 'Client', entityId: client.id, metadata: { shifts: i.shiftIds.length, people: people.size, sent, failed, optedOut, notConfigured: !availability.available, from } },
       'floor.crew_text',
     );
-    res.json({ sent, noPhone });
+    res.json({ sent, failed, optedOut, noPhone, notConfigured: availability.available ? null : availability.reason });
   } catch (err) {
     next(err);
   }

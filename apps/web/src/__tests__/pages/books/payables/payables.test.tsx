@@ -23,8 +23,8 @@ const api = vi.hoisted(() => ({
   voidBill: vi.fn(),
   uploadBillAttachment: vi.fn(),
   payablesOptions: vi.fn(),
-  listBillPayments: vi.fn(),
   payBills: vi.fn(),
+  payBillsBatch: vi.fn(),
   voidBillPayment: vi.fn(),
   listRecurringBills: vi.fn(),
   createRecurringBill: vi.fn(),
@@ -152,6 +152,59 @@ describe('<BillsPage>', () => {
     await waitFor(() =>
       expect(api.payBills).toHaveBeenCalledWith(expect.objectContaining({ vendorId: SHELL, method: 'ACH', bankAccountId: CASH, sendAch: true, applications: [{ billId: late.id, amount: 300 }, { billId: second.id, amount: 200 }] })),
     );
+  });
+});
+
+describe('<BillsPage> — one bill run for several vendors (finance walk 8)', () => {
+  const LEASE = '00000000-0000-4000-8000-00000000a002';
+  it('pays every bill due by Friday, grouped by vendor, with the cash left afterwards — in one request', async () => {
+    const shell = bill({ dueDate: '2026-10-20' });
+    const lease = bill({ id: '00000000-0000-4000-8000-00000000b009', vendorId: LEASE, vendorName: 'Coastal Van Lease', billNumber: 'L-1', total: 450, balance: 450, dueDate: '2026-10-21' });
+    const later = bill({ id: '00000000-0000-4000-8000-00000000b010', billNumber: 'SF-9', total: 99, balance: 99, dueDate: '2099-01-01', daysPastDue: -9999 });
+    api.listBills.mockImplementation(async ({ tab }: { tab?: string }) => ({ bills: tab === 'approve' ? [] : [shell, lease, later] }));
+    api.payablesOptions.mockResolvedValue({ ...OPTIONS, ownAch: false, cashOnHand: 2000 });
+    api.listVendors.mockResolvedValue({ vendors: [vendor(), vendor({ id: LEASE, name: 'Coastal Van Lease', paymentMethod: 'CHECK' })] });
+    api.payBillsBatch.mockResolvedValue({ payments: [{ amount: 300 }, { amount: 450 }], cashAfter: 1250 });
+    const user = userEvent.setup();
+    renderPage(<BillsPage />, '/books/bills', '/books/bills');
+    await user.click(await screen.findByRole('button', { name: /Pay bills due/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Pay bills due' });
+    fireEvent.change(within(dialog).getByLabelText('Pay bills due by'), { target: { value: '2026-10-23' } });
+    const list = within(dialog).getByRole('list', { name: 'Vendors in this run' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+    // Total = the sum of the vendor rows; cash left = cash today less the total.
+    const run = within(dialog).getByRole('list', { name: 'Vendors in this run' }).parentElement!;
+    expect(within(run).getByText('$750.00')).toBeInTheDocument();
+    expect(within(run).getByText('$1,250.00')).toBeInTheDocument();
+    // Take one vendor out: the total follows.
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Pay Coastal Van Lease' }));
+    expect(within(run).getByText('$300.00', { selector: 'dd' })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Pay Coastal Van Lease' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Pay 2 vendors · $750.00' }));
+    await waitFor(() =>
+      expect(api.payBillsBatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'ACH',
+          bankAccountId: CASH,
+          sendAch: false,
+          vendors: [
+            { vendorId: LEASE, applications: [{ billId: lease.id, amount: 450 }] },
+            { vendorId: SHELL, applications: [{ billId: shell.id, amount: 300 }] },
+          ],
+        }),
+      ),
+    );
+  });
+
+  it('bills of two vendors picked on the grid open one run, not “one vendor at a time”', async () => {
+    const shell = bill();
+    const lease = bill({ id: '00000000-0000-4000-8000-00000000b009', vendorId: LEASE, vendorName: 'Coastal Van Lease', billNumber: 'L-1', total: 450, balance: 450 });
+    api.listBills.mockImplementation(async ({ tab }: { tab?: string }) => ({ bills: tab === 'approve' ? [] : [shell, lease] }));
+    const user = userEvent.setup();
+    renderPage(<BillsPage />, '/books/bills', '/books/bills');
+    await user.click(await screen.findByRole('checkbox', { name: /Select every unpaid bill/i }));
+    await user.click(await screen.findByRole('button', { name: /Pay 2 bills to 2 vendors · \$750\.00/ }));
+    expect(await screen.findByRole('dialog', { name: 'Pay 2 vendors' })).toBeInTheDocument();
   });
 });
 

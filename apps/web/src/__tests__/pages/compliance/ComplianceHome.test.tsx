@@ -70,12 +70,13 @@ describe('the audit-packet tab follows the capability the server enforces', () =
   });
 
   it('hides it from a role that only holds view:hr-admin', () => {
-    // The exact pair that used to be conflated: INTERNAL_RECRUITER can read
+    // The exact pair that used to be conflated: OPERATIONS_MANAGER can read
     // the HR admin surfaces and cannot export the packet. (Marketing held
-    // the same pair until it was narrowed to its own charter, 2026-10-17.)
-    expect(ROLE_CAPABILITIES.INTERNAL_RECRUITER.has('view:hr-admin')).toBe(true);
-    expect(ROLE_CAPABILITIES.INTERNAL_RECRUITER.has('export:audit-packet')).toBe(false);
-    renderAs('INTERNAL_RECRUITER');
+    // the same pair until 2026-10-17, the recruiter until 2026-10-21 — each
+    // narrowed to its own charter.)
+    expect(ROLE_CAPABILITIES.OPERATIONS_MANAGER.has('view:hr-admin')).toBe(true);
+    expect(ROLE_CAPABILITIES.OPERATIONS_MANAGER.has('export:audit-packet')).toBe(false);
+    renderAs('OPERATIONS_MANAGER');
     expect(screen.queryByRole('tab', { name: 'Audit packets' })).toBeNull();
   });
 
@@ -83,7 +84,7 @@ describe('the audit-packet tab follows the capability the server enforces', () =
     // Anyone who used this before the narrowing has the URL in their
     // history. Selecting a tab with no panel renders a blank page, which
     // reads as an outage.
-    renderAs('INTERNAL_RECRUITER', '/compliance?tab=audit');
+    renderAs('OPERATIONS_MANAGER', '/compliance?tab=audit');
     expect(screen.getByText('scorecard body')).toBeInTheDocument();
     expect(screen.queryByText('audit packet body')).toBeNull();
   });

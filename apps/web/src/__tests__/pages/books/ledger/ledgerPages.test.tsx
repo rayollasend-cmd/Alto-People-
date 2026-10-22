@@ -6,7 +6,6 @@ import type { BooksOverview, BooksProfitAndLoss, LedgerAccountRow } from '@alto-
 import { renderAs } from '../../hrPack/harness';
 
 const api = vi.hoisted(() => ({
-  BOOKS_KEY: ['books'],
   getBooksOverview: vi.fn(),
   getBooksDimensions: vi.fn(),
   listLedgerAccounts: vi.fn(),
@@ -70,8 +69,8 @@ describe('the Books overview', () => {
   it('shows the money at a glance and what needs someone', async () => {
     const o: BooksOverview = {
       asOf: '2026-10-19',
-      cash: { total: 7500, accounts: [{ id: CASH.id, code: '1000', name: 'Operating checking', subtype: 'BANK', balance: 7500 }] },
-      receivables: { total: 1200, aging: { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 1200 }, topClients: [{ clientId: 'c1', name: 'Harbor Grill', open: 1200, oldestDueAt: '2026-07-01' }] },
+      cash: { total: 7500, accounts: [{ id: CASH.id, code: '1000', name: 'Operating checking', subtype: 'BANK', balance: 7500 }], connectedAccounts: 1 },
+      receivables: { total: 1200, openOnStatements: 1200, aging: { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 1200 }, topClients: [{ clientId: 'c1', name: 'Harbor Grill', open: 1200, oldestDueAt: '2026-07-01' }] },
       payables: { total: 250, dueIn7Days: 250, overdue: 0, awaitingApproval: 1 },
       profit: { month: totals({ income: 1200, netIncome: 900 }), yearToDate: totals({ income: 5000, netIncome: 2000, grossMarginPct: 38 }), trend: [{ key: '2026-10', label: 'Oct 2026', income: 1200, netIncome: 900 }] },
       close: { periodKey: '2026-09', status: 'OPEN', closedAt: null, tasksDone: 2, tasksTotal: 8 },
@@ -88,13 +87,42 @@ describe('the Books overview', () => {
     expect(screen.getByRole('link', { name: /Journal entry/ })).toBeInTheDocument();
     // The profit chart says what it shows.
     expect(screen.getByRole('img', { name: 'Income and net income, the last month. Best: Oct 2026, $900.00 kept.' })).toBeInTheDocument();
+    // Dates go through fmtDate, never a raw 2026-07-01.
+    expect(screen.queryByText(/oldest due 2026-07-01/)).toBeNull();
+    expect(screen.getByText('1 account connected to the bank')).toBeInTheDocument();
+  });
+
+  it('one source per figure: the KPI is the aging card’s total, and says when the ledger differs; an empty profit chart says so (finance walk 3, 15)', async () => {
+    const aging = { current: 500, days1to30: 0, days31to60: 5260, days61to90: 0, over90: 0 };
+    api.getBooksOverview.mockResolvedValue({
+      asOf: '2026-10-19',
+      cash: { total: 0, accounts: [{ id: CASH.id, code: '1000', name: 'Operating checking', subtype: 'BANK', balance: 0 }], connectedAccounts: 0 },
+      receivables: { total: 0, openOnStatements: 5760, aging, topClients: [{ clientId: 'c1', name: 'Harbor Grill', open: 5760, oldestDueAt: '2026-09-08' }] },
+      payables: { total: 0, dueIn7Days: 0, overdue: 0, awaitingApproval: 0 },
+      profit: { month: totals(), yearToDate: totals(), trend: [0, 1, 2, 3, 4, 5].map((i) => ({ key: `2026-0${i + 4}`, label: `M${i}`, income: 0, netIncome: 0 })) },
+      close: { periodKey: '2026-09', status: 'OPEN', closedAt: null, tasksDone: 5, tasksTotal: 10 },
+      quickbooks: { connected: false, status: null, companyName: null, lastPushAt: null, lastPullAt: null, openConflicts: 0, pending: 0, failed: 0 },
+      needsYou: [],
+    } satisfies BooksOverview);
+    const { container } = renderAs('FINANCE_ACCOUNTANT', <BooksHome />, '/books');
+    const kpi = (await screen.findByText('Clients owe')).parentElement!;
+    expect(kpi).toHaveTextContent('$5,760.00');
+    expect(kpi).toHaveTextContent('$0.00 in the ledger — post history to match');
+    // The card shows the same total, and its buckets add up to it.
+    expect(screen.getByText('$5,760.00 on finalized statements, by how late it is')).toBeInTheDocument();
+    expect(Object.values(aging).reduce((a, b) => a + b, 0)).toBe(5760);
+    expect(screen.getByText('5 of 10 close steps done')).toBeInTheDocument();
+    expect(screen.getByText('From the ledger — no bank connected yet')).toBeInTheDocument();
+    expect(screen.getByText('Nothing has posted to income or expenses in the last six months.')).toBeInTheDocument();
+    // No NaN sparkline, ever.
+    expect(container.innerHTML).not.toContain('NaN');
   });
 
   it('the executive reads but gets no posting button', async () => {
     api.getBooksOverview.mockResolvedValue({
       asOf: '2026-10-19',
-      cash: { total: 0, accounts: [] },
-      receivables: { total: 0, aging: { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 }, topClients: [] },
+      cash: { total: 0, accounts: [], connectedAccounts: 0 },
+      receivables: { total: 0, openOnStatements: 0, aging: { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 }, topClients: [] },
       payables: { total: 0, dueIn7Days: 0, overdue: 0, awaitingApproval: 0 },
       profit: { month: totals(), yearToDate: totals(), trend: [] },
       close: { periodKey: '2026-09', status: 'CLOSED', closedAt: '2026-10-05T12:00:00Z', tasksDone: 8, tasksTotal: 8 },

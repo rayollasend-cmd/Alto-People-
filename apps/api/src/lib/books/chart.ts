@@ -51,6 +51,7 @@ export const DEFAULT_CHART: readonly ChartSeed[] = [
   { code: '2210', name: 'Retirement contributions payable', type: 'LIABILITY', subtype: 'PAYROLL_LIABILITY', systemKey: 'RETIREMENT_PAYABLE' },
   { code: '2220', name: 'Garnishments payable', type: 'LIABILITY', subtype: 'PAYROLL_LIABILITY', systemKey: 'GARNISHMENTS_PAYABLE' },
   { code: '2230', name: 'Other payroll deductions payable', type: 'LIABILITY', subtype: 'PAYROLL_LIABILITY', systemKey: 'DEDUCTIONS_PAYABLE' },
+  { code: '2250', name: 'Sales tax payable', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY', systemKey: 'SALES_TAX_PAYABLE', description: 'Sales tax billed on client statements, owed to the state.' },
   { code: '2300', name: 'Accrued expenses', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY', systemKey: 'ACCRUED_EXPENSES' },
   { code: '2310', name: 'Accrued wages', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY', systemKey: 'ACCRUED_WAGES' },
   { code: '2500', name: 'Loans payable', type: 'LIABILITY', subtype: 'LONG_TERM_LIABILITY', systemKey: 'LOANS_PAYABLE' },

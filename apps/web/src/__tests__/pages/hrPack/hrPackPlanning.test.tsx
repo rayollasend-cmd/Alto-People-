@@ -10,17 +10,27 @@ vi.mock('@/lib/payrollApi', async (orig) => ({ ...(await orig<typeof import('@/l
 vi.mock('@/lib/useOrgSites', () => ({ useOrgSites: () => [] }));
 vi.mock('@/lib/useClients', () => ({ useClients: () => ({ clients: [], isError: false, refetch: vi.fn() }) }));
 vi.mock('@/lib/compApi', async (orig) => ({ ...(await orig<typeof import('@/lib/compApi')>()), listCycles: vi.fn(), getWorksheet: vi.fn(), getCalibration: vi.fn(), updateProposal: vi.fn() }));
-vi.mock('@/lib/inboxApi', () => ({ useInbox: () => ({ data: { total: 5, sources: [{ key: 'expirations', count: 3 }, { key: 'onboarding-review', count: 2 }] }, isLoading: false }) }));
-vi.mock('@/lib/hrCases123Api', async (orig) => ({ ...(await orig<typeof import('@/lib/hrCases123Api')>()), getCaseSummary: vi.fn() }));
-vi.mock('@/lib/policyCampaignsApi', () => ({ listPolicyCampaigns: vi.fn() }));
+vi.mock('@/lib/inboxApi', () => ({
+  useInbox: () => ({
+    data: {
+      total: 9,
+      sources: [
+        { key: 'leave-desk', count: 2, path: '/leave' },
+        { key: 'ui-claims', count: 1, path: '/claims/unemployment' },
+        { key: 'wc-claims', count: 2, path: '/claims/workers-comp' },
+        { key: 'everify-mismatches', count: 1, path: '/compliance?tab=everify&status=issue&associateId=a-maria' },
+        { key: 'onboarding-stuck', count: 3, path: '/onboarding?status=STUCK' },
+      ],
+    },
+    isLoading: false,
+  }),
+}));
 
 import { getHeadcountPlan } from '@/lib/positionsApi';
 import { applyMassUpdate, listMassUpdateBatches, previewMassUpdate } from '@/lib/massUpdateApi';
 import { listDepartments } from '@/lib/orgApi';
 import { listPayrollSchedules } from '@/lib/payrollApi';
 import { getWorksheet, listCycles, updateProposal } from '@/lib/compApi';
-import { getCaseSummary } from '@/lib/hrCases123Api';
-import { listPolicyCampaigns } from '@/lib/policyCampaignsApi';
 import { HeadcountPlan } from '@/pages/headcount/HeadcountPlan';
 import { MassUpdate } from '@/pages/people/MassUpdate';
 import { CompPlanningTab } from '@/pages/compensation/CompPlanningTab';
@@ -92,14 +102,23 @@ describe('compensation planning', () => {
 });
 
 describe('the role-differentiated first row', () => {
-  it('the HR administrator sees the people desk', async () => {
-    vi.mocked(getCaseSummary).mockResolvedValue({ openTotal: 7, byStatus: {}, byPriority: {}, byCategory: {}, sla: { breached: 2, atRisk: 1 } });
-    vi.mocked(listPolicyCampaigns).mockResolvedValue({ campaigns: [] });
+  it('the HR administrator sees the legal deadlines first, on the Inbox counts and links', async () => {
     renderAs('HR_ADMINISTRATOR', <RoleFocusRow />);
     expect(await screen.findByRole('region', { name: 'Your people desk' })).toBeInTheDocument();
-    expect(await screen.findByText('2 past SLA · 1 due within 4h')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /HR cases open/ })).toHaveAttribute('href', '/hr-cases?sla=breached');
-    expect(screen.getByRole('link', { name: /Credentials expiring/ })).toHaveTextContent('3');
+    const leave = screen.getByRole('link', { name: /Leave notices due/ });
+    expect(leave).toHaveAttribute('href', '/leave');
+    expect(leave).toHaveTextContent('2');
+    const claims = screen.getByRole('link', { name: /Claims to answer/ });
+    expect(claims).toHaveTextContent('3');
+    expect(claims).toHaveTextContent('1 unemployment · 2 workers’ comp');
+    expect(claims).toHaveAttribute('href', '/claims/unemployment');
+    // The filtered link the Inbox built — her case, not an A–Z list.
+    expect(screen.getByRole('link', { name: /E-Verify mismatches/ })).toHaveAttribute('href', '/compliance?tab=everify&status=issue&associateId=a-maria');
+    const stuck = screen.getByRole('link', { name: /Stuck onboarding/ });
+    expect(stuck).toHaveAttribute('href', '/onboarding?status=STUCK');
+    expect(stuck).toHaveTextContent('3');
+    // Collecting an invoice is not on the HR desk.
+    expect(screen.queryByText(/statement/i)).toBeNull();
   });
 
   it('a Manager has its own home, so no row here', () => {

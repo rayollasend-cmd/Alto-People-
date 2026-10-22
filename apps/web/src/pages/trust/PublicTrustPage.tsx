@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
-import { Commitments, ControlsTable, SubProcessors, TrustHero } from '@/components/trust/TrustBlocks';
+import { Commitments, ControlsTable, Soc2Block, SubProcessors, TrustHero, TrustRequestForm } from '@/components/trust/TrustBlocks';
 import { PublicShell } from '@/components/trust/PublicShell';
 
 /**
@@ -34,19 +34,14 @@ export function PublicTrustPage() {
       ) : (
         <>
           <TrustHero data={q.data} />
+          <Soc2Block soc2={q.data.soc2} />
           <section aria-labelledby="trust-controls">
             <SectionTitle id="trust-controls" title="Controls" description={`${q.data.controls.passing} of ${q.data.controls.total} passing, each collecting its own evidence.`} />
             <ControlsTable items={q.data.controls.items} />
           </section>
           <Commitments data={q.data} />
           <SubProcessors data={q.data} />
-          <section aria-labelledby="trust-request" className="rounded-lg border border-line bg-surface p-5">
-            <SectionTitle id="trust-request" title="Reports and questionnaires" className="mb-0" />
-            <p className="mt-1 max-w-prose text-sm text-ink-muted">
-              Audit reports, penetration test summaries, the data processing addendum and completed security questionnaires are shared under NDA on request
-              {q.data.securityContactSet ? ' through the security contact your account team will introduce.' : ' through your account team.'}
-            </p>
-          </section>
+          <TrustRequestForm securityContactSet={q.data.securityContactSet} />
         </>
       )}
     </PublicShell>

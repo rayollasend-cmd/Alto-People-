@@ -3,9 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { STOCK_LEGEND } from '@/components/ui/charts';
-import { CalendarRange } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
-import { useTenant, useTerm } from '@/lib/auth';
+import { Briefcase, CalendarRange } from 'lucide-react';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { postingForGapHref } from '@/pages/recruiting/postingSeed';
+import { getStaffingPlan, largestGap, type StaffingStore, type StaffingWeek } from '@/pages/recruiting/staffingGaps';
 import { useClients } from '@/lib/useClients';
 import { fmtDayShort, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -21,40 +22,7 @@ import { Button, Card, CardContent, EmptyState, MetricCard, SegmentedControl, Se
  * the way to close them one click away (Season planner, open shifts).
  */
 
-type Source = 'season' | 'forecast' | 'targets' | 'none';
-
-interface StaffingWeek {
-  week: string;
-  required: number;
-  placed: number;
-  scheduled: number;
-  gap: number;
-  hours: number;
-  budget: number | null;
-  source: Source;
-}
-
-interface StaffingStore {
-  storeId: string;
-  storeName: string;
-  clientId: string | null;
-  clientName: string | null;
-  placed: number;
-  weeks: StaffingWeek[];
-}
-
-export interface StaffingPlanResponse {
-  weeks: string[];
-  stores: StaffingStore[];
-  totals: Array<{ week: string; required: number; placed: number; scheduled: number; gap: number; budget: number | null }>;
-  priced: number;
-}
-
-export const getStaffingPlan = (opts: { weeks: number; clientId?: string }) => {
-  const qs = new URLSearchParams({ weeks: String(opts.weeks) });
-  if (opts.clientId) qs.set('clientId', opts.clientId);
-  return apiFetch<StaffingPlanResponse>(`/headcount/staffing-plan?${qs.toString()}`);
-};
+type Source = StaffingWeek['source'];
 
 const SOURCE_LABEL: Record<Source, string> = {
   season: 'Season plan',
@@ -65,6 +33,7 @@ const SOURCE_LABEL: Record<Source, string> = {
 
 export function StaffingPlanView() {
   const term = useTerm();
+  const canPost = useAuth().can('manage:recruiting');
   const hasClients = useTenant().moduleOn('clientPortal');
   const { clients } = useClients({ enabled: hasClients });
   const [weeks, setWeeks] = useState<8 | 12 | 26>(12);
@@ -212,6 +181,14 @@ export function StaffingPlanView() {
                           <th scope="row" className="sticky left-0 bg-surface px-3 py-2 text-left font-normal">
                             <div className="text-ink">{s.storeName}</div>
                             <div className="text-2xs text-ink-muted">{SOURCE_LABEL[s.weeks.find((w) => w.source !== 'none')?.source ?? 'none']}</div>
+                            {canPost && largestGap(s) > 0 && (
+                              <Button asChild size="sm" variant="outline" className="mt-1.5 h-7 px-2 text-xs">
+                                <Link to={postingForGapHref({ clientId: s.clientId, storeName: s.storeName, openings: largestGap(s) })}>
+                                  <Briefcase className="h-3.5 w-3.5" aria-hidden="true" />
+                                  Open a posting for {largestGap(s)}
+                                </Link>
+                              </Button>
+                            )}
                           </th>
                           <td className="px-2 py-2 text-right tabular-nums text-ink">{s.placed}</td>
                           {s.weeks.map((w) => (

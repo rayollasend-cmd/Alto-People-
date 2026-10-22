@@ -34,6 +34,7 @@
 // =============================================================================
 
 import type { W2Boxes } from './w2Aggregator.js';
+import { stateNumericCode } from './efw2.js';
 
 const RECORD_LEN = 512;
 
@@ -236,8 +237,9 @@ function buildRCW(emp: Efw2cEmployee): string {
 
 function buildRCS(emp: Efw2cEmployee, state: string): string {
   // RCS STATE RECORD — one per state per employee. Carries previous +
-  // corrected wages and tax for that state. Position 4-5 is the USPS
-  // letter code; same TODO as efw2.ts about FIPS-vs-USPS verification.
+  // corrected wages and tax for that state. Positions 4-5 carry the SSA
+  // numeric state code (Pub 42-014 Appendix F), the same table the RS
+  // record uses in efw2.ts; the USPS letters belong in the address block.
   const prev = emp.previous.stateLines.find((s) => s.state === state);
   const curr = emp.corrected.stateLines.find((s) => s.state === state);
   const prevWages = prev?.stateWages ?? 0;
@@ -246,7 +248,7 @@ function buildRCS(emp: Efw2cEmployee, state: string): string {
   const currTax = curr?.stateIncomeTax ?? 0;
   const fields: Field[] = [
     fixed('RCS', 1, 3),
-    text(state, 4, 5),
+    fixed(stateNumericCode(state) ?? '  ', 4, 5),
     digits(emp.ssn, 6, 14),
     text(emp.firstName, 15, 29),
     text(emp.middleName ?? '', 30, 44),

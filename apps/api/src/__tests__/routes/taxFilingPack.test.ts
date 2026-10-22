@@ -4,12 +4,9 @@ import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { buildAcaAirXml } from '../../lib/acaAir.js';
 import { build940Xml, build941Xml } from '../../lib/irsMef.js';
-import { expenseSplitsForItems } from '../../lib/quickbooks.js';
-import { encryptString } from '../../lib/crypto.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
-  createClient,
   createUser,
   prisma,
   truncateAll,
@@ -117,36 +114,5 @@ describe('1095-C and marking filed', () => {
     expect(r.headers['content-type']).toContain('xml');
     expect(r.text).toContain('<IRS941 documentId="IRS941-1">');
     expect(r.text).toContain('<WagesAmt>9000.00</WagesAmt>');
-  });
-});
-
-describe('GL by cost center', () => {
-  it('splits the wage debit by the mapped cost-center accounts, with the remainder on the default', async () => {
-    const client = await createClient('Acme');
-    const conn = await prisma.quickbooksConnection.create({
-      data: { clientId: client.id, realmId: '9130', accessTokenEnc: encryptString('a'), refreshTokenEnc: encryptString('r'), expiresAt: new Date(Date.now() + 3_600_000), accountSalariesExpense: '61' },
-    });
-    const kitchen = await prisma.costCenter.create({ data: { clientId: client.id, code: 'KIT', name: 'Kitchen' } });
-    const front = await prisma.costCenter.create({ data: { clientId: client.id, code: 'FOH', name: 'Front of house' } });
-    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
-    const agent = await loginAs(user.email);
-    const put = await agent.put('/quickbooks/cost-centers').send({ clientId: client.id, glByCostCenter: true, mappings: [{ costCenterId: kitchen.id, accountRef: '6110', accountName: 'Kitchen wages' }] });
-    expect(put.status).toBe(200);
-    const get = await agent.get(`/quickbooks/cost-centers?clientId=${client.id}`);
-    expect(get.status).toBe(200);
-    expect(get.body.glByCostCenter).toBe(true);
-    expect(get.body.costCenters.find((c: { id: string }) => c.id === kitchen.id).accountRef).toBe('6110');
-    expect(get.body.costCenters.find((c: { id: string }) => c.id === front.id).accountRef).toBeNull();
-
-    const items = [
-      { grossPay: 1000, employerFica: 62, employerMedicare: 14.5, employerFuta: 6, employerSuta: 27, associate: { costCenterId: kitchen.id } },
-      { grossPay: 500, employerFica: 31, employerMedicare: 7.25, employerFuta: 3, employerSuta: 13.5, associate: { costCenterId: front.id } },
-      { grossPay: 200, employerFica: 12.4, employerMedicare: 2.9, employerFuta: 1.2, employerSuta: 5.4, associate: { costCenterId: null } },
-    ];
-    const splits = await expenseSplitsForItems(prisma, { id: conn.id, glByCostCenter: true }, items);
-    expect(splits).toEqual([{ accountRef: '6110', amount: 1109.5, memo: 'Payroll expense — KIT Kitchen' }]);
-    expect(await expenseSplitsForItems(prisma, { id: conn.id, glByCostCenter: false }, items)).toBeUndefined();
-    const status = await agent.get(`/quickbooks/status?clientId=${client.id}`);
-    expect(status.body.glByCostCenter).toBe(true);
   });
 });

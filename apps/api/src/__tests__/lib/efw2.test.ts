@@ -227,8 +227,24 @@ describe('EFW2 generator — field positions (Pub 42-007 TY2025)', () => {
     expect(at(rs[1]!, 308, 308)).toBe('F');
   });
 
-  it('refuses the 2026 codes whose positions SSA has not confirmed, never guessing', () => {
-    expect(() => one({ box12: [{ code: 'TP', amount: 300 }] }, 2026)).toThrow(/TP/);
-    expect(() => one({ box14bTippedOccupationCodes: ['101'] }, 2026)).toThrow(/14b/);
+  it('a TY2026 W-2 carries TP and TT in their RO fields and the tipped occupation code in RW 490-492', () => {
+    const lines = one({ box12: [{ code: 'TP', amount: 300 }, { code: 'TT', amount: 125.5 }, { code: 'A', amount: 10 }], box14bTippedOccupationCodes: ['101', '205'] }, 2026);
+    const rw = lines.find((l) => l.startsWith('RW'))!;
+    const ro = lines.find((l) => l.startsWith('RO'))!;
+    expect(at(rw, 490, 492)).toBe('101');
+    expect(at(rw, 493, 495)).toBe('205');
+    expect(at(ro, 232, 242)).toBe('00000030000');
+    expect(at(ro, 243, 253)).toBe('00000012550');
+    // Code A moved to its own field; the TY2025 combined A+B field is zero.
+    expect(at(ro, 155, 165)).toBe('00000001000');
+    expect(at(ro, 23, 33)).toBe('00000000000');
+    for (const l of lines) expect(l).toHaveLength(512);
+  });
+
+  it('a TY2025 W-2 still refuses the 2026 codes, and keeps A and B combined', () => {
+    expect(() => one({ box12: [{ code: 'TP', amount: 300 }] }, 2025)).toThrow(/TP/);
+    expect(() => one({ box14bTippedOccupationCodes: ['101'] }, 2025)).toThrow(/14b/);
+    const ro = one({ box12: [{ code: 'A', amount: 10 }, { code: 'B', amount: 5 }] }, 2025).find((l) => l.startsWith('RO'))!;
+    expect(at(ro, 23, 33)).toBe('00000001500');
   });
 });

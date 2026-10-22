@@ -67,6 +67,8 @@ export function Sparkline({ series, tone = 'current', width = 88, height = 24, a
   const points = segments.flat();
   if (points.length < 2) return null;
   const [lo, hi] = sparkDomain(points.map((p) => p.v));
+  // Never draw NaN coordinates (`<polygon points="NaN…">`): a degenerate scale draws nothing.
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi === lo) return null;
   const pad = 2;
   const x = (i: number) => pad + (i / Math.max(series.length - 1, 1)) * (width - pad * 2);
   const y = (v: number) => height - pad - ((v - lo) / (hi - lo)) * (height - pad * 2);

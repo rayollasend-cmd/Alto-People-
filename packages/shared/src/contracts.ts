@@ -152,6 +152,9 @@ export const ClientUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   /** Invoicing: the standing purchase order and net-days terms every statement takes. */
   poNumber: z.string().trim().max(60).nullable().optional(),
   paymentTermsDays: z.number().int().min(0).max(365).optional(),
+  /** Sales tax on this client's statements: taxable, and the rate (percent). */
+  salesTaxable: z.boolean().optional(),
+  salesTaxRatePct: z.number().min(0).max(100).nullable().optional(),
 }))();
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
@@ -873,98 +876,6 @@ export const AuditLogListResponseSchema = /* @__PURE__ */ (() => z.object({
   entries: z.array(AuditLogEntrySchema),
 }))();
 export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
-
-/* -------------------------------------------------------------------------- *
- *  Phase 44 — QuickBooks Online integration (per-client OAuth + JE sync)
- * -------------------------------------------------------------------------- */
-
-export const QboJeModeSchema = /* @__PURE__ */ (() => z.enum(['AGGREGATE', 'PER_EMPLOYEE']))();
-export type QboJeMode = z.infer<typeof QboJeModeSchema>;
-
-export const QboStatusSchema = /* @__PURE__ */ (() => z.object({
-  connected: z.boolean(),
-  // The stored tokens can't be read under the current key (or Intuit
-  // refused the refresh): the connection row exists but is unusable until
-  // someone reconnects. The account mapping survives a reconnect.
-  needsReconnect: z.boolean(),
-  realmId: z.string().nullable(),
-  expiresAt: z.string().datetime().nullable(),
-  lastRefreshedAt: z.string().datetime().nullable(),
-  // True when the integration is in stub mode (no Intuit creds configured).
-  // The UI uses this to badge the connection card.
-  stubMode: z.boolean(),
-  // Account-ref configuration HR can fill in to map JE lines onto their
-  // QBO chart-of-accounts. All seven default to null.
-  accountSalariesExpense: z.string().nullable(),
-  accountFederalTaxPayable: z.string().nullable(),
-  accountStateTaxPayable: z.string().nullable(),
-  accountFicaPayable: z.string().nullable(),
-  accountMedicarePayable: z.string().nullable(),
-  accountBenefitsPayable: z.string().nullable(),
-  accountNetPayPayable: z.string().nullable(),
-  // Wave 5.2 — JE granularity. AGGREGATE = one JE per run (default);
-  // PER_EMPLOYEE = one JE per associate, with EmployeeRef.
-  jeMode: QboJeModeSchema,
-  glByCostCenter: z.boolean().optional(),
-}))();
-export type QboStatus = z.infer<typeof QboStatusSchema>;
-
-export const QboAuthorizeStartResponseSchema = /* @__PURE__ */ (() => z.object({
-  authorizeUrl: z.string().url(),
-  state: z.string(),
-}))();
-export type QboAuthorizeStartResponse = z.infer<typeof QboAuthorizeStartResponseSchema>;
-
-export const QboAccountConfigInputSchema = /* @__PURE__ */ (() => z.object({
-  accountSalariesExpense: z.string().trim().min(1).max(64).nullable().optional(),
-  accountFederalTaxPayable: z.string().trim().min(1).max(64).nullable().optional(),
-  accountStateTaxPayable: z.string().trim().min(1).max(64).nullable().optional(),
-  accountFicaPayable: z.string().trim().min(1).max(64).nullable().optional(),
-  accountMedicarePayable: z.string().trim().min(1).max(64).nullable().optional(),
-  accountBenefitsPayable: z.string().trim().min(1).max(64).nullable().optional(),
-  accountNetPayPayable: z.string().trim().min(1).max(64).nullable().optional(),
-  // Wave 5.2 — when omitted, jeMode is left unchanged.
-  jeMode: QboJeModeSchema.optional(),
-  /** GL by cost center: split the wage expense debit by the associates' cost centers. */
-  glByCostCenter: z.boolean().optional(),
-}))();
-export type QboAccountConfigInput = z.infer<typeof QboAccountConfigInputSchema>;
-
-export const QboSyncResponseSchema = /* @__PURE__ */ (() => z.object({
-  journalEntryId: z.string(),
-  syncedAt: z.string().datetime(),
-}))();
-export type QboSyncResponse = z.infer<typeof QboSyncResponseSchema>;
-
-// Wave 3.1 — Chart-of-accounts discovery
-export const QboAccountSchema = /* @__PURE__ */ (() => z.object({
-  id: z.string(),
-  name: z.string(),
-  classification: z.string(),
-  accountType: z.string(),
-  isSubAccount: z.boolean(),
-}))();
-export type QboAccount = z.infer<typeof QboAccountSchema>;
-
-export const QboAccountListResponseSchema = /* @__PURE__ */ (() => z.object({
-  accounts: z.array(QboAccountSchema),
-}))();
-export type QboAccountListResponse = z.infer<typeof QboAccountListResponseSchema>;
-
-// Wave 3.2 — Batch associate sync
-export const QboSyncAssociatesResponseSchema = /* @__PURE__ */ (() => z.object({
-  scanned: z.number().int().nonnegative(),
-  synced: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
-  errors: z.array(
-    z.object({
-      associateId: UuidSchema,
-      name: z.string(),
-      reason: z.string(),
-    })
-  ),
-}))();
-export type QboSyncAssociatesResponse = z.infer<typeof QboSyncAssociatesResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 43 — Time-off entitlements (annual lump-sum + carryover cap)
@@ -1902,6 +1813,11 @@ export const ShiftSchema = /* @__PURE__ */ (() => z.object({
   // calendar renders startsAt/endsAt in THIS zone so a manager viewing the
   // store from another timezone still sees the store's wall-clock times.
   timezone: z.string(),
+  /** Fair-workweek notice window at the shift's site, in days, when its
+   *  jurisdiction owes predictability pay for schedule changes
+   *  (lib/laborRules predictive.noticeDays); null elsewhere. The web
+   *  requires a `changeReason` on every change to such a shift. */
+  fairWorkweekNoticeDays: z.number().nullable().optional(),
   hourlyRate: z.number().nullable(),
   /** Cost-side rate set explicitly ON this shift (null = none entered). */
   payRate: z.number().nullable(),
@@ -2258,6 +2174,14 @@ export const ShiftRateDefaultInputSchema = /* @__PURE__ */ (() => z.object({
 }))();
 export type ShiftRateDefaultInput = z.infer<typeof ShiftRateDefaultInputSchema>;
 
+/** The reasons a fair-workweek law excuses a late schedule change (no
+ *  predictability pay owed): the worker asked, a mutual swap, a voluntary
+ *  pick-up, or an emergency. Any change to a published, assigned shift in
+ *  a predictability-pay jurisdiction carries one or owes the premium. */
+export const SCHEDULE_CHANGE_REASONS = ['EMPLOYEE_REQUESTED', 'MUTUAL_SWAP', 'VOLUNTARY_PICKUP', 'EMERGENCY'] as const;
+export const ScheduleChangeReasonSchema = /* @__PURE__ */ (() => z.enum(SCHEDULE_CHANGE_REASONS))();
+export type ScheduleChangeReason = z.infer<typeof ScheduleChangeReasonSchema>;
+
 export const ShiftUpdateInputSchema = /* @__PURE__ */ (() => z
   .object({
     position: z.string().min(1).max(120).optional(),
@@ -2269,6 +2193,8 @@ export const ShiftUpdateInputSchema = /* @__PURE__ */ (() => z
     notes: z.string().max(1000).nullable().optional(),
     status: ShiftStatusSchema.optional(),
     lateNoticeReason: z.string().min(1).max(500).optional(),
+    /** Why the change is excused from predictability pay (lib/predictabilityPay). */
+    changeReason: ScheduleChangeReasonSchema.optional(),
   })
   .refine(
     (v) =>
@@ -2294,6 +2220,8 @@ export const ShiftAssignInputSchema = /* @__PURE__ */ (() => z.object({
    *  (a lead, the bench, the agent) filled it meanwhile, /assign 409s with
    *  `shift_taken` instead of silently replacing their pick. */
   expectUnassigned: z.boolean().optional(),
+  /** Why the change is excused from predictability pay (lib/predictabilityPay). */
+  changeReason: ScheduleChangeReasonSchema.optional(),
 }))();
 export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
 
@@ -2312,7 +2240,16 @@ export const PublishPreflightResponseSchema = /* @__PURE__ */ (() => z.object({
   open: z.number().int().nonnegative(),
   /** People projected past 40h scheduled in the window's week. */
   otProjected: z.array(
-    z.object({ name: z.string(), hours: z.number().nonnegative() }),
+    z.object({
+      name: z.string(),
+      hours: z.number().nonnegative(),
+      /** Who, so the review sheet opens that person's row. */
+      associateId: UuidSchema.optional(),
+      /** Their shifts in the window, so a row can land on one. */
+      shiftIds: z.array(UuidSchema).optional(),
+      /** The week's projected cost at their rate, premium included. */
+      projectedCostCents: z.number().int().nonnegative().optional(),
+    }),
   ),
   /** Short turnarounds (<10h between consecutive shifts). */
   restGaps: z.array(
@@ -2321,14 +2258,52 @@ export const PublishPreflightResponseSchema = /* @__PURE__ */ (() => z.object({
       gapHours: z.number().nonnegative(),
       /** ISO start of the SECOND (short-rested) shift. */
       startsAt: z.string().datetime(),
+      associateId: UuidSchema.optional(),
+      /** [first, second] — the two shifts the gap sits between. */
+      shiftIds: z.array(UuidSchema).optional(),
     }),
   ),
+  /** What the labor-rules engine (lib/laborRules evaluateSchedule) says
+   *  about each draft: minors' limits and rest periods block, the rest
+   *  warn. Publish refuses while a `block` finding stands. */
+  laborFindings: z.array(
+    z.object({
+      rule: z.string(),
+      severity: z.enum(['warn', 'block']),
+      reason: z.string(),
+      shiftId: UuidSchema,
+      associateId: UuidSchema.nullable(),
+      associateName: z.string().nullable(),
+    }),
+  ).optional(),
+  /** The review sheet's totals for the window. */
+  totals: z.object({
+    shifts: z.number().int().nonnegative(),
+    hours: z.number().nonnegative(),
+    costCents: z.number().int().nonnegative(),
+    /** Change vs the same-length window one week earlier; null when there was nothing then. */
+    deltaHoursVsLastWeek: z.number().nullable(),
+    deltaCostCentsVsLastWeek: z.number().int().nullable(),
+  }).optional(),
+  /** Distinct people a publish would notify. */
+  notifyCount: z.number().int().nonnegative().optional(),
+  /** Unfilled drafts/opens by id, so the sheet can open Assign on one. */
+  openShiftIds: z.array(UuidSchema).optional(),
 }))();
 export type PublishPreflightResponse = z.infer<typeof PublishPreflightResponseSchema>;
+export type PublishLaborFinding = NonNullable<PublishPreflightResponse['laborFindings']>[number];
 
 export const ShiftCancelInputSchema = /* @__PURE__ */ (() => z.object({
   reason: z.string().min(1).max(500),
+  /** Why the cancellation is excused from predictability pay (lib/predictabilityPay). */
+  changeReason: ScheduleChangeReasonSchema.optional(),
 }))();
+
+/** Body of POST /scheduling/shifts/:id/unassign — nothing required. */
+export const ShiftUnassignInputSchema = /* @__PURE__ */ (() => z.object({
+  changeReason: ScheduleChangeReasonSchema.optional(),
+}))();
+export type ShiftUnassignInput = z.infer<typeof ShiftUnassignInputSchema>;
 export type ShiftCancelInput = z.infer<typeof ShiftCancelInputSchema>;
 
 /* -------------------------------------------------------------------------- *
@@ -2814,6 +2789,20 @@ export const PublishWeekResponseSchema = /* @__PURE__ */ (() => z.object({
    *  are still DRAFT; run publish again. Silent before, which quietly left
    *  drafts unpublished on very large weeks. */
   truncated: z.boolean().optional(),
+  /** What the labor-rules engine warned about on the shifts that published
+   *  (overtime ahead, short rest where the rules only warn). A `block`
+   *  finding never reaches here: publish-week answers 409
+   *  `labor_rules_block` with `{ findings }` and publishes nothing. */
+  laborWarnings: z.array(
+    z.object({
+      rule: z.string(),
+      severity: z.enum(['warn', 'block']),
+      reason: z.string(),
+      shiftId: UuidSchema,
+      associateId: UuidSchema.nullable(),
+      associateName: z.string().nullable(),
+    }),
+  ).optional(),
 }))();
 export type PublishWeekResponse = z.infer<typeof PublishWeekResponseSchema>;
 
@@ -2931,6 +2920,8 @@ export const PayrollEarningKindSchema = /* @__PURE__ */ (() => z.enum([
   'REIMBURSEMENT',
   // PAYEXP: what daily pay already paid this period, shown (negative) on the true-up.
   'DAILY_SETTLED',
+  // Non-cash taxable income (group-term life over $50,000): taxed, never paid out. W-2 Box 12 C.
+  'IMPUTED_INCOME',
 ]))();
 export type PayrollEarningKind = z.infer<typeof PayrollEarningKindSchema>;
 
@@ -3040,14 +3031,10 @@ export const PayrollRunSummarySchema = /* @__PURE__ */ (() => z.object({
   finalizedAt: z.string().datetime().nullable(),
   disbursedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
-  // Phase 44 — QuickBooks Online sync state.
-  qboJournalEntryId: z.string().nullable(),
-  qboSyncedAt: z.string().datetime().nullable(),
-  qboSyncError: z.string().nullable(),
   // Gap 3 — kind + amendment / void metadata. kind is REGULAR for any run
   // created before this lands (default migration value). amendsRunId,
   // amendmentReason are populated only on AMENDMENT runs. cancelledAt /
-  // cancelledById / cancelReason / voidJournalEntryId are populated only
+  // cancelledById / cancelReason are populated only
   // on voided runs (status=CANCELLED). All optional in the contract so
   // historical responses remain valid.
   kind: PayrollRunKindSchema,
@@ -3056,11 +3043,26 @@ export const PayrollRunSummarySchema = /* @__PURE__ */ (() => z.object({
   cancelledAt: z.string().datetime().nullable(),
   cancelledById: UuidSchema.nullable(),
   cancelReason: z.string().nullable(),
-  voidJournalEntryId: z.string().nullable(),
   // Tier-3 — four-eyes approval stamp (optional so historical responses
   // stay valid). Set when a second person approves a FINALIZED run.
   approvedAt: z.string().datetime().nullable().optional(),
   approverEmail: z.string().nullable().optional(),
+  /** OFF_CYCLE made from the period ledger: it pays the period's approved time (finance walk 1). */
+  includesApprovedTime: z.boolean().optional(),
+  /** The payday the run's schedule names for its period (YYYY-MM-DD); null for a run on no schedule. */
+  payDate: z.string().nullable().optional(),
+  /** When the review report was signed off on the run's current numbers (null: not yet, or not required). */
+  reviewSignedAt: z.string().datetime().nullable().optional(),
+  /** What the run waits on next, from the same lifecycle the guided close shows (finance walk 10). */
+  nextStep: z
+    .object({
+      key: z.enum(['finalize', 'review', 'fund', 'held', 'disburse', 'uploadFile', 'deposit', 'remit', 'done', 'cancelled']),
+      label: z.string(),
+      to: z.string(),
+      /** Someone else's move (a second approver, the bank) rather than the payroll person's. */
+      waitingOn: z.string().nullable(),
+    })
+    .optional(),
 }))();
 export type PayrollRunSummary = z.infer<typeof PayrollRunSummarySchema>;
 
@@ -3126,6 +3128,8 @@ export const PayrollRunCreateInputSchema = /* @__PURE__ */ (() => z
     kind: z.enum(['REGULAR', 'OFF_CYCLE']).optional(),
     /** The pay schedule this run pays: only people on it, for the days they were on it (paySchedules.ts). */
     payrollScheduleId: UuidSchema.nullable().optional(),
+    /** OFF_CYCLE only: pay the period's approved time that is on no paystub yet (a missed payday from the period ledger, finance walk 1). */
+    includesApprovedTime: z.boolean().optional(),
   })
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',
@@ -3189,6 +3193,31 @@ export const PayrollRunPreviewResponseSchema = /* @__PURE__ */ (() => z.object({
     totalGarnishments: z.number().nonnegative(),
     itemCount: z.number().int().nonnegative(),
   }),
+  /**
+   * Changes against the last REGULAR run on the same schedule (or client),
+   * before this run exists (finance walk 9). Null when there is no earlier
+   * locked run to compare with.
+   */
+  previous: z
+    .object({
+      runId: UuidSchema,
+      periodStart: z.string(),
+      periodEnd: z.string(),
+      people: z.number().int().nonnegative(),
+      gross: z.number(),
+      net: z.number(),
+      hours: z.number(),
+      /** Per person in that run: what they were paid then. */
+      byAssociate: z.array(z.object({ associateId: UuidSchema, associateName: z.string(), hours: z.number(), gross: z.number(), net: z.number() })),
+      /** In the last run, not in this preview. */
+      missing: z.array(z.object({ associateId: UuidSchema, associateName: z.string(), net: z.number() })),
+      /** In this preview, not in the last run. */
+      newPeople: z.array(z.object({ associateId: UuidSchema, associateName: z.string() })),
+      /** People whose net moved more than 15% either way. */
+      moved: z.array(z.object({ associateId: UuidSchema, associateName: z.string(), netDelta: z.number(), netDeltaPct: z.number().nullable() })),
+    })
+    .nullable()
+    .optional(),
 }))();
 export type PayrollRunPreviewResponse = z.infer<typeof PayrollRunPreviewResponseSchema>;
 
@@ -3349,6 +3378,7 @@ export const PayrollExceptionKindSchema = /* @__PURE__ */ (() => z.enum([
   'ROTH_CATCH_UP',       // WARNING  — a higher earner's catch-up stops: the plan has no deemed Roth (SECURE 2.0 §603)
   'DEFERRAL_LIMIT',      // INFO     — an annual limit (402(g), catch-up, HSA, FSA) stops part of an election this check
   'UNASSIGNED_SCHEDULE', // WARNING  — approved time in the period but on no pay schedule: not paid by a schedule's run
+  'LATE_APPROVED_TIME',  // WARNING  — approved time from an earlier period whose payday passed with no paystub for it (finance walk 1)
 ]))();
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
@@ -3417,6 +3447,8 @@ export const PayrollUpcomingSummarySchema = /* @__PURE__ */ (() => z.object({
       draftRunId: UuidSchema.nullable(),
     })
     .nullable(),
+  /** Hired people on no pay schedule — the hero's blocker (finance walk 10). */
+  peopleOnNoSchedule: z.number().int().nonnegative().optional(),
   /** The next due period for EVERY schedule the caller can run (the per-schedule list on payroll home). */
   bySchedule: z
     .array(
@@ -3801,6 +3833,14 @@ export const I9VerificationSchema = /* @__PURE__ */ (() => z.object({
    *  application) — feeds the client filter. Null mid-onboarding. */
   clientId: UuidSchema.nullable().optional(),
   clientName: z.string().nullable().optional(),
+  /** Keep the I-9 until this date (YYYY-MM-DD): the later of 3 years from
+   *  hire and 1 year from separation. Null until a hire date exists. */
+  retainUntil: z.string().nullable().optional(),
+  /** Reverification (Supplement B) due on this date (YYYY-MM-DD) — the
+   *  work-authorization expiry. Null when the status never expires. */
+  reverifyDueAt: z.string().nullable().optional(),
+  /** Separated on (ISO instant) — retention runs from here. */
+  separatedAt: z.string().datetime().nullable().optional(),
 }))();
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
@@ -3840,6 +3880,8 @@ export const BgCheckStatusSchema = /* @__PURE__ */ (() => z.enum([
   'PASSED',
   'FAILED',
   'NEEDS_REVIEW',
+  /** Consent recorded, no screening provider connected — the check never ran. */
+  'NOT_RUN',
 ]))();
 export type BgCheckStatus = z.infer<typeof BgCheckStatusSchema>;
 
@@ -3859,8 +3901,86 @@ export const BackgroundCheckSchema = /* @__PURE__ */ (() => z.object({
   /** BACKGROUND_CHECK_RESULT documents on file for this associate — a
    *  finalized status with zero reports is a decision with no evidence. */
   reportCount: z.number().int().nonnegative().optional(),
+  /** FCRA adjudication (audit 2026-10-21 #14): ENGAGED | PRE_ADVERSE | ADVERSE. */
+  adjudication: z.string().nullable().optional(),
+  preAdverseSentAt: z.string().datetime().nullable().optional(),
+  adverseWaitUntil: z.string().datetime().nullable().optional(),
+  adverseSentAt: z.string().datetime().nullable().optional(),
+  /** The provider's verdict before adjudication: clear | consider. */
+  result: z.string().nullable().optional(),
+  /** Ordered through a connected provider — adverse action runs in its panel. */
+  viaProvider: z.boolean().optional(),
 }))();
 export type BackgroundCheck = z.infer<typeof BackgroundCheckSchema>;
+
+/** The FCRA adverse-action worklist (GET /compliance/adverse-actions). */
+export const AdverseActionStageSchema = /* @__PURE__ */ (() => z.enum(['FINAL_DUE', 'DECIDE', 'WAITING', 'DONE']))();
+export type AdverseActionStage = z.infer<typeof AdverseActionStageSchema>;
+
+export const AdverseActionRowSchema = /* @__PURE__ */ (() => z.object({
+  checkId: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  stage: AdverseActionStageSchema,
+  waitUntil: z.string().datetime().nullable(),
+  preAdverseSentAt: z.string().datetime().nullable(),
+  adverseSentAt: z.string().datetime().nullable(),
+  result: z.string().nullable(),
+  status: BgCheckStatusSchema,
+  viaProvider: z.boolean(),
+}))();
+export type AdverseActionRow = z.infer<typeof AdverseActionRowSchema>;
+
+export const AdverseActionListResponseSchema = /* @__PURE__ */ (() => z.object({
+  rows: z.array(AdverseActionRowSchema),
+}))();
+export type AdverseActionListResponse = z.infer<typeof AdverseActionListResponseSchema>;
+
+/**
+ * Voluntary EEO self-identification (audit 2026-10-21 #14). Submitted by the
+ * applicant on their own page or by the new hire on their checklist; stored
+ * apart from the candidate and the application, read only in aggregate.
+ */
+export const EEO_GENDER_VALUES = ['FEMALE', 'MALE', 'NONBINARY', 'DECLINE'] as const;
+export const EEO_ETHNICITY_VALUES = [
+  'HISPANIC_OR_LATINO',
+  'WHITE',
+  'BLACK_OR_AFRICAN_AMERICAN',
+  'NATIVE_HAWAIIAN_OR_PACIFIC_ISLANDER',
+  'ASIAN',
+  'AMERICAN_INDIAN_OR_ALASKA_NATIVE',
+  'TWO_OR_MORE_RACES',
+  'DECLINE',
+] as const;
+export const EEO_VETERAN_VALUES = ['PROTECTED', 'NOT_PROTECTED', 'DECLINE'] as const;
+export const EEO_DISABILITY_VALUES = ['YES', 'NO', 'DECLINE'] as const;
+
+export const EeoSelfIdInputSchema = /* @__PURE__ */ (() => z.object({
+  /** The whole form declined — nothing else is kept. */
+  declined: z.boolean().optional(),
+  gender: z.enum(EEO_GENDER_VALUES).nullable().optional(),
+  ethnicity: z.enum(EEO_ETHNICITY_VALUES).nullable().optional(),
+  veteranStatus: z.enum(EEO_VETERAN_VALUES).nullable().optional(),
+  disabilityStatus: z.enum(EEO_DISABILITY_VALUES).nullable().optional(),
+}))();
+export type EeoSelfIdInput = z.infer<typeof EeoSelfIdInputSchema>;
+
+/** A count, or '<5' when the bucket is too small to publish. */
+export const EeoBucketCountSchema = /* @__PURE__ */ (() => z.union([z.number().int().nonnegative(), z.literal('<5')]))();
+
+export const EeoApplicantReportSchema = /* @__PURE__ */ (() => z.object({
+  from: z.string(),
+  to: z.string(),
+  /** Candidates created plus applications invited in the window. */
+  applicants: z.number().int().nonnegative(),
+  responses: EeoBucketCountSchema,
+  declined: EeoBucketCountSchema,
+  gender: z.record(z.string(), EeoBucketCountSchema),
+  ethnicity: z.record(z.string(), EeoBucketCountSchema),
+  veteranStatus: z.record(z.string(), EeoBucketCountSchema),
+  disabilityStatus: z.record(z.string(), EeoBucketCountSchema),
+}))();
+export type EeoApplicantReport = z.infer<typeof EeoApplicantReportSchema>;
 
 export const BackgroundCheckListResponseSchema = /* @__PURE__ */ (() => z.object({
   checks: z.array(BackgroundCheckSchema),
@@ -4135,6 +4255,9 @@ export const NotificationStatusSchema = /* @__PURE__ */ (() => z.enum([
   'SUPPRESSED',
   // WHATSAPP — the handset took it (Brief 1C-4); read lands as READ.
   'DELIVERED',
+  // SMS / PUSH — no provider is configured, so nothing left the building.
+  // Recorded instead of SENT so the sent log never claims a text went out.
+  'NOT_CONFIGURED',
 ]))();
 export type NotificationStatus = z.infer<typeof NotificationStatusSchema>;
 
@@ -5234,6 +5357,37 @@ export const AutoFillCandidateSchema = /* @__PURE__ */ (() => z.object({
   // Surfaced so the picker can flag them; their score is also forced to 0.
   onApprovedTimeOff: z.boolean().default(false),
   score: z.number().min(0).max(1),
+  /* The facts a scheduler decides on, so the Assign dialog never sends
+   * them to three other pages (role walk, ops 7). All optional: an older
+   * server answers without them and the dialog shows what it has. */
+  /** Home store name, when the person has one. */
+  homeLocationName: z.string().nullable().optional(),
+  /** Minutes scheduled this week INCLUDING the shift being assigned. */
+  projectedWeeklyMinutes: z.number().int().nonnegative().optional(),
+  /** The cost rate the shift would be paid at; null when none resolves. */
+  hourlyRateCents: z.number().int().nonnegative().nullable().optional(),
+  /** This shift's cost at that rate (straight time). */
+  shiftCostCents: z.number().int().nonnegative().nullable().optional(),
+  /** The overtime premium this assignment adds (the half-time on the hours past 40). */
+  otPremiumCents: z.number().int().nonnegative().optional(),
+  /** Last 90 days: late arrivals, no-shows, call-outs. */
+  reliability: z.object({
+    late: z.number().int().nonnegative(),
+    noShow: z.number().int().nonnegative(),
+    callOut: z.number().int().nonnegative(),
+    days: z.number().int().positive(),
+  }).optional(),
+  /** Their window on the shift's day, e.g. "Avail Mon 4:00 PM–11:00 PM", or why they don't fit. */
+  availabilityLabel: z.string().nullable().optional(),
+  /** Shifts worked at this site in the last 90 days — site history. */
+  siteShiftsWorked: z.number().int().nonnegative().optional(),
+  /** Straight-line distance from home to the site, when both are known. */
+  distanceMiles: z.number().nonnegative().nullable().optional(),
+  /** Required credentials for the position: which they hold and which they lack. */
+  credentials: z.object({
+    required: z.array(z.string()),
+    missing: z.array(z.string()),
+  }).optional(),
 }))();
 export type AutoFillCandidate = z.infer<typeof AutoFillCandidateSchema>;
 
@@ -6254,6 +6408,7 @@ export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
   'BILL_APPROVAL',
   'VENDOR_BANK',
   'PERIOD_REOPEN',
+  'PAY_RATE_BATCH',
 ]))();
 export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
 
@@ -6276,6 +6431,7 @@ export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> =
   BILL_APPROVAL: 'Vendor bill',
   VENDOR_BANK: 'Vendor bank account',
   PERIOD_REOPEN: 'Reopen a closed month',
+  PAY_RATE_BATCH: 'Pay change for many people',
 };
 
 export const ApprovalRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']))();
@@ -7183,6 +7339,11 @@ export const OrgBrandingSchema = /* @__PURE__ */ (() => z.object({
   requisitionApproval: z.boolean(),
   /** Before a payroll run pays out, someone signs off on its review report. */
   payrollReviewRequired: z.boolean(),
+  /** Finance: the remit-to printed on invoices and statements (name, address lines, how to pay), and the cash floor the forecast draws. */
+  remitToName: z.string().nullable(),
+  remitToAddress: z.string().nullable(),
+  remitToInstructions: z.string().nullable(),
+  cashMinimum: z.number().nullable(),
   updatedAt: z.string().datetime(),
 }))();
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
@@ -7224,6 +7385,10 @@ export const UpdateOrgBrandingInputSchema = /* @__PURE__ */ (() => z
     roleChangeApproval: z.boolean().optional(),
     requisitionApproval: z.boolean().optional(),
     payrollReviewRequired: z.boolean().optional(),
+    remitToName: z.string().trim().max(255).nullable().optional(),
+    remitToAddress: z.string().trim().max(500).nullable().optional(),
+    remitToInstructions: z.string().trim().max(500).nullable().optional(),
+    cashMinimum: z.number().min(0).max(1_000_000_000).nullable().optional(),
   })
   .strict())();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
@@ -7348,7 +7513,14 @@ export const StatementSnapshotSchema = /* @__PURE__ */ (() => z.object({
     hours: z.number(),
     regularHours: z.number(),
     otHours: z.number(),
+    /** What the client owes: subtotal + sales tax. */
     amount: z.number(),
+    hoursAmount: z.number().optional(),
+    adjustmentsAmount: z.number().optional(),
+    /** Hours + adjustments before tax; absent on snapshots that predate sales tax (then equal to amount). */
+    subtotal: z.number().optional(),
+    salesTaxRatePct: z.number().optional(),
+    salesTax: z.number().optional(),
   }),
   sla: z.object({
     publishedShifts: z.number().int(),
@@ -8063,6 +8235,12 @@ export interface EmergencySummary {
   associatesNotified: number;
   shiftsRestored: number;
   checkIns: { total: number; responded: number; safe: number; needsHelp: number; needsRide: number };
+  /**
+   * The text channel, told the truth: whether an SMS provider is connected
+   * (and why not), and — on the declare / stand-down answer — how many texts
+   * actually left. Absent on older rows; never "sent" for a text that wasn't.
+   */
+  texts?: { available: boolean; reason: string | null; sent?: number; notSent?: number };
 }
 
 export interface EmergencyBoardRow {
@@ -9271,6 +9449,15 @@ export interface HeadcountOverview {
 /* ===== Inbox — every decision waiting on the signed-in person ============== */
 
 /** One queue the person may act on, as a count and the link to it. */
+/**
+ * How a queue ranks against the others (role walk HR 4): a legal clock
+ * (an E-Verify mismatch, a claim's response window) above money (payroll
+ * sign-off, bills due) above routine work (a punch to review). Absent on
+ * an older API: routine.
+ */
+export const INBOX_URGENCIES = ['legal', 'money', 'routine'] as const;
+export type InboxUrgency = (typeof INBOX_URGENCIES)[number];
+
 export const InboxSourceSchema = /* @__PURE__ */ (() => z.object({
   key: z.string().min(1),
   label: z.string().min(1),
@@ -9278,8 +9465,24 @@ export const InboxSourceSchema = /* @__PURE__ */ (() => z.object({
   /** Capped at 999 by the API. */
   count: z.number().int().min(0).max(999),
   path: z.string().min(1),
+  urgency: z.enum(INBOX_URGENCIES).optional(),
+  /** The soonest deadline among the items counted, when the queue has one. */
+  dueAt: z.string().datetime().nullable().optional(),
+  /** A task's own progress ("2 of 8 done") — the associate's onboarding. */
+  progress: z.object({ done: z.number().int().min(0), total: z.number().int().min(1) }).optional(),
 }))();
 export type InboxSource = z.infer<typeof InboxSourceSchema>;
+
+/**
+ * The Inbox's order: legal clocks first, then money, then routine; within
+ * a band the soonest deadline, then the biggest queue. One ranking for the
+ * page, the home rows and the phone sheet, so no two surfaces disagree.
+ */
+export function rankInboxSources<T extends Pick<InboxSource, 'count' | 'urgency' | 'dueAt'>>(sources: readonly T[]): T[] {
+  const band = (s: T) => INBOX_URGENCIES.indexOf(s.urgency ?? 'routine');
+  const due = (s: T) => (s.dueAt ? Date.parse(s.dueAt) : Number.POSITIVE_INFINITY);
+  return [...sources].sort((a, b) => band(a) - band(b) || due(a) - due(b) || b.count - a.count);
+}
 
 /** GET /me/inbox — only the sources the caller may see. */
 export const InboxResponseSchema = /* @__PURE__ */ (() => z.object({

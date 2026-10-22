@@ -18,8 +18,12 @@ import {
   type Candidate,
   type CandidateFilters,
   type CandidateSort,
+  type Role,
+  ROLE_CAPABILITIES,
   can,
+  hasCapability,
 } from '@alto-people/shared';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -971,6 +975,93 @@ recruitingRouter.delete('/candidates/:id', MANAGE, async (req, res, next) => {
   try {
     await removeCandidate(req, req.params.id, null);
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /recruiting/candidates/bulk-remove — the list view's selection, off
+ * the pipeline in one go (system audit Tier 3: removal was single-id only).
+ * Each one goes through the same removal as the drawer's; a hired candidate
+ * or one already gone is skipped with the reason, never fails the batch.
+ */
+const BulkRemoveInputSchema = z.object({
+  candidateIds: z.array(z.string().uuid()).min(1).max(200),
+  reason: z.string().trim().max(500).optional().nullable(),
+});
+
+recruitingRouter.post('/candidates/bulk-remove', MANAGE, async (req, res, next) => {
+  try {
+    const { candidateIds, reason } = BulkRemoveInputSchema.parse(req.body ?? {});
+    let removed = 0;
+    const skipped: { id: string; reason: string }[] = [];
+    for (const id of [...new Set(candidateIds)]) {
+      try {
+        await removeCandidate(req, id, reason || null);
+        removed += 1;
+      } catch (err) {
+        if (err instanceof HttpError) {
+          skipped.push({ id, reason: err.code === 'already_hired' ? 'already hired' : err.status === 404 ? 'not found' : err.message });
+        } else {
+          throw err;
+        }
+      }
+    }
+    res.json({ removed, skipped });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /recruiting/interviewers[?candidateId=] — who can sit on an interview
+ * panel (HR walk 9): staff logins with hiring permissions, plus — when a
+ * candidate is named — the portal users of the client their posting is for
+ * (the store manager who will actually work with the hire). Never an
+ * associate's own login, never a disabled account.
+ */
+recruitingRouter.get('/interviewers', async (req, res, next) => {
+  try {
+    const candidateId = z.string().uuid().optional().parse(req.query.candidateId);
+    const hiringRoles = (Object.keys(ROLE_CAPABILITIES) as Role[]).filter(
+      (r) => r !== 'ASSOCIATE' && (hasCapability(r, 'manage:recruiting') || hasCapability(r, 'manage:org')),
+    );
+    let clientId: string | null = null;
+    if (candidateId) {
+      const c = await prisma.candidate.findFirst({
+        where: { id: candidateId, deletedAt: null },
+        select: { jobPosting: { select: { clientId: true } } },
+      });
+      clientId = c?.jobPosting?.clientId ?? null;
+    }
+    const users = await prisma.user.findMany({
+      where: {
+        tenantId: tenantIdForWrite(),
+        deletedAt: null,
+        status: 'ACTIVE',
+        OR: [{ role: { in: hiringRoles } }, ...(clientId ? [{ role: 'CLIENT_PORTAL' as const, clientId }] : [])],
+      },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        displayName: true,
+        associate: { select: { firstName: true, lastName: true } },
+        client: { select: { name: true } },
+      },
+      orderBy: { email: 'asc' },
+      take: 300,
+    });
+    res.json({
+      interviewers: users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : u.displayName?.trim() || u.email,
+        role: u.role,
+        clientName: u.role === 'CLIENT_PORTAL' ? (u.client?.name ?? null) : null,
+      })),
+    });
   } catch (err) {
     next(err);
   }

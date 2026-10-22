@@ -1,6 +1,7 @@
 import type {
   ActiveUsersResponse,
   AdoptionResponse,
+  ProductEventsResponse,
   RouteUsageResponse,
   TrafficResponse,
   WebVitalsResponse,
@@ -33,4 +34,9 @@ export function getAdoption(days: number): Promise<AdoptionResponse> {
 
 export function getWebVitals(days: number, limit = 15): Promise<WebVitalsResponse> {
   return apiFetch<WebVitalsResponse>(`/product-analytics/web-vitals?days=${days}&limit=${limit}`);
+}
+
+/** The three behaviour measures (ux-upgrade §6): first decision, decisions a session by role, settings searches. */
+export function getProductEvents(days: number): Promise<ProductEventsResponse> {
+  return apiFetch<ProductEventsResponse>(`/product-analytics/product-events?days=${days}`);
 }

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cpu, RefreshCw } from 'lucide-react';
+import { ClipboardCheck, Cpu, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { FLEET_PROVIDERS, type RobotRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -127,12 +127,20 @@ export function RobotsHome() {
       subtitle={`Every robot in the registry with its fleet reading. Connected to ${providerLabel}.`}
       breadcrumbs={[{ label: 'Operations', to: '/control-room' }, { label: 'Robots' }]}
       secondaryActions={
-        canManage ? (
-          <Button variant="ghost" size="sm" onClick={() => sample.mutate()} loading={sample.isPending}>
-            <RefreshCw className="h-4 w-4" />
-            Read the fleet now
+        <span className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link to="/robots/checklists">
+              <ClipboardCheck className="h-4 w-4" />
+              Checklists
+            </Link>
           </Button>
-        ) : undefined
+          {canManage && (
+            <Button variant="ghost" size="sm" onClick={() => sample.mutate()} loading={sample.isPending}>
+              <RefreshCw className="h-4 w-4" />
+              Read the fleet now
+            </Button>
+          )}
+        </span>
       }
       primaryAction={
         canManage ? (

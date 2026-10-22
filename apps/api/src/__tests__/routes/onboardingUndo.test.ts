@@ -62,7 +62,11 @@ async function setup() {
   const template = await createStandardTemplate();
   const { user: rec } = await createUser({ role: 'INTERNAL_RECRUITER' });
   const a = await loginAs(rec.email);
-  return { a, rec, client, template };
+  // The onboarding desk (invite, cancel, reopen) is HR's: the recruiter's own
+  // charter (audit #16) hires through Recruiting, not the onboarding queue.
+  const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+  const hr = await loginAs(hrUser.email);
+  return { a, rec, hr, client, template };
 }
 
 /** A candidate hired through Recruiting, with the invite link from the dev stub. */
@@ -149,7 +153,7 @@ describe('undo a hire', () => {
 
 describe('cancel an invite sent by mistake', () => {
   async function invite(s: Awaited<ReturnType<typeof setup>>, email: string, clientId = s.client.id) {
-    const r = await s.a.post('/onboarding/applications').send({
+    const r = await s.hr.post('/onboarding/applications').send({
       associateFirstName: 'Ana', associateLastName: 'Diaz', associateEmail: email, clientId, templateId: s.template.id,
     });
     if (r.status !== 201) throw new Error(`invite failed ${r.status} ${JSON.stringify(r.body)}`);
@@ -160,7 +164,7 @@ describe('cancel an invite sent by mistake', () => {
     const s = await setup();
     const inv = await invite(s, 'ana@example.com');
     sent.length = 0;
-    const r = await s.a.post(`/onboarding/applications/${inv.id}/cancel`).send({ reason: 'WRONG_CLIENT' });
+    const r = await s.hr.post(`/onboarding/applications/${inv.id}/cancel`).send({ reason: 'WRONG_CLIENT' });
     expect(r.status).toBe(200);
     expect(r.body.mode).toBe('removed');
     expect(sent).toEqual([]);
@@ -173,14 +177,14 @@ describe('cancel an invite sent by mistake', () => {
     const s = await setup();
     const first = await invite(s, 'ana@example.com');
     const second = await invite(s, 'ana@example.com');
-    const r = await s.a.post(`/onboarding/applications/${second.id}/cancel`).send({ reason: 'DUPLICATE' });
+    const r = await s.hr.post(`/onboarding/applications/${second.id}/cancel`).send({ reason: 'DUPLICATE' });
     expect(r.body.mode).toBe('cancelled');
     expect((await prisma.application.findUniqueOrThrow({ where: { id: second.id } })).status).toBe('CANCELLED');
     expect((await request(app()).get(`/auth/invite/${first.token}`)).status).toBe(200);
     // Closed, not in the working set.
-    const active = (await s.a.get('/onboarding/applications?status=ACTIVE')).body.applications.map((x: { id: string }) => x.id);
+    const active = (await s.hr.get('/onboarding/applications?status=ACTIVE')).body.applications.map((x: { id: string }) => x.id);
     expect(active).toEqual([first.id]);
-    const closed = (await s.a.get('/onboarding/applications?status=ARCHIVED')).body.applications.map((x: { id: string }) => x.id);
+    const closed = (await s.hr.get('/onboarding/applications?status=ARCHIVED')).body.applications.map((x: { id: string }) => x.id);
     expect(closed).toEqual([second.id]);
   });
 
@@ -188,11 +192,11 @@ describe('cancel an invite sent by mistake', () => {
     const s = await setup();
     const inv = await invite(s, 'ana@example.com');
     expect((await request(app()).post('/auth/accept-invite').send({ token: inv.token, password: 'a-good-password-123' })).status).toBe(200);
-    const r = await s.a.post(`/onboarding/applications/${inv.id}/cancel`).send({ reason: 'NOT_JOINING', note: 'Took another job' });
+    const r = await s.hr.post(`/onboarding/applications/${inv.id}/cancel`).send({ reason: 'NOT_JOINING', note: 'Took another job' });
     expect(r.body.mode).toBe('cancelled');
     const user = await prisma.user.findFirstOrThrow({ where: { email: 'ana@example.com' } });
     expect(user.status).toBe('DISABLED');
-    const re = await s.a.post(`/onboarding/applications/${inv.id}/reopen`);
+    const re = await s.hr.post(`/onboarding/applications/${inv.id}/reopen`);
     expect(re.status).toBe(200);
     expect((await prisma.application.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe('DRAFT');
     expect((await prisma.user.findFirstOrThrow({ where: { email: 'ana@example.com' } })).status).toBe('ACTIVE');
@@ -201,7 +205,7 @@ describe('cancel an invite sent by mistake', () => {
   it('a hire’s invite is undone from Recruiting, so the candidate goes back too', async () => {
     const s = await setup();
     const h = await hire(s);
-    const r = await s.a.post(`/onboarding/applications/${h.applicationId}/cancel`).send({ reason: 'SENT_IN_ERROR' });
+    const r = await s.hr.post(`/onboarding/applications/${h.applicationId}/cancel`).send({ reason: 'SENT_IN_ERROR' });
     expect(r.status).toBe(409);
     expect(r.body.error.code).toBe('hired_in_recruiting');
   });
@@ -210,7 +214,7 @@ describe('cancel an invite sent by mistake', () => {
     const s = await setup();
     const inv = await invite(s, 'ana@example.com');
     await prisma.application.update({ where: { id: inv.id }, data: { status: 'APPROVED' } });
-    expect((await s.a.post(`/onboarding/applications/${inv.id}/cancel`).send({ reason: 'OTHER' })).status).toBe(409);
+    expect((await s.hr.post(`/onboarding/applications/${inv.id}/cancel`).send({ reason: 'OTHER' })).status).toBe(409);
   });
 });
 
@@ -219,7 +223,7 @@ describe('the invite waits a few seconds for an Undo', () => {
     (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 're_test';
     (env as { RESEND_FROM?: string }).RESEND_FROM = 'Alto <hr@alto.test>';
     const s = await setup();
-    const r = await s.a.post('/onboarding/applications').send({
+    const r = await s.hr.post('/onboarding/applications').send({
       associateFirstName: 'Ana', associateLastName: 'Diaz', associateEmail: 'ana@example.com', clientId: s.client.id, templateId: s.template.id,
     });
     expect(r.status).toBe(201);
@@ -237,10 +241,10 @@ describe('the invite waits a few seconds for an Undo', () => {
     expect(await prisma.inviteToken.count()).toBe(1);
 
     // Undone inside the window: never sent.
-    const r2 = await s.a.post('/onboarding/applications').send({
+    const r2 = await s.hr.post('/onboarding/applications').send({
       associateFirstName: 'Lee', associateLastName: 'Ray', associateEmail: 'lee@example.com', clientId: s.client.id, templateId: s.template.id,
     });
-    await s.a.post(`/onboarding/applications/${r2.body.id}/cancel`).send({ reason: 'SENT_IN_ERROR' });
+    await s.hr.post(`/onboarding/applications/${r2.body.id}/cancel`).send({ reason: 'SENT_IN_ERROR' });
     expect(await deliverDueInvite(r2.body.id, new Date(Date.now() + 60_000))).toBe(false);
     expect(sent.filter((m) => m.to === 'lee@example.com')).toEqual([]);
   });

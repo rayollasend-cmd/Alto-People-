@@ -51,6 +51,8 @@ export interface InterviewRecord {
   kitName: string | null;
   interviewerUserId: string | null;
   interviewerEmail: string | null;
+  /** The panel — everyone doing this interview (up to 3). */
+  interviewers: { userId: string; email: string; name: string }[];
   scheduledFor: string;
   durationMinutes: number;
   location: string | null;
@@ -59,21 +61,46 @@ export interface InterviewRecord {
   scorecard: unknown;
 }
 
+/** Someone who can sit on an interview panel: staff with hiring permissions,
+ *  plus the posting client's portal users when a candidate is named. */
+export interface Interviewer {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  clientName: string | null;
+}
+
+export const listInterviewers = (candidateId?: string) =>
+  apiFetch<{ interviewers: Interviewer[] }>(
+    candidateId ? `/recruiting/interviewers?candidateId=${candidateId}` : '/recruiting/interviewers',
+  );
+
 /** Who a calendar invite went to. */
 export interface InviteResult {
   candidate: boolean;
   interviewer: boolean;
 }
 
-export const listInterviews = (candidateId?: string) =>
-  apiFetch<{ interviews: InterviewRecord[] }>(
-    candidateId ? `/interviews?candidateId=${candidateId}` : '/interviews',
-  );
+export const listInterviews = (
+  candidateId?: string,
+  filters: { interviewerUserId?: string; from?: string; to?: string } = {},
+) => {
+  const p = new URLSearchParams();
+  if (candidateId) p.set('candidateId', candidateId);
+  if (filters.interviewerUserId) p.set('interviewerUserId', filters.interviewerUserId);
+  if (filters.from) p.set('from', filters.from);
+  if (filters.to) p.set('to', filters.to);
+  const qs = p.toString();
+  return apiFetch<{ interviews: InterviewRecord[] }>(qs ? `/interviews?${qs}` : '/interviews');
+};
 
 export const createInterview = (input: {
   candidateId: string;
   kitId?: string | null;
   interviewerUserId?: string | null;
+  /** The panel (up to 3). When given, interviewerUserId is its first member. */
+  interviewerUserIds?: string[];
   scheduledFor: string;
   durationMinutes?: number;
   location?: string | null;
@@ -89,6 +116,7 @@ export const updateInterview = (
     durationMinutes?: number;
     location?: string | null;
     interviewerUserId?: string | null;
+    interviewerUserIds?: string[];
     notify?: boolean;
   },
 ) => apiFetch<{ ok: true; invited: InviteResult }>(`/interviews/${id}`, { method: 'PATCH', body: input });

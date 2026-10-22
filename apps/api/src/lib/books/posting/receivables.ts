@@ -5,6 +5,7 @@ import { emitBooksChange } from '../events.js';
 import { accountByKey, postEntry } from '../ledger.js';
 import { cents, voidByKey, ymd, type Db } from './common.js';
 import { statementAmounts } from './statements.js';
+import { AGING_BUCKETS, bucketFor, daysPastDue, dueOnFor, zeroBuckets, type AgingBucket } from '../aging.js';
 
 /**
  * Money clients pay, and what they still owe.
@@ -221,18 +222,9 @@ export async function recordStatementPaidInFull(db: import('@prisma/client').Pri
 
 /* ---- Aging ------------------------------------------------------------ */
 
-export const AGING_BUCKETS = ['current', 'days1to30', 'days31to60', 'days61to90', 'over90'] as const;
-export type AgingBucket = (typeof AGING_BUCKETS)[number];
-
-export function bucketFor(daysPastDue: number): AgingBucket {
-  if (daysPastDue <= 0) return 'current';
-  if (daysPastDue <= 30) return 'days1to30';
-  if (daysPastDue <= 60) return 'days31to60';
-  if (daysPastDue <= 90) return 'days61to90';
-  return 'over90';
-}
-
-const DAY = 86_400_000;
+// The one aging definition lives in lib/books/aging (finance walk 3); re-exported for callers here.
+export { AGING_BUCKETS, bucketFor };
+export type { AgingBucket };
 
 export async function agingReport(db: Db, asOf: string, opts: { clientId?: string } = {}) {
   const open = (await statementBalances(db, opts.clientId ? { clientId: opts.clientId } : {})).filter((b) => b.open > 0);
@@ -242,12 +234,11 @@ export async function agingReport(db: Db, asOf: string, opts: { clientId?: strin
     unappliedCredits(db, clientIds),
   ]);
   const names = new Map(clients.map((c) => [c.id, c.name]));
-  const asOfMs = new Date(`${asOf}T00:00:00.000Z`).getTime();
-  const zero = () => ({ current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 });
+  const zero = () => zeroBuckets();
   const byClient = new Map<string, { clientId: string; clientName: string; buckets: Record<AgingBucket, number>; open: number; statements: number; oldestDaysPastDue: number; unapplied: number }>();
   const statements = open.map((b) => {
-    const due = b.dueAt ?? (b.finalizedAt ? b.finalizedAt.slice(0, 10) : b.periodEnd);
-    const days = Math.floor((asOfMs - new Date(`${due}T00:00:00.000Z`).getTime()) / DAY);
+    const due = dueOnFor(b) ?? b.periodEnd;
+    const days = daysPastDue(due, asOf);
     const bucket = bucketFor(days);
     const row = byClient.get(b.clientId) ?? { clientId: b.clientId, clientName: names.get(b.clientId) ?? 'A client', buckets: zero(), open: 0, statements: 0, oldestDaysPastDue: 0, unapplied: unapplied.get(b.clientId) ?? 0 };
     row.buckets[bucket] += b.open;

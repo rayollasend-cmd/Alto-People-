@@ -1,4 +1,5 @@
 import type {
+  PublishLaborFinding,
   AdminOpenShiftClaimListResponse,
   AssociateListResponse,
   AutoFillResponse,
@@ -97,6 +98,8 @@ export interface SchedulingKpis {
   openUpcoming?: number;
   /** Ended while still OPEN. */
   wentUnfilled?: number;
+  /** Same count under the name the close-out flow uses. */
+  unfilledPast?: number;
   fillRatePercent: number;
   totalScheduledMinutes: number;
   /** Null for client-bound roles (SHIFT_SUPERVISOR) — the API withholds
@@ -254,7 +257,21 @@ export function bulkCreateShifts(
   });
 }
 
-export function updateShift(id: string, body: ShiftUpdateInput): Promise<Shift> {
+/**
+ * Why a published schedule changed, for predictability pay (audit Tier 1
+ * #9). The fair-workweek laws excuse a change the worker asked for, a
+ * mutual swap, a voluntary pickup and an emergency; anything else owes the
+ * premium. Every scheduling write that changes a published shift carries
+ * one — the API records the change either way, so a missing reason is
+ * "premium owed", never "nothing happened".
+ */
+export const CHANGE_REASONS = ['EMPLOYEE_REQUESTED', 'MUTUAL_SWAP', 'VOLUNTARY_PICKUP', 'EMERGENCY'] as const;
+export type ChangeReason = (typeof CHANGE_REASONS)[number];
+export interface WithChangeReason {
+  changeReason?: ChangeReason;
+}
+
+export function updateShift(id: string, body: ShiftUpdateInput & WithChangeReason): Promise<Shift> {
   return apiFetch<Shift>(`/scheduling/shifts/${id}`, { method: 'PATCH', body });
 }
 
@@ -263,16 +280,41 @@ export function deleteShift(id: string): Promise<void> {
   return apiFetch<void>(`/scheduling/shifts/${id}`, { method: 'DELETE' });
 }
 
-export function assignShift(id: string, body: ShiftAssignInput): Promise<Shift> {
+export function assignShift(id: string, body: ShiftAssignInput & WithChangeReason): Promise<Shift> {
   return apiFetch<Shift>(`/scheduling/shifts/${id}/assign`, { method: 'POST', body });
 }
 
-export function unassignShift(id: string): Promise<Shift> {
-  return apiFetch<Shift>(`/scheduling/shifts/${id}/unassign`, { method: 'POST' });
+export function unassignShift(id: string, body?: WithChangeReason): Promise<Shift> {
+  return apiFetch<Shift>(`/scheduling/shifts/${id}/unassign`, { method: 'POST', ...(body ? { body } : {}) });
 }
 
-export function cancelShift(id: string, body: ShiftCancelInput): Promise<Shift> {
+export function cancelShift(id: string, body: ShiftCancelInput & WithChangeReason): Promise<Shift> {
   return apiFetch<Shift>(`/scheduling/shifts/${id}/cancel`, { method: 'POST', body });
+}
+
+/**
+ * Close out shifts that ended while still OPEN: cancelled with the reason
+ * "unfilled", so fill-rate history stays honest and the board stops
+ * offering Assign on a shift that is over (role walk, ops 6 / HR 19).
+ */
+export function closeOutUnfilled(body: {
+  clientId?: string;
+  locationId?: string;
+  from?: string;
+  to?: string;
+}): Promise<{ closed: number; shiftIds: string[] }> {
+  return apiFetch<{ closed: number; shiftIds: string[] }>('/scheduling/shifts/close-out-unfilled', {
+    method: 'POST',
+    body,
+  });
+}
+
+/** The most recent shift at a site (or client), the New-shift dialog's prefill. */
+export function getLastShift(params: { clientId?: string; locationId?: string }): Promise<{ shift: Shift | null }> {
+  const q = new URLSearchParams();
+  if (params.clientId) q.set('clientId', params.clientId);
+  if (params.locationId) q.set('locationId', params.locationId);
+  return apiFetch<{ shift: Shift | null }>(`/scheduling/last-shift${q.toString() ? `?${q}` : ''}`);
 }
 
 /* Phase 15 — conflicts, auto-fill, availability, swaps */
@@ -661,8 +703,13 @@ export function assignTeamMemberHere(
   );
 }
 
-export function publishWeek(body: PublishWeekInput): Promise<PublishWeekResponse> {
-  return apiFetch<PublishWeekResponse>('/scheduling/publish-week', {
+/** What publish-week answers; `laborWarnings` is what the labor-rules engine
+ *  warned about and let through. A `block` finding answers 409
+ *  `labor_rules_block` with `{ findings }` instead. */
+export type PublishWeekResult = PublishWeekResponse & { laborWarnings?: PublishLaborFinding[] };
+
+export function publishWeek(body: PublishWeekInput): Promise<PublishWeekResult> {
+  return apiFetch<PublishWeekResult>('/scheduling/publish-week', {
     method: 'POST',
     body,
   });

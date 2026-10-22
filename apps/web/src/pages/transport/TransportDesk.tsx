@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Bus, CalendarClock, Check, Fuel, IdCard, Plus, ShieldAlert, Siren, ThumbsDown, ThumbsUp, Trash2, Wrench } from 'lucide-react';
@@ -7,7 +7,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { fmtDate, fmtDateTime, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, ymdLocal } from '@/lib/format';
-import { workweekStart } from '@/lib/workweek';
+import { useChargesRange } from '@/lib/transportRange';
 import {
   ackSos,
   addVanService,
@@ -167,10 +167,22 @@ export function SosBanner({ runs, manage }: { runs: RunMap[]; manage: boolean })
 
 /* ===== Drivers ============================================================== */
 
-function CredentialChip({ d }: { d: DeskDriver }) {
+function CredentialChip({ d, onAdd }: { d: DeskDriver; onAdd?: () => void }) {
   const lapsed = d.credentials.problems.some((p) => p.expired);
   const tracked = !!d.profile.licenceExpiresAt || d.profile.dotMedicalRequired;
-  if (!tracked) return <Badge size="sm" variant="default">No licence on file</Badge>;
+  // Transport walk 2: a missing licence is the thing to fix, not a dead
+  // badge — the chip is the way in. Once any driver has a record, a driver
+  // without one is refused at dispatch.
+  if (!tracked) {
+    return onAdd ? (
+      <Button size="xs" variant="outline" onClick={onAdd} aria-label={`Add ${d.name}'s licence`}>
+        <IdCard className="h-3 w-3" />
+        Add licence
+      </Button>
+    ) : (
+      <Badge size="sm" variant="pending">No licence on file</Badge>
+    );
+  }
   if (lapsed) return <Badge size="sm" variant="destructive">Licence lapsed</Badge>;
   if (!d.credentials.ok) return <Badge size="sm" variant="pending">Missing a document</Badge>;
   if (d.credentials.dueSoon.length > 0) return <Badge size="sm" variant="pending">Renew soon</Badge>;
@@ -259,7 +271,7 @@ export function DriversTab({ manage }: { manage: boolean }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-ink">{d.name}</span>
-                        <CredentialChip d={d} />
+                        <CredentialChip d={d} onAdd={manage ? () => setEditing(d) : undefined} />
                         {!d.drivesByTrade && <Badge size="sm" variant="outline">Drives in a pinch</Badge>}
                       </div>
                       <div className="mt-0.5 text-xs text-silver">
@@ -973,15 +985,8 @@ export function FeedbackSection() {
 /* ===== Cost per seat ========================================================== */
 
 export function CostsSection() {
-  const initial = useMemo(() => {
-    const start = workweekStart();
-    start.setDate(start.getDate() - 7);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 13);
-    return { from: ymdLocal(start), to: ymdLocal(end) };
-  }, []);
-  const [from, setFrom] = useState(initial.from);
-  const [to, setTo] = useState(initial.to);
+  // Transport walk 13: the same range as the charges table above, from the URL.
+  const { from, to, setFrom, setTo } = useChargesRange();
   const q = useQuery({ queryKey: ['transport', 'costs', from, to], queryFn: () => getTransportCosts(from, to) });
   const t = q.data?.totals;
   return (

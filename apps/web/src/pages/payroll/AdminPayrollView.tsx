@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DisburseFacts, useDisbursePreview } from './DisburseFacts';
+import { MissedPaydaysStrip } from './MissedPaydaysStrip';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { quoteGrossUp } from '@/lib/payExpApi';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -14,7 +16,6 @@ import {
   CreditCard,
   Download,
   FileText,
-  Link as LinkIcon,
   Pencil,
   Play,
   Plus,
@@ -65,7 +66,6 @@ import {
 } from '@/lib/payrollApi';
 import { getPayrollReviewStatus } from '@/lib/payrollReviewApi';
 import { clearPayByCheck, getRunChecks, setPayByCheck } from '@/lib/paperChecksApi';
-import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { Select } from '@/components/ui/Select';
@@ -76,7 +76,6 @@ import { ExceptionStrip } from './PayrollExceptionStrip';
 import { fundingSentence, getRunFunding } from '@/lib/bankingApi';
 import { PayrollCostChart } from './PayrollCostChart';
 import { listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type PayrollUpcomingWithSchedules, type UpcomingBySchedule } from '@/lib/payScheduleFlowApi';
-import { GarnishmentsView } from './GarnishmentsView';
 import { WebhookHealthTile } from './WebhookHealthTile';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { ApiError } from '@/lib/api';
@@ -122,7 +121,9 @@ import { FilterChip } from '@/components/ui/FilterBar';
 const fmtPeriod = (startYmd: string, endYmd: string) =>
   `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
-const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL'; label: MessageKey }> = [
+const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL' | 'OPEN'; label: MessageKey }> = [
+  // Draft and finalized: the runs still moving — the default view (finance walk 10).
+  { value: 'OPEN', label: 'payrollHome.statusOpen' },
   { value: 'DRAFT', label: 'payrollHome.statusDraft' },
   { value: 'FINALIZED', label: 'payrollHome.statusFinalized' },
   { value: 'DISBURSED', label: 'payrollHome.statusDisbursed' },
@@ -208,8 +209,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     refetchInterval: 120_000,
   });
   const openChanges = financialChanges.data?.open ?? 0;
-  const [tab, setTab] = useState<'runs' | 'garnishments'>('runs');
-  const [filter, setFilter] = useState<PayrollRunStatus | 'ALL'>('DRAFT');
+  const [tab, setTab] = useState<'runs'>('runs');
+  const [filter, setFilter] = useState<PayrollRunStatus | 'ALL' | 'OPEN'>('OPEN');
+  // The default "Open" view falls back to All, once, when nothing is open.
+  const openFellBack = useRef(false);
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   // Hero-CTA prefill for the wizard; null = generic "New run" (full flow).
@@ -250,6 +253,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   });
   const signoff = reviewStatus.data?.signoff ?? null;
   const reviewBlocksPayout = !!signoff && signoff.required && !signoff.current;
+  // The disburse dialog's facts: provider status, split by method, arrival, funding (finance walk 12).
+  const disbursePreview = useDisbursePreview(selected?.id ?? null, confirmDisburse && canProcess);
   // On the company's own ACH the money has to arrive before pay goes out
   // (the server refuses otherwise) — said before the ceremony, not after.
   const runFunding = useQuery({
@@ -311,6 +316,13 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     placeholderData: keepPreviousData,
   });
   const runs: PayrollRunSummary[] | null = runsQuery.data?.runs ?? null;
+  useEffect(() => {
+    if (filter !== 'OPEN' || openFellBack.current || !runsQuery.isSuccess || runsQuery.isPlaceholderData) return;
+    if ((runsQuery.data?.runs.length ?? 0) === 0) {
+      openFellBack.current = true;
+      setFilter('ALL');
+    }
+  }, [filter, runsQuery.isSuccess, runsQuery.isPlaceholderData, runsQuery.data]);
   const { refetch: refetchRuns } = runsQuery;
   const refresh = useCallback(async () => {
     await refetchRuns();
@@ -646,22 +658,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     }
   };
 
-  const onSyncQbo = async () => {
-    if (!selected || busy) return;
-    setBusy(true);
-    try {
-      await syncRunToQbo(selected.id);
-      // Re-fetch the run so qboJournalEntryId / qboSyncedAt land on the UI.
-      const updated = await getPayrollRun(selected.id);
-      setSelected(updated);
-      toast.success('Posted to QuickBooks.');
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'QuickBooks sync failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const expectedVoidString = selected
     ? expectedVoidConfirmation(selected.periodStart, selected.periodEnd)
     : '';
@@ -903,6 +899,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             onExceptionsChanged={() => void refreshUpcoming()}
           />
 
+          {/* Paydays that passed with no run, and the hours they left unpaid (finance walk 1). */}
+          <MissedPaydaysStrip
+            canProcess={canProcess}
+            focus={searchParams.get('ledger') === 'missed'}
+            onPay={(seed) => {
+              setWizardSeed(seed);
+              setShowCreate(true);
+            }}
+          />
+
           <PayrollCostChart onOpenRun={(id) => void openRun(id)} />
 
           {canProcess && (
@@ -947,8 +953,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 </DrawerHeader>
                 <DrawerBody>
                   {/* Gap 3 — CANCELLED banner. When the run was voided, surface
-                      who/when/why above everything else and link the reversing
-                      JE if QBO sync was wired up. */}
+                      who/when/why above everything else. */}
                   {selected.status === 'CANCELLED' && (
                     <div className="mb-4 rounded border border-alert/40 bg-alert/5 p-3 text-xs">
                       <div className="flex items-center gap-2 text-alert font-medium mb-1">
@@ -964,15 +969,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         <div className="text-silver mt-1">
                           <span className="text-silver/70">Reason: </span>
                           {selected.cancelReason}
-                        </div>
-                      )}
-                      {selected.voidJournalEntryId && (
-                        <div className="text-silver/70 mt-1">
-                          Reversing JE{' '}
-                          <span className="font-mono text-silver">
-                            {selected.voidJournalEntryId}
-                          </span>{' '}
-                          filed in QuickBooks.
                         </div>
                       )}
                       <div className="text-silver/70 mt-1.5">
@@ -1055,12 +1051,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   ) : null}
 
                   {/* Wave 9 — QBO-style status progress bar shown across the top
-                      of the drawer. Tracks the run state through the four
+                      of the drawer. Tracks the run state through the three
                       human-meaningful checkpoints. */}
-                  <RunStatusStepper
-                    status={selected.status}
-                    qboSynced={!!selected.qboJournalEntryId}
-                  />
+                  <RunStatusStepper status={selected.status} lifecycle={runs?.find((r) => r.id === selected.id) ?? null} signedOff={!!signoff?.current} />
 
                   {/* Draft add-on lines (bonus / commission / tips / PTO). */}
                   {selected.status === 'DRAFT' && canProcess && (
@@ -1177,30 +1170,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     </div>
                   )}
 
-                  {(selected.qboJournalEntryId || selected.qboSyncError) && (
-                    <div className="mt-5 rounded border border-silver/15 bg-black/30 p-3 text-xs">
-                      <div className="flex items-center gap-2 text-2xs uppercase tracking-widest text-silver/70 mb-1.5">
-                        <LinkIcon className="h-3 w-3" />
-                        QuickBooks sync
-                      </div>
-                      {selected.qboJournalEntryId && (
-                        <div className="text-silver">
-                          JournalEntry{' '}
-                          <span className="font-mono text-white">
-                            {selected.qboJournalEntryId}
-                          </span>
-                          {selected.qboSyncedAt && (
-                            <> — synced {fmtDateTime(selected.qboSyncedAt)}</>
-                          )}
-                        </div>
-                      )}
-                      {selected.qboSyncError && (
-                        <div className="text-alert mt-1">
-                          Last sync error: {selected.qboSyncError}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </DrawerBody>
                 {canProcess && (
                   <DrawerFooter className="flex-wrap justify-start">
@@ -1280,13 +1249,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                           Retry failed disbursements
                         </Button>
                       )}
-                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                      selected.clientId && (
-                        <Button variant="secondary" onClick={onSyncQbo} loading={busy}>
-                          <LinkIcon className="h-4 w-4" />
-                          {selected.qboJournalEntryId ? 'Re-sync to QuickBooks' : 'Sync to QuickBooks'}
-                        </Button>
-                      )}
                     {canShowAmendButton && (
                       <Button variant="secondary" onClick={() => setAmendOpen(true)} disabled={busy}>
                         <Pencil className="h-4 w-4" />
@@ -1326,20 +1288,20 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
         }
       >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs' | 'garnishments')} className="mb-5">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs')} className="mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <TabsList>
             <TabsTrigger value="runs">{t('payrollHome.tabRuns')}</TabsTrigger>
-            <TabsTrigger value="garnishments">{t('payrollHome.tabGarnishments')}</TabsTrigger>
           </TabsList>
+          {/* Garnishments live on their own desk (finance walk 5: one place, not four). */}
+          <Link to="/payroll/garnishments" className="text-sm text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+            {t('payrollHome.tabGarnishments')} →
+          </Link>
           {/* Pay schedules grew into their own page — who is paid when, by client and by face. */}
           <Link to="/payroll/schedules" className="text-sm text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
             {t('payrollHome.tabSchedules')} →
           </Link>
         </div>
-        <TabsContent value="garnishments" className="mt-5">
-          <GarnishmentsView canProcess={canProcess} />
-        </TabsContent>
         <TabsContent value="runs" className="mt-5">
 
       {/* snap-x snap-mandatory locks each chip to a scroll-stop on
@@ -1474,6 +1436,24 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   ),
                 },
                 { key: 'schedule', header: 'Pay schedule', accessor: (r) => r.payrollScheduleName ?? '', sortable: true, defaultHidden: true, cell: (r) => r.payrollScheduleName ?? '—' },
+                { key: 'payday', header: 'Payday', accessor: (r) => r.payDate ?? '', csv: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : ''), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums text-silver whitespace-nowrap', cell: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : '—') },
+                { key: 'kind', header: 'Kind', accessor: (r) => r.kind, sortable: true, cell: (r) => (r.kind === 'REGULAR' ? <span className="text-silver">Regular</span> : <RunKindBadge kind={r.kind} />) },
+                {
+                  key: 'nextStep',
+                  header: 'Next step',
+                  accessor: (r) => r.nextStep?.label ?? '',
+                  sortable: true,
+                  cardMeta: true,
+                  cell: (r) =>
+                    r.nextStep ? (
+                      <span className={cn('text-xs', r.nextStep.key === 'done' || r.nextStep.key === 'cancelled' ? 'text-silver' : 'text-ink')}>
+                        {r.nextStep.label}
+                        {r.nextStep.waitingOn && <span className="block text-2xs text-silver">waiting on {r.nextStep.waitingOn}</span>}
+                      </span>
+                    ) : (
+                      '—'
+                    ),
+                },
                 {
                   key: 'status',
                   header: 'Status',
@@ -1577,6 +1557,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   </DialogDescription>
                 </DialogHeader>
 
+                {!busy && <DisburseFacts runId={selected.id} data={disbursePreview.data} loading={disbursePreview.isLoading} />}
+
                 {busy && (
                   <div className="rounded-md border border-gold/30 bg-gold/5 p-3 text-xs text-silver inline-flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />
@@ -1596,7 +1578,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     size="lg"
                     onClick={onDisburse}
                     loading={busy}
-                    disabled={busy}
+                    disabled={busy || !!disbursePreview.data?.provider.blocked}
                   >
                     {busy ? 'Disbursing…' : `Disburse ${fmtMoney(selected.totalNet)}`}
                   </Button>
@@ -1820,6 +1802,7 @@ function PayrollHero({
   const only = bySchedule[0] ?? null;
 
   const isResume = !!nr?.draftRunId;
+  const emptySchedule = !!only && only.people === 0;
 
   return (
     <div className="mb-5 grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -1869,11 +1852,30 @@ function PayrollHero({
                   onChanged={onExceptionsChanged}
                 />
               )}
+              {/* The blocker, inline — not only inside the dialog (finance walk 10). */}
+              {emptySchedule && (
+                <p className="mt-3 text-xs text-alert" role="status">
+                  No one is on {only!.scheduleName} — this run would pay no one.{' '}
+                  <Link to={`/payroll/schedules/${only!.scheduleId}`} className="underline underline-offset-2">
+                    Add people to it
+                  </Link>
+                </p>
+              )}
+              {(upcoming.peopleOnNoSchedule ?? 0) > 0 && (
+                <p className="mt-2 text-xs text-warning" role="status">
+                  {upcoming.peopleOnNoSchedule} {upcoming.peopleOnNoSchedule === 1 ? 'person is' : 'people are'} on no pay schedule — no run pays them.{' '}
+                  <Link to="/payroll/schedules?view=unassigned" className="underline underline-offset-2">
+                    Add them
+                  </Link>
+                </p>
+              )}
             </div>
             {canProcess && (
               <Button
                 onClick={() => (isResume ? onResumeRun(nr.draftRunId!) : onStartRun(null))}
                 className="shrink-0"
+                disabled={emptySchedule && !isResume}
+                title={emptySchedule && !isResume ? 'Add people to the schedule first' : undefined}
               >
                 <Play className="h-4 w-4" />
                 {isResume ? 'Resume run' : 'Run payroll'}
@@ -2141,15 +2143,9 @@ function PayrollHeroSkeleton() {
  *  internal database statuses.
  * -------------------------------------------------------------------------- */
 
-type StepperStage = 'DRAFT' | 'FINALIZED' | 'DISBURSED' | 'SYNCED';
+type StepperStage = 'DRAFT' | 'FINALIZED' | 'SIGNED' | 'DISBURSED' | 'DEPOSIT';
 
-function RunStatusStepper({
-  status,
-  qboSynced,
-}: {
-  status: PayrollRunStatus;
-  qboSynced: boolean;
-}) {
+function RunStatusStepper({ status, lifecycle, signedOff }: { status: PayrollRunStatus; lifecycle: PayrollRunSummary | null; signedOff: boolean }) {
   if (status === 'CANCELLED') {
     return (
       <div className="rounded border border-alert/30 bg-alert/5 p-3 text-xs text-alert flex items-center gap-2">
@@ -2158,19 +2154,22 @@ function RunStatusStepper({
       </div>
     );
   }
+  // The same lifecycle the guided close shows (GET /payroll/runs nextStep, finance walk 10).
   const stages: { key: StepperStage; label: string }[] = [
     { key: 'DRAFT', label: 'Draft' },
     { key: 'FINALIZED', label: 'Finalized' },
+    { key: 'SIGNED', label: 'Signed off' },
     { key: 'DISBURSED', label: 'Disbursed' },
-    { key: 'SYNCED', label: 'Synced to QBO' },
+    { key: 'DEPOSIT', label: 'Tax deposit' },
   ];
+  const next = lifecycle?.nextStep ?? null;
   const reachedIdx = (() => {
-    if (qboSynced) return 3;
-    if (status === 'DISBURSED') return 2;
-    if (status === 'FINALIZED') return 1;
+    if (status === 'DISBURSED') return next && (next.key === 'done' || next.key === 'remit') ? 4 : 3;
+    if (status === 'FINALIZED') return signedOff || !!lifecycle?.reviewSignedAt || (next && next.key !== 'review') ? 2 : 1;
     return 0;
   })();
   return (
+    <div className="space-y-2">
     <ol className="flex items-center gap-1 sm:gap-2">
       {stages.map((s, i) => {
         const reached = i <= reachedIdx;
@@ -2208,6 +2207,13 @@ function RunStatusStepper({
         );
       })}
     </ol>
+      {next && next.key !== 'done' && (
+        <p className="text-xs text-silver">
+          Next: <Link to={next.to} className="text-gold underline underline-offset-2">{next.label}</Link>
+          {next.waitingOn && ` — waiting on ${next.waitingOn}`}
+        </p>
+      )}
+    </div>
   );
 }
 

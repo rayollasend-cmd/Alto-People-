@@ -29,6 +29,7 @@ import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTz, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
 import { enterStagger } from '@/lib/motion';
 import { statusTone } from '@/lib/status';
+import { useTenant } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { PaperCheckRequestCard } from './PaperCheckRequestCard';
 import { cn } from '@/lib/cn';
@@ -81,6 +82,7 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   RETRO: 'pay.kind.RETRO',
   PREMIUM: 'pay.kind.PREMIUM',
   DAILY_SETTLED: 'pay.kind.DAILY_SETTLED',
+  IMPUTED_INCOME: 'pay.kind.IMPUTED_INCOME',
 };
 
 // Labels stay i18n keys (this page is translated); tones come from the
@@ -871,6 +873,9 @@ export function PaystubCard({
   appearIndex?: number;
 }) {
   const { t } = useI18n();
+  // Van rides are the transportation module's: a tenant without vans never shows the row (tenant profile §5.3 item 5).
+  const { moduleOn } = useTenant();
+  const ridesOn = moduleOn('transportation');
   // YTD comes from the server, not from summing the loaded stubs: the list
   // endpoint returns at most 50, so a client-side sum silently understates
   // the tax and net columns for anyone paid weekly for a year or more.
@@ -1083,7 +1088,7 @@ export function PaystubCard({
                       },
                     ]
                   : []),
-                ...(transportAmount > 0
+                ...(ridesOn && transportAmount > 0
                   ? [
                       {
                         key: 'transport',
@@ -1101,7 +1106,7 @@ export function PaystubCard({
                     ]
                   : []),
                 // Brief 1A-3: what the minimum-wage guard held back, in words.
-                ...((item.transport?.deferred ?? 0) > 0
+                ...(ridesOn && (item.transport?.deferred ?? 0) > 0
                   ? [
                       {
                         key: 'transport-deferred',

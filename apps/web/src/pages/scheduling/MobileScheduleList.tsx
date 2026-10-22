@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/Button';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
-import { fmtDayHeaderTz, fmtTimeTz, zonedDayKey } from '@/lib/format';
+import { fmtDayHeaderTz, fmtShiftTz, zonedDayKey } from '@/lib/format';
+import { isOpenShift, wentUnfilled } from '@alto-people/shared';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 
 /** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
@@ -68,12 +69,25 @@ interface Props {
   onShiftClick: (s: Shift) => void;
   onPrevDay: () => void;
   onNextDay: () => void;
+  /** Jump to a day from the 7-day strip. */
+  onPickDay?: (dayStart: Date) => void;
   onCreate: (dayStart: Date) => void;
 }
 
+/** Store wall-clock, with the zone's abbreviation when the viewer isn't in it. */
 function fmtTime(d: Date, timeZone?: string | null): string {
-  return fmtTimeTz(d, timeZone);
+  return fmtShiftTz(d, timeZone, { day: false });
 }
+
+/** Local midnight `n` days from `d` (setDate absorbs 23h/25h DST days). */
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // fmtDayHeaderTz with no zone: dayAnchor is a browser-local calendar
 // anchor — its local Y/M/D is exactly the `ymd(dayAnchor)` key the list
@@ -94,6 +108,7 @@ export function MobileScheduleList({
   onShiftClick,
   onPrevDay,
   onNextDay,
+  onPickDay,
   onCreate,
 }: Props) {
   const associateById = useMemo(() => {
@@ -114,7 +129,30 @@ export function MobileScheduleList({
       );
   }, [shifts, dayAnchor, displayTimeZone]);
 
-  const openCount = todayShifts.filter((s) => s.status === 'OPEN').length;
+  const openCount = todayShifts.filter((s) => isOpenShift(s)).length;
+  const unfilledCount = todayShifts.filter((s) => wentUnfilled(s)).length;
+
+  // The week around the anchored day, Monday first — the sticky strip a
+  // phone pages with (role walk, ops 14 / floor 9). Shift counts per day
+  // come from whatever is loaded, so a day outside the fetched window
+  // shows no dot rather than a wrong zero.
+  const strip = useMemo(() => {
+    const mondayOffset = (dayAnchor.getDay() + 6) % 7;
+    const monday = addDays(dayAnchor, -mondayOffset);
+    const todayKey = ymd(new Date());
+    const anchorKey = ymd(dayAnchor);
+    const counts = new Map<string, number>();
+    for (const s of shifts) {
+      if (s.status === 'CANCELLED') continue;
+      const k = zonedDayKey(s.startsAt, displayTimeZone);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = addDays(monday, i);
+      const key = ymd(d);
+      return { d, key, label: WD[d.getDay()]!, day: d.getDate(), count: counts.get(key) ?? 0, isToday: key === todayKey, isAnchor: key === anchorKey };
+    });
+  }, [shifts, dayAnchor, displayTimeZone]);
 
   // Same day-bucketing as the visible list, applied to the filter-hidden
   // complement — so the header can say "2 hidden by filter" instead of
@@ -188,6 +226,12 @@ export function MobileScheduleList({
                 <span className="text-warning">{openCount} open</span>
               </>
             )}
+            {unfilledCount > 0 && (
+              <>
+                {' · '}
+                <span className="text-silver/70">{unfilledCount} unfilled</span>
+              </>
+            )}
             {hiddenToday > 0 && (
               <>
                 {' · '}
@@ -206,6 +250,34 @@ export function MobileScheduleList({
         >
           <ChevronRight className="h-5 w-5" />
         </button>
+      </div>
+
+      {/* 7-day strip — sticky under the day bar, one tap per day. */}
+      <div
+        className="sticky top-[3.25rem] z-10 -mx-4 grid grid-cols-7 gap-1 border-b border-navy-secondary bg-navy/95 px-4 py-1.5 backdrop-blur"
+        role="tablist"
+        aria-label="Days this week"
+        data-testid="mobile-day-strip"
+      >
+        {strip.map((d) => (
+          <button
+            key={d.key}
+            type="button"
+            role="tab"
+            aria-selected={d.isAnchor}
+            aria-label={`${d.label} ${d.day}${d.count ? `, ${d.count} shift${d.count === 1 ? '' : 's'}` : ''}`}
+            onClick={() => onPickDay?.(d.d)}
+            className={cn(
+              'flex h-11 flex-col items-center justify-center rounded-md text-xs leading-tight',
+              d.isAnchor ? 'bg-gold/15 text-gold' : 'text-silver hover:text-ink',
+              d.isToday && !d.isAnchor && 'text-ink',
+            )}
+          >
+            <span className="text-3xs uppercase tracking-wider">{d.label}</span>
+            <span className={cn('tabular-nums font-medium', d.isToday && 'underline underline-offset-2')}>{d.day}</span>
+            <span className={cn('mt-0.5 h-1 w-1 rounded-full', d.count > 0 ? 'bg-gold' : 'bg-transparent')} aria-hidden="true" />
+          </button>
+        ))}
       </div>
 
       {canManage && (
@@ -258,14 +330,22 @@ export function MobileScheduleList({
                         <div className="font-medium text-white tabular-nums text-sm">
                           {fmtTime(start, s.timezone)} – {fmtTime(end, s.timezone)}
                         </div>
-                        <Badge variant={STATUS_VARIANT[s.status]}>
-                          {STATUS_LABELS[s.status] ?? s.status}
-                        </Badge>
+                        {wentUnfilled(s) ? (
+                          <Badge variant="default" title="Ended while still open">Unfilled</Badge>
+                        ) : (
+                          <Badge variant={STATUS_VARIANT[s.status]}>
+                            {STATUS_LABELS[s.status] ?? s.status}
+                          </Badge>
+                        )}
                       </div>
+                      {/* "Housekeeper · The Grand Hotel · Front Beach" — the
+                          card used to say only the position, so an open
+                          shift never said which store it was at. */}
                       <div className="text-sm text-white mt-0.5 truncate">
                         {s.position}
-                        {s.location && (
-                          <span className="text-silver"> · {s.location}</span>
+                        {s.clientName && <span className="text-silver"> · {s.clientName}</span>}
+                        {(s.locationName ?? s.location) && (
+                          <span className="text-silver"> · {s.locationName ?? s.location}</span>
                         )}
                       </div>
                       {assigneeName ? (
@@ -280,9 +360,11 @@ export function MobileScheduleList({
                         </div>
                       ) : (
                         <div className="text-xs text-silver mt-0.5 truncate">
-                          <span className="text-warning">
-                            Open · tap to assign
-                          </span>
+                          {wentUnfilled(s) ? (
+                            <span className="text-silver/70">Went unfilled</span>
+                          ) : (
+                            <span className="text-warning">Open · tap to assign</span>
+                          )}
                         </div>
                       )}
                     </div>

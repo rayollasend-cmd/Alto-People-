@@ -19,6 +19,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { armJob, stopJob } from './jobs.js';
 import { paidMinutesForRange, rolesWithCapability } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -242,28 +243,19 @@ export async function runScheduleDigestSweep(
   return { sent: true, recipients: recipients.length, shifts: shifts.length };
 }
 
-let timer: NodeJS.Timeout | null = null;
+export const SCHEDULE_DIGEST_JOB = 'scheduleDigest';
 
+/** On by default (SCHEDULE_DIGEST_INTERVAL_SECONDS=900); sends once a day after SCHEDULE_DIGEST_HOUR. */
 export function startScheduleDigestCron(): void {
-  if (timer) return;
-  const seconds = env.SCHEDULE_DIGEST_INTERVAL_SECONDS;
-  if (seconds <= 0) return;
-  void tenantJob('scheduleDigest', runScheduleDigestSweep)().catch((err) => {
-    console.error('[alto-people/api] schedule digest sweep failed:', err);
+  armJob({
+    name: SCHEDULE_DIGEST_JOB,
+    label: 'Schedule digest to admins (daily)',
+    intervalSeconds: env.SCHEDULE_DIGEST_INTERVAL_SECONDS,
+    run: tenantJob(SCHEDULE_DIGEST_JOB, runScheduleDigestSweep),
+    note: `SCHEDULE_DIGEST_INTERVAL_SECONDS; sends after ${env.SCHEDULE_DIGEST_HOUR}:00 ${DEFAULT_TIMEZONE}, once a day.`,
   });
-  timer = setInterval(() => {
-    void tenantJob('scheduleDigest', runScheduleDigestSweep)().catch((err) => {
-      console.error('[alto-people/api] schedule digest sweep failed:', err);
-    });
-  }, seconds * 1000);
-  timer.unref();
-  console.log(
-    `[alto-people/api] schedule digest cron armed (every ${seconds}s, sends after ${env.SCHEDULE_DIGEST_HOUR}:00 ${DEFAULT_TIMEZONE})`,
-  );
 }
 
 export function stopScheduleDigestCron(): void {
-  if (!timer) return;
-  clearInterval(timer);
-  timer = null;
+  stopJob(SCHEDULE_DIGEST_JOB);
 }

@@ -33,6 +33,7 @@ export const GO_TO: ReadonlyArray<GoTo> = [
   { key: 'y', path: '/payroll', label: 'Payroll' },
   { key: 'b', path: '/books', label: 'Books' },
   { key: 'o', path: '/onboarding', label: 'Onboarding' },
+  { key: 'r', path: '/transport', label: 'Transportation' },
   { key: ',', path: '/settings', label: 'Settings' },
 ];
 

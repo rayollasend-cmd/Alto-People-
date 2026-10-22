@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Search, Sparkles, ShieldCheck } from 'lucide-react';
+import { Plus, Search, Sparkles, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
+  claimAssociateSkill,
   createSkill,
+  deleteAssociateSkill,
   deleteSkill,
+  listAssociateSkills,
   listSkills,
   searchSkills,
+  verifyAssociateSkill,
+  type AssociateSkillEntry,
   type SkillCatalogEntry,
   type SkillLevel,
   type SkillSearchResult,
@@ -40,6 +45,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 
 const LEVELS: SkillLevel[] = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'];
@@ -60,7 +66,7 @@ function distinctCategories(entries: SkillCatalogEntry[]): string[] {
 export function SkillsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [tab, setTab] = useState<'search' | 'catalog'>('search');
+  const [tab, setTab] = useState<'search' | 'people' | 'catalog'>('search');
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -69,16 +75,20 @@ export function SkillsHome() {
         subtitle="Find people by what they know — or browse the catalog and add new competencies."
         breadcrumbs={[{ label: 'Skills' }]}
     >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'search' | 'catalog')}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'search' | 'people' | 'catalog')}>
         <TabsList>
           <TabsTrigger value="search">
             <Search className="mr-2 h-4 w-4" /> Find people
+          </TabsTrigger>
+          <TabsTrigger value="people">
+            <UserRound className="mr-2 h-4 w-4" /> One person
           </TabsTrigger>
           <TabsTrigger value="catalog">
             <Sparkles className="mr-2 h-4 w-4" /> Catalog
           </TabsTrigger>
         </TabsList>
         <TabsContent value="search"><SearchTab canManage={canManage} /></TabsContent>
+        <TabsContent value="people"><PersonSkillsTab canManage={canManage} /></TabsContent>
         <TabsContent value="catalog"><CatalogTab canManage={canManage} /></TabsContent>
       </Tabs>
     </ListTemplate>
@@ -354,6 +364,165 @@ function SearchTab({ canManage }: { canManage: boolean }) {
             void runSearch(q);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * One person's skills: record what they can do (a claim, at a level), and
+ * verify it once someone has seen them do it. The API had all four calls
+ * and no screen — nobody was ever tagged with a skill.
+ */
+export function PersonSkillsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
+  const [person, setPerson] = useState<PickedAssociate | null>(null);
+  const [skillId, setSkillId] = useState('');
+  const [level, setLevel] = useState<SkillLevel>('INTERMEDIATE');
+  const [years, setYears] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const catalog = useQuery({ queryKey: ['skills'], queryFn: () => listSkills() });
+  const mine = useQuery({
+    queryKey: ['skills', 'associate', person?.id],
+    queryFn: () => listAssociateSkills(person!.id),
+    enabled: Boolean(person),
+  });
+  const rows: AssociateSkillEntry[] = mine.data?.skills ?? [];
+  const run = async (key: string, fn: () => Promise<unknown>, done: string) => {
+    if (busy) return;
+    setBusy(key);
+    try {
+      await fn();
+      toast.success(done);
+      await mine.refetch();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'That did not save.');
+    } finally {
+      setBusy(null);
+    }
+  };
+  const claim = () => {
+    if (!person || !skillId) {
+      toast.error('Pick a skill first.');
+      return;
+    }
+    const y = years.trim() === '' ? null : Number(years);
+    if (y !== null && (!Number.isFinite(y) || y < 0 || y > 60)) {
+      toast.error('Years must be a number from 0 to 60.');
+      return;
+    }
+    const name = catalog.data?.skills.find((x) => x.id === skillId)?.name ?? 'Skill';
+    void run(
+      'claim',
+      () => claimAssociateSkill({ associateId: person.id, skillId, level, yearsExperience: y }),
+      `${name} recorded for ${person.name} — verify it once you've seen it.`,
+    ).then(() => {
+      setSkillId('');
+      setYears('');
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="space-y-3 py-4">
+          <Label htmlFor="skills-person">Person</Label>
+          <AssociatePicker id="skills-person" value={person} onChange={setPerson} placeholder="Find someone by name…" />
+        </CardContent>
+      </Card>
+      {person && (
+        <>
+          {canManage && (
+            <Card>
+              <CardContent className="grid gap-3 py-4 sm:grid-cols-[1fr_10rem_7rem_auto] sm:items-end">
+                <div>
+                  <Label htmlFor="claim-skill">Skill</Label>
+                  <Select id="claim-skill" className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+                    <option value="">{catalog.isLoading ? 'Loading the catalog…' : 'Pick a skill…'}</option>
+                    {(catalog.data?.skills ?? [])
+                      .filter((x) => !rows.some((r) => r.skillId === x.id))
+                      .map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name}
+                          {x.category ? ` · ${x.category}` : ''}
+                        </option>
+                      ))}
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="claim-level">Level</Label>
+                  <Select id="claim-level" className="mt-1" value={level} onChange={(e) => setLevel(e.target.value as SkillLevel)}>
+                    {LEVELS.map((l) => (
+                      <option key={l} value={l}>
+                        {LEVEL_LABELS[l]}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="claim-years">Years</Label>
+                  <Input id="claim-years" className="mt-1" type="number" inputMode="numeric" min={0} max={60} value={years} onChange={(e) => setYears(e.target.value)} />
+                </div>
+                <Button onClick={claim} loading={busy === 'claim'} disabled={busy !== null}>
+                  <Plus className="h-4 w-4" />
+                  Add skill
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+          <Card>
+            <CardContent className="p-3">
+              {mine.isError ? (
+                <ErrorBanner>{mine.error instanceof ApiError ? mine.error.message : 'Could not load their skills.'}</ErrorBanner>
+              ) : mine.isLoading ? (
+                <SkeletonRows count={3} />
+              ) : rows.length === 0 ? (
+                <EmptyState icon={Sparkles} title="No skills recorded" description={`Add what ${person.name} can do — verified skills count first in Find people.`} />
+              ) : (
+                <ul className="divide-y divide-line" aria-label={`${person.name}'s skills`}>
+                  {rows.map((r) => (
+                    <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm">
+                      <span className="min-w-0 flex-1 text-ink">
+                        {r.skillName}
+                        <span className="text-ink-muted">
+                          {' '}
+                          · {LEVEL_LABELS[r.level]}
+                          {r.yearsExperience != null ? ` · ${r.yearsExperience} yr` : ''}
+                        </span>
+                      </span>
+                      {r.verifiedAt ? (
+                        <Badge variant="success" className="gap-1">
+                          <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                          Verified{r.verifiedByEmail ? ` by ${r.verifiedByEmail}` : ''} {fmtDate(r.verifiedAt)}
+                        </Badge>
+                      ) : canManage ? (
+                        <Button size="sm" variant="outline" loading={busy === `v:${r.id}`} disabled={busy !== null} onClick={() => void run(`v:${r.id}`, () => verifyAssociateSkill(r.id), `${r.skillName} verified.`)}>
+                          Verify
+                        </Button>
+                      ) : (
+                        <Badge variant="pending">Not verified</Badge>
+                      )}
+                      {canManage && (
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={`Remove ${r.skillName}`}
+                          disabled={busy !== null}
+                          onClick={async () => {
+                            if (!(await confirm({ title: `Remove ${r.skillName} from ${person.name}?`, destructive: true, confirmLabel: 'Remove' }))) return;
+                            void run(`d:${r.id}`, () => deleteAssociateSkill(r.id), `${r.skillName} removed.`);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </>
       )}
     </div>
   );

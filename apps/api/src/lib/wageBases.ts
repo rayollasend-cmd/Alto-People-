@@ -112,6 +112,8 @@ export const ITEM_BASES_SELECT = {
   payrollRun: { select: { disbursedAt: true, clientId: true } },
   deductions: { select: { code: true, category: true, label: true, employeeAmount: true, employerAmount: true, exemptFrom: true, w2Box12Code: true, w2Box14Label: true, w2Box10: true } },
   taxLines: { select: { code: true, kind: true, label: true, resident: true, workState: true, wages: true, amount: true, employer: true } },
+  // Group-term life over $50,000 (lib/groupTermLife): W-2 Box 12 C.
+  earnings: { where: { kind: 'IMPUTED_INCOME' }, select: { amount: true } },
   associate: { select: { state: true } },
 } satisfies Prisma.PayrollItemSelect;
 
@@ -206,6 +208,8 @@ export function basesOf(row: ItemBasesRow): ItemBases {
     retirementPlan = d.pre401k + d.pre403b + d.roth401k + d.roth403b > 0;
   }
   const tips = Number(row.qualifiedTips);
+  // Taxable cost of group-term life over $50,000 — already inside gross; Box 12 C reports it.
+  add12('C', ((row as { earnings?: Array<{ amount: Prisma.Decimal | number }> }).earnings ?? []).reduce((sum, e) => sum + Number(e.amount), 0));
   add12('TP', tips);
   add12('TT', Number(row.qualifiedOvertime));
 

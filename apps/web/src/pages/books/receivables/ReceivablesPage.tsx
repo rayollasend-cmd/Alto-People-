@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { HandCoins, History, Plus, RotateCcw } from 'lucide-react';
 import {
@@ -19,6 +19,7 @@ import { cn } from '@/lib/cn';
 import {
   RECEIVABLES_KEY,
   backfillPosting,
+  getCollectionsWorklist,
   getReceivablesAging,
   listClientPayments,
   undoClientPayment,
@@ -31,14 +32,18 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
 import { PaymentDialog, useWho } from './receivablesKit';
+import { AgingByClientChart, CollectionActions, CollectionsGrid, DsoTrendChart, PromiseDialog, ReminderLine, useCollectionActions } from './collections';
+import type { CollectionItem } from '@/lib/books/receivablesApi';
 
 /**
- * Receivables: what clients owe, by how late (the aging), the money they
- * paid and the statements it paid, and the catch-up that posts history to
- * the books. Contract: packages/shared/src/books/receivables.ts.
+ * Receivables: what clients owe, by how late (the aging, with the picture
+ * by client and days to collect), the collections worklist (finance walk
+ * 7), the money they paid and the statements it paid, and the catch-up that
+ * posts history to the books. Contract: packages/shared/src/books/receivables.ts.
  */
 
-type View = 'aging' | 'payments';
+type View = 'aging' | 'collections' | 'payments';
+const VIEWS: View[] = ['aging', 'collections', 'payments'];
 const money = (n: number) => fmtMoney(n, { precise: true });
 
 
@@ -47,10 +52,19 @@ export function ReceivablesPage() {
   const { can } = useAuth();
   const manage = can('manage:books');
   const qc = useQueryClient();
-  const [view, setView] = useState<View>('aging');
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('view') as View | null;
+  const view: View = asked && VIEWS.includes(asked) ? asked : 'aging';
+  const setView = (v: View) =>
+    setParams((p) => {
+      p.set('view', v);
+      return p;
+    }, { replace: true });
   const [paying, setPaying] = useState<{ clientId: string | null } | null>(null);
   const aging = useQuery({ queryKey: [...RECEIVABLES_KEY, 'aging'], queryFn: () => getReceivablesAging() });
   const payments = useQuery({ queryKey: [...RECEIVABLES_KEY, 'payments'], queryFn: () => listClientPayments(), enabled: view === 'payments' });
+  // The worklist also feeds each client's expanded statements (reminder stage, last sent, next).
+  const worklist = useQuery({ queryKey: [...RECEIVABLES_KEY, 'worklist'], queryFn: getCollectionsWorklist });
 
   const backfill = useMutation({
     mutationFn: () => backfillPosting(),
@@ -110,13 +124,24 @@ export function ReceivablesPage() {
           onChange={setView}
           options={[
             { value: 'aging', label: `By ${who.one}` },
+            { value: 'collections', label: `Collections${worklist.data ? ` · ${worklist.data.items.filter((i) => i.nextActionOn <= ymdLocal()).length} today` : ''}` },
             { value: 'payments', label: 'Payments' },
           ]}
         />
       }
     >
       {view === 'aging' ? (
-        <AgingGrid rows={aging.data?.rows ?? []} statements={aging.data?.statements ?? []} loading={aging.isLoading} error={aging.isError ? `Couldn’t load what ${who.many} owe.` : null} onRetry={() => void aging.refetch()} onPay={manage ? (clientId) => setPaying({ clientId }) : null} />
+        <div className="space-y-[var(--d-stack)]">
+          {(aging.data?.rows.length ?? 0) > 0 && (
+            <div className="grid gap-[var(--d-stack)] lg:grid-cols-2">
+              <AgingByClientChart rows={aging.data!.rows} />
+              <DsoTrendChart />
+            </div>
+          )}
+          <AgingGrid rows={aging.data?.rows ?? []} statements={aging.data?.statements ?? []} reminders={worklist.data?.items ?? []} manage={manage} loading={aging.isLoading} error={aging.isError ? `Couldn’t load what ${who.many} owe.` : null} onRetry={() => void aging.refetch()} onPay={manage ? (clientId) => setPaying({ clientId }) : null} />
+        </div>
+      ) : view === 'collections' ? (
+        <CollectionsGrid items={worklist.data?.items ?? []} loading={worklist.isLoading} error={worklist.isError ? 'Couldn’t load the collections worklist.' : null} onRetry={() => void worklist.refetch()} manage={manage} />
       ) : (
         <PaymentsGrid rows={payments.data?.payments ?? []} loading={payments.isLoading} error={payments.isError ? 'Couldn’t load payments.' : null} onRetry={() => void payments.refetch()} manage={manage} />
       )}
@@ -130,6 +155,8 @@ export function ReceivablesPage() {
 function AgingGrid({
   rows,
   statements,
+  reminders,
+  manage,
   loading,
   error,
   onRetry,
@@ -137,6 +164,8 @@ function AgingGrid({
 }: {
   rows: ReceivablesAgingRow[];
   statements: ReceivableStatement[];
+  reminders: CollectionItem[];
+  manage: boolean;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
@@ -208,7 +237,7 @@ function AgingGrid({
       defaultSort={{ key: 'open', direction: 'desc' }}
       expandable={{
         label: (r) => `${r.clientName}’s open statements`,
-        render: (r) => <StatementList statements={byClient.get(r.clientId) ?? []} />,
+        render: (r) => <StatementList statements={byClient.get(r.clientId) ?? []} reminders={reminders} manage={manage} />,
       }}
       empty={{ icon: HandCoins, title: 'Nothing owed', description: 'Every finalized statement is paid.' }}
       footnote="Days late count from each statement’s due date; a statement with no due date counts from the day it was finalized."
@@ -216,24 +245,38 @@ function AgingGrid({
   );
 }
 
-function StatementList({ statements }: { statements: ReceivableStatement[] }) {
+function StatementList({ statements, reminders, manage }: { statements: ReceivableStatement[]; reminders: CollectionItem[]; manage: boolean }) {
+  const actions = useCollectionActions();
+  const byId = new Map(reminders.map((r) => [r.statementId, r]));
   return (
+    <>
     <ul className="divide-y divide-navy-secondary text-sm">
-      {statements.map((s) => (
+      {statements.map((s) => {
+        const rem = byId.get(s.statementId);
+        return (
         <li key={s.statementId} className="flex flex-wrap items-center justify-between gap-2 py-2">
           <span className="min-w-0">
             <span className="text-ink">Statement {s.number !== null ? `No. ${String(s.number).padStart(4, '0')}` : ''}</span>
             <span className="text-silver"> · {fmtDate(s.periodStart)} – {fmtDate(s.periodEnd)}</span>
+            {rem && (
+              <span className="block">
+                <ReminderLine item={rem} />
+              </span>
+            )}
           </span>
           <span className="flex items-center gap-3 tabular-nums">
             <span className="text-xs text-silver">due {fmtDate(s.dueOn)}</span>
             {s.daysPastDue > 0 ? <Badge size="sm" variant={s.daysPastDue > 60 ? 'destructive' : 'pending'}>{s.daysPastDue} days late</Badge> : <Badge size="sm" variant="outline">Not yet due</Badge>}
             {s.applied > 0 && <span className="text-xs text-silver">{money(s.applied)} paid of {money(s.total)}</span>}
             <span className="font-medium text-ink">{money(s.open)}</span>
+            {rem && manage && <CollectionActions item={rem} actions={actions} />}
           </span>
         </li>
-      ))}
+        );
+      })}
     </ul>
+    {actions.promising && <PromiseDialog item={actions.promising} onClose={() => actions.setPromising(null)} onSaved={actions.refresh} />}
+    </>
   );
 }
 

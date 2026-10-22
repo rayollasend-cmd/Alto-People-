@@ -1,3 +1,4 @@
+import { requireModule } from '../lib/tenantProfile.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -25,6 +26,8 @@ import { associatesOfClient } from '../lib/scope.js';
  */
 
 export const clientRequestsRouter = Router();
+// Tenant profile (Brief 2-1b): requests are a client-portal feature — gone, not forbidden, where the module is off.
+clientRequestsRouter.use(['/client-portal', '/client-requests'], requireModule('clientPortal'));
 
 const KIND = z.enum(['STAFFING', 'FEEDBACK', 'ISSUE', 'BILLING']);
 type Kind = z.infer<typeof KIND>;

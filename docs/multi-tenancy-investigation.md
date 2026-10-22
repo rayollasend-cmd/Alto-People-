@@ -128,7 +128,7 @@ No RLS policies, no `current_setting`, and no sequences other than the pay-check
 | `/careers*` | host name or slug |
 | `/anonymous-reports` | host for filing; tracking code for lookup |
 | `/branch/webhook`, `/resend/webhook`, `/whatsapp/webhook` | the referenced payroll item, notification or phone consent |
-| `/quickbooks/connect/callback` | signed state → client |
+| `/quickbooks/connect/callback` | forwards to `/books/quickbooks/callback` (signed state → tenant); the per-client connection is retired (2026-10-21) |
 | `GET /admin/org/settings/logo` | host, or a tenant in the URL |
 
 ## 4. Raw SQL (bypasses any Prisma extension)

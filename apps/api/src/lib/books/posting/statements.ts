@@ -9,6 +9,7 @@ import { LineBook, cents, voidByKey, ymd, type Db } from './common.js';
  *   Cr Staffing services revenue — the hours, split by store where the
  *      statement has them (a store with no site on file stays client-wide)
  *   Cr Billing adjustments — retro rebills and contract premiums it carried
+ *   Cr Sales tax payable — the tax billed on top, owed to the state
  * A credit (a negative statement) posts the other way. Draft statements
  * aren't revenue yet; a statement that stops being final is taken off.
  */
@@ -16,18 +17,20 @@ import { LineBook, cents, voidByKey, ymd, type Db } from './common.js';
 interface Snapshot {
   stores?: Array<{ locationName: string; amount: number }>;
   adjustments?: Array<{ amount: number }>;
-  totals?: { amount?: number; hoursAmount?: number; adjustmentsAmount?: number };
+  totals?: { amount?: number; hoursAmount?: number; adjustmentsAmount?: number; subtotal?: number; salesTax?: number };
 }
 
 export const statementKey = (id: string) => `statement:${id}`;
 
-/** The statement's total, hours part and adjustments part, cents. */
-export function statementAmounts(snapshot: unknown): { total: number; hours: number; adjustments: number } {
+/** The statement's total (what the client owes), its hours part, adjustments part and sales tax, cents. */
+export function statementAmounts(snapshot: unknown): { total: number; hours: number; adjustments: number; salesTax: number } {
   const s = (snapshot ?? {}) as Snapshot;
   const total = cents(s.totals?.amount ?? 0);
+  const salesTax = cents(s.totals?.salesTax ?? 0);
+  const subtotal = total - salesTax;
   const adjustments = s.totals?.adjustmentsAmount !== undefined ? cents(s.totals.adjustmentsAmount) : (s.adjustments ?? []).reduce((n, a) => n + cents(a.amount), 0);
-  const hours = s.totals?.hoursAmount !== undefined ? cents(s.totals.hoursAmount) : total - adjustments;
-  return { total, hours, adjustments: total - hours };
+  const hours = s.totals?.hoursAmount !== undefined ? cents(s.totals.hoursAmount) : subtotal - adjustments;
+  return { total, hours, adjustments: subtotal - hours, salesTax };
 }
 
 export async function postStatement(db: Db, statementId: string): Promise<'posted' | 'voided' | 'skipped'> {
@@ -61,6 +64,8 @@ export async function postStatement(db: Db, statementId: string): Promise<'poste
     book.credit('REVENUE_STAFFING', amounts.hours, { clientId: st.clientId });
   }
   book.credit('REVENUE_ADJUSTMENTS', amounts.adjustments, { clientId: st.clientId });
+  // Sales tax billed is owed to the state, not earned.
+  if (amounts.salesTax !== 0) book.credit('SALES_TAX_PAYABLE', amounts.salesTax, { clientId: st.clientId });
 
   const label = st.number !== null ? `Statement No. ${String(st.number).padStart(4, '0')}` : 'Statement';
   await postEntry(db, {

@@ -1,3 +1,4 @@
+import { requireModule } from '../lib/tenantProfile.js';
 import { Router } from 'express';
 import { regionSiteIds, regionUnitPath } from '../lib/orgUnits.js';
 import type { OpsPeriod } from '@prisma/client';
@@ -73,6 +74,8 @@ import {
  */
 
 export const clientPortalRouter = Router();
+// Tenant profile (Brief 2-1b): the portal exists only where the client portal module is on — 404 on every path, not 403.
+clientPortalRouter.use('/client-portal', requireModule('clientPortal'));
 
 
 

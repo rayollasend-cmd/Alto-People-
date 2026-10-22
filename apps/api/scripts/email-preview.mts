@@ -13,6 +13,7 @@ process.env.JWT_SECRET ??= 'preview-only-secret-that-is-at-least-forty-four-char
 process.env.PAYOUT_ENCRYPTION_KEY ??= 'YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=';
 process.env.APP_BASE_URL ??= 'https://people.altohr.com';
 
+import { TERM_LANGS } from '@alto-people/shared';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -80,7 +81,7 @@ mkdirSync(outDir, { recursive: true });
 const rows: string[] = [];
 for (const [name, build] of Object.entries(samples)) {
   if (only && name !== only) continue;
-  for (const lang of ['en', 'es', 'tr'] as const) {
+  for (const lang of TERM_LANGS) {
     const r = build(lang);
     writeFileSync(path.join(outDir, `${name}.${lang}.html`), r.html);
     writeFileSync(path.join(outDir, `${name}.${lang}.txt`), `Subject: ${r.subject}\n\n${r.text}`);

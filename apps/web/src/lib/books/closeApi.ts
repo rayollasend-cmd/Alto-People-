@@ -35,6 +35,11 @@ export const unmarkCloseReady = (periodKey: string) => apiFetch<ClosePeriodDetai
 export const signOffClose = (periodKey: string) => apiFetch<ClosePeriodDetail>(`/books/close/${periodKey}/sign-off`, { method: 'POST' });
 export const requestCloseReopen = (periodKey: string, reason: string) =>
   apiFetch<{ pending: true; approvalId: string; title: string }>(`/books/close/${periodKey}/reopen`, { method: 'POST', body: { reason } });
+/** Finance walk 16 — two steps done from the checklist itself; each answers with the refreshed month. */
+export const finalizeCloseStatements = (periodKey: string) =>
+  apiFetch<{ finalized: number; failed: Array<{ id: string; clientName: string; error: string }>; month: ClosePeriodDetail }>(`/books/close/${periodKey}/finalize-statements`, { method: 'POST', timeoutMs: 120_000 });
+export const postCloseHistory = (periodKey: string) =>
+  apiFetch<{ payrollRuns: number; statements: number; failed: Array<{ error: string }>; month: ClosePeriodDetail }>(`/books/close/${periodKey}/post-history`, { method: 'POST', timeoutMs: 120_000 });
 export const listAccruals = (periodKey: string) => apiFetch<CloseAccrualsResponse>(`/books/close/${periodKey}/accruals`);
 export const createAccrual = (body: AccrualCreateInput) => apiFetch<{ entryId: string }>('/books/close/accruals', { method: 'POST', body });
 
@@ -45,7 +50,6 @@ export const getBudget = (id: string) => apiFetch<{ budget: BudgetDetail }>(`/bo
 export const createBudget = (body: BudgetCreateInput) => apiFetch<{ budget: BudgetDetail }>('/books/budgets', { method: 'POST', body });
 export const updateBudget = (id: string, body: BudgetUpdateInput) =>
   apiFetch<{ budget: BudgetDetail; demoted: string | null }>(`/books/budgets/${id}`, { method: 'PATCH', body });
-export const deleteBudget = (id: string) => apiFetch<void>(`/books/budgets/${id}`, { method: 'DELETE' });
 export const saveBudgetLines = (id: string, body: BudgetLinesInput) => apiFetch<{ budget: BudgetDetail }>(`/books/budgets/${id}/lines`, { method: 'PUT', body });
 export const budgetFromActuals = (id: string, growthPct: number) =>
   apiFetch<{ budget: BudgetDetail }>(`/books/budgets/${id}/from-actuals`, { method: 'POST', body: { growthPct } });

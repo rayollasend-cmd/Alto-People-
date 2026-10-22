@@ -9,7 +9,10 @@ import { ROLE_CAPABILITIES, rolesWithCapability } from '../roles.js';
  * incident in the company. This table answers "whose job is this".
  */
 
-const FANOUT_POOL = rolesWithCapability('manage:onboarding');
+// Mirrors ONBOARDING_ADMIN_ROLES in apps/api/src/lib/notify.ts: the hiring
+// desk (manage:recruiting) is in the pool though it no longer holds
+// manage:onboarding (audit #16).
+const FANOUT_POOL = [...new Set([...rolesWithCapability('manage:onboarding'), ...rolesWithCapability('manage:recruiting')])];
 
 describe('who a system notification is for', () => {
   it('keeps the marketing desk out of the floor and the HR file', () => {

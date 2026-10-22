@@ -49,6 +49,7 @@ import { credentialRequirementsRouter } from './routes/credentialRequirements.js
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { productAnalyticsRouter } from './routes/productAnalytics.js';
+import { scheduledJobsRouter } from './routes/scheduledJobs.js';
 import { emergencyRouter } from './routes/emergency.js';
 import { programsRouter } from './routes/programs.js';
 import { seasonPlansRouter } from './routes/seasonPlans.js';
@@ -85,7 +86,6 @@ import { recruitingRouter } from './routes/recruiting.js';
 import { jobsRouter } from './routes/jobs.js';
 import { auditRouter } from './routes/audit.js';
 import { benefitsRouter } from './routes/benefits.js';
-import { quickbooksRouter } from './routes/quickbooks.js';
 import { branchWebhookRouter } from './routes/branchWebhook.js';
 import { resendWebhookRouter } from './routes/resendWebhook.js';
 import { whatsappRouter, whatsappWebhookRouter } from './routes/whatsapp.js';
@@ -466,7 +466,8 @@ export function createApp() {
   // bearer header.
   app.use('/integrations/v1', requireModule('payrollSync'), integrationsV1Router);
   // Agents call with their own credential, never a session (Brief 1D-2).
-  app.use('/agent/v1', agentApiRouter);
+  // Tenant profile: agents exist only where the agent builder module is on (404 otherwise, before any credential check).
+  app.use('/agent/v1', requireModule('agentBuilder'), agentApiRouter);
   // Brief 2-7: the MCP server over the agent API, agent credentials only.
   app.use('/mcp', mcpRouter);
   // Brief 2-4: the public API. OAuth client credentials, scoped tokens, a
@@ -509,7 +510,8 @@ export function createApp() {
   // (SHIFT_SUPERVISOR, CLIENT_PORTAL) through to GET /:id/locations only —
   // see clientsAccessGate for why.
   // The messenger gates per role inside (associates are never callers).
-  app.use('/messages', messagesRouter);
+  // Tenant profile: the messenger is the client portal's store channels (404 where that module is off).
+  app.use('/messages', requireModule('clientPortal'), messagesRouter);
   // The region command center (region accounts + admin preview) and the
   // regions admin (manage:org).
   app.use('/region', requireModule('clientPortal'), regionRouter);
@@ -600,6 +602,8 @@ export function createApp() {
   // the workforce analytics above, so its own capability rather than a
   // sub-path under view:dashboard.
   app.use('/product-analytics', productAnalyticsRouter);
+  // The scheduled-jobs panel: last run, next run, last error per job (lib/jobs).
+  app.use('/admin/jobs', scheduledJobsRouter);
   // Emergency Mode: the switch and the board are capability-gated inside;
   // /me and /check-in are for any signed-in associate.
   app.use('/emergency', emergencyRouter);
@@ -616,8 +620,9 @@ export function createApp() {
   // Brief 3-3: one screen for people and machines, per site.
   app.use('/control-room', requireModule('scheduling'), controlRoomRouter);
   // Workers: people, agents and robots with an accountable owner (view/manage:org).
+  // /workers is the one roster of people, agents and robots: never module-gated. The agent registry is.
   app.use('/workers', workersRouter);
-  app.use('/agents', agentsRouter);
+  app.use('/agents', requireModule('agentBuilder'), agentsRouter);
   // Hugo in the app: the same intent registry as WhatsApp, for associates and desks (agent families step 3).
   app.use('/hugo', hugoRouter);
   // The browser's own report card (web vitals). Signed-in only; nothing
@@ -694,7 +699,7 @@ export function createApp() {
   app.use('/self', selfServiceRouter);
   // Ready-to-work handoffs: a supervisor's queue of hires awaiting a first
   // shift, and HR's view of who was told. Routes self-gate.
-  app.use('/ready-to-work', readyToWorkRouter);
+  app.use('/ready-to-work', requireModule('clientPortal'), readyToWorkRouter);
   // Phase 83 — compensation: routes self-gate per-handler with view:comp
   // / manage:comp.
   app.use('/comp', compensationRouter);
@@ -889,19 +894,15 @@ export function createApp() {
   // render it (and so HTML emails — which are public — can fetch it).
   app.use('/', orgSettingsRouter);
   app.use('/', tenancyRouter);
-  // QuickBooks router self-gates each route — the OAuth callback must accept
-  // an unauthenticated browser redirect from Intuit, so we cannot apply a
-  // capability check at this mount point.
-  // Intuit returns to the one redirect URI registered for the app. A state
-  // that starts "company." is the company's own books connecting (lib/books/qbo):
-  // on to its callback, whatever the payroll-sync module says.
-  app.get('/quickbooks/connect/callback', (req, res, next) => {
-    const state = typeof req.query.state === 'string' ? req.query.state : '';
-    if (!state.startsWith('company.')) return next();
+  // Intuit returns to the one redirect URI registered for the app
+  // (/api/quickbooks/connect/callback, from the retired per-client payroll
+  // connection). The company's own books (lib/books/qbo) is the only
+  // QuickBooks integration now, so every return goes on to its callback;
+  // it verifies the signed state itself.
+  app.get('/quickbooks/connect/callback', (req, res) => {
     const qs = new URLSearchParams(req.query as Record<string, string>).toString();
     res.redirect(`${env.APP_BASE_URL}/api/books/quickbooks/callback?${qs}`);
   });
-  app.use('/quickbooks', requireModule('payrollSync'), quickbooksRouter);
 
   // Production: the same Express service hosts the built React SPA. In dev,
   // Vite serves the SPA on its own port (5173) and proxies /api/* here, so

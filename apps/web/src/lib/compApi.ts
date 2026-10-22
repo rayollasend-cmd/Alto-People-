@@ -75,8 +75,6 @@ export interface MeritProposal {
 // Records
 export const listRecords = (associateId: string) =>
   apiFetch<{ records: CompRecord[] }>(`/comp/associates/${associateId}/records`);
-export const getCurrentRecord = (associateId: string) =>
-  apiFetch<{ record: CompRecord | null }>(`/comp/associates/${associateId}/current`);
 export const createRecord = (
   associateId: string,
   input: {

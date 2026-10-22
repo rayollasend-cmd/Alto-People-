@@ -17,6 +17,8 @@ import {
   type LedgerAccountType,
 } from '@alto-people/shared';
 import { prisma } from '../../db.js';
+import { agingReport } from '../../lib/books/posting/receivables.js';
+import { closeProgress } from '../../lib/books/close/period.js';
 import { HttpError } from '../../middleware/error.js';
 import { requireCapability } from '../../middleware/auth.js';
 import { enqueueAudit } from '../../lib/audit.js';
@@ -138,32 +140,17 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
       });
     const cashTotal = cashAccounts.reduce((s, a) => s + toCents(a.subtype === 'BANK' ? a.balance : -a.balance), 0);
 
-    // Receivables: the AR accounts' balance, aged from the open finalized statements.
+    // Receivables: the AR accounts' balance in the ledger, and what the open statements
+    // say — the same report Receivables and the finance home read (lib/books/posting/
+    // receivables), aged by the one definition (lib/books/aging).
     const arTotal = [...byId.values()].filter((a) => a.subtype === 'AR').reduce((s, a) => s + (bal.get(a.id) ?? 0), 0);
-    const open = await prisma.clientStatement.findMany({
-      where: { tenantId, status: 'FINAL', paidAt: null },
-      select: { id: true, clientId: true, dueAt: true, finalizedAt: true, snapshot: true, client: { select: { name: true } } },
+    const ar = await agingReport(prisma, asOf);
+    const aging = ar.totals.buckets;
+    const byClient = ar.rows.map((r) => {
+      const oldest = ar.statements.filter((st) => st.clientId === r.clientId).map((st) => st.dueOn).sort()[0] ?? null;
+      return { clientId: r.clientId, name: r.clientName, open: r.open, oldestDueAt: oldest };
     });
-    const applied = open.length
-      ? await prisma.clientPaymentApplication.groupBy({ by: ['statementId'], where: { tenantId, statementId: { in: open.map((s) => s.id) }, payment: { voidedAt: null } }, _sum: { amount: true } })
-      : [];
-    const paid = new Map(applied.map((a) => [a.statementId, toCents(a._sum.amount)]));
-    const aging = { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 };
-    const byClient = new Map<string, { clientId: string; name: string; open: number; oldestDueAt: string | null }>();
     const now = dateOnly(asOf).getTime();
-    for (const s of open) {
-      const amount = toCents((s.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0) - (paid.get(s.id) ?? 0);
-      if (amount <= 0) continue;
-      const due = s.dueAt ?? s.finalizedAt ?? new Date();
-      const late = Math.floor((now - dateOnly(ymd(due)).getTime()) / DAY);
-      const bucket = late <= 0 ? 'current' : late <= 30 ? 'days1to30' : late <= 60 ? 'days31to60' : late <= 90 ? 'days61to90' : 'over90';
-      aging[bucket] += amount;
-      const c = byClient.get(s.clientId) ?? { clientId: s.clientId, name: s.client.name, open: 0, oldestDueAt: null };
-      c.open += amount;
-      const d = ymd(due);
-      if (!c.oldestDueAt || d < c.oldestDueAt) c.oldestDueAt = d;
-      byClient.set(s.clientId, c);
-    }
 
     // Payables.
     const bills = await prisma.bill.findMany({ where: { tenantId, status: { in: ['APPROVED', 'PARTIALLY_PAID'] } }, select: { balance: true, dueDate: true } });
@@ -184,9 +171,11 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
       return { key: m.key, label: m.label, income: c?.totals.income ?? 0, netIncome: c?.totals.netIncome ?? 0 };
     });
 
-    // Last month's close.
+    // Last month's close — counted exactly as the close page counts it (lib/books/close/period.closeProgress).
     const lastMonth = ymd(new Date(Date.UTC(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 2, 1))).slice(0, 7);
-    const period = await prisma.fiscalPeriod.findUnique({ where: { tenantId_periodKey: { tenantId, periodKey: lastMonth } }, include: { closeTasks: { select: { status: true } } } });
+    const period = await closeProgress(prisma, lastMonth);
+    // The bank and card accounts actually connected to a feed (the Bank page's list), beside the ledger's.
+    const feedAccounts = await prisma.bankFeedAccount.count({ where: { tenantId, isActive: true } });
 
     // QuickBooks.
     const [conn, conflicts, pending, failed, unmatched] = await Promise.all([
@@ -211,24 +200,26 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
       needsYou.push({ key: 'ar-unposted', label: `Receivables in the books (${fmt(arTotal)}) don’t match open statements (${fmt(openOnStatements)}) — post history to bring them in`, count: 1, to: '/books/receivables', tone: 'warning' });
     }
     if (aging.over90 > 0) needsYou.push({ key: 'ar-90', label: `${fromCents(aging.over90).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} owed by clients for over 90 days`, count: 1, to: '/books/receivables', tone: 'alert' });
-    if (period?.status !== 'CLOSED' && Number(asOf.slice(8, 10)) >= 5) needsYou.push({ key: 'close', label: `${new Date(`${lastMonth}-01T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })} isn’t closed yet`, count: 1, to: `/books/close/${lastMonth}`, tone: 'info' });
+    if (period.status !== 'CLOSED' && Number(asOf.slice(8, 10)) >= 5) needsYou.push({ key: 'close', label: `${new Date(`${lastMonth}-01T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })} isn’t closed yet`, count: 1, to: `/books/close/${lastMonth}`, tone: 'info' });
 
     const body: BooksOverview = {
       asOf,
-      cash: { total: fromCents(cashTotal), accounts: cashAccounts },
+      cash: { total: fromCents(cashTotal), accounts: cashAccounts, connectedAccounts: feedAccounts },
       receivables: {
         total: fromCents(arTotal),
+        /** What the open statements add up to (the card's source); the KPI shows this and says when the ledger differs. */
+        openOnStatements: fromCents(openOnStatements),
         aging: { current: fromCents(aging.current), days1to30: fromCents(aging.days1to30), days31to60: fromCents(aging.days31to60), days61to90: fromCents(aging.days61to90), over90: fromCents(aging.over90) },
-        topClients: [...byClient.values()].sort((a, b) => b.open - a.open).slice(0, 5).map((c) => ({ ...c, open: fromCents(c.open) })),
+        topClients: byClient.slice(0, 5).map((c) => ({ ...c, open: fromCents(c.open) })),
       },
       payables: { total: fromCents(apTotal), dueIn7Days: fromCents(apDue7), overdue: fromCents(apOverdue), awaitingApproval },
       profit: { month: month.totals ?? zeroTotals, yearToDate: ytd.totals ?? zeroTotals, trend },
       close: {
         periodKey: lastMonth,
-        status: period?.status === 'CLOSED' ? 'CLOSED' : 'OPEN',
-        closedAt: period?.closedAt?.toISOString() ?? null,
-        tasksDone: period?.closeTasks.filter((t) => t.status !== 'OPEN').length ?? 0,
-        tasksTotal: period?.closeTasks.length ?? 0,
+        status: period.status === 'CLOSED' ? 'CLOSED' : 'OPEN',
+        closedAt: period.closedAt,
+        tasksDone: period.tasksDone,
+        tasksTotal: period.tasksTotal,
       },
       quickbooks: {
         connected: !!conn && conn.status !== 'DISCONNECTED',
@@ -253,11 +244,16 @@ booksLedgerRouter.get('/dimensions', async (_req, res, next) => {
     const tenantId = tenantIdForWrite();
     const [clients, sites, departments, costCenters] = await Promise.all([
       prisma.client.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: 2000 }),
-      prisma.site.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: 2000 }),
+      prisma.site.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true, client: { select: { name: true } } }, orderBy: { name: 'asc' }, take: 2000 }),
       prisma.department.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: 2000 }),
       prisma.costCenter.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, name: true, code: true }, orderBy: { code: 'asc' }, take: 2000 }),
     ]);
-    const body: BooksDimensions = { clients, sites, departments, costCenters: costCenters.map((c) => ({ id: c.id, name: `${c.code} · ${c.name}` })) };
+    // Several clients can each have a site of the same name ("The Grand Hotel" ten times
+    // in a picker): a repeated name carries its client (finance walk 15).
+    const nameCount = new Map<string, number>();
+    for (const s of sites) nameCount.set(s.name, (nameCount.get(s.name) ?? 0) + 1);
+    const siteRows = sites.map((s) => ({ id: s.id, name: (nameCount.get(s.name) ?? 0) > 1 && s.client?.name && s.client.name !== s.name ? `${s.name} · ${s.client.name}` : s.name }));
+    const body: BooksDimensions = { clients, sites: siteRows, departments, costCenters: costCenters.map((c) => ({ id: c.id, name: `${c.code} · ${c.name}` })) };
     res.json(body);
   } catch (err) {
     next(err);

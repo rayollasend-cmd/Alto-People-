@@ -169,7 +169,8 @@ describe('the paystub', () => {
     });
     const built = await buildPaystubDataById(prisma, item.id);
     const d = built!.data;
-    expect(d.preTaxDeductions.map((l) => l.label)).toEqual(['401(k)', 'Health & benefits']);
+    // A check from before itemizing reads as the backfill would write it (lib/deductionBackfill).
+    expect(d.preTaxDeductions.map((l) => l.label)).toEqual(['401(k)', 'Health & benefits (before itemizing)']);
     expect(d.postTaxDeductions.map((l) => [l.label, l.current])).toEqual([['Roth 401(k)', 50]]);
     expect(d.informational).toEqual([{ label: 'Qualified overtime premium (W-2 box 12 TT)', current: 20, ytd: 20 }]);
     expect(d.hoursTotal).toBe(82);
@@ -241,6 +242,9 @@ describe('new-hire reporting per state', () => {
     let list = await h.get('/pay-compliance/new-hire-reports');
     expect(list.status).toBe(200);
     expect(list.body.reports).toHaveLength(1);
+    // What ships is the CSV for the state portal: the list says so instead of implying an electronic filing.
+    expect(list.body.filing).toMatchObject({ kind: 'MANUAL_UPLOAD', configured: true, provider: { key: 'csv-manual-upload' } });
+    expect(list.body.reports[0].filingService).toBeNull();
     expect(list.body.reports[0]).toMatchObject({ state: 'ME', deadlineDays: 7, confirmDeadlineWithState: true, status: 'DUE' });
     // The employer has no EIN or address yet.
     expect(list.body.reports[0].blockedBy).toEqual(expect.arrayContaining(['Employer EIN missing']));

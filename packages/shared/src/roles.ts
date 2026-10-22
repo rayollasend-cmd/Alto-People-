@@ -436,7 +436,26 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // gated behind manage:communications, which finance does not have.
     'view:communications',
   ]),
-  INTERNAL_RECRUITER: new Set<Capability>(FULL_ADMIN),
+  // The recruiter's own charter (system audit 2026-10-21, #16). It used to be
+  // FULL_ADMIN with a curated menu, so SSN reveal, role changes and API keys
+  // were one typed URL away. Now: the funnel end to end — candidates,
+  // postings, interviews, offers — the hand-off into onboarding (invite, not
+  // review), and READ access to people, documents and compliance to check a
+  // hire's status. No org writes, no payroll, no admin lists, no keys.
+  INTERNAL_RECRUITER: new Set<Capability>([
+    'view:dashboard',
+    'view:recruiting',
+    'manage:recruiting',
+    'view:onboarding',
+    'invite:onboarding',
+    'view:org',
+    'view:documents',
+    'view:compliance',
+    'view:communications',
+    'view:analytics',
+    // The careers-site funnel and source of hire it recruits against.
+    'view:marketing',
+  ]),
   MANAGER: new Set<Capability>([
     ...FULL_ADMIN,
     // Gap 10 — Managers approve their direct reports' reimbursements.
