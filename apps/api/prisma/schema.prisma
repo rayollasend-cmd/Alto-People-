@@ -425,6 +425,8 @@ model User {
   payrollReviewsSigned   PayrollRunReview[] @relation("PayrollReviewSigner")
   /// Brief 2-4: the /v1 API clients this person is accountable for.
   ownedApiClients        ApiClient[]        @relation("ApiClientOwner")
+  /// The new-business prospects this person owns (the Clients pipeline).
+  ownedProspects         ClientProspect[]   @relation("ClientProspectOwner")
   id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email                  String             @unique
   passwordHash           String?            @db.VarChar(255)
@@ -544,6 +546,8 @@ model User {
   delegationsGiven       TeamDelegation[]   @relation("DelegationFrom")
   delegationsReceived    TeamDelegation[]   @relation("DelegationTo")
   client                 Client?            @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  /// The client accounts this person owns (Client.accountOwnerUserId).
+  ownedClientAccounts    Client[]           @relation("ClientAccountOwner")
   location               Site?              @relation("UserStoreScope", fields: [locationId], references: [id], onDelete: SetNull)
   region                 Region?            @relation("UserRegionScope", fields: [regionId], references: [id], onDelete: SetNull)
   orgUnit                OrgUnit?           @relation("UserOrgUnitScope", fields: [orgUnitId], references: [id], onDelete: SetNull)
@@ -793,6 +797,8 @@ model User {
 model Client {
   /// Agent families step 5: credentials every site of this client requires.
   credentialRequirements CredentialRequirement[]
+  /// The pipeline prospects that were won as this client.
+  wonFromProspects       ClientProspect[]        @relation("ClientProspectWon")
   id                     String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Required; the database default (Alto HR) fills a row written outside any tenant context.
   tenantId               String                  @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
@@ -851,6 +857,15 @@ model Client {
   // OR demand 14-day notice). Null = federal default = no state-specific
   // rules enforced.
   state                  String?                 @db.VarChar(2)
+  /// Who at the company owns this account: an internal user of the same
+  /// tenant (never a portal or associate login). Null = nobody named yet.
+  accountOwnerUserId     String?                 @db.Uuid
+  accountOwner           User?                   @relation("ClientAccountOwner", fields: [accountOwnerUserId], references: [id], onDelete: SetNull)
+  /// The contract's term, when one is on file (calendar days; end on or after start).
+  contractStartDate      DateTime?               @db.Date
+  contractEndDate        DateTime?               @db.Date
+  /// The people at the client the account is run with.
+  contacts               ClientContact[]
   // Phase 131 — geofence moved to Location. Each physical site has its
   // own coordinates and radius; lookups read Location.geofence with a
   // "first active Location under this client" fallback for associates
@@ -955,6 +970,39 @@ model Client {
   @@index([status])
   @@index([deletedAt])
   @@index([tenantId])
+  @@index([accountOwnerUserId])
+}
+
+/// The people at a client the account is run with (CL-A, 2026-10-22): who
+/// signs, who pays the statements, who runs the floor. One primary per
+/// client (a partial unique index; the API moves the flag). Soft-deleted.
+model ClientContact {
+  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String            @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  clientId  String            @db.Uuid
+  name      String            @db.VarChar(120)
+  title     String?           @db.VarChar(120)
+  email     String?           @db.VarChar(254)
+  phone     String?           @db.VarChar(40)
+  role      ClientContactRole @default(OTHER)
+  isPrimary Boolean           @default(false)
+  notes     String?           @db.VarChar(1000)
+  createdAt DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime?         @db.Timestamptz(6)
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([clientId])
+}
+
+enum ClientContactRole {
+  PRIMARY
+  BILLING
+  SITE
+  OPERATIONS
+  OTHER
 }
 
 // Phase 131 — Site (table "Location", Brief 2-1b step 7 renamed the model, not the table): a physical work site, under a Client for a staffing tenant or under the tenant alone. State and
@@ -2033,23 +2081,40 @@ enum ProspectStage {
 }
 
 // New-business pipeline — the diversification answer to single-client
-// concentration. Deliberately NOT linked to Client: a prospect becomes a
-// Client only on WON, by the normal client-creation flow.
+// concentration. A prospect is not a Client: it becomes one only on WON,
+// by the normal client-creation flow, and then points at the client it
+// became (wonClientId).
 model ClientProspect {
-  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Brief 2-1: the tenant this row belongs to. Required; the database default (Alto HR) fills a row written outside any tenant context.
-  tenantId       String        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
-  name           String
-  stage          ProspectStage @default(LEAD)
-  estWeeklyHours Int?
-  estBillRate    Decimal?      @db.Decimal(8, 2)
-  notes          String?
-  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
-  deletedAt      DateTime?     @db.Timestamptz(6)
+  tenantId          String        @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  name              String
+  stage             ProspectStage @default(LEAD)
+  estWeeklyHours    Int?
+  estBillRate       Decimal?      @db.Decimal(8, 2)
+  notes             String?
+  /// Who on our side is working this prospect.
+  ownerUserId       String?       @db.Uuid
+  owner             User?         @relation("ClientProspectOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  /// When the work would start if it is won (a calendar day).
+  expectedStartDate DateTime?     @db.Date
+  contactName       String?       @db.VarChar(120)
+  contactEmail      String?       @db.VarChar(254)
+  /// Why it was lost; required on the move to LOST.
+  lostReason        String?       @db.VarChar(500)
+  /// The client this prospect became on WON.
+  wonClientId       String?       @db.Uuid
+  wonClient         Client?       @relation("ClientProspectWon", fields: [wonClientId], references: [id], onDelete: SetNull)
+  /// When the stage last changed — "days in stage" on the board.
+  stageChangedAt    DateTime      @default(now()) @db.Timestamptz(6)
+  createdAt         DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt         DateTime?     @db.Timestamptz(6)
 
   @@index([stage])
   @@index([tenantId])
+  @@index([ownerUserId])
+  @@index([wonClientId])
 }
 
 enum ClockInRequestStatus {

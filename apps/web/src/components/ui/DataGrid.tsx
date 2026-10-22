@@ -132,6 +132,12 @@ export interface DataGridProps<T> {
   /** CSV export of what is on screen. Default on; pass false to disable. */
   exportCsv?: boolean | { filename: string };
   columnChooser?: boolean;
+  /**
+   * Controlled column visibility — a page that saves its layout in a named
+   * view (the clients list) keeps the hidden set itself; the chooser
+   * reports toggles. Uncontrolled (kept per grid, per person) otherwise.
+   */
+  columnsState?: { hidden: ReadonlySet<string>; onChange: (next: Set<string>) => void };
   /** Row selection + a bulk-action bar. `actions` renders with the chosen ids. */
   selectable?: {
     /** Rows that cannot be picked (e.g. the signed-in user). */
@@ -336,6 +342,7 @@ function GridCore<T>({
   sort,
   exportCsv = true,
   columnChooser = true,
+  columnsState,
   selectable,
   onRowClick,
   rowActionLabel,
@@ -418,12 +425,20 @@ function GridCore<T>({
   }, [sortState, onSortChange, sort]);
 
   /* ---- column visibility ------------------------------------------- */
-  const [hidden, setHidden] = React.useState<Set<string>>(() => {
+  const [ownHidden, setHidden] = React.useState<Set<string>>(() => {
     const stored = typeof window !== 'undefined' ? readHidden(id, userId) : null;
     if (stored) return stored;
     return new Set(columns.filter((c) => c.defaultHidden).map((c) => c.key));
   });
+  const hidden: ReadonlySet<string> = columnsState ? columnsState.hidden : ownHidden;
   const toggleColumn = (key: string) => {
+    if (columnsState) {
+      const next = new Set(columnsState.hidden);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      columnsState.onChange(next);
+      return;
+    }
     setHidden((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);

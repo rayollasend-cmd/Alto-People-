@@ -25,3 +25,5 @@ export * from './payrollGoLive.js';
 export * from './attendanceInsights.js';
 export * from './openShift.js';
 export * from './timesheetQueue.js';
+export * from './clientAccount.js';
+export * from './prospects.js';

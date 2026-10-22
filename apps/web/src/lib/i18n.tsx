@@ -86,6 +86,9 @@ const en = {
   'nav.storeScope': 'Client scope',
   'nav.allClients': 'All clients',
   'nav.viewingClient': 'Viewing',
+  'nav.findClient': 'Find a client',
+  'nav.noClientMatch': 'No client matches',
+  'nav.moreClients': '{n} more: type to narrow',
   'nav.displayLanguage': 'Display & language',
   'nav.theme': 'Theme',
 
@@ -4388,6 +4391,9 @@ const en = {
   // The top bar (role walk ops 5, floor 10).
   'top.storeScope': 'Store scope',
   'top.all': 'All',
+  'top.findClient': 'Find a client',
+  'top.noClientMatch': 'No client matches “{q}”',
+  'top.currentScope': 'current',
   'top.back': 'Back',
   'top.logo': 'Company logo',
   'top.breadcrumb': 'Breadcrumb',

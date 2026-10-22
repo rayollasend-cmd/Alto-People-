@@ -1,27 +1,27 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import type { ClientPerformanceStatement } from '@alto-people/shared';
 import { BarChart3 } from 'lucide-react';
 import { useAuth, useTerm } from '@/lib/auth';
-import { listClientStatements } from '@/lib/clientsApi';
+import { getClientPerformance } from '@/lib/clientsApi';
 import { fmtDate, fmtMoney, fmtMoneyCompact } from '@/lib/format';
-import { getNpsResults } from '@/lib/npsApi';
 import { storeTrends } from '@/lib/schedulingApi';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
+import { LegendKey, PALETTE, StackedBarChart, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, TrendLineChart } from '@/components/ui/charts';
 import { Sparkline } from '@/components/ui/charts/Sparkline';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
- * How a client is doing, on its record: hours and margin week by week for
- * each of its locations, its NPS wave by wave, and what each statement
- * billed. Each piece shows only to the people who can read its numbers —
- * labor margin (scheduling, executive, payroll), NPS (executive,
- * marketing), statements (payroll).
+ * How a client is doing, on its record's Performance tab (Clients rebuild,
+ * 2026-10-22): the weeks, the statements, NPS and margin by site. Each
+ * piece shows only to the people who can read its numbers — statements
+ * (process:payroll or view:executive, decided by the API), NPS (executive,
+ * marketing), labor margin (scheduling, executive, payroll).
  */
 
 export interface StoreTrend {
@@ -36,10 +36,6 @@ export interface StoreTrend {
   standardShare?: number;
 }
 
-const weekLabel = (ymd: string) => {
-  const [, m, d] = ymd.slice(0, 10).split('-').map(Number);
-  return `${m}/${d}`;
-};
 const perHour = (v: number | null) => (v === null ? '—' : `${v < 0 ? '−' : ''}${fmtMoney(Math.abs(v))}/h`);
 
 /** Hours-weighted share of a client's time priced at standard rates. */
@@ -75,155 +71,256 @@ export function rollUpWeeks(stores: StoreTrend[]): Array<{ start: string; hours:
     .map(([start, b]) => ({ start, hours: Math.round(b.hours * 10) / 10, marginPerHour: b.marginHours > 0 ? Math.round((b.margin / b.marginHours) * 100) / 100 : null }));
 }
 
-function useClientNumbers(clientId: string) {
-  const { can } = useAuth();
-  const canLabor = can('manage:scheduling') || can('view:executive') || can('process:payroll');
-  const canNps = can('view:executive') || can('view:marketing');
-  const canBill = can('process:payroll');
-  const labor = useQuery({ queryKey: ['clients', clientId, 'storeTrends'], queryFn: () => storeTrends<StoreTrend>(clientId), enabled: canLabor, retry: false, staleTime: 5 * 60_000 });
-  const nps = useQuery({ queryKey: ['executive', 'nps'], queryFn: getNpsResults, enabled: canNps, retry: false });
-  const statements = useQuery({ queryKey: ['clients', clientId, 'statements'], queryFn: () => listClientStatements(clientId), enabled: canBill, retry: false });
-  const stores = labor.data?.stores ?? [];
-  const weeks = rollUpWeeks(stores);
-  const truncated = labor.data?.truncated ?? false;
-  const standardShare = standardShareOf(stores);
-  const npsPoints = nps.data?.clientTrends?.find((c) => c.clientId === clientId)?.points ?? [];
-  const billed = (statements.data?.statements ?? [])
-    .filter((s) => s.snapshot?.totals)
-    .sort((a, b) => a.periodEnd.localeCompare(b.periodEnd))
-    .slice(-12)
-    .map((s) => ({
-      id: s.id,
-      label: s.number !== null ? `#${s.number}` : weekLabel(s.periodEnd),
-      periodEnd: s.periodEnd,
-      amount: s.snapshot.totals.amount,
-      hours: s.snapshot.totals.hours,
-      state: s.status === 'DRAFT' ? ('Draft' as const) : s.paidAt ? ('Paid' as const) : ('Outstanding' as const),
-    }));
-  return { canLabor, canNps, canBill, labor, nps, statements, stores, weeks, npsPoints, billed, truncated, standardShare };
-}
-
-/* ----- The strip at the top of the record -------------------------------- */
-
-function GlanceTile({ label, value, hint, children, onOpen }: { label: string; value: string; hint?: string; children?: React.ReactNode; onOpen?: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex min-w-0 flex-col gap-1 rounded-lg border border-line bg-surface-raised px-3 py-2.5 text-left transition-colors hover:border-gold/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/60"
-    >
-      <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">{label}</span>
-      <span className="flex items-end justify-between gap-2">
-        <span className="text-lg font-semibold tabular-nums text-ink">{value}</span>
-        {children}
-      </span>
-      {hint && <span className="truncate text-2xs text-ink-muted">{hint}</span>}
-    </button>
-  );
-}
-
-/** Four numbers with their trend, above the client's details — each opens the Performance tab. */
-export function ClientGlance({ clientId, onOpen }: { clientId: string; onOpen: () => void }) {
-  const n = useClientNumbers(clientId);
-  const lastWeek = n.weeks[n.weeks.length - 1];
-  const prevWeek = n.weeks[n.weeks.length - 2];
-  const lastNps = [...n.npsPoints].reverse().find((p) => p.nps !== null);
-  const lastBill = n.billed[n.billed.length - 1];
-  const outstanding = n.billed.filter((b) => b.state === 'Outstanding').reduce((s, b) => s + b.amount, 0);
-  const tiles: React.ReactNode[] = [];
-  if (n.canLabor && n.weeks.length > 0) {
-    const hoursDelta = lastWeek && prevWeek ? lastWeek.hours - prevWeek.hours : null;
-    tiles.push(
-      <GlanceTile key="hours" label="Hours last week" value={lastWeek ? lastWeek.hours.toLocaleString('en-US') : '—'} hint={hoursDelta === null ? undefined : `${hoursDelta >= 0 ? '+' : '−'}${Math.abs(Math.round(hoursDelta)).toLocaleString('en-US')} vs the week before`} onOpen={onOpen}>
-        <Sparkline series={n.weeks.map((w) => w.hours)} tone="primary" />
-      </GlanceTile>,
-      <GlanceTile key="margin" label={n.standardShare >= 0.5 ? 'Margin per hour · standard rates' : 'Margin per hour'} value={perHour(lastWeek?.marginPerHour ?? null)} hint={marginBasis(n.standardShare)} onOpen={onOpen}>
-        <Sparkline series={n.weeks.map((w) => w.marginPerHour)} tone={(lastWeek?.marginPerHour ?? 0) < 0 ? 'bad' : 'good'} />
-      </GlanceTile>,
-    );
-  }
-  if (n.canNps && n.npsPoints.some((p) => p.nps !== null)) {
-    tiles.push(
-      <GlanceTile key="nps" label={`NPS · ${lastNps?.quarter ?? ''}`} value={lastNps?.nps === null || lastNps === undefined ? '—' : `${lastNps.nps > 0 ? '+' : ''}${lastNps.nps}`} hint="Their managers’ answer, by quarter" onOpen={onOpen}>
-        <Sparkline series={n.npsPoints.map((p) => p.nps)} tone="primary" />
-      </GlanceTile>,
-    );
-  }
-  if (n.canBill && n.billed.length > 0) {
-    tiles.push(
-      <GlanceTile key="billed" label="Last statement" value={lastBill ? fmtMoneyCompact(lastBill.amount) : '—'} hint={outstanding > 0 ? `${fmtMoney(outstanding)} outstanding` : 'Nothing outstanding'} onOpen={onOpen}>
-        <Sparkline series={n.billed.map((b) => b.amount)} tone="primary" />
-      </GlanceTile>,
-    );
-  }
-  if (tiles.length === 0) return null;
-  return (
-    <div className={cn('grid grid-cols-2 gap-3', tiles.length >= 4 ? 'lg:grid-cols-4' : tiles.length === 3 ? 'lg:grid-cols-3' : '')} aria-label="At a glance">
-      {tiles}
-    </div>
-  );
-}
-
-/** Whether the person can see any of the Performance tab. */
-export function useCanSeeClientPerformance(): boolean {
-  const { can } = useAuth();
-  return can('manage:scheduling') || can('view:executive') || can('process:payroll') || can('view:marketing');
-}
-
 /* ----- The Performance tab ------------------------------------------------ */
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+/** "Oct 4" for a calendar day, read as the day it names (never shifted by the viewer's zone). */
+export const shortDay = (ymd: string) => fmtDate(ymd.slice(0, 10)).replace(/,\s*\d{4}$/, '');
+const longDay = (ymd: string) => fmtDate(ymd.slice(0, 10));
+const pctText = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${Math.round(v * 10) / 10}%`);
+const hoursText = (v: number) => `${Math.round(v).toLocaleString('en-US')}h`;
+
+const STATE_LABEL: Record<ClientPerformanceStatement['state'], string> = { paid: 'Paid', waiting: 'Waiting on payment', draft: 'Draft' };
+/** Paid, waiting (not yet due), late (past due) or a draft — states, so the state colours. */
+type BarState = 'paid' | 'waiting' | 'late' | 'draft';
+const barState = (s: Pick<ClientPerformanceStatement, 'state' | 'daysPastDue'>): BarState => (s.state === 'waiting' && (s.daysPastDue ?? 0) > 0 ? 'late' : s.state);
+const BAR_COLOR: Record<BarState, string> = { paid: PALETTE.good, waiting: PALETTE.warn, late: PALETTE.bad, draft: PALETTE.other };
+
+/** Whether the person can see the Performance tab: anyone who can open the client (the money and NPS parts check their own access). */
+export function useCanSeeClientPerformance(): boolean {
+  const { can } = useAuth();
+  return can('view:clients');
+}
+
+/**
+ * The Performance tab, full width: the last 12 complete weeks (hours with
+ * the overtime among them, fill rate, overtime %), every recent statement
+ * by the day its period ends and whether it is paid, waiting or a draft
+ * (people who read statements), NPS wave by wave (executives and
+ * marketing), and margin per hour by site (scheduling, executives,
+ * payroll). One request for the weeks and statements
+ * (GET /clients/:id/performance); the same definitions as the clients list.
+ */
 export function ClientPerformance({ clientId }: { clientId: string }) {
   const term = useTerm();
-  const n = useClientNumbers(clientId);
+  const { can } = useAuth();
+  const canLabor = can('manage:scheduling') || can('view:executive') || can('process:payroll');
   const storeWord = term('label.store').toLowerCase();
-  const weekRows = useMemo(() => n.weeks.map((w) => ({ week: weekLabel(w.start), hours: w.hours, margin: w.marginPerHour })), [n.weeks]);
-  const loading = (n.canLabor && n.labor.isPending) || (n.canBill && n.statements.isPending) || (n.canNps && n.nps.isPending);
-  if (loading) return <Skeleton className="h-72" />;
-  const nothing = n.weeks.length === 0 && !n.npsPoints.some((p) => p.nps !== null) && n.billed.length === 0;
-  if (nothing) {
-    return <EmptyState icon={BarChart3} title="No numbers yet" description={`Hours, margin, NPS and statements show here once this ${term('label.client').toLowerCase()} has some.`} />;
+  const perf = useQuery({ queryKey: ['clients', clientId, 'performance'], queryFn: () => getClientPerformance(clientId), retry: false, staleTime: 60_000 });
+  const labor = useQuery({ queryKey: ['clients', clientId, 'storeTrends'], queryFn: () => storeTrends<StoreTrend>(clientId), enabled: canLabor, retry: false, staleTime: 5 * 60_000 });
+
+  const weeks = useMemo(
+    () =>
+      (perf.data?.weeks ?? []).map((w) => ({
+        week: shortDay(w.start),
+        start: w.start,
+        regular: Math.round((w.hours - w.overtimeHours) * 10) / 10,
+        overtime: Math.round(w.overtimeHours * 10) / 10,
+        hours: w.hours,
+        overtimePct: w.overtimePct,
+        shifts: w.shifts,
+        filled: w.filled,
+        fillRatePct: w.fillRatePct,
+      })),
+    [perf.data],
+  );
+  const statements = useMemo(
+    () =>
+      (perf.data?.statements ?? []).map((s) => ({
+        ...s,
+        label: shortDay(s.periodEnd),
+        name: s.number !== null ? `#${s.number}` : 'Draft',
+        status: s.state === 'waiting' && s.daysPastDue ? `Waiting · ${s.daysPastDue} day${s.daysPastDue === 1 ? '' : 's'} late` : STATE_LABEL[s.state],
+      })),
+    [perf.data],
+  );
+  const stores = useMemo(() => labor.data?.stores ?? [], [labor.data]);
+  const marginWeeks = useMemo(() => rollUpWeeks(stores).map((w) => ({ week: shortDay(w.start), start: w.start, margin: w.marginPerHour })), [stores]);
+  const standardShare = standardShareOf(stores);
+
+  if (perf.isPending) return <Skeleton className="h-72" />;
+  if (perf.isError || !perf.data) {
+    return <EmptyState icon={BarChart3} title="The numbers could not be loaded" description="Try again in a moment." />;
   }
-  const totalHours = n.weeks.reduce((s, w) => s + w.hours, 0);
+  const p = perf.data;
+  const nps = (p.nps ?? []).filter((x) => x.nps !== null);
+  const totalHours = weeks.reduce((n, w) => n + w.hours, 0);
+  const totalOt = weeks.reduce((n, w) => n + w.overtime, 0);
+  const totalShifts = weeks.reduce((n, w) => n + w.shifts, 0);
+  const totalFilled = weeks.reduce((n, w) => n + w.filled, 0);
+  const weekWord = `${p.weeks.length} full weeks (${WEEKDAYS[p.weekStartsOn] ?? 'Saturday'} to ${WEEKDAYS[(p.weekStartsOn + 6) % 7] ?? 'Friday'})`;
+  const billedTotal = statements.reduce((n, s) => n + s.amount, 0);
+  const waitingTotal = statements.filter((s) => s.state === 'waiting').reduce((n, s) => n + s.open, 0);
 
   return (
     <div className="space-y-4">
-      {n.weeks.length > 0 && (
-        <ChartFrame
-          title="Hours and margin, week by week"
-          description={`The last ${n.weeks.length} full weeks across every ${storeWord}. ${marginBasis(n.standardShare)}.${n.truncated ? ' Too many punches to count them all — the oldest week may read low.' : ''}`}
-          summary={`${Math.round(totalHours).toLocaleString('en-US')} hours over ${n.weeks.length} weeks; the last week ran ${perHour(n.weeks[n.weeks.length - 1]!.marginPerHour)}.`}
-          csvName="client-hours-margin"
-          columns={[
-            { key: 'week', label: 'Week of' },
-            { key: 'hours', label: 'Hours', numeric: true },
-            { key: 'margin', label: 'Margin per hour', numeric: true, format: (v) => perHour(v as number | null) },
+      <ChartFrame
+        title="Hours, week by week"
+        description={`Hours worked here over the last ${weekWord}. Overtime is what the labor rules make overtime — the split pay uses, across every client the person worked for that week.`}
+        summary={totalHours > 0 ? `${Math.round(totalHours).toLocaleString('en-US')} hours over ${p.weeks.length} weeks, ${Math.round(totalOt).toLocaleString('en-US')} of them overtime. The last week ran ${hoursText(weeks[weeks.length - 1]!.hours)}.` : `No hours worked here in the last ${p.weeks.length} weeks.`}
+        csvName="client-hours"
+        rows={totalHours > 0 ? weeks : []}
+        columns={[
+          { key: 'start', label: 'Week of', format: (v) => longDay(String(v)) },
+          { key: 'hours', label: 'Hours', numeric: true, format: (v) => (v as number).toLocaleString('en-US') },
+          { key: 'overtime', label: 'Overtime hours', numeric: true },
+          { key: 'overtimePct', label: 'Overtime %', numeric: true, format: (v) => pctText(v as number | null) },
+        ]}
+        empty={<EmptyState icon={BarChart3} title="No hours yet" description={`Nobody has clocked hours here in the last ${p.weeks.length} weeks.`} />}
+      >
+        <StackedBarChart
+          data={weeks}
+          x="week"
+          series={[
+            { key: 'regular', name: 'Regular hours', color: PALETTE.series[0] },
+            { key: 'overtime', name: 'Overtime', color: PALETTE.series[1] },
           ]}
-          rows={weekRows}
+          format={(v) => Math.round(v).toLocaleString('en-US')}
+          yLabel="Hours"
+          heading={(x) => `Week of ${x}`}
+        />
+      </ChartFrame>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartFrame
+          title="Fill rate, week by week"
+          description="Of the published shifts that started each week, the share that had someone assigned. The dashed line is 95%."
+          summary={totalShifts > 0 ? `${totalFilled.toLocaleString('en-US')} of ${totalShifts.toLocaleString('en-US')} shifts filled over ${p.weeks.length} weeks (${pctText((totalFilled / totalShifts) * 100)}).` : `No shifts were published here in the last ${p.weeks.length} weeks.`}
+          csvName="client-fill-rate"
+          height={220}
+          rows={totalShifts > 0 ? weeks : []}
+          columns={[
+            { key: 'start', label: 'Week of', format: (v) => longDay(String(v)) },
+            { key: 'shifts', label: 'Shifts', numeric: true },
+            { key: 'filled', label: 'Filled', numeric: true },
+            { key: 'fillRatePct', label: 'Fill rate', numeric: true, format: (v) => pctText(v as number | null) },
+          ]}
+          empty={<EmptyState icon={BarChart3} title="No shifts to fill" description={`No shifts were published here in the last ${p.weeks.length} weeks.`} />}
         >
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={weekRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-              <XAxis dataKey="week" tick={TICK} tickLine={false} axisLine={false} />
-              <YAxis yAxisId="h" tick={TICK} tickLine={false} axisLine={false} width={48} />
-              <YAxis yAxisId="m" orientation="right" tick={TICK} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => `$${v}`} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v, name) => (name === 'Margin per hour' ? perHour(Number(v)) : Number(v).toLocaleString('en-US'))} />
-              <Bar yAxisId="h" dataKey="hours" name="Hours" fill={PALETTE.series[0]} radius={[3, 3, 0, 0]} maxBarSize={36} />
-              <Line yAxisId="m" dataKey="margin" name="Margin per hour" stroke={PALETTE.series[1]} strokeWidth={2} dot={{ r: 3 }} connectNulls type="monotone" />
-            </ComposedChart>
-          </ResponsiveContainer>
+          <StackedBarChart data={weeks} x="week" series={[{ key: 'fillRatePct', name: 'Fill rate', color: PALETTE.series[2] }]} format={(v) => `${Math.round(v)}%`} target={{ value: 95, label: '95%' }} heading={(x) => `Week of ${x}`} />
+        </ChartFrame>
+        <ChartFrame
+          title="Overtime, week by week"
+          description="Overtime and double-time hours as a share of the hours worked here each week."
+          summary={totalHours > 0 ? `Overtime was ${pctText((totalOt / totalHours) * 100)} of the hours over ${p.weeks.length} weeks; last week ${pctText(weeks[weeks.length - 1]!.overtimePct)}.` : `No hours worked here in the last ${p.weeks.length} weeks.`}
+          csvName="client-overtime"
+          height={220}
+          rows={totalHours > 0 ? weeks : []}
+          columns={[
+            { key: 'start', label: 'Week of', format: (v) => longDay(String(v)) },
+            { key: 'hours', label: 'Hours', numeric: true },
+            { key: 'overtime', label: 'Overtime hours', numeric: true },
+            { key: 'overtimePct', label: 'Overtime %', numeric: true, format: (v) => pctText(v as number | null) },
+          ]}
+          empty={<EmptyState icon={BarChart3} title="No hours yet" description="Overtime shows once people work here." />}
+        >
+          <StackedBarChart data={weeks} x="week" series={[{ key: 'overtimePct', name: 'Overtime', color: PALETTE.series[1] }]} format={(v) => `${Math.round(v * 10) / 10}%`} heading={(x) => `Week of ${x}`} />
+        </ChartFrame>
+      </div>
+
+      {p.canSeeMoney && (
+        <ChartFrame
+          title="Billed by statement"
+          description="Each statement on the day its period ends: paid, waiting on payment, past due, or still a draft."
+          summary={statements.length ? `${statements.length} statement${statements.length === 1 ? '' : 's'}, ${fmtMoney(billedTotal)} billed in all${waitingTotal > 0 ? `; ${fmtMoney(waitingTotal)} still waiting on payment` : ''}.` : 'No statements yet.'}
+          csvName="client-statements"
+          rows={statements}
+          columns={[
+            { key: 'name', label: 'Statement' },
+            { key: 'periodEnd', label: 'Period ending', format: (v) => longDay(String(v)) },
+            { key: 'hours', label: 'Hours', numeric: true },
+            { key: 'amount', label: 'Billed', numeric: true, format: (v) => fmtMoney(v as number) },
+            { key: 'status', label: 'Status' },
+          ]}
+          empty={<EmptyState icon={BarChart3} title="No statements yet" description="Statements show here once one is drafted for this client." />}
+        >
+          <div className="flex h-full w-full flex-col">
+            <div className="min-h-0 flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={statements} margin={{ top: 12, right: 12, bottom: 0, left: 0 }} barCategoryGap="24%">
+                  <CartesianGrid stroke={PALETTE.grid} vertical={false} />
+                  <XAxis dataKey="label" tick={TICK} tickLine={false} axisLine={false} minTickGap={8} />
+                  <YAxis tick={TICK} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => fmtMoneyCompact(v)} />
+                  <Tooltip
+                    contentStyle={TOOLTIP_STYLE}
+                    labelStyle={TOOLTIP_LABEL_STYLE}
+                    cursor={{ fill: PALETTE.cursor }}
+                    labelFormatter={(_l, payload) => {
+                      const row = payload?.[0]?.payload as (typeof statements)[number] | undefined;
+                      return row ? `${row.name} · period ending ${longDay(row.periodEnd)}` : '';
+                    }}
+                    formatter={(v, _n, item) => [fmtMoney(Number(v)), (item?.payload as (typeof statements)[number] | undefined)?.status ?? 'Billed']}
+                  />
+                  <Bar dataKey="amount" name="Billed" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false}>
+                    {statements.map((s) => (
+                      <Cell key={s.id} fill={BAR_COLOR[barState(s)]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-1">
+              <LegendKey
+                items={[
+                  { name: 'Paid', color: BAR_COLOR.paid },
+                  { name: 'Waiting, not yet due', color: BAR_COLOR.waiting },
+                  { name: 'Past due', color: BAR_COLOR.late },
+                  { name: 'Draft', color: BAR_COLOR.draft },
+                ]}
+              />
+            </div>
+          </div>
         </ChartFrame>
       )}
 
-      {n.stores.length > 1 && (
+      {(nps.length > 0 || (canLabor && marginWeeks.some((w) => w.margin !== null))) && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {nps.length > 0 && (
+            <ChartFrame
+              title="NPS by quarter"
+              description="Their managers’ answer to “how likely are you to recommend us?”, −100 to +100."
+              summary={`NPS over ${nps.length} quarter${nps.length === 1 ? '' : 's'}, latest ${nps[nps.length - 1]!.nps! > 0 ? '+' : ''}${nps[nps.length - 1]!.nps}.`}
+              csvName="client-nps"
+              height={220}
+              rows={p.nps ?? []}
+              columns={[
+                { key: 'quarter', label: 'Quarter' },
+                { key: 'nps', label: 'NPS', numeric: true },
+                { key: 'responses', label: 'Answers', numeric: true },
+              ]}
+            >
+              <TrendLineChart data={p.nps ?? []} x="quarter" series={[{ key: 'nps', name: 'NPS' }]} zeroBased={false} format={(v) => `${v > 0 ? '+' : ''}${Math.round(v)}`} />
+            </ChartFrame>
+          )}
+          {canLabor && marginWeeks.some((w) => w.margin !== null) && (
+            <ChartFrame
+              title="Margin per hour, week by week"
+              description={`Bill less pay, per hour worked, on the company week. ${marginBasis(standardShare)}.${labor.data?.truncated ? ' Too many punches to count them all — the oldest week may read low.' : ''}`}
+              summary={`Margin per hour over ${marginWeeks.length} weeks; the last week ran ${perHour(marginWeeks[marginWeeks.length - 1]!.margin)}.`}
+              csvName="client-margin"
+              height={220}
+              rows={marginWeeks}
+              columns={[
+                { key: 'start', label: 'Week of', format: (v) => longDay(String(v)) },
+                { key: 'margin', label: 'Margin per hour', numeric: true, format: (v) => perHour(v as number | null) },
+              ]}
+            >
+              <TrendLineChart data={marginWeeks} x="week" series={[{ key: 'margin', name: 'Margin per hour', color: PALETTE.good }]} zeroBased={false} format={(v) => `$${Math.round(v * 100) / 100}`} heading={(x) => `Week of ${x}`} />
+            </ChartFrame>
+          )}
+        </div>
+      )}
+
+      {canLabor && stores.length > 1 && (
         <Card>
           <CardContent className="space-y-3 p-4 md:p-5">
-            <SectionTitle as="h3" title={`By ${storeWord}`} description="Hours over the weeks, and the average margin per hour." />
+            <SectionTitle as="h3" title={`By ${storeWord}`} description="Hours over the last four weeks, and the average margin per hour." />
             <ul className="divide-y divide-line">
-              {[...n.stores]
+              {[...stores]
                 .sort((a, b) => b.hours4w - a.hours4w)
                 .map((s) => (
                   <li key={s.locationId} className="flex items-center gap-3 py-2 text-sm">
-                    <span className="min-w-0 flex-1 truncate text-ink">{s.locationName}</span>
+                    <span className="min-w-0 flex-1 break-words text-ink">{s.locationName}</span>
                     <Sparkline series={s.weeks.map((w) => w.hours)} tone="primary" label={`${s.locationName} hours by week`} />
                     <span className="w-20 shrink-0 text-right tabular-nums text-ink-muted">{Math.round(s.hours4w).toLocaleString('en-US')} h</span>
                     <span className={cn('w-24 shrink-0 text-right tabular-nums', s.avgMarginPerHour === null ? 'text-ink-muted' : s.avgMarginPerHour >= 0 ? 'text-success' : 'text-alert')}>
@@ -235,65 +332,6 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
           </CardContent>
         </Card>
       )}
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        {n.npsPoints.some((p) => p.nps !== null) && (
-          <ChartFrame
-            title="NPS by quarter"
-            description="Their managers’ answer to “how likely are you to recommend us?”, −100 to +100."
-            summary={`NPS over ${n.npsPoints.length} quarters, latest ${[...n.npsPoints].reverse().find((p) => p.nps !== null)?.nps ?? '—'}.`}
-            csvName="client-nps"
-            height={220}
-            columns={[
-              { key: 'quarter', label: 'Quarter' },
-              { key: 'nps', label: 'NPS', numeric: true },
-              { key: 'responded', label: 'Answers', numeric: true },
-            ]}
-            rows={n.npsPoints}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={n.npsPoints} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
-                <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                <XAxis dataKey="quarter" tick={TICK} tickLine={false} axisLine={false} />
-                <YAxis domain={[-100, 100]} ticks={[-100, -50, 0, 50, 100]} tick={TICK} tickLine={false} axisLine={false} width={40} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} />
-                <Line dataKey="nps" name="NPS" stroke={PALETTE.series[0]} strokeWidth={2} dot={{ r: 3 }} connectNulls type="monotone" />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartFrame>
-        )}
-        {n.billed.length > 0 && (
-          <ChartFrame
-            title="Billed, statement by statement"
-            description="The last 12 statements. Gold is paid, amber is waiting on payment, grey is still a draft."
-            summary={`${n.billed.length} statements, ${fmtMoney(n.billed.reduce((s, b) => s + b.amount, 0))} billed in all.`}
-            csvName="client-statements"
-            height={220}
-            columns={[
-              { key: 'label', label: 'Statement' },
-              { key: 'periodEnd', label: 'Period ending', format: (v) => fmtDate(String(v)) },
-              { key: 'hours', label: 'Hours', numeric: true },
-              { key: 'amount', label: 'Billed', numeric: true, format: (v) => fmtMoney(v as number) },
-              { key: 'state', label: 'Status' },
-            ]}
-            rows={n.billed}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={n.billed} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                <XAxis dataKey="label" tick={TICK} tickLine={false} axisLine={false} />
-                <YAxis tick={TICK} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => fmtMoneyCompact(v)} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v) => fmtMoney(Number(v))} />
-                <Bar dataKey="amount" name="Billed" radius={[3, 3, 0, 0]} maxBarSize={32}>
-                  {n.billed.map((b) => (
-                    <Cell key={b.id} fill={b.state === 'Paid' ? PALETTE.series[0] : b.state === 'Outstanding' ? PALETTE.warn : PALETTE.other} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartFrame>
-        )}
-      </div>
     </div>
   );
 }

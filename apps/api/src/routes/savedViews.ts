@@ -32,6 +32,7 @@ const SCOPE_CAPABILITY: Record<SavedViewScope, Capability> = {
   'recruiting.candidates': 'view:recruiting',
   'people.directory': 'view:org',
   'onboarding.applications': 'view:onboarding',
+  'clients.list': 'view:clients',
 };
 
 const MAX_VIEWS_PER_OWNER = 50;

@@ -1,6 +1,7 @@
 import type {
   ClientCreateInput,
   ClientListResponse,
+  ClientPerformanceResponse,
   ClientStatement,
   ClientStatementListResponse,
   ClientStateInput,
@@ -21,6 +22,11 @@ export function listClients(
     /** Id of the last client of the previous page (ClientListResponse.nextCursor). */
     cursor?: string;
     limit?: number;
+    /** The account numbers (health, fill rate, hours, owner, money for statements readers) — the clients list only; pickers leave it off. */
+    metrics?: boolean;
+    /** The billed range (YYYY-MM-DD, inclusive); the API defaults to this month to date. */
+    from?: string;
+    to?: string;
   } = {}
 ): Promise<ClientListResponse> {
   const sp = new URLSearchParams();
@@ -28,8 +34,18 @@ export function listClients(
   if (filters.q && filters.q.trim()) sp.set('q', filters.q.trim());
   if (filters.cursor) sp.set('cursor', filters.cursor);
   if (filters.limit != null) sp.set('limit', String(filters.limit));
+  if (filters.metrics) sp.set('include', 'metrics');
+  if (filters.from && filters.to) {
+    sp.set('from', filters.from);
+    sp.set('to', filters.to);
+  }
   const qs = sp.toString();
   return apiFetch<ClientListResponse>(`/clients${qs ? `?${qs}` : ''}`);
+}
+
+/** A client's Performance tab: 12 weeks, statements (money readers), NPS (executives). */
+export function getClientPerformance(id: string): Promise<ClientPerformanceResponse> {
+  return apiFetch<ClientPerformanceResponse>(`/clients/${id}/performance`);
 }
 
 export function getClient(id: string): Promise<ClientSummary> {

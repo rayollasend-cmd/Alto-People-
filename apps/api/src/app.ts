@@ -24,6 +24,7 @@ import { authRouter } from './routes/auth.js';
 import { oidcAuthRouter } from './routes/oidcAuth.js';
 import { samlAuthRouter } from './routes/samlAuth.js';
 import { clientsAccessGate, clientsRouter } from './routes/clients.js';
+import { clientAccountRouter } from './routes/clientAccount.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
 import { timeCorrectionsRouter } from './routes/timeCorrections.js';
@@ -96,6 +97,7 @@ import { opsRouter } from './routes/opsShifts.js';
 import { auditPacketRouter } from './routes/auditPacket.js';
 import { directoryRouter } from './routes/directory.js';
 import { executiveRouter } from './routes/executive.js';
+import { clientProspectsRouter } from './routes/clientProspects.js';
 import { roleDecisionsRouter } from './routes/roleDecisions.js';
 import { inboxRouter } from './routes/inbox.js';
 import { positionsRouter } from './routes/positions.js';
@@ -518,6 +520,11 @@ export function createApp() {
   app.use('/region', requireModule('clientPortal'), regionRouter);
   app.use('/regions', requireModule('clientPortal'), regionsAdminRouter);
   app.use('/clients', requireModule('clientPortal'), clientsAccessGate, clientsRouter);
+  // The account page: overview, contacts, owner options (routes/clientAccount). Same gate.
+  app.use('/clients', requireModule('clientPortal'), clientsAccessGate, clientAccountRouter);
+  // The new-business pipeline (Clients → Pipeline). Self-gates: read on
+  // view:executive or manage:clients, write on manage:clients.
+  app.use('/client-prospects', requireModule('clientPortal'), clientProspectsRouter);
   app.use(
     '/onboarding',
     requireCapability('view:onboarding'),

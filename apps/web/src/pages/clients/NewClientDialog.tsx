@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClientStatus, ClientSummary } from '@alto-people/shared';
@@ -45,9 +45,24 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onCreated: (c: ClientSummary) => void;
+  /** Prefill (the pipeline's "Create the client" on a won prospect). */
+  initialName?: string;
+  initialContactEmail?: string | null;
+  initialStatus?: ClientStatus;
+  title?: string;
+  description?: ReactNode;
 }
 
-export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
+export function NewClientDialog({
+  open,
+  onOpenChange,
+  onCreated,
+  initialName,
+  initialContactEmail,
+  initialStatus,
+  title,
+  description,
+}: Props) {
   const [name, setName] = useState('');
   const [industry, setIndustry] = useState('');
   const [status, setStatus] = useState<ClientStatus>('PROSPECT');
@@ -60,7 +75,14 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
       setIndustry('');
       setStatus('PROSPECT');
       setContactEmail('');
+    } else {
+      // Opening with a prefill (a won prospect) starts from it.
+      if (initialName) setName(initialName);
+      if (initialContactEmail) setContactEmail(initialContactEmail);
+      if (initialStatus) setStatus(initialStatus);
     }
+    // The prefill is read as the dialog opens, not tracked while it is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const submit = async () => {
@@ -99,14 +121,14 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      confirmDiscard={() => name.trim().length > 0}
+      confirmDiscard={() => name.trim().length > 0 && name.trim() !== (initialName ?? '').trim()}
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New client</DialogTitle>
+          <DialogTitle>{title ?? 'New client'}</DialogTitle>
           <DialogDescription>
-            Defaults to Prospect — flip to Active once contracts are signed
-            and you're ready for the live roster numbers to count.
+            {description ??
+              "Defaults to Prospect — flip to Active once contracts are signed and you're ready for the live roster numbers to count."}
           </DialogDescription>
         </DialogHeader>
 

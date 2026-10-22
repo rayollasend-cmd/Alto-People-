@@ -1,58 +1,104 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import {
-  Building2,
-  ClipboardList,
-  DollarSign,
-  FileText,
-  LayoutGrid,
-  List,
-  MapPin,
-  Plus,
-  Users,
-  type LucideIcon,
-} from 'lucide-react';
-import type { ClientListItem, ClientStatus } from '@alto-people/shared';
+import { Building2, FileText, KanbanSquare, LayoutGrid, List, MapPin, Plus } from 'lucide-react';
+import type { ClientListItem } from '@alto-people/shared';
 import { clientServiceReportUrl, listClients } from '@/lib/clientsApi';
+import { listProspects, PROSPECTS_KEY } from '@/lib/prospectsApi';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtRelativeDate, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtMoneyCompact, fmtRelativeDate, ymdLocal } from '@/lib/format';
 // Org-week helper — despite the name it starts weeks on SATURDAY, the
 // Sat→Fri week every payroll/report surface runs on.
 import { startOfWeekMonday } from '@/pages/scheduling/WeekCalendarView';
 import { useAuth, useTerm } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { StatusBadge } from '@/lib/status';
+import { useDesktopTable, useMinWidth } from '@/lib/useViewport';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
-import { DataGrid } from '@/components/ui/DataGrid';
+import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
-import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
-import { NewClientDialog } from './NewClientDialog';
+import { ViewToggle } from '@/components/ui/ViewToggle';
+import { FilterSheet, filtersSummary } from '@/components/FilterSheet';
+import { SavedViewsMenu } from '@/components/SavedViewsMenu';
 import { ListTemplate } from '@/components/templates';
-import { PipelineSection } from './PipelineSection';
-import { rollUpWeeks, standardShareOf, type StoreTrend } from './ClientPerformance';
-import { storeTrends } from '@/lib/schedulingApi';
-import { Sparkline } from '@/components/ui/charts/Sparkline';
+import { NewClientDialog } from './NewClientDialog';
+import { HealthCell, HealthDot, healthSentence } from './ClientHealthDot';
+import {
+  BILLED_RANGES,
+  BUILT_IN_VIEWS,
+  billedRange,
+  builtInViewOf,
+  daysUntil,
+  fromQuery,
+  matches,
+  nextSort,
+  numbersLine,
+  sortClients,
+  toQuery,
+  viewCounts,
+  type BilledRangeKey,
+  type ClientsFilters,
+  type ListState,
+  type StatusFilter,
+} from './clientsList';
 
-const STATUS_FILTERS: Array<{ value: ClientStatus | 'ALL'; label: string }> = [
-  { value: 'ALL', label: 'All' },
-  { value: 'ACTIVE', label: 'Active' },
-  { value: 'PROSPECT', label: 'Prospect' },
-  { value: 'INACTIVE', label: 'Inactive' },
-];
+/**
+ * Clients — every account at a glance (Clients rebuild, 2026-10-22).
+ *
+ * Built to RUN accounts, not configure them: who is working there, how
+ * well the next week is staffed, the hours, what is billed and owed, when
+ * the contract ends, and a health call with its reasons. The table is the
+ * default (the choice is remembered per person); cards remain; a phone gets
+ * one compact row per account. Built-in views (Needs attention, Mine,
+ * Contract ending…) and saved views (name + filters + sort + columns, kept
+ * server-side per person) sit over the same rows. Money columns show only
+ * to people who can read statements — the API leaves the fields out for
+ * everyone else, so there is nothing to hide.
+ */
 
-const VIEW_OPTIONS = ['cards', 'table'] as const;
-type ClientsView = (typeof VIEW_OPTIONS)[number];
+type Layout = 'table' | 'cards';
+const LAYOUTS: readonly Layout[] = ['table', 'cards'];
+/** Columns off until someone turns them on. */
+const DEFAULT_HIDDEN = ['industry', 'state', 'openApplications'];
 
-// Shared relative formatter — one "time ago" dialect across the app.
-const fmtRelative = (iso: string | null): string => fmtRelativeDate(iso);
+const layoutKey = (userId: string | null) => `alto.clients.layout.v2.${userId ?? 'anon'}`;
+const colsKey = (userId: string | null) => `alto.clients.cols.v1.${userId ?? 'anon'}`;
+
+function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? null : parse(raw);
+  } catch {
+    return null;
+  }
+}
+function writeStored(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* a per-person convenience; storage may be unavailable */
+  }
+}
+
+/** The table or the cards, remembered for this person on this browser. */
+function useLayout(userId: string | null): [Layout, (next: Layout) => void] {
+  const [layout, setLayout] = useState<Layout>(() => readStored(layoutKey(userId), (raw) => (LAYOUTS.includes(raw as Layout) ? (raw as Layout) : null)) ?? 'table');
+  const set = useCallback(
+    (next: Layout) => {
+      setLayout(next);
+      writeStored(layoutKey(userId), next);
+    },
+    [userId],
+  );
+  return [layout, set];
+}
 
 /** The 8 most recent COMPLETED org weeks (Sat 00:00 → Fri), newest first —
  *  the weeks the service-report endpoint can cover. `value` is the week
@@ -70,49 +116,139 @@ export function serviceReportWeekOptions(): Array<{ value: string; label: string
   return out;
 }
 
+const STATUS_CHIPS: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'ALL', label: 'All' },
+  { value: 'ACTIVE', label: 'Active' },
+  { value: 'INACTIVE', label: 'Inactive' },
+  { value: 'PROSPECT', label: 'Prospect' },
+];
+
+const pct = (v: number) => `${Math.round(v)}%`;
+/** Hours as people say them: a tenth under 10, whole hours above. */
+const hoursText = (h: number) => `${(h < 10 ? Math.round(h * 10) / 10 : Math.round(h)).toLocaleString('en-US')}h`;
+
 export function ClientsHome() {
   const term = useTerm();
-  const { can } = useAuth();
+  const { user, can } = useAuth();
+  const me = user?.id ?? null;
   const canManage = can('manage:clients');
-  // The weekly service-report endpoint is billing-gated; the button only
-  // renders for logins that can actually download it.
-  const canReport = can('process:payroll') || can('view:executive');
-  // Four weeks of hours and margin per client, for the row's trend line —
-  // labor margin reads to scheduling, executives and payroll only.
-  const canTrend = can('manage:scheduling') || can('view:executive') || can('process:payroll');
-  const trendsQuery = useQuery({ queryKey: ['clients', 'storeTrends', 'all'], queryFn: () => storeTrends<StoreTrend>(null), enabled: canTrend, retry: false, staleTime: 5 * 60_000 });
-  const trendByClient = useMemo(() => {
-    const byClient = new Map<string, StoreTrend[]>();
-    for (const st of trendsQuery.data?.stores ?? []) byClient.set(st.clientId, [...(byClient.get(st.clientId) ?? []), st]);
-    return new Map([...byClient.entries()].map(([id, stores]) => [id, { weeks: rollUpWeeks(stores), standardShare: standardShareOf(stores) }]));
-  }, [trendsQuery.data]);
-  // Capped at the server (too many punches to count): the oldest week reads
-  // low and every line would seem to climb — so no trend column at all.
-  const trendsTruncated = trendsQuery.data?.truncated ?? false;
-  // Per-row busy tracking so several clients' reports can generate in
-  // parallel — a single busy id serialized the whole run.
-  const [reportBusyIds, setReportBusyIds] = useState<Set<string>>(new Set());
-  // Which org week every per-row PDF link covers. Defaults to the last
-  // completed week — the server's own default when no week is passed.
-  const reportWeeks = useMemo(serviceReportWeekOptions, []);
-  const [reportWeek, setReportWeek] = useState(reportWeeks[0].value);
+  // Statements readers: the money columns, the service-report PDF and the weekly statements desk.
+  const canMoney = can('process:payroll') || can('view:executive');
+  const canStatementsTab = can('process:payroll');
+  const canPipeline = can('manage:clients') || can('view:executive');
+  const canSchedule = can('manage:scheduling') || can('view:scheduling');
+  const canTime = can('manage:time');
+  const today = ymdLocal();
 
+  const desktopTable = useDesktopTable();
+  const phone = !useMinWidth(640);
+  const [layout, setLayout] = useLayout(me);
+
+  /* ----- The list's state lives in the URL (Back restores it; a view is a link) ----- */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [hidden, setHiddenState] = useState<string[]>(
+    () => readStored(colsKey(me), (raw) => {
+      const v: unknown = JSON.parse(raw);
+      return Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : null;
+    }) ?? DEFAULT_HIDDEN,
+  );
+  const setHidden = useCallback(
+    (next: string[]) => {
+      setHiddenState(next);
+      writeStored(colsKey(me), JSON.stringify(next));
+    },
+    [me],
+  );
+  const state: ListState = useMemo(
+    () => ({ ...fromQuery(Object.fromEntries(searchParams.entries()), { hidden: DEFAULT_HIDDEN }), hidden }),
+    [searchParams, hidden],
+  );
+  const writeState = useCallback(
+    (next: Partial<ListState>, opts: { keepView?: boolean } = {}) => {
+      const merged: ListState = { ...state, ...next };
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(toQuery(merged));
+          // The applied saved view rides along (?sv=) — its menu says when the filters drift from it —
+          // until a built-in view replaces it.
+          const sv = prev.get('sv');
+          if (sv && opts.keepView !== false) p.set('sv', sv);
+          return p;
+        },
+        { replace: true },
+      );
+    },
+    [state, setSearchParams],
+  );
+  const setFilters = (f: Partial<ClientsFilters>) => writeState({ filters: { ...state.filters, ...f } });
+
+  // The search box answers at once; the URL (and the server search) follow a beat later.
+  const [query, setQuery] = useState(state.q);
+  const lastWrittenQ = useRef(state.q);
+  useEffect(() => {
+    if (query === state.q) return;
+    const t = setTimeout(() => {
+      lastWrittenQ.current = query;
+      writeState({ q: query });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query, state.q, writeState]);
+  // Only when the URL changes underneath the box (Back, a view applied) — never an echo of typing.
+  useEffect(() => {
+    if (state.q === lastWrittenQ.current) return;
+    lastWrittenQ.current = state.q;
+    setQuery(state.q);
+  }, [state.q]);
+
+  const range = billedRange(state.range, today);
+
+  /* ----- Data ----- */
+  // Every status is loaded and narrowed here, so the views can count what they hold.
+  const clientsQuery = useInfiniteQuery({
+    queryKey: ['clients', 'list', state.q, range.from, range.to],
+    queryFn: ({ pageParam }) => listClients({ q: state.q, metrics: true, from: range.from, to: range.to, ...(pageParam ? { cursor: pageParam } : {}) }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    placeholderData: (prev) => prev,
+  });
+  const pipelineQuery = useQuery({ queryKey: PROSPECTS_KEY, queryFn: listProspects, enabled: canPipeline, retry: false, staleTime: 60_000 });
+  const openProspects = pipelineQuery.data?.totals.open ?? null;
+
+  const all = useMemo(() => (clientsQuery.data ? clientsQuery.data.pages.flatMap((pg) => pg.clients) : null), [clientsQuery.data]);
+  const ctx = useMemo(() => ({ me, today }), [me, today]);
+  const counts = useMemo(() => viewCounts(all ?? [], ctx), [all, ctx]);
+  const rows = useMemo(() => (all ? sortClients(all.filter((c) => matches(c, state.filters, ctx)), state.sort) : null), [all, state.filters, state.sort, ctx]);
+  const prospectsListed = (all ?? []).some((c) => c.status === 'PROSPECT');
+  const moreOnServer = clientsQuery.hasNextPage;
+  const error = clientsQuery.error ? (clientsQuery.error instanceof ApiError ? clientsQuery.error.message : 'The clients could not be loaded.') : null;
+  const activeView = builtInViewOf(state.filters);
+  const showGrid = !phone && layout === 'table' && desktopTable && !!rows && rows.length > 0;
+  const filtered = activeView !== 'all' || state.q.trim().length > 0;
+
+  /* ----- Saved views ----- */
+  const savedViewId = searchParams.get('sv');
+  const viewQuery = useMemo(() => toQuery(state, { cols: true, defaultHidden: DEFAULT_HIDDEN }), [state]);
+  const applySavedView = (id: string | null, q: Record<string, string>) => {
+    const next = fromQuery(q, { hidden: DEFAULT_HIDDEN });
+    setHidden(next.hidden);
+    setQuery(next.q);
+    const p = new URLSearchParams(toQuery(next));
+    if (id) p.set('sv', id);
+    setSearchParams(p, { replace: true });
+  };
+
+  /* ----- The service-report PDF (unchanged behaviour) ----- */
+  const [reportBusyIds, setReportBusyIds] = useState<Set<string>>(new Set());
+  const reportWeeks = useMemo(serviceReportWeekOptions, []);
+  const [reportWeek, setReportWeek] = useState(reportWeeks[0]!.value);
   const downloadReport = async (clientId: string, clientName: string) => {
     if (reportBusyIds.has(clientId)) return;
-    // Functional updates — concurrent downloads must not clear each other.
-    setReportBusyIds((prev) => {
-      const n = new Set(prev);
-      n.add(clientId);
-      return n;
-    });
+    setReportBusyIds((prev) => new Set(prev).add(clientId));
     try {
-      const res = await fetch(clientServiceReportUrl(clientId, reportWeek), {
-        credentials: 'include',
-      });
+      const res = await fetch(clientServiceReportUrl(clientId, reportWeek), { credentials: 'include' });
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
-      const cd = res.headers.get('content-disposition') ?? '';
-      const m = /filename="([^"]+)"/.exec(cd);
+      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '');
       const objUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = objUrl;
@@ -134,474 +270,597 @@ export function ClientsHome() {
   };
 
   const [showNew, setShowNew] = useState(false);
-  // Filter + search live in the URL (?status=&q=, replace-mode) so
-  // opening a client and coming Back restores the same slice of the list.
-  const [statusFilter, setStatusFilter] = useState<ClientStatus | 'ALL'>(() => {
-    const s = new URLSearchParams(window.location.search).get('status');
-    return s && STATUS_FILTERS.some((f) => f.value === s)
-      ? (s as ClientStatus | 'ALL')
-      : 'ALL';
-  });
-  const [query, setQuery] = useState(
-    () => new URLSearchParams(window.location.search).get('q') ?? '',
-  );
-  const [appliedQuery, setAppliedQuery] = useState(query);
-  const [view, setView] = useViewMode<ClientsView>('clients', 'cards', VIEW_OPTIONS);
-  useEffect(() => {
-    const t = setTimeout(() => setAppliedQuery(query), 250);
-    return () => clearTimeout(t);
-  }, [query]);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
-  // The same cursor-paged shape as the audit log, on the same query: the
-  // pages are one cache entry keyed by the filters, Back restores the
-  // scrolled list instantly, and "Load more" appends a page.
-  const clientsQuery = useInfiniteQuery({
-    queryKey: ['clients', 'list', statusFilter, appliedQuery],
-    queryFn: ({ pageParam }) =>
-      listClients({
-        status: statusFilter === 'ALL' ? undefined : statusFilter,
-        q: appliedQuery,
-        ...(pageParam ? { cursor: pageParam } : {}),
-      }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
-    placeholderData: (prev) => prev,
-  });
-  const items = clientsQuery.data ? clientsQuery.data.pages.flatMap((pg) => pg.clients) : null;
-  const nextCursor = clientsQuery.hasNextPage ? 'more' : null;
-  const loadingMore = clientsQuery.isFetchingNextPage;
-  const error = clientsQuery.error
-    ? clientsQuery.error instanceof ApiError
-      ? clientsQuery.error.message
-      : 'Failed to load.'
-    : null;
-  const refresh = () => clientsQuery.refetch();
-  const loadMore = () => {
-    if (clientsQuery.hasNextPage && !clientsQuery.isFetchingNextPage) void clientsQuery.fetchNextPage();
-  };
+  /* ----- Links behind the numbers ----- */
+  // The same link the client's overview puts behind its On assignment tile.
+  const peopleHref = (c: ClientListItem) => (can('view:org') ? `/people?client=${c.id}&status=ACTIVE` : `/clients/${c.id}`);
+  const moneyHref = (c: ClientListItem) => `/clients/${c.id}?section=${canStatementsTab ? 'statements' : 'performance'}`;
+  const fillHref = (c: ClientListItem) => (canSchedule ? `/scheduling?client=${c.id}` : `/clients/${c.id}?section=performance`);
+  const hoursHref = (c: ClientListItem) => (canTime ? `/time-attendance/timesheets?client=${c.id}` : `/clients/${c.id}?section=performance`);
 
-  const [, setSearchParams] = useSearchParams();
-
-  // Mirror filter + debounced search into the URL. Replace-mode so
-  // filter clicks don't pile up history entries — Back still leaves the
-  // page in one press, and detail→Back restores the filters.
-  useEffect(() => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (statusFilter === 'ALL') next.delete('status');
-        else next.set('status', statusFilter);
-        if (appliedQuery) next.set('q', appliedQuery);
-        else next.delete('q');
-        return next;
+  /* ----- The table ----- */
+  const billedHeader = `Billed · ${range.short}`;
+  const columns: Array<GridColumn<ClientListItem>> = [
+    {
+      key: 'name',
+      header: 'Name',
+      accessor: (c) => c.name,
+      sortable: true,
+      primary: true,
+      className: 'min-w-[10rem]',
+      cell: (c) => (
+        <div className="flex items-center gap-2.5">
+          <Avatar name={c.name} size="sm" />
+          <div className="min-w-0">
+            <Link to={`/clients/${c.id}`} className="break-words font-medium text-ink underline-offset-4 hover:text-gold-bright hover:underline">
+              {c.name}
+            </Link>
+            {c.state && (
+              <div className="flex items-center gap-0.5 text-2xs text-ink-muted">
+                <MapPin className="h-3 w-3" aria-hidden="true" />
+                {c.state}
+              </div>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'health',
+      header: 'Health',
+      accessor: (c) => (c.health ? ({ risk: 0, watch: 1, good: 2 } as const)[c.health] : null),
+      csv: (c) => (c.health ? healthSentence(c.health, c.healthReasons ?? []) : ''),
+      sortable: true,
+      searchable: false,
+      cell: (c) => <HealthCell health={c.health} reasons={c.healthReasons} />,
+    },
+    {
+      key: 'owner',
+      header: 'Owner',
+      accessor: (c) => c.accountOwner?.name ?? null,
+      sortable: true,
+      cell: (c) =>
+        c.accountOwner ? (
+          // An owner with no name on file reads as their email; the part before the @ is enough in a column.
+          <span className="text-ink" title={c.accountOwner.name}>
+            {c.accountOwner.name.includes('@') ? c.accountOwner.name.split('@')[0] : c.accountOwner.name}
+          </span>
+        ) : (
+          <span className="whitespace-nowrap text-ink-subtle">No owner</span>
+        ),
+    },
+    {
+      key: 'onAssignment',
+      header: 'On assignment',
+      accessor: (c) => c.onAssignment ?? c.activeAssociateCount,
+      sortable: true,
+      align: 'right',
+      className: 'tabular-nums',
+      cell: (c) => {
+        const n = c.onAssignment ?? c.activeAssociateCount;
+        return (
+          <Link to={peopleHref(c)} className={cn('hover:underline', n > 0 ? 'text-ink' : 'text-ink-subtle')} title={`${n} working at ${c.name} now`}>
+            {n.toLocaleString('en-US')}
+          </Link>
+        );
       },
-      { replace: true },
-    );
-  }, [statusFilter, appliedQuery, setSearchParams]);
+    },
+    {
+      key: 'fillRate',
+      header: 'Filled, next\u00a07\u00a0days',
+      accessor: (c) => c.fillRatePct ?? null,
+      csv: (c) => (c.fillRatePct == null ? '' : `${Math.round(c.fillRatePct)}%`),
+      sortable: true,
+      align: 'right',
+      className: 'tabular-nums',
+      cell: (c) =>
+        c.fillRatePct == null || !c.shiftsNext7 ? (
+          <span className="whitespace-nowrap text-ink-subtle" title="No shifts start in the next 7 days">No shifts</span>
+        ) : (
+          <Link to={fillHref(c)} className="inline-flex flex-col items-end leading-tight hover:underline">
+            <span className={c.fillRatePct < 80 ? 'text-alert' : c.fillRatePct < 95 ? 'text-warning' : 'text-ink'}>{pct(c.fillRatePct)}</span>
+            <span className="text-2xs text-ink-muted">
+              {c.shiftsNext7.filled} of {c.shiftsNext7.total}
+            </span>
+          </Link>
+        ),
+    },
+    {
+      key: 'hours',
+      header: 'Hours this\u00a0week',
+      accessor: (c) => c.hoursThisWeek ?? null,
+      csv: (c) => (c.hoursThisWeek == null ? '' : String(c.hoursThisWeek)),
+      sortable: true,
+      align: 'right',
+      className: 'tabular-nums',
+      cell: (c) =>
+        !c.hoursThisWeek ? (
+          <span className="whitespace-nowrap text-ink-subtle" title="No hours worked here yet this week">No hours</span>
+        ) : (
+          <Link to={hoursHref(c)} className="text-ink hover:underline">
+            {hoursText(c.hoursThisWeek)}
+          </Link>
+        ),
+    },
+    ...(canMoney
+      ? ([
+          {
+            key: 'billed',
+            header: billedHeader,
+            accessor: (c) => c.billedInRange ?? null,
+            csv: (c) => (c.billedInRange == null ? '' : c.billedInRange.toFixed(2)),
+            sortable: true,
+            align: 'right',
+            className: 'tabular-nums',
+            cell: (c) =>
+              c.billedInRange == null ? (
+                <span className="text-ink-subtle">—</span>
+              ) : c.billedInRange === 0 ? (
+                <span className="text-ink-subtle">$0</span>
+              ) : (
+                <Link to={moneyHref(c)} className="text-ink hover:underline" title={fmtMoney(c.billedInRange)}>
+                  {fmtMoneyCompact(c.billedInRange)}
+                </Link>
+              ),
+          },
+          {
+            key: 'outstanding',
+            header: 'Outstanding',
+            accessor: (c) => c.outstanding ?? null,
+            csv: (c) => (c.outstanding == null ? '' : c.outstanding.toFixed(2)),
+            sortable: true,
+            align: 'right',
+            className: 'tabular-nums',
+            cell: (c) => {
+              if (c.outstanding == null) return <span className="text-ink-subtle">—</span>;
+              if (c.outstanding === 0) return <span className="text-ink-subtle">$0</span>;
+              const late = (c.healthReasons ?? []).some((r) => r.includes('past due'));
+              return (
+                <Link to={moneyHref(c)} className={cn('hover:underline', late ? 'text-alert' : 'text-ink')} title={fmtMoney(c.outstanding)}>
+                  {fmtMoneyCompact(c.outstanding)}
+                </Link>
+              );
+            },
+          },
+        ] satisfies Array<GridColumn<ClientListItem>>)
+      : []),
+    {
+      key: 'contractEnds',
+      header: 'Contract ends',
+      accessor: (c) => c.contractEndDate ?? null,
+      csv: (c) => c.contractEndDate ?? '',
+      sortable: true,
+      cell: (c) => <ContractEnds date={c.contractEndDate ?? null} today={today} />,
+    },
+    {
+      key: 'lastPayroll',
+      header: 'Last payroll',
+      accessor: (c) => (c.lastPayrollDisbursedAt ? Date.parse(c.lastPayrollDisbursedAt) : null),
+      csv: (c) => c.lastPayrollDisbursedAt ?? '',
+      sortable: true,
+      className: 'whitespace-nowrap text-ink-muted',
+      cell: (c) => (c.lastPayrollDisbursedAt ? <span title={fmtDate(c.lastPayrollDisbursedAt)}>{fmtRelativeDate(c.lastPayrollDisbursedAt)}</span> : <span className="text-ink-subtle">None yet</span>),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      accessor: (c) => c.status,
+      sortable: true,
+      cell: (c) => <StatusBadge status={c.status} />,
+    },
+    { key: 'industry', header: 'Industry', accessor: (c) => c.industry, sortable: true, defaultHidden: true, className: 'text-ink-muted' },
+    { key: 'state', header: 'State', accessor: (c) => c.state, sortable: true, defaultHidden: true, cell: (c) => (c.state ? <span className="text-ink-muted">{c.state}</span> : <span className="text-ink-subtle">—</span>) },
+    {
+      key: 'openApplications',
+      header: 'Open apps',
+      accessor: (c) => c.openApplications,
+      sortable: true,
+      defaultHidden: true,
+      align: 'right',
+      className: 'tabular-nums text-ink-muted',
+    },
+    ...(canMoney
+      ? ([
+          {
+            key: 'report',
+            header: 'Report',
+            accessor: () => null,
+            searchable: false,
+            csv: () => '',
+            cell: (c) => (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void downloadReport(c.id, c.name)}
+                loading={reportBusyIds.has(c.id)}
+                title={`Download ${c.name}'s weekly service report for the selected week — the client-facing PDF.`}
+                aria-label={`Download service report for ${c.name}`}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span className="sr-only">PDF</span>
+              </Button>
+            ),
+          },
+        ] satisfies Array<GridColumn<ClientListItem>>)
+      : []),
+  ];
+  const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+
+  /* ----- Controls ----- */
+  const viewChips = (
+    <div role="group" aria-label="Views" className="flex flex-wrap items-center gap-1.5">
+      {BUILT_IN_VIEWS.map((v) => (
+        <FilterChip key={v.key} active={activeView === v.key && !savedViewId} title={v.hint} onClick={() => writeState({ filters: v.filters }, { keepView: false })}>
+          {v.label}
+          {all && v.key !== 'all' && <span className="ml-1 tabular-nums text-ink-muted">{counts[v.key]}</span>}
+        </FilterChip>
+      ))}
+    </div>
+  );
+  const savedViews = (
+    <SavedViewsMenu scope="clients.list" current={viewQuery} activeId={savedViewId} onApply={applySavedView} allLabel="Saved views" />
+  );
+  const statusChips = (
+    <div role="group" aria-label="Status" className="flex flex-wrap items-center gap-1.5">
+      {STATUS_CHIPS.filter((s) => s.value !== 'PROSPECT' || prospectsListed || state.filters.status === 'PROSPECT').map((s) => (
+        <FilterChip key={s.value} active={state.filters.status === s.value} onClick={() => setFilters({ status: s.value })}>
+          {s.label}
+        </FilterChip>
+      ))}
+    </div>
+  );
+  const rangeSelect = canMoney ? (
+    <Select size="sm" aria-label="Billed in" title="The period the Billed column covers" value={state.range} onChange={(e) => writeState({ range: e.target.value as BilledRangeKey })} className="w-auto">
+      {BILLED_RANGES.map((r) => (
+        <option key={r.key} value={r.key}>
+          Billed: {r.label.toLowerCase()}
+        </option>
+      ))}
+    </Select>
+  ) : null;
+  const searchBox = (
+    <SearchInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search accounts…" aria-label="Search clients" wrapperClassName={phone ? 'w-full' : 'w-64'} />
+  );
+  const countLine = rows ? `${rows.length.toLocaleString('en-US')} ${rows.length === 1 ? 'account' : 'accounts'}${moreOnServer ? ' shown' : ''}` : '';
+  const listControls = (
+    <>
+      <span className="text-xs text-ink-muted">Status</span>
+      {statusChips}
+      {searchBox}
+      {rangeSelect}
+      {canMoney && layout === 'table' && desktopTable && (
+        <Select size="sm" aria-label="Service report week" title="Org week (Sat–Fri) each row's service-report PDF covers" value={reportWeek} onChange={(e) => setReportWeek(e.target.value)} className="w-auto">
+          {reportWeeks.map((w) => (
+            <option key={w.value} value={w.value}>
+              Report: {w.label}
+            </option>
+          ))}
+        </Select>
+      )}
+      {(layout === 'cards' || !rows || rows.length === 0) && <span className="ml-auto text-2xs tabular-nums text-ink-muted">{countLine}</span>}
+      <ViewToggle<Layout>
+        value={layout}
+        onChange={setLayout}
+        className={layout === 'cards' || !rows || rows.length === 0 ? undefined : 'ml-auto'}
+        options={[
+          { value: 'table', label: 'Table', icon: List },
+          { value: 'cards', label: 'Cards', icon: LayoutGrid },
+        ]}
+      />
+    </>
+  );
+  const activeFilterCount = (activeView === 'all' ? 0 : 1) + (state.range !== 'month' ? 1 : 0);
 
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Clients"
-        subtitle="Configure work-site state, geofence, and per-client jobs."
-        breadcrumbs={[{ label: term('nav.clients') }]}
-        secondaryActions={
-          canReport ? (
+      title={term('nav.clients')}
+      subtitle="Every account at a glance: who's working, what's billed, and what needs you."
+      breadcrumbs={[{ label: term('nav.clients') }]}
+      secondaryActions={
+        <>
+          {canMoney && (
             <Button asChild variant="outline">
               <Link to="/clients/statements">
                 <FileText className="h-4 w-4" />
                 Weekly statements
               </Link>
             </Button>
-          ) : undefined
-        }
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="h-4 w-4" />
-              New client
+          )}
+          {canPipeline && (
+            <Button asChild variant="outline">
+              <Link to="/clients/pipeline">
+                <KanbanSquare className="h-4 w-4" />
+                Pipeline
+                {openProspects !== null && openProspects > 0 && <span className="tabular-nums text-ink-muted">{openProspects}</span>}
+              </Link>
             </Button>
-          ) : undefined
-        }
+          )}
+        </>
+      }
+      primaryAction={
+        canManage ? (
+          <Button onClick={() => setShowNew(true)}>
+            <Plus className="h-4 w-4" />
+            New client
+          </Button>
+        ) : undefined
+      }
     >
-
       {error && (
-        <ErrorBanner className="mb-4">
+        <ErrorBanner>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>{error}</span>
-            <Button size="sm" variant="outline" onClick={() => refresh()}>
+            <Button size="sm" variant="outline" onClick={() => void clientsQuery.refetch()}>
               Retry
             </Button>
           </div>
         </ErrorBanner>
       )}
 
-      <FilterBar className="mb-4">
-        {STATUS_FILTERS.map((f) => (
-          <FilterChip
-            key={f.value}
-            active={statusFilter === f.value}
-            onClick={() => setStatusFilter(f.value)}
-          >
-            {f.label}
-          </FilterChip>
-        ))}
-        <div className="flex-1 min-w-[14rem] max-w-md">
-          <SearchInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name…"
-            aria-label="Search clients"
-          />
-        </div>
-        <span className="ml-auto text-2xs text-silver/80 tabular-nums">
-          {items
-            ? nextCursor
-              ? // More pages exist server-side — don't present the page
-                // length as the total.
-                `${items.length} shown`
-              : `${items.length} client${items.length === 1 ? '' : 's'}`
-            : ''}
-        </span>
-        {canReport && view === 'table' && (
-          <Select
-            size="sm"
-            aria-label="Service report week"
-            title="Org week (Sat–Fri) each row's service-report PDF covers"
-            value={reportWeek}
-            onChange={(e) => setReportWeek(e.target.value)}
-            className="max-w-[16rem]"
-          >
-            {reportWeeks.map((w) => (
-              <option key={w.value} value={w.value}>
-                {w.label}
-              </option>
-            ))}
-          </Select>
-        )}
-        <ViewToggle<ClientsView>
-          value={view}
-          onChange={setView}
-          options={[
-            { value: 'cards', label: 'Cards', icon: LayoutGrid },
-            { value: 'table', label: 'Table', icon: List },
-          ]}
-        />
-      </FilterBar>
+      {!phone && all && all.length > 0 && <PortfolioStrip rows={all} canMoney={canMoney} attention={counts.attention} onAttention={() => writeState({ filters: BUILT_IN_VIEWS[1]!.filters }, { keepView: false })} onActive={() => setFilters({ status: 'ACTIVE' })} />}
 
-      {!items && !error && view === 'cards' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {phone ? (
+        <div className="space-y-2">
+          {searchBox}
+          <div className="flex items-center justify-between gap-2">
+            <FilterSheet mobile open={sheetOpen} onOpenChange={setSheetOpen} summary={filtersSummary(activeFilterCount)} description="Pick a view or narrow the accounts, then close to see them.">
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-ink-muted">View</p>
+                {viewChips}
+                <div className="pt-1">{savedViews}</div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-ink-muted">Status</p>
+                {statusChips}
+              </div>
+              {rangeSelect}
+            </FilterSheet>
+            <span className="text-2xs tabular-nums text-ink-muted">{countLine}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {viewChips}
+            {savedViews}
+          </div>
+          {!showGrid && <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-surface-sunken/40 px-3 py-2">{listControls}</div>}
+        </div>
+      )}
+
+      {!rows && !error && (phone || layout === 'table' ? (
+        <Card>
+          <div className="p-2">
+            <SkeletonRows count={phone ? 5 : 6} rowHeight={phone ? 'h-14' : 'h-12'} />
+          </div>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-44" />
           ))}
         </div>
-      )}
+      ))}
 
-      {!items && !error && view === 'table' && (
-        <Card>
-          <div className="p-2">
-            <SkeletonRows count={4} rowHeight="h-12" />
-          </div>
-        </Card>
-      )}
-
-      {items && items.length === 0 && (
+      {rows && rows.length === 0 && (
         <EmptyState
           icon={Building2}
-          title={
-            statusFilter !== 'ALL' || appliedQuery.length > 0
-              ? 'No matching clients'
-              : 'No clients yet'
-          }
+          title={filtered ? 'No accounts match' : 'No clients yet'}
           description={
-            statusFilter !== 'ALL' || appliedQuery.length > 0
-              ? 'Try clearing the filter or search.'
+            filtered
+              ? activeView === 'mine'
+                ? 'No account names you as its owner. Owners are set on each client.'
+                : 'Try another view or clear the search.'
               : canManage
-                ? 'Click "New client" above to add your first one.'
-                : "Once a client account is created, it'll appear here."
+                ? 'Add your first client with “New client” above.'
+                : 'Accounts appear here once one is created.'
+          }
+          action={
+            filtered ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setQuery('');
+                  writeState({ filters: BUILT_IN_VIEWS[0]!.filters, q: '' }, { keepView: false });
+                }}
+              >
+                Show every account
+              </Button>
+            ) : undefined
           }
         />
       )}
 
-      {items && items.length > 0 && view === 'cards' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {items.map((c) => (
-            <ClientCard key={c.id} client={c} />
+      {rows && rows.length > 0 && (phone || (layout === 'table' && !desktopTable)) && <PhoneRows rows={rows} />}
+
+      {rows && rows.length > 0 && !phone && layout === 'cards' && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {rows.map((c) => (
+            <ClientCard key={c.id} client={c} today={today} />
           ))}
         </div>
       )}
 
-      {items && items.length > 0 && view === 'table' && (
-        <Card className="p-3">
-          {/* The list's own filter bar above does the server-side status
-              and search; the grid takes the loaded page and adds what the
-              hand-built table never had — sort on every column, a column
-              chooser, an export of what is on screen, and a real card
-              layout on phones instead of columns that hide themselves. */}
+      {showGrid && (
+        // Twelve columns side by side at 1440px: the headers wrap to two lines and the cells pad a little less, so nothing is cut off.
+        <div className="[--d-cell-x:0.5rem] [&_th_.truncate]:whitespace-normal [&_th_button]:h-auto [&_th_button]:min-h-10 [&_th_button]:px-2 [&_th_button]:py-1.5 [&_th_svg.opacity-0]:hidden">
           <DataGrid<ClientListItem>
-            id="clients"
+            id="clients-accounts"
             caption="Clients"
-            rows={items}
+            noun={{ one: 'account', many: 'accounts' }}
+            rows={rows}
             rowKey={(c) => c.id}
             search={false}
             urlState={false}
-            defaultSort={{ key: 'name', direction: 'asc' }}
-            footnote={nextCursor ? 'more on the server — load more below' : undefined}
-            columns={[
-              {
-                key: 'name',
-                header: 'Name',
-                accessor: (c) => c.name,
-                sortable: true,
-                primary: true,
-                cell: (c) => (
-                  <div className="flex items-center gap-2.5">
-                    <Avatar name={c.name} size="sm" />
-                    <Link
-                      to={`/clients/${c.id}`}
-                      className="text-white hover:text-gold-bright font-medium underline-offset-4 hover:underline"
-                    >
-                      {c.name}
-                    </Link>
-                  </div>
-                ),
-              },
-              {
-                key: 'industry',
-                header: 'Industry',
-                accessor: (c) => c.industry,
-                sortable: true,
-                cardMeta: true,
-                className: 'text-silver',
-              },
-              {
-                key: 'status',
-                header: 'Status',
-                accessor: (c) => c.status,
-                sortable: true,
-                cell: (c) => <StatusBadge status={c.status} />,
-              },
-              {
-                key: 'state',
-                header: 'State',
-                accessor: (c) => c.state ?? 'federal default',
-                sortable: true,
-                cell: (c) =>
-                  c.state ? (
-                    <span className="inline-flex items-center gap-1 text-silver">
-                      <MapPin className="h-3 w-3" aria-hidden="true" />
-                      {c.state}
-                    </span>
-                  ) : (
-                    <span className="text-silver/80 italic text-xs">federal default</span>
-                  ),
-              },
-              {
-                key: 'openApplications',
-                header: 'Open apps',
-                accessor: (c) => c.openApplications,
-                sortable: true,
-                align: 'right',
-                className: 'tabular-nums',
-                cell: (c) => (
-                  <span className={c.openApplications > 0 ? 'text-silver' : 'text-silver/70'}>
-                    {c.openApplications}
-                  </span>
-                ),
-              },
-              {
-                key: 'active',
-                header: 'Active',
-                accessor: (c) => c.activeAssociateCount,
-                sortable: true,
-                align: 'right',
-                className: 'tabular-nums',
-                cell: (c) => (
-                  <span className={c.activeAssociateCount > 0 ? 'text-success' : 'text-silver/70'}>
-                    {c.activeAssociateCount}
-                  </span>
-                ),
-              },
-              ...(canTrend && trendByClient.size > 0 && !trendsTruncated
-                ? [
-                    {
-                      key: 'trend',
-                      header: 'Hours · 4 wks',
-                      accessor: (c: ClientListItem) => trendByClient.get(c.id)?.weeks.reduce((n, w) => n + w.hours, 0) ?? null,
-                      csv: (c: ClientListItem) => {
-                        const w = trendByClient.get(c.id)?.weeks;
-                        return w ? String(Math.round(w.reduce((n, x) => n + x.hours, 0))) : '';
-                      },
-                      sortable: true,
-                      searchable: false,
-                      align: 'right' as const,
-                      cell: (c: ClientListItem) => {
-                        const t = trendByClient.get(c.id);
-                        const w = t?.weeks;
-                        if (!t || !w || w.length === 0) return <span className="text-silver/70">—</span>;
-                        const total = Math.round(w.reduce((n, x) => n + x.hours, 0));
-                        const margin = w[w.length - 1]!.marginPerHour;
-                        const basis = t.standardShare >= 0.5 ? ' (at standard rates — no rate card)' : '';
-                        return (
-                          <span className="inline-flex items-center justify-end gap-2" title={margin === null ? undefined : `Last week’s margin: $${margin.toFixed(2)} an hour${basis}`}>
-                            <Sparkline series={w.map((x) => x.hours)} tone={margin !== null && margin < 0 ? 'bad' : 'primary'} width={64} height={20} />
-                            <span className="tabular-nums text-silver">{total.toLocaleString('en-US')}h</span>
-                          </span>
-                        );
-                      },
-                    },
-                  ]
-                : []),
-              {
-                key: 'lastPayroll',
-                header: 'Last payroll',
-                accessor: (c) =>
-                  c.lastPayrollDisbursedAt ? new Date(c.lastPayrollDisbursedAt).getTime() : null,
-                csv: (c) => c.lastPayrollDisbursedAt ?? '',
-                sortable: true,
-                align: 'right',
-                className: 'text-silver text-xs',
-                cell: (c) => fmtRelative(c.lastPayrollDisbursedAt),
-              },
-              ...(canReport
-                ? [
-                    {
-                      key: 'report',
-                      header: 'Report',
-                      accessor: () => null,
-                      searchable: false,
-                      align: 'right' as const,
-                      csv: () => '',
-                      cell: (c: ClientListItem) => (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => void downloadReport(c.id, c.name)}
-                          loading={reportBusyIds.has(c.id)}
-                          title={`Download ${c.name}'s weekly service report for the selected week — the client-facing PDF.`}
-                          aria-label={`Download service report for ${c.name}`}
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                          PDF
-                        </Button>
-                      ),
-                    },
-                  ]
-                : []),
-            ]}
+            cards={false}
+            keyboard={false}
+            filters={listControls}
+            sort={{ state: state.sort, onToggle: (key) => writeState({ sort: nextSort(state.sort, key) }) }}
+            columnsState={{ hidden: hiddenSet, onChange: (next) => setHidden([...next]) }}
+            exportCsv={{ filename: `clients-${today}` }}
+            footnote={moreOnServer ? 'more on the server — load more below' : undefined}
+            columns={columns}
           />
-        </Card>
+        </div>
       )}
 
-      {items && nextCursor && (
-        <div className="mt-4 flex justify-center">
-          <Button variant="outline" onClick={loadMore} loading={loadingMore}>
+      {rows && moreOnServer && (
+        <div className="flex justify-center">
+          <Button variant="outline" onClick={() => void clientsQuery.fetchNextPage()} loading={clientsQuery.isFetchingNextPage}>
             Load more
           </Button>
         </div>
       )}
 
-      {canManage && <PipelineSection />}
-
-      <NewClientDialog
-        open={showNew}
-        onOpenChange={setShowNew}
-        onCreated={() => refresh()}
-      />
+      <NewClientDialog open={showNew} onOpenChange={setShowNew} onCreated={() => void clientsQuery.refetch()} />
     </ListTemplate>
   );
 }
 
-function ClientCard({ client }: { client: ClientListItem }) {
-  const stateLabel = client.state ?? 'Federal default';
+/* ----- Pieces ------------------------------------------------------------------ */
+
+function ContractEnds({ date, today }: { date: string | null; today: string }) {
+  const days = daysUntil(date, today);
+  if (!date || days === null) return <span className="text-ink-subtle">Not set</span>;
+  const tone = days < 0 || days <= 30 ? 'text-alert' : days <= 60 ? 'text-warning' : 'text-ink-muted';
+  const when = days < 0 ? 'ended' : days === 0 ? 'today' : `in ${days} day${days === 1 ? '' : 's'}`;
+  return (
+    <span className="inline-flex flex-col leading-tight">
+      <span className="whitespace-nowrap text-ink">{fmtDate(date)}</span>
+      <span className={cn('text-2xs', tone)}>{when}</span>
+    </span>
+  );
+}
+
+/** Four numbers over the whole book of accounts — two of them open the list behind them. */
+function PortfolioStrip({ rows, canMoney, attention, onAttention, onActive }: { rows: ClientListItem[]; canMoney: boolean; attention: number; onAttention: () => void; onActive: () => void }) {
+  const active = rows.filter((c) => c.status === 'ACTIVE');
+  const atRisk = rows.filter((c) => c.health === 'risk').length;
+  const working = rows.reduce((n, c) => n + (c.onAssignment ?? c.activeAssociateCount), 0);
+  const hours = rows.reduce((n, c) => n + (c.hoursThisWeek ?? 0), 0);
+  const outstanding = rows.reduce((n, c) => n + (c.outstanding ?? 0), 0);
+  const owing = rows.filter((c) => (c.outstanding ?? 0) > 0).length;
+  const tile = 'flex min-w-0 flex-col gap-0.5 rounded-lg border border-line bg-surface-raised px-4 py-3 text-left';
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="All accounts">
+      <button type="button" onClick={onActive} className={cn(tile, 'transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright')}>
+        <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Active accounts</span>
+        <span className="text-2xl font-semibold tabular-nums text-ink">{active.length.toLocaleString('en-US')}</span>
+        <span className="text-2xs text-ink-muted">of {rows.length.toLocaleString('en-US')} on the list</span>
+      </button>
+      <button type="button" onClick={onAttention} className={cn(tile, 'transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright')}>
+        <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Needs attention</span>
+        <span className={cn('text-2xl font-semibold tabular-nums', attention > 0 ? 'text-warning' : 'text-ink')}>{attention.toLocaleString('en-US')}</span>
+        <span className="text-2xs text-ink-muted">{atRisk > 0 ? `${atRisk} at risk` : attention > 0 ? 'None at risk' : 'Every account is in good shape'}</span>
+      </button>
+      <div className={tile}>
+        <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">On assignment</span>
+        <span className="text-2xl font-semibold tabular-nums text-ink">{working.toLocaleString('en-US')}</span>
+        <span className="text-2xs text-ink-muted">{hours > 0 ? `${Math.round(hours).toLocaleString('en-US')} hours worked this week` : 'No hours yet this week'}</span>
+      </div>
+      {canMoney ? (
+        <div className={tile}>
+          <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Outstanding</span>
+          <span className="text-2xl font-semibold tabular-nums text-ink">{fmtMoneyCompact(outstanding)}</span>
+          <span className="text-2xs text-ink-muted">{owing > 0 ? `Owed by ${owing} account${owing === 1 ? '' : 's'}` : 'Nothing owed'}</span>
+        </div>
+      ) : (
+        <div className={tile}>
+          <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Shifts next 7 days</span>
+          <span className="text-2xl font-semibold tabular-nums text-ink">{rows.reduce((n, c) => n + (c.shiftsNext7?.total ?? 0), 0).toLocaleString('en-US')}</span>
+          <span className="text-2xs text-ink-muted">{rows.reduce((n, c) => n + (c.shiftsNext7 ? c.shiftsNext7.total - c.shiftsNext7.filled : 0), 0).toLocaleString('en-US')} still open</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A phone's list: one compact row per account, the first visible without scrolling. */
+function PhoneRows({ rows }: { rows: ClientListItem[] }) {
+  return (
+    <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface-raised" aria-label="Clients">
+      {rows.map((c) => (
+        <li key={c.id}>
+          <Link to={`/clients/${c.id}`} className="flex items-start gap-3 px-3 py-2.5 active:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright">
+            {c.health ? (
+              <span className="mt-1.5" title={healthSentence(c.health, c.healthReasons ?? [])}>
+                <HealthDot health={c.health} />
+                <span className="sr-only">{healthSentence(c.health, c.healthReasons ?? [])}</span>
+              </span>
+            ) : (
+              <span className="mt-1.5 h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="flex items-start justify-between gap-2">
+                <span className="break-words font-medium leading-snug text-ink">{c.name}</span>
+                {c.status !== 'ACTIVE' && <StatusBadge status={c.status} size="sm" className="mt-0.5 shrink-0" />}
+              </span>
+              <span className="mt-0.5 block text-xs tabular-nums text-ink-muted">{numbersLine(c)}</span>
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ClientCard({ client: c, today }: { client: ClientListItem; today: string }) {
+  const n = c.onAssignment ?? c.activeAssociateCount;
+  const days = daysUntil(c.contractEndDate, today);
   return (
     <Link
-      to={`/clients/${client.id}`}
-      className={cn(
-        'group flex flex-col gap-3 rounded-lg border bg-navy p-4 transition-colors',
-        'border-navy-secondary hover:border-gold/40',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright'
-      )}
+      to={`/clients/${c.id}`}
+      className="group flex flex-col gap-3 rounded-lg border border-line bg-surface-raised p-4 transition-colors hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
     >
       <div className="flex items-start gap-3">
-        <Avatar name={client.name} size="md" />
+        <Avatar name={c.name} size="md" />
         <div className="min-w-0 flex-1">
-          <div className="text-lg text-white group-hover:text-gold-bright transition-colors truncate leading-tight">
-            {client.name}
-          </div>
-          <div className="text-xs text-silver mt-0.5 flex items-center gap-1.5 flex-wrap">
-            {client.industry && <span>{client.industry}</span>}
-            {client.industry && client.state && <span className="text-silver/70">·</span>}
-            <span className="inline-flex items-center gap-0.5">
-              <MapPin className="h-3 w-3" aria-hidden="true" />
-              {stateLabel}
-            </span>
+          <div className="break-words text-base font-medium leading-snug text-ink transition-colors group-hover:text-gold-bright">{c.name}</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-ink-muted">
+            {c.accountOwner ? <span>Owner: {c.accountOwner.name}</span> : <span className="text-ink-subtle">No owner</span>}
+            {c.state && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="inline-flex items-center gap-0.5">
+                  <MapPin className="h-3 w-3" aria-hidden="true" />
+                  {c.state}
+                </span>
+              </>
+            )}
           </div>
         </div>
-        <StatusBadge status={client.status} className="shrink-0" />
+        <StatusBadge status={c.status} className="shrink-0" />
       </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-navy-secondary/60">
-        <KpiTile
-          icon={ClipboardList}
-          label="Open apps"
-          value={client.openApplications}
-          tone={client.openApplications > 0 ? 'gold' : 'silver'}
-        />
-        <KpiTile
-          icon={Users}
-          label="Active"
-          value={client.activeAssociateCount}
-          tone={client.activeAssociateCount > 0 ? 'success' : 'silver'}
-        />
-        <KpiTile
-          icon={DollarSign}
-          label="Last payroll"
-          value={fmtRelative(client.lastPayrollDisbursedAt)}
-          tone={client.lastPayrollDisbursedAt ? 'silver' : 'mute'}
-          small
-        />
-      </div>
+      {c.health && (
+        <div className="flex items-start gap-2 text-xs">
+          <HealthDot health={c.health} className="mt-1" />
+          <span className={c.health === 'good' ? 'text-ink-muted' : c.health === 'watch' ? 'text-warning' : 'text-alert'}>
+            {c.health === 'good' ? 'In good shape' : (c.healthReasons ?? [])[0] ?? ''}
+            {(c.healthReasons ?? []).length > 1 && <span className="text-ink-subtle"> · {(c.healthReasons ?? []).length - 1} more</span>}
+          </span>
+        </div>
+      )}
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 border-t border-line pt-3">
+        <CardNumber label="On assignment" value={n.toLocaleString('en-US')} muted={n === 0} />
+        <CardNumber label="Filled · next 7 days" value={c.fillRatePct == null ? 'No shifts' : pct(c.fillRatePct)} muted={c.fillRatePct == null} tone={c.fillRatePct == null ? undefined : c.fillRatePct < 80 ? 'alert' : c.fillRatePct < 95 ? 'warning' : undefined} />
+        <CardNumber label="Hours this week" value={c.hoursThisWeek ? hoursText(c.hoursThisWeek) : 'No hours yet'} muted={!c.hoursThisWeek} />
+        {c.outstanding !== undefined ? (
+          <CardNumber label="Outstanding" value={c.outstanding > 0 ? fmtMoneyCompact(c.outstanding) : '$0'} muted={c.outstanding === 0} />
+        ) : (
+          <CardNumber label="Contract ends" value={c.contractEndDate ? fmtDate(c.contractEndDate) : 'Not set'} muted={!c.contractEndDate} tone={days !== null && days <= 30 ? 'alert' : days !== null && days <= 60 ? 'warning' : undefined} />
+        )}
+      </dl>
     </Link>
   );
 }
 
-function KpiTile({
-  icon: Icon,
-  label,
-  value,
-  tone,
-  small,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: number | string;
-  tone: 'gold' | 'success' | 'silver' | 'mute';
-  small?: boolean;
-}) {
-  const valueClass =
-    tone === 'gold'
-      ? 'text-gold'
-      : tone === 'success'
-        ? 'text-success'
-        : tone === 'silver'
-          ? 'text-white'
-          : 'text-silver/70';
+function CardNumber({ label, value, muted, tone }: { label: string; value: string; muted?: boolean; tone?: 'alert' | 'warning' }) {
   return (
     <div className="min-w-0">
-      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1">
-        <Icon className="h-3 w-3" aria-hidden="true" />
-        <span className="truncate">{label}</span>
-      </div>
-      <div
-        className={cn(
-          'mt-0.5 tabular-nums truncate',
-          small ? 'text-xs' : 'text-lg font-semibold',
-          valueClass
-        )}
-      >
-        {value}
-      </div>
+      <dt className="text-2xs font-medium uppercase tracking-wider text-ink-muted">{label}</dt>
+      <dd className={cn('mt-0.5 text-base font-semibold tabular-nums', tone === 'alert' ? 'text-alert' : tone === 'warning' ? 'text-warning' : muted ? 'text-ink-subtle' : 'text-ink')}>{value}</dd>
     </div>
   );
 }

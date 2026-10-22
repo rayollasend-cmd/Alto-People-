@@ -276,6 +276,9 @@ export function PeopleDirectory() {
     ) {
       setEmploymentType(rawType as EmploymentTypeFilter);
     }
+    // ?client= deep-link — a client's "On assignment" tile lands on its people.
+    const rawClient = params.get('client');
+    if (rawClient && /^[0-9a-f-]{36}$/i.test(rawClient) && rawClient !== clientId) setClientId(rawClient);
   }
   const filters = useMemo<DirectoryFilters>(
     () => ({

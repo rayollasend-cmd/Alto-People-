@@ -149,6 +149,7 @@ import {
   // The office pack (2026-10-17).
   Rocket as MarketingIcon,
   ThumbsUp as ClientNpsIcon,
+  Handshake as ClientPipelineIcon,
 } from 'lucide-react';
 import {
   UserRound as MeDoorIcon,
@@ -230,6 +231,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   // The office pack (2026-10-17): marketing's hub and the client NPS results.
   marketing: MarketingIcon,
   'client-nps': ClientNpsIcon,
+  'client-pipeline': ClientPipelineIcon,
   'celebrations': CelebrationsIcon,
   'assets': AssetsIcon,
   'pulse': PulseIcon,

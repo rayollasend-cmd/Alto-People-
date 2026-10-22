@@ -1,32 +1,17 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Archive, Building2, MapPin, Save } from 'lucide-react';
-import { toast } from 'sonner';
-import type { ClientStatus, ClientSummary } from '@alto-people/shared';
-import {
-  archiveClient,
-  getClient,
-  setClientState,
-  updateClient,
-} from '@/lib/clientsApi';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import type { ClientOverview as Overview, ClientSummary } from '@alto-people/shared';
+import { getClient } from '@/lib/clientsApi';
+import { clientOverviewKey } from '@/lib/clientAccountApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { useConfirm } from '@/lib/confirm';
-import { StatusBadge, statusLabel } from '@/lib/status';
+import { fmtDate } from '@/lib/format';
+import { StatusBadge } from '@/lib/status';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { Field } from '@/components/ui/Field';
-import { Input } from '@/components/ui/Input';
 import { RecordTemplate } from '@/components/templates';
-import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
 import { RateDefaultsSection } from './RateDefaultsSection';
@@ -34,81 +19,82 @@ import { StatementsSection } from './StatementsSection';
 import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { PortalAccessSection } from './PortalAccessSection';
-import { ClientGlance, ClientPerformance, useCanSeeClientPerformance } from './ClientPerformance';
+import { ClientPerformance, useCanSeeClientPerformance } from './ClientPerformance';
+import { ClientOverview, fmtCount, HEALTH, useClientOverview } from './ClientOverview';
+import { ClientBasicsCard } from './ClientBasicsCard';
+import { ClientSettingsSection } from './ClientSettingsSection';
+import { ClientRecordActions } from './ClientRecordActions';
 
-const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
+/**
+ * One client account (Clients rebuild, 2026-10-22). It opens on the
+ * Overview — how the account is doing and what needs you — and keeps
+ * configuration a tab away: Basics (who the client is, read first),
+ * Settings (scheduling week, work-site state, billing, exports) and the
+ * facets that were here before.
+ *
+ * "?section=<key>" is the open tab and a contract notifications rely on:
+ * ?section=basics opens Basics, ?section=state opens Settings at the
+ * work-site state, ?tab=<key> is read the same way for older links.
+ */
 
-// Index = the 0=Sunday…6=Saturday convention Client.weekStartsOn uses.
-const WEEKDAY_NAMES: string[] = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-];
+/** Old section keys that now live inside another tab. */
+const SECTION_ALIASES: Record<string, string> = { state: 'settings' };
 
-// Two-letter US state codes that have either OT/break rules in Phase 23
-// or predictive scheduling in Phase 25. The select doubles as a shortcut
-// for the states the engine actually does something with.
-const POLICY_STATES = [
-  'CA', 'NY', 'IL', 'MA', 'NJ', 'PA', 'WA', 'CO', 'AZ', 'GA',
-  'NC', 'VA', 'FL', 'TX', 'OR',
-] as const;
+/** "Owner Pat Lee · Contract ends Dec 31, 2026 · Primary Dana Reyes · 3 locations · 41 on assignment", only what exists. */
+export function recordSubtitle(o: Overview | undefined): string | undefined {
+  if (!o) return undefined;
+  const primary = o.contacts.find((c) => c.isPrimary);
+  const parts = [
+    o.owner ? `Owner ${o.owner.name}` : null,
+    o.contract.end ? `${o.contract.daysLeft !== null && o.contract.daysLeft < 0 ? 'Contract ended' : 'Contract ends'} ${fmtDate(o.contract.end)}` : null,
+    primary ? `Primary contact ${primary.name}` : null,
+    o.locations.count > 0 ? (o.locations.count === 1 ? '1 location' : `${fmtCount(o.locations.count)} locations`) : null,
+    o.kpis && o.kpis.onAssignment > 0 ? `${fmtCount(o.kpis.onAssignment)} on assignment` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : undefined;
+}
+
+/** The account's health beside its status, and how many things need someone: one tap to the list. */
+function HealthLink({ o }: { o: Overview }) {
+  const h = HEALTH[o.kpis!.health];
+  const n = o.needsYou.length;
+  return (
+    <Link to={{ search: '?section=overview', hash: '#needs-you' }} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" data-testid="client-health-link">
+      <Badge variant={h.variant}>{n > 0 ? `${h.label} · ${n} need${n === 1 ? 's' : ''} you` : h.label}</Badge>
+    </Link>
+  );
+}
 
 export function ClientDetail() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const { can } = useAuth();
   const canManage = can('manage:clients');
-  const confirm = useConfirm();
   const showPerformance = useCanSeeClientPerformance();
+  const canSeeStatements = can('process:payroll') || can('view:executive');
 
+  const queryClient = useQueryClient();
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [archiving, setArchiving] = useState(false);
+  const [editingBasics, setEditingBasics] = useState(false);
 
-  // Design system §4.3 (UX upgrade step 6, the sweep): the Record template.
-  // The record's facets are tabs; "?section=<key>" (a shareable deep link)
-  // is the open tab. The two
-  // keys that were one card each (basics, state) share the first tab.
   const [searchParams, setSearchParams] = useSearchParams();
-  const section = searchParams.get('section');
-  const activeTab = section === 'state' ? 'basics' : (section ?? 'basics');
+  const requested = searchParams.get('section') ?? searchParams.get('tab');
+  const activeTab = requested ? (SECTION_ALIASES[requested] ?? requested) : 'overview';
   const openTab = (key: string) => {
     const next = new URLSearchParams(searchParams);
     next.set('section', key);
+    next.delete('tab');
     setSearchParams(next, { replace: true });
   };
 
-  const onArchive = async () => {
-    if (!client) return;
-    if (
-      !(await confirm({
-        title: `Archive "${client.name}"?`,
-        description:
-          "They'll be hidden from the clients list. Open applications, payroll, and associates aren't deleted.",
-        confirmLabel: 'Archive',
-        destructive: true,
-      }))
-    ) {
-      return;
-    }
-    setArchiving(true);
-    try {
-      await archiveClient(client.id);
-      toast.success(`"${client.name}" archived.`);
-      navigate('/clients');
-    } catch (err) {
-      toast.error('Could not archive.', {
-        description: err instanceof ApiError ? err.message : 'Something went wrong.',
-      });
-      setArchiving(false);
-    }
-  };
+  // ?section=state scrolls Settings to the work-site state once it renders.
+  useEffect(() => {
+    if (requested !== 'state' || !client) return;
+    const t = window.setTimeout(() => document.getElementById('state')?.scrollIntoView?.({ block: 'start' }), 0);
+    return () => window.clearTimeout(t);
+  }, [requested, client]);
 
-  const refreshQuery = useQuery({
+  const clientQuery = useQuery({
     // Keyed by the route id: this element stays mounted from one client's
     // URL to the next, and a fixed key showed the previous client's record.
     queryKey: ['ClientDetail', 'client', id ?? ''],
@@ -116,19 +102,17 @@ export function ClientDetail() {
     enabled: Boolean(id),
   });
   useEffect(() => {
-    const c = refreshQuery.data;
-    if (c === undefined) return;
-    setClient(c);
-  }, [refreshQuery.data]);
+    if (clientQuery.data !== undefined) setClient(clientQuery.data);
+  }, [clientQuery.data]);
   useEffect(() => {
-    if (!refreshQuery.isError) return;
-    const err = refreshQuery.error;
+    if (!clientQuery.isError) return;
+    const err = clientQuery.error;
     setError(err instanceof ApiError ? err.message : 'Failed to load.');
-  }, [refreshQuery.isError, refreshQuery.error]);
-  const refresh = async () => {
-    await refreshQuery.refetch();
-  };
-
+  }, [clientQuery.isError, clientQuery.error]);
+  // The header's line reads the overview the Overview tab shows (one request, shared).
+  const overview = useClientOverview(id ?? '');
+  // A different client's URL starts from its own read mode.
+  useEffect(() => setEditingBasics(false), [id]);
 
   if (error) {
     return (
@@ -141,7 +125,7 @@ export function ClientDetail() {
               variant="outline"
               onClick={() => {
                 setError(null);
-                refresh();
+                void clientQuery.refetch();
               }}
             >
               Retry
@@ -151,7 +135,8 @@ export function ClientDetail() {
       </div>
     );
   }
-  if (!client) {
+  // The previous client's record never paints under this client's URL.
+  if (!client || client.id !== id) {
     return (
       <div className="mx-auto space-y-3">
         <Skeleton className="h-8 w-1/3" />
@@ -161,358 +146,51 @@ export function ClientDetail() {
     );
   }
 
+  // A save anywhere on the record is the record from now on, and the overview reads it again.
+  const onSaved = (c: ClientSummary) => {
+    setClient(c);
+    queryClient.setQueryData(['ClientDetail', 'client', c.id], c);
+    void queryClient.invalidateQueries({ queryKey: clientOverviewKey(c.id) });
+  };
+  const primary = overview.data?.contacts.find((c) => c.isPrimary && c.email) ?? null;
+  const editBasics = () => {
+    setEditingBasics(true);
+    openTab('basics');
+  };
+
   const tabs = [
+    { key: 'overview', label: 'Overview', content: <ClientOverview client={client} onOpenTab={openTab} onSaved={onSaved} /> },
     {
       key: 'basics',
       label: 'Basics',
-      content: (
-        <div className="space-y-6">
-          {showPerformance && <ClientGlance clientId={client.id} onOpen={() => openTab('performance')} />}
-          <BasicsEditor client={client} canManage={canManage} onSaved={(updated) => setClient(updated)} />
-          <StateEditor client={client} canManage={canManage} onSaved={(updated) => setClient(updated)} />
-        </div>
-      ),
+      content: <ClientBasicsCard client={client} canManage={canManage} editing={editingBasics} onEditingChange={setEditingBasics} onSaved={onSaved} />,
     },
     ...(showPerformance ? [{ key: 'performance', label: 'Performance', content: <ClientPerformance clientId={client.id} /> }] : []),
     { key: 'locations', label: 'Locations', content: <LocationsSection clientId={client.id} /> },
     { key: 'portal', label: 'Portal access', content: <PortalAccessSection clientId={client.id} /> },
     { key: 'jobs', label: 'Jobs', content: <JobsSection clientId={client.id} /> },
     { key: 'rates', label: 'Rates', content: <RateDefaultsSection clientId={client.id} /> },
-    // Statements render only for process:payroll holders; the tab follows.
-    ...(can('process:payroll') ? [{ key: 'statements', label: 'Statements', content: <StatementsSection clientId={client.id} /> }] : []),
+    // Statements render for those who read them (payroll drafts and finalizes; executives read).
+    ...(canSeeStatements ? [{ key: 'statements', label: 'Statements', content: <StatementsSection clientId={client.id} /> }] : []),
     { key: 'benefits', label: 'Benefits', content: <BenefitsPlansSection clientId={client.id} /> },
+    { key: 'settings', label: 'Settings', content: <ClientSettingsSection client={client} onSaved={onSaved} onOpenTab={openTab} /> },
   ];
 
   return (
     <RecordTemplate
       breadcrumbs={[{ label: 'Clients', to: '/clients' }, { label: client.name }]}
       title={client.name}
-      status={<StatusBadge status={client.status} />}
-      subtitle={[client.industry, client.contactEmail].filter(Boolean).join(' · ') || undefined}
-      actions={
-        canManage ? (
-          <Button variant="ghost" onClick={onArchive} loading={archiving}>
-            <Archive className="h-4 w-4" />
-            Archive
-          </Button>
-        ) : undefined
+      status={
+        <span className="inline-flex flex-wrap items-center gap-2">
+          <StatusBadge status={client.status} />
+          {overview.data?.kpis && <HealthLink o={overview.data} />}
+        </span>
       }
+      subtitle={recordSubtitle(overview.data) ?? (client.industry || undefined)}
+      actions={<ClientRecordActions client={client} primaryEmail={primary ? { name: primary.name, email: primary.email! } : null} onEdit={editBasics} onOpenTab={openTab} />}
       tabs={tabs}
-      activeTab={tabs.some((t) => t.key === activeTab) ? activeTab : 'basics'}
+      activeTab={tabs.some((t) => t.key === activeTab) ? activeTab : 'overview'}
       onTabChange={openTab}
     />
   );
 }
-
-/* ----------------------------- Basics editor ----------------------------- */
-
-function BasicsEditor({
-  client,
-  canManage,
-  onSaved,
-}: {
-  client: ClientSummary;
-  canManage: boolean;
-  onSaved: (c: ClientSummary) => void;
-}) {
-  const [name, setName] = useState(client.name);
-  const [industry, setIndustry] = useState(client.industry ?? '');
-  const [status, setStatus] = useState<ClientStatus>(client.status);
-  const [contactEmail, setContactEmail] = useState(client.contactEmail ?? '');
-  const [weekStartsOn, setWeekStartsOn] = useState(client.weekStartsOn ?? 0);
-  const [fieldglassSiteName, setFieldglassSiteName] = useState(
-    client.fieldglassSiteName ?? '',
-  );
-  const [fieldglassBillRate, setFieldglassBillRate] = useState(
-    client.fieldglassBillRate != null ? String(client.fieldglassBillRate) : '',
-  );
-  const [saving, setSaving] = useState(false);
-
-  // Empty string → null; otherwise the parsed number (NaN if the field is junk).
-  const billRateParsed =
-    fieldglassBillRate.trim() === '' ? null : Number(fieldglassBillRate);
-
-  // Re-sync local state when the parent reloads the client (e.g. after a
-  // sibling section's save flips status from PROSPECT to ACTIVE).
-  useEffect(() => {
-    setName(client.name);
-    setIndustry(client.industry ?? '');
-    setStatus(client.status);
-    setContactEmail(client.contactEmail ?? '');
-    setWeekStartsOn(client.weekStartsOn ?? 0);
-    setFieldglassSiteName(client.fieldglassSiteName ?? '');
-    setFieldglassBillRate(
-      client.fieldglassBillRate != null ? String(client.fieldglassBillRate) : '',
-    );
-  }, [
-    client.name,
-    client.industry,
-    client.status,
-    client.contactEmail,
-    client.weekStartsOn,
-    client.fieldglassSiteName,
-    client.fieldglassBillRate,
-  ]);
-
-  const dirty =
-    name.trim() !== client.name ||
-    (industry.trim() || null) !== (client.industry || null) ||
-    status !== client.status ||
-    (contactEmail.trim() || null) !== (client.contactEmail || null) ||
-    weekStartsOn !== (client.weekStartsOn ?? 0) ||
-    (fieldglassSiteName.trim() || null) !== (client.fieldglassSiteName || null) ||
-    billRateParsed !== (client.fieldglassBillRate ?? null);
-
-  const submit = async () => {
-    const trimmed = name.trim();
-    if (trimmed.length === 0) {
-      toast.error('Name required.');
-      return;
-    }
-    if (billRateParsed !== null && !(billRateParsed >= 0)) {
-      toast.error('Fieldglass bill rate must be a number ≥ 0.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const updated = await updateClient(client.id, {
-        name: trimmed,
-        industry: industry.trim() || null,
-        status,
-        contactEmail: contactEmail.trim() || null,
-        weekStartsOn,
-        fieldglassSiteName: fieldglassSiteName.trim() || null,
-        fieldglassBillRate: billRateParsed,
-      });
-      onSaved(updated);
-      toast.success('Client saved.');
-    } catch (err) {
-      toast.error('Could not save.', {
-        description: err instanceof ApiError ? err.message : 'Something went wrong.',
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Building2 className="h-4 w-4 text-gold" />
-          Basics
-        </CardTitle>
-        <CardDescription>
-          Name, industry, account status, and a primary contact email.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Name" required>
-            {(p) => (
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                maxLength={120}
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field label="Industry">
-            {(p) => (
-              <Input
-                value={industry}
-                onChange={(e) => setIndustry(e.target.value)}
-                maxLength={80}
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field label="Status">
-            {(p) => (
-              <Select
-                disabled={!canManage}
-                value={status}
-                onChange={(e) => setStatus(e.target.value as ClientStatus)}
-                {...p}
-              >
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {statusLabel(s)}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field
-            label="Contact email"
-            hint="Leave blank if there's no primary point of contact."
-          >
-            {(p) => (
-              <Input
-                type="email"
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-                maxLength={254}
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field
-            label="Week starts on"
-            hint="This client's scheduling week. Associates get their week-ahead digest the evening before."
-          >
-            {(p) => (
-              <Select
-                disabled={!canManage}
-                value={String(weekStartsOn)}
-                onChange={(e) => setWeekStartsOn(Number(e.target.value))}
-                {...p}
-              >
-                {WEEKDAY_NAMES.map((label, i) => (
-                  <option key={label} value={String(i)}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field
-            label="Fieldglass site name"
-            hint='Verbatim SAP Fieldglass "Site" label (e.g. "1 - Onsite - FL - Destin"). Shown on the Timesheets export so the Site column matches Fieldglass. Blank falls back to the worksite/client name.'
-          >
-            {(p) => (
-              <Input
-                value={fieldglassSiteName}
-                onChange={(e) => setFieldglassSiteName(e.target.value)}
-                maxLength={255}
-                placeholder="1 - Onsite - FL - Destin"
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field
-            label="Fieldglass bill rate ($/hr)"
-            hint='Client-billed rate on the Fieldglass timesheet accounting block (Amount = rate × hours). Not the associate pay rate. Leave blank if you bill a different way.'
-          >
-            {(p) => (
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                inputMode="decimal"
-                value={fieldglassBillRate}
-                onChange={(e) => setFieldglassBillRate(e.target.value)}
-                placeholder="21.21"
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-        </div>
-        {canManage && (
-          <div className="mt-4">
-            <Button onClick={submit} disabled={!dirty} loading={saving}>
-              <Save className="h-4 w-4" />
-              Save
-            </Button>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/* ----------------------------- State editor ------------------------------ */
-
-function StateEditor({
-  client,
-  canManage,
-  onSaved,
-}: {
-  client: ClientSummary;
-  canManage: boolean;
-  onSaved: (c: ClientSummary) => void;
-}) {
-  const [value, setValue] = useState(client.state ?? '');
-  const [saving, setSaving] = useState(false);
-
-  // Keep local state in sync if the parent refreshes the client.
-  useEffect(() => {
-    setValue(client.state ?? '');
-  }, [client.state]);
-
-  const dirty = (value || null) !== (client.state || null);
-
-  const submit = async () => {
-    setSaving(true);
-    try {
-      const updated = await setClientState(client.id, {
-        state: value ? value.toUpperCase() : null,
-      });
-      onSaved(updated);
-      toast.success('Work-site state saved.');
-    } catch (err) {
-      toast.error('Could not save.', {
-        description: err instanceof Error ? err.message : 'Something went wrong.',
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MapPin className="h-4 w-4 text-gold" />
-          Work-site state
-        </CardTitle>
-        <CardDescription>
-          Drives OT thresholds, meal-break minimums, sick-leave accrual, and
-          fair-workweek (predictive-scheduling) enforcement. Leave blank for
-          the federal default.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-wrap gap-3 items-end">
-          <Field
-            label="State (2-letter code)"
-            className="flex-1 min-w-[10rem]"
-            hint={`States with policy templates: ${POLICY_STATES.join(', ')}.`}
-          >
-            {(p) => (
-              <Select
-                disabled={!canManage}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                {...p}
-              >
-                <option value="">— Federal default —</option>
-                {POLICY_STATES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          {canManage && (
-            <Button onClick={submit} disabled={!dirty} loading={saving}>
-              <Save className="h-4 w-4" />
-              Save
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Phase 131 — the per-Client GeofenceEditor was removed. Geofence
-// lives on Location now; edit it from the LocationsSection's
-// per-row dialog (PATCH /clients/:id/locations/:lid).

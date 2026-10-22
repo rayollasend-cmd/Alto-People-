@@ -17,6 +17,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { activeAssociateCountsByClient } from '../lib/associateClients.js';
+import { canReadStatements, clientPerformanceHandler, withAccountNumbers } from './clientsMetrics.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
@@ -41,6 +42,7 @@ import { recordStatementPaidInFull, statementBalances } from '../lib/books/posti
 import { daysPastDue, dueOnFor } from '../lib/books/aging.js';
 import { UNBILLED_GRACE_DAYS } from '../lib/payBillRecon.js';
 import { sendStatementReminderNow } from '../lib/statementDunning.js';
+import { accountFieldsPatch, accountSummaryFields, type AccountSummaryRow } from '../lib/clientAccountFields.js';
 
 export const clientsRouter = Router();
 
@@ -173,6 +175,12 @@ clientsRouter.get('/', async (req, res, next) => {
     });
     const ids = rows.map((r) => r.id);
 
+    // Clients rebuild: ?include=metrics adds how each account is doing
+    // (routes/clientsMetrics). Opt-in: the client pickers across the app
+    // (the topbar's store scope loads this list on every page) need names,
+    // not hours and money.
+    const withNumbers = req.query.include === 'metrics';
+
     // Batched aggregates regardless of N — no per-row queries.
     const [appCounts, activeCounts, lastPayrolls] = ids.length
       ? await Promise.all([
@@ -186,7 +194,8 @@ clientsRouter.get('/', async (req, res, next) => {
             _count: { _all: true },
           }),
           // Where people work NOW — a transfer moves them (lib/associateClients).
-          activeAssociateCountsByClient(ids),
+          // With the account numbers it comes from there (onAssignment, the same count), computed once.
+          withNumbers ? Promise.resolve(new Map<string, number>()) : activeAssociateCountsByClient(ids),
           prisma.payrollRun.groupBy({
             by: ['clientId'],
             where: { clientId: { in: ids }, disbursedAt: { not: null } },
@@ -204,13 +213,16 @@ clientsRouter.get('/', async (req, res, next) => {
       if (r.clientId) lastPayrollByClient.set(r.clientId, r._max.disbursedAt);
     }
 
-    const clients: ClientListItem[] = rows.map((row) => ({
-      ...toSummary(row),
+    const base: ClientListItem[] = rows.map((row) => ({
+      ...toSummary(row, canReadStatements(req)),
       openApplications: appCountByClient.get(row.id) ?? 0,
       activeAssociateCount: activeCounts.get(row.id) ?? 0,
       lastPayrollDisbursedAt:
         lastPayrollByClient.get(row.id)?.toISOString() ?? null,
     }));
+    // On assignment, fill rate, hours, health, owner, and money for
+    // statements readers only; activeAssociateCount becomes onAssignment.
+    const clients = withNumbers ? await withAccountNumbers(req, base, rows) : base;
     const nextCursor = rows.length === limit ? rows[rows.length - 1]!.id : null;
     const payload: ClientListResponse = { clients, nextCursor };
     res.json(payload);
@@ -274,7 +286,7 @@ clientsRouter.post('/', MANAGE, async (req, res, next) => {
     });
     // The company QuickBooks keeps a customer per client (lib/books/qbo).
     emitBooksChange({ localType: 'Client', localId: created.id, op: 'UPSERT' });
-    res.status(201).json(toSummary(created));
+    res.status(201).json(toSummary(created, canReadStatements(req)));
   } catch (err) {
     next(err);
   }
@@ -309,8 +321,11 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
       data.fieldglassBillRate = parsed.data.fieldglassBillRate;
     if (parsed.data.poNumber !== undefined) data.poNumber = parsed.data.poNumber;
     if (parsed.data.paymentTermsDays !== undefined) data.paymentTermsDays = parsed.data.paymentTermsDays;
+    // The account: owner (an internal user), contract term, legal facts (lib/clientAccountFields).
+    const account = await accountFieldsPatch(prisma, tenantIdForWrite(), existing, parsed.data);
+    Object.assign(data, account.data);
     if (Object.keys(data).length === 0) {
-      res.json(toSummary(existing));
+      res.json(toSummary(existing, canReadStatements(req)));
       return;
     }
 
@@ -321,8 +336,10 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
     await auditClient(req, 'client.updated', updated.id, {
       changed: Object.keys(data),
     });
+    if (account.owner) await auditClient(req, 'client.owner_changed', updated.id, account.owner);
+    if (account.contract) await auditClient(req, 'client.contract_changed', updated.id, account.contract);
     emitBooksChange({ localType: 'Client', localId: updated.id, op: 'UPSERT' });
-    res.json(toSummary(updated));
+    res.json(toSummary(updated, canReadStatements(req)));
   } catch (err) {
     next(err);
   }
@@ -364,11 +381,14 @@ clientsRouter.get('/:id', async (req, res, next) => {
     if (!row) {
       throw new HttpError(404, 'client_not_found', 'Client not found');
     }
-    res.json(toSummary(row));
+    res.json(toSummary(row, canReadStatements(req)));
   } catch (err) {
     next(err);
   }
 });
+
+// Clients rebuild: the Performance tab — weeks, statements, NPS (routes/clientsMetrics).
+clientsRouter.get('/:id/performance', clientPerformanceHandler);
 
 // Phase 131 — Locations under this client. `?includeInactive=true`
 // surfaces archived rows for the admin UI; default hides them so the
@@ -594,7 +614,7 @@ function toSummary(row: {
   weekStartsOn: number;
   fieldglassSiteName: string | null;
   fieldglassBillRate: Prisma.Decimal | null;
-}): ClientSummary {
+} & AccountSummaryRow, money: boolean): ClientSummary {
   return {
     id: row.id,
     name: row.name,
@@ -604,8 +624,12 @@ function toSummary(row: {
     state: row.state,
     weekStartsOn: row.weekStartsOn,
     fieldglassSiteName: row.fieldglassSiteName,
-    fieldglassBillRate:
-      row.fieldglassBillRate == null ? null : Number(row.fieldglassBillRate),
+    // A bill rate is client money: only statement readers get it (omitted, not null).
+    ...(money
+      ? { fieldglassBillRate: row.fieldglassBillRate == null ? null : Number(row.fieldglassBillRate) }
+      : {}),
+    // Owner, contract term, legal facts, invoicing terms (lib/clientAccountFields).
+    ...accountSummaryFields(row),
   };
 }
 
@@ -632,7 +656,7 @@ clientsRouter.put('/:id/state', MANAGE, async (req, res, next) => {
       from: existing.state,
       to: normalized,
     });
-    res.json(toSummary(updated));
+    res.json(toSummary(updated, canReadStatements(req)));
   } catch (err) {
     next(err);
   }

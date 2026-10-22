@@ -150,7 +150,9 @@ export type ModuleKey =
   | 'reports'
   // The office pack (2026-10-17): marketing's hub and the client NPS results.
   | 'marketing'
-  | 'client-nps';
+  | 'client-nps'
+  // The Clients rebuild (2026-10-22): the new-business pipeline.
+  | 'client-pipeline';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -229,6 +231,7 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'reports',
   // The board numbers that were missing from the exec nav (2026-10-17).
   'client-nps',
+  'client-pipeline',
   'trust-center',
   'season-planner',
   // Pay against the local market, for rate negotiations.
@@ -541,6 +544,7 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   'pay-bill': 'clientPortal',
   portal: 'clientPortal',
   'client-nps': 'clientPortal',
+  'client-pipeline': 'clientPortal',
   'market-rates': 'clientPortal',
   'portal-today': 'clientPortal',
   'portal-ops': 'clientPortal',
@@ -1261,6 +1265,15 @@ export const MODULES: ModuleNav[] = [
     description: 'How likely each store is to recommend you — one question a quarter, per client and over time.',
     requires: 'view:executive',
     requiresAny: ['view:executive', 'view:marketing'],
+    group: 'client-services',
+  },
+  {
+    key: 'client-pipeline',
+    path: '/clients/pipeline',
+    label: 'Pipeline',
+    description: 'New business from first call to signed client: owners, expected starts, and the value weighted by stage.',
+    requires: 'manage:clients',
+    requiresAny: ['manage:clients', 'view:executive'],
     group: 'client-services',
   },
   {
@@ -2204,7 +2217,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   },
   operations: { key: 'operations', label: 'Operations', children: ['control-room', 'tasks', 'ops', 'robots'] },
   transport: { key: 'transport', label: (term) => term('nav.transport'), children: ['transport'] },
-  clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'client-nps'] },
+  clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'client-pipeline', 'client-nps'] },
   comms: { key: 'comms', label: 'Communications', children: ['communications', 'dircomms', 'pulse'] },
   marketing: { key: 'marketing', label: 'Marketing', children: ['marketing'] },
   insights: { key: 'insights', label: 'Insights', children: ['analytics', 'reports'] },

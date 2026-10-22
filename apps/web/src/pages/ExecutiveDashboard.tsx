@@ -1620,7 +1620,8 @@ export function ExecutiveDashboard() {
                   </div>
                   {!prospects || prospects.prospects.length === 0 ? (
                     <p className="text-sm text-silver">
-                      No prospects tracked yet — admins add them on the Clients page.
+                      No prospects tracked yet — admins add them on the{' '}
+                      <Link to="/clients/pipeline" className="text-gold hover:underline">Pipeline</Link> page.
                     </p>
                   ) : (
                     <ul className="divide-y divide-navy-secondary/60">
@@ -1629,10 +1630,9 @@ export function ExecutiveDashboard() {
                         .slice(0, 5)
                         .map((p) => (
                           <li key={p.id} className="py-1.5 text-sm">
-                            {/* Prospects live in the Clients page's pipeline
-                                section — no per-prospect page exists. */}
+                            {/* Prospects live on Clients → Pipeline. */}
                             <Link
-                              to="/clients"
+                              to="/clients/pipeline"
                               className="flex items-center justify-between gap-2 hover:text-gold"
                             >
                               <span className="min-w-0 truncate text-white">{p.name}</span>

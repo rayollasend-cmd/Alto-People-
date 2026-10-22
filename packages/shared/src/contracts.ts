@@ -95,6 +95,19 @@ export const ClientSummarySchema = /* @__PURE__ */ (() => z.object({
   /** Fieldglass client bill rate ($/hr) — the "Rate" on the timesheet
    *  accounting block (Amount = rate × hours). Not the associate pay rate. */
   fieldglassBillRate: z.number().nullable().optional(),
+  /** Who at the company owns the account (an internal user), and the
+   *  contract's term (YYYY-MM-DD). Optional for old clients of the API. */
+  accountOwnerUserId: UuidSchema.nullable().optional(),
+  contractStartDate: z.string().nullable().optional(),
+  contractEndDate: z.string().nullable().optional(),
+  /** The account's legal facts and invoicing terms, read on Basics. */
+  legalName: z.string().nullable().optional(),
+  addressLine1: z.string().nullable().optional(),
+  addressLine2: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  zip: z.string().nullable().optional(),
+  poNumber: z.string().nullable().optional(),
+  paymentTermsDays: z.number().int().optional(),
 }))();
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 
@@ -110,12 +123,70 @@ export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 // assignment there, else (none open) their approved application there;
 // separated / deactivated people excluded. A cross-client transfer moves
 // them (lib/associateClients.activeAssociateCountsByClient).
+/** good / watch / risk (the type is ClientHealth, in clientAccount.ts). */
+export const ClientHealthLevelSchema = /* @__PURE__ */ (() => z.enum(['good', 'watch', 'risk']))();
+
+// Clients rebuild (2026-10-22): how the account is doing, from
+// lib/clientMetrics — the same numbers the client's overview shows. Present
+// only with ?include=metrics (the clients list); pickers stay lean.
+// onAssignment is activeAssociateCount by its plain name (people working
+// there by the one definition of active). fillRatePct is null when no
+// shift starts in the next 7 days. Money fields (outstanding, billedInRange
+// for the list's ?from=&to=, this month by default) are present only for
+// callers who can read statements; omitted, never 0, for everyone else.
 export const ClientListItemSchema = /* @__PURE__ */ (() => ClientSummarySchema.extend({
   openApplications: z.number().int().nonnegative(),
   activeAssociateCount: z.number().int().nonnegative(),
   lastPayrollDisbursedAt: z.string().datetime().nullable(),
+  onAssignment: z.number().int().nonnegative().optional(),
+  shiftsNext7: z.object({ total: z.number().int().nonnegative(), filled: z.number().int().nonnegative() }).optional(),
+  fillRatePct: z.number().nullable().optional(),
+  hoursThisWeek: z.number().optional(),
+  health: ClientHealthLevelSchema.optional(),
+  healthReasons: z.array(z.string()).optional(),
+  accountOwner: z.object({ id: UuidSchema, name: z.string() }).nullable().optional(),
+  outstanding: z.number().optional(),
+  billedInRange: z.number().optional(),
 }))();
 export type ClientListItem = z.infer<typeof ClientListItemSchema>;
+
+/** GET /clients/:id/performance — a client's Performance tab (lib/clientMetrics.clientWeeks). */
+export interface ClientPerformanceWeek {
+  /** The week's first day (YYYY-MM-DD) on the client's week, site clock. */
+  start: string;
+  hours: number;
+  overtimeHours: number;
+  overtimePct: number | null;
+  shifts: number;
+  filled: number;
+  fillRatePct: number | null;
+}
+export interface ClientPerformanceStatement {
+  id: string;
+  number: number | null;
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  hours: number;
+  /** Still owed on a FINAL statement, net of payments. */
+  open: number;
+  state: 'paid' | 'waiting' | 'draft';
+  dueOn: string | null;
+  daysPastDue: number | null;
+}
+export interface ClientPerformanceResponse {
+  clientId: string;
+  asOf: string;
+  weekStartsOn: number;
+  timezone: string;
+  /** The last 12 complete weeks, oldest first. */
+  weeks: ClientPerformanceWeek[];
+  canSeeMoney: boolean;
+  /** Statements readers only; oldest first. */
+  statements?: ClientPerformanceStatement[];
+  /** Executive and marketing only; wave by wave, oldest first. */
+  nps?: Array<{ quarter: string; nps: number | null; responses: number }>;
+}
 
 export const ClientStateInputSchema = /* @__PURE__ */ (() => z.object({
   state: z.string().length(2).nullable(),
@@ -155,6 +226,17 @@ export const ClientUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   /** Sales tax on this client's statements: taxable, and the rate (percent). */
   salesTaxable: z.boolean().optional(),
   salesTaxRatePct: z.number().min(0).max(100).nullable().optional(),
+  /** The account's owner: an internal user of the same tenant (null clears). */
+  accountOwnerUserId: UuidSchema.nullable().optional(),
+  /** The contract's term, YYYY-MM-DD (null clears); end on or after start. */
+  contractStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  contractEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  /** Legal name and billing address (W-2 employer block, statements). */
+  legalName: z.string().trim().max(255).nullable().optional(),
+  addressLine1: z.string().trim().max(255).nullable().optional(),
+  addressLine2: z.string().trim().max(255).nullable().optional(),
+  city: z.string().trim().max(120).nullable().optional(),
+  zip: z.string().trim().max(10).nullable().optional(),
 }))();
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
@@ -4551,7 +4633,7 @@ export type CandidateBoardResponse = z.infer<typeof CandidateBoardResponseSchema
 
 /* ----- Saved views ---------------------------------------------------------- */
 
-export const SavedViewScopeSchema = /* @__PURE__ */ (() => z.enum(['recruiting.candidates', 'people.directory', 'onboarding.applications']))();
+export const SavedViewScopeSchema = /* @__PURE__ */ (() => z.enum(['recruiting.candidates', 'people.directory', 'onboarding.applications', 'clients.list']))();
 export type SavedViewScope = z.infer<typeof SavedViewScopeSchema>;
 
 /** A view's query: the list's own URL params — short strings only. */

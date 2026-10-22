@@ -10,7 +10,7 @@ import { offlineSessionSavedAt } from '@/lib/offlineSession';
 import { displayZoneAbbrev, displayZoneDiffersFromDevice, fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
-import { Select } from '@/components/ui/Select';
+import { StoreScopeCombobox } from './StoreScopeCombobox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,32 +44,36 @@ function StoreScopeBar() {
   return <StoreScopeControl />;
 }
 
+/** The segmented bar holds at most this many clients… */
+const SEGMENT_MAX_CLIENTS = 6;
+/** …and this many characters of short names between them. */
+const SEGMENT_MAX_CHARS = 56;
+const segmentChars = (clients: readonly { name: string }[]) =>
+  clients.reduce((n, c) => n + shortStoreName(c.name).length, 0);
+
 function StoreScopeControl() {
   const { clients, clientId, setClientId } = useStoreScope();
   const { t } = useI18n();
 
-  // One dropdown. Below 1280px the segmented bar took ~510px of a 1024px
+  // One picker. Below 1280px the segmented bar took ~510px of a 1024px
   // tablet and pushed Help and the bell off the right edge (role walk ops
-  // 5), so it is the dropdown there; the segments come back at xl.
+  // 5), so it is the picker there; the segments come back at xl. The
+  // picker searches (StoreScopeCombobox): a native select of 300 client
+  // names was a scroll, not a choice.
   const dropdown = (className: string) => (
-    <div className={className} data-testid="store-scope-select">
-      <Select
-        size="sm"
-        value={clientId}
-        onChange={(e) => setClientId(e.target.value)}
-        aria-label={t('top.storeScope')}
-      >
-        <option value="">{t('nav.allClients')}</option>
-        {clients.map((c) => (
-          <option key={c.id} value={c.id}>
-            {shortStoreName(c.name)}
-          </option>
-        ))}
-      </Select>
-    </div>
+    <StoreScopeCombobox
+      className={className}
+      data-testid="store-scope-select"
+      clients={clients}
+      clientId={clientId}
+      onChange={setClientId}
+    />
   );
 
-  if (clients.length > 6) return dropdown('hidden lg:block');
+  // Segments only while they fit: up to six clients whose short names fit
+  // the bar. Three long names ("Seaside Hospitality Group"…) took ~510px at
+  // 1440 and squeezed the page's name in the bar down to "Clie… > Alto H…".
+  if (clients.length > SEGMENT_MAX_CLIENTS || segmentChars(clients) > SEGMENT_MAX_CHARS) return dropdown('hidden lg:block');
 
   const seg = (active: boolean) =>
     cn(
@@ -174,8 +178,11 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
   };
 
   return (
+    // relative z-30: the backdrop blur makes the bar its own stacking context,
+    // and without a z-index <main> (later in the page) painted over anything
+    // that opens out of the bar, such as the store-scope list.
     <header
-      className="bg-navy/95 backdrop-blur elev-1 border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
+      className="relative z-30 bg-navy/95 backdrop-blur elev-1 border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
     >
       {/* No ☰ on phones: the tab bar's More opens the same menu, and two
           doors to one room read as a website, not an app.
@@ -210,6 +217,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
         // arrives — and it's hidden from screen readers too, which would
         // otherwise meet the page's name twice in a row. A page with no hero
         // of its own (`hasHero` false) keeps its name here permanently.
+        data-testid="topbar-title"
         aria-hidden={hasHero && !heroHidden}
         // Hidden from assistive tech AND from the tab order: a breadcrumb link
         // inside an aria-hidden block is a focus stop nobody can see.
@@ -234,17 +242,18 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                 ? 'text-base md:text-lg text-white'
                 : 'text-silver'
             );
-            // On phones we collapse intermediate crumbs and only show the
-            // current page (last segment). On sm+ the full trail renders.
-            // Without this, six 4-character truncated crumbs eat the whole
-            // header and nothing is readable.
+            // The compact trail names the current page; the crumbs above it
+            // come back only where the bar has room for them (2xl). Between,
+            // the store scope and search leave ~230px, and "Clie… > Coastal
+            // Resort Ho…" named neither — the page's own breadcrumb, a scroll
+            // away, carries the full trail.
             const hideOnMobile = !isLast;
             return (
               <span
                 key={`${seg.label}-${i}`}
                 className={cn(
                   'flex items-center gap-1 min-w-0',
-                  hideOnMobile && 'hidden sm:inline-flex',
+                  hideOnMobile && 'hidden 2xl:inline-flex',
                 )}
               >
                 {seg.to && !isLast ? (

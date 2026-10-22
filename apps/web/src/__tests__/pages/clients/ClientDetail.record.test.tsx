@@ -13,6 +13,11 @@ vi.mock('@/lib/clientsApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/clientsApi')>()),
   getClient: vi.fn(),
 }));
+// The overview (header line, Overview tab) is the account page's own test (ClientAccount.test).
+vi.mock('@/lib/clientAccountApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/clientAccountApi')>()),
+  getClientOverview: vi.fn(() => new Promise(() => {})),
+}));
 // The sections have their own queries and their own tests; here only the
 // record at the top of the page matters.
 vi.mock('@/pages/clients/JobsSection', () => ({ JobsSection: () => null }));

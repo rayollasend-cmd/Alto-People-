@@ -24,6 +24,7 @@ import { Select } from '@/components/ui/Select';
 import { tabBarHiddenFrom, tabSetFor } from '@/components/BottomTabBar';
 import { useMediaQuery } from '@/lib/useViewport';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
+import { matchClients } from '@/components/StoreScopeCombobox';
 import { cn } from '@/lib/cn';
 
 
@@ -331,9 +332,16 @@ function CountPill({ n }: { n: number }) {
   );
 }
 
+/** Above this many clients the phone's chips get a search field and wrap. */
+const CHIPS_BEFORE_SEARCH = 6;
+/** How many matches the searchable chips show before asking for more letters. */
+const CHIPS_SHOWN = 24;
+
 /**
  * The store scope on a phone: the same choice as the desktop top bar's
- * "All / client" control, as a row of chips that scrolls sideways.
+ * "All / client" control, as a row of chips that scrolls sideways. Past six
+ * clients a sideways row is endless, so a search field sits above and the
+ * chips wrap: "All clients" and the current one first, then what matches.
  */
 function StoreScopeChips({ onPicked }: { onPicked: () => void }) {
   const { enabled, clients, clientId, setClientId: choose } = useStoreScope();
@@ -343,12 +351,51 @@ function StoreScopeChips({ onPicked }: { onPicked: () => void }) {
     onPicked();
   };
   const { t } = useI18n();
+  const [query, setQuery] = useState('');
   if (!enabled || clients.length < 2) return null;
   const chip = (active: boolean) =>
     cn(
       'h-8 shrink-0 rounded-full border px-3 text-xs whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
       active ? 'border-gold bg-gold text-on-accent font-semibold' : 'border-navy-secondary text-silver hover:text-ink',
     );
+  if (clients.length > CHIPS_BEFORE_SEARCH) {
+    const current = clients.find((c) => c.id === clientId);
+    const matches = matchClients(clients, query).filter((c) => c.id !== clientId);
+    const shown = matches.slice(0, CHIPS_SHOWN);
+    return (
+      <div className="space-y-2 px-4 pb-2" data-testid="store-scope-search">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver/70" aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label={t('nav.findClient')}
+            placeholder={t('nav.findClient')}
+            autoComplete="off"
+            className="h-11 w-full rounded-lg border border-navy-secondary bg-navy-secondary/40 pl-9 pr-3 text-base text-ink placeholder:text-silver/70 focus:border-gold focus:outline-none"
+          />
+        </div>
+        <div role="group" aria-label={t('nav.storeScope')} className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto overscroll-contain">
+          <button type="button" className={chip(clientId === '')} aria-pressed={clientId === ''} onClick={() => setClientId('')}>
+            {t('nav.allClients')}
+          </button>
+          {current && (
+            <button type="button" className={chip(true)} aria-pressed onClick={() => setClientId(current.id)}>
+              {shortStoreName(current.name)}
+            </button>
+          )}
+          {shown.map((c) => (
+            <button key={c.id} type="button" className={chip(false)} aria-pressed={false} onClick={() => setClientId(c.id)}>
+              {shortStoreName(c.name)}
+            </button>
+          ))}
+        </div>
+        {matches.length === 0 && query.trim() !== '' && <p className="text-xs text-silver">{t('nav.noClientMatch')}</p>}
+        {matches.length > shown.length && <p className="text-xs text-silver">{t('nav.moreClients', { n: matches.length - shown.length })}</p>}
+      </div>
+    );
+  }
   return (
     <div className="px-4 pb-2">
       <div role="group" aria-label={t('nav.storeScope')} className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">

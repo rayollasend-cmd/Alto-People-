@@ -1,8 +1,11 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type RefObject,
@@ -33,7 +36,13 @@ interface PageTitleContextValue {
    * an app frame — the name twice, forty pixels apart.
    */
   heroHidden: boolean;
-  setHeroHidden: (hidden: boolean) => void;
+  /**
+   * A page header announcing itself (PageHeader, RecordTemplate). The shell
+   * watches the first one registered — one observer for the whole app, so
+   * two headers on one screen can never fight over the top bar. Returns the
+   * unregister.
+   */
+  registerHero: (el: HTMLElement) => () => void;
 }
 
 const PageTitleContext = createContext<PageTitleContextValue | null>(null);
@@ -45,19 +54,61 @@ export function PageTitleProvider({ children }: { children: ReactNode }) {
   // observer fires) still gets its name in the chrome — the handoff only ever
   // *hides* the compact title, it never withholds it.
   const [heroHidden, setHeroHidden] = useState(true);
+  const [heroEl, setHeroEl] = useState<HTMLElement | null>(null);
+  const heroes = useRef<HTMLElement[]>([]);
+
+  const registerHero = useCallback((el: HTMLElement) => {
+    // The top-most header is the page's (a header nested in a tab is not),
+    // whatever order React mounted them in.
+    heroes.current = [...heroes.current, el].sort((a, b) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+    );
+    setHeroEl(heroes.current[0] ?? null);
+    return () => {
+      heroes.current = heroes.current.filter((h) => h !== el);
+      setHeroEl(heroes.current[0] ?? null);
+    };
+  }, []);
+
+  // The one observer. Its root is the viewport: the shell's <main> is the
+  // scroller but it fills the viewport, so an element scrolled out of main is
+  // out of the viewport too. The top margin is negative by the top bar's
+  // height, so the handoff happens as the header slides *under* the bar
+  // rather than after it has already gone — which is where the eye expects it.
+  useLayoutEffect(() => {
+    if (!heroEl) {
+      // No header of the page's own (or the page left): the chrome names it.
+      setHeroHidden(true);
+      return;
+    }
+    if (typeof IntersectionObserver === 'undefined') {
+      setHeroHidden(true);
+      return;
+    }
+    // Measured before the first paint, so a page at rest never flashes its
+    // name in the bar while the observer's first answer is on its way.
+    const r = heroEl.getBoundingClientRect();
+    if (r.width > 0 || r.height > 0) setHeroHidden(r.bottom <= TOP_BAR_PX);
+    const io = new IntersectionObserver(
+      ([entry]) => setHeroHidden(!entry?.isIntersecting),
+      { rootMargin: `-${TOP_BAR_PX}px 0px 0px 0px`, threshold: 0 },
+    );
+    io.observe(heroEl);
+    return () => io.disconnect();
+  }, [heroEl]);
 
   const value = useMemo<PageTitleContextValue>(
     () => ({
       title,
       breadcrumbs,
       heroHidden,
-      setHeroHidden,
+      registerHero,
       setMeta: ({ title: t, breadcrumbs: b }) => {
         setTitle(t);
         setBreadcrumbs(b);
       },
     }),
-    [title, breadcrumbs, heroHidden]
+    [title, breadcrumbs, heroHidden, registerHero]
   );
 
   return <PageTitleContext.Provider value={value}>{children}</PageTitleContext.Provider>;
@@ -79,37 +130,27 @@ export function useHeroHidden(): boolean {
   return ctx?.heroHidden ?? true;
 }
 
+/** The top bar's height at rest (min-h-14). */
+const TOP_BAR_PX = 56;
+
 /**
- * Watch a page's <h1> and tell the topbar when it leaves. The observer's
- * root is the viewport: the shell's <main> is the scroller but it fills the
- * viewport, so an element scrolled out of main is out of the viewport too.
- * The top margin is negative by the topbar's height, so the handoff happens
- * as the heading slides *under* the bar rather than after it has already
- * gone — which is where the eye expects it.
+ * Mark a page's own heading as its hero: while it is on screen the top bar
+ * keeps quiet, and once it scrolls under the bar the compact title takes
+ * over. Every template that renders a title and breadcrumb of its own
+ * (PageHeader, so ListTemplate; RecordTemplate) calls this; a page that
+ * renders none keeps its name in the bar. The observing is the shell's
+ * (PageTitleProvider), so it is done once, the same way, everywhere.
+ * Leaving the page hands the title back to the chrome.
  */
 export function useHeroObserver(ref: RefObject<HTMLElement | null>) {
   const ctx = useContext(PageTitleContext);
-  const setHeroHidden = ctx?.setHeroHidden;
+  const registerHero = ctx?.registerHero;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || !setHeroHidden) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      setHeroHidden(true);
-      return;
-    }
-    const io = new IntersectionObserver(
-      ([entry]) => setHeroHidden(!entry?.isIntersecting),
-      { rootMargin: '-56px 0px 0px 0px', threshold: 0 },
-    );
-    io.observe(el);
-    return () => {
-      io.disconnect();
-      // Leaving the page hands the title back to the chrome, so the next
-      // page's bar is never briefly blank.
-      setHeroHidden(true);
-    };
-  }, [ref, setHeroHidden]);
+    if (!el || !registerHero) return;
+    return registerHero(el);
+  }, [ref, registerHero]);
 }
 
 /**

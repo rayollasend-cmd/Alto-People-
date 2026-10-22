@@ -2,7 +2,7 @@ import * as React from 'react';
 import { cn } from '@/lib/cn';
 import { Breadcrumb, type BreadcrumbSegment } from '@/components/ui/Breadcrumb';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
-import { usePublishPageTitle } from '@/lib/pageTitle';
+import { useHeroObserver, usePublishPageTitle } from '@/lib/pageTitle';
 
 /**
  * Record — one thing (design system §4.3): a person, an agent, a site, a
@@ -45,6 +45,10 @@ export interface RecordTemplateProps {
 
 export function RecordTemplate({ breadcrumbs, identity, title, subtitle, status, actions, summary, tabs, activeTab, onTabChange, aside, className }: RecordTemplateProps) {
   usePublishPageTitle(title, breadcrumbs ?? null);
+  // The page names itself here, so the top bar's compact title waits until
+  // this heading has scrolled under it — one trail on screen, never two.
+  const heroRef = React.useRef<HTMLHeadingElement>(null);
+  useHeroObserver(heroRef);
   const [internal, setInternal] = React.useState(tabs[0]?.key ?? '');
   const current = activeTab ?? internal;
   const change = (k: string) => {
@@ -63,7 +67,7 @@ export function RecordTemplate({ breadcrumbs, identity, title, subtitle, status,
           {identity && <div className="shrink-0">{identity}</div>}
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-display text-hero leading-[1.1] tracking-tight text-ink">{title}</h1>
+              <h1 ref={heroRef} className="font-display text-hero leading-[1.1] tracking-tight text-ink">{title}</h1>
               {status}
             </div>
             {subtitle && <p className="mt-1 text-sm text-ink-muted md:text-base">{subtitle}</p>}

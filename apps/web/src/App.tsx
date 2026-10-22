@@ -22,6 +22,7 @@ import { queryClient } from '@/lib/queryClient';
 import { trackChunk } from '@/lib/chunkLoading';
 import { directoryQuery } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
+import { PROSPECTS_KEY, listProspects } from '@/lib/prospectsApi';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 import { LegacyPayrollRedirect } from '@/pages/payroll/legacyPayrollRoutes';
 
@@ -199,6 +200,7 @@ const AgentRecordPage = lazyNamed(() => import('@/pages/admin/AgentRecordPage'),
 const AgentGovernance = lazyNamed(() => import('@/pages/admin/AgentGovernance'), 'AgentGovernance');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
+const PipelinePage = lazyNamed(() => import('@/pages/clients/PipelinePage'), 'PipelinePage');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
 const PersonRecord = lazyNamed(() => import('@/pages/people/PersonRecord'), 'PersonRecord');
 const OrgHome = lazyNamed(() => import('@/pages/org/OrgHome'), 'OrgHome');
@@ -349,6 +351,7 @@ registerPrefetch('/recruiting', () => import('@/pages/recruiting/RecruitingHome'
 // People key warms both chunks — on the nav link and on a name in the grid.
 registerPrefetch('/people', () => Promise.all([import('@/pages/people/PeopleDirectory'), import('@/pages/people/PersonRecord')]));
 registerPrefetch('/clients', () => import('@/pages/clients/ClientsHome'));
+registerPrefetch('/clients/pipeline', () => import('@/pages/clients/PipelinePage'));
 registerPrefetch('/time-attendance', () => import('@/pages/time/TimeHome'));
 registerPrefetch('/time-off', () => import('@/pages/timeoff/TimeOffHome'));
 registerPrefetch('/scheduling', () => Promise.all([import('@/pages/scheduling/SchedulingHome'), import('@/pages/scheduling/AdminSchedulingView')]));
@@ -415,6 +418,10 @@ registerDataPrefetch('/clients', () => {
     queryFn: () => listClients({ status: 'ACTIVE' }),
     staleTime: 5 * 60_000,
   });
+});
+registerDataPrefetch('/clients/pipeline', () => {
+  // Same key and loader as PipelinePage's own query.
+  void queryClient.prefetchQuery({ queryKey: PROSPECTS_KEY, queryFn: listProspects, staleTime: 30_000 });
 });
 
 // Tiny in-page fallback for top-level (no-Layout) routes while their chunk
@@ -519,6 +526,8 @@ const LAYOUT_ROUTES = [
   // payroll finalizes, executives read. Static segment outranks `clients/:id`.
   { path: 'clients/statements', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><ClientStatementsRollup /></RequireCapability> },
   { path: 'clients/nps', element: <RequireCapability cap="view:executive" anyOf={['view:marketing']}><ClientNpsPage /></RequireCapability> },
+  // The new-business pipeline: whoever works it (manage:clients) and the executives who read it.
+  { path: 'clients/pipeline', element: <RequireCapability cap="manage:clients" anyOf={['view:executive']} notClientBounded><PipelinePage /></RequireCapability> },
   { path: 'clients/:id', element: <RequireCapability cap="view:clients"><ClientDetail /></RequireCapability> },
   // The client portal home — CLIENT_PORTAL's landing view; admins with
   // view:executive/manage:org preview any client via ?clientId= (the

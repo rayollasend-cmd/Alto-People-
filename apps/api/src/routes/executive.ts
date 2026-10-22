@@ -10,7 +10,8 @@ import { isInternallyScoped } from '../lib/scope.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { formatRef } from '../lib/emailTemplates.js';
-import { rolesWithCapability } from '@alto-people/shared';
+import { ProspectInputSchema, ProspectUpdateSchema, rolesWithCapability } from '@alto-people/shared';
+import { createProspect, deleteProspect, updateProspect } from '../lib/clientProspects.js';
 import { computeExecutiveBriefing } from '../lib/executiveBriefing.js';
 import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
 import { computeExecutiveSummary, executiveNarrative } from '../lib/executiveSummary.js';
@@ -532,14 +533,10 @@ executiveRouter.put(
 
 /* ===== New-business pipeline ============================================= */
 
-const ProspectInputSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  stage: z.enum(['LEAD', 'CONTACTED', 'PROPOSAL', 'VERBAL', 'WON', 'LOST']).optional(),
-  estWeeklyHours: z.number().int().nonnegative().max(100_000).nullable().optional(),
-  estBillRate: z.number().nonnegative().max(10_000).nullable().optional(),
-  notes: z.string().trim().max(2_000).nullable().optional(),
-});
-
+// The pipeline itself lives at /client-prospects (routes/clientProspects.ts,
+// the Clients → Pipeline page). The executive dashboard reads it here, and
+// the writes stay as aliases into the same code, so a stage moved from
+// either place keeps "days in stage" and the LOST/WON rules true.
 const PROSPECT_WRITE = requireCapability('manage:clients');
 
 executiveRouter.get('/prospects', EXEC, async (_req: Request, res: Response) => {
@@ -563,48 +560,20 @@ executiveRouter.get('/prospects', EXEC, async (_req: Request, res: Response) => 
 
 executiveRouter.post('/prospects', PROSPECT_WRITE, async (req: Request, res: Response) => {
   const input = ProspectInputSchema.parse(req.body);
-  const row = await prisma.clientProspect.create({
-    data: {
-      name: input.name,
-      stage: input.stage ?? 'LEAD',
-      estWeeklyHours: input.estWeeklyHours ?? null,
-      estBillRate: input.estBillRate ?? null,
-      notes: input.notes ?? null,
-    },
-  });
-  enqueueAudit(
-    {
-      actorUserId: req.user!.id,
-      action: 'executive.prospect_created',
-      entityType: 'ClientProspect',
-      entityId: row.id,
-      metadata: { name: row.name },
-    },
-    'executive.prospects',
-  );
-  res.status(201).json({ id: row.id });
+  res.status(201).json(await createProspect(tenantIdForWrite(), input, req.user!.id));
 });
 
 executiveRouter.patch('/prospects/:id', PROSPECT_WRITE, async (req: Request, res: Response) => {
   const id = z.string().uuid().parse(req.params.id);
-  const input = ProspectInputSchema.partial().parse(req.body);
-  const existing = await prisma.clientProspect.findFirst({
-    where: { id, deletedAt: null, tenantId: tenantIdForWrite() },
-  });
-  if (!existing) throw new HttpError(404, 'not_found', 'Prospect not found.');
-  await prisma.clientProspect.update({ where: { id }, data: input });
+  const input = ProspectUpdateSchema.parse(req.body);
+  await updateProspect(tenantIdForWrite(), id, input, req.user!.id);
   res.json({ ok: true });
 });
 
 executiveRouter.delete('/prospects/:id', PROSPECT_WRITE, async (req: Request, res: Response) => {
   const id = z.string().uuid().parse(req.params.id);
   // Brief 2-1: another tenant's prospect is not found (cross-tenant suite).
-  const existing = await prisma.clientProspect.findFirst({ where: { id, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
-  if (!existing) throw new HttpError(404, 'not_found', 'Prospect not found.');
-  await prisma.clientProspect.updateMany({
-    where: { id, deletedAt: null },
-    data: { deletedAt: new Date() },
-  });
+  await deleteProspect(tenantIdForWrite(), id, req.user!.id);
   res.json({ ok: true });
 });
 
