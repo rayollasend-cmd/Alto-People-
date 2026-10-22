@@ -452,6 +452,8 @@ const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   // The kiosk code that puts a hire on the floor is the last step of the
   // recruiter's onboarding desk (owner 2026-10-22); it was URL-only.
   'kiosk',
+  // The accounts she hires for (view:clients since 2026-10-22).
+  'clients',
 ]);
 
 /**

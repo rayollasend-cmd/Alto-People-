@@ -440,9 +440,9 @@ function PublicRouteFallback() {
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
   // Phase 61 — template manager (HR/Ops only; component enforces).
-  { path: 'onboarding/templates', element: <RequireCapability cap="view:hr-admin"><TemplatesList /></RequireCapability> },
-  { path: 'onboarding/templates/new', element: <RequireCapability cap="view:hr-admin"><TemplateEditor /></RequireCapability> },
-  { path: 'onboarding/templates/:id', element: <RequireCapability cap="view:hr-admin"><TemplateEditor /></RequireCapability> },
+  { path: 'onboarding/templates', element: <RequireCapability cap="manage:onboarding"><TemplatesList /></RequireCapability> },
+  { path: 'onboarding/templates/new', element: <RequireCapability cap="manage:onboarding"><TemplateEditor /></RequireCapability> },
+  { path: 'onboarding/templates/:id', element: <RequireCapability cap="manage:onboarding"><TemplateEditor /></RequireCapability> },
   // Phase 62 — time-to-completion analytics (view:dashboard required).
   { path: 'onboarding/analytics', element: <RequireCapability cap="view:analytics"><OnboardingAnalytics /></RequireCapability> },
   {

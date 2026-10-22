@@ -456,6 +456,11 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:onboarding',
     'invite:onboarding',
     'view:org',
+    // The accounts she hires for: every invite, posting and offer names a
+    // client, and the pickers read GET /clients (view:clients). Without it
+    // the New application dialog rendered "Pick a client" with no clients
+    // (reported 2026-10-22). Read only — manage:clients stays out.
+    'view:clients',
     // Document inspection and approval for the hire's file.
     'view:documents',
     'manage:documents',

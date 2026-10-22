@@ -55,9 +55,9 @@ describe('the recruiter is refused outside recruiting', () => {
 });
 
 describe('the recruiter runs the onboarding desk', () => {
-  it('reads the document review queue and the kiosk codes (manage:documents, manage:time)', async () => {
+  it('reads the document review queue, the kiosk codes and the accounts she hires for (manage:documents, manage:time, view:clients)', async () => {
     const a = await recruiter();
-    for (const path of ['/documents/admin', '/kiosk-pins']) {
+    for (const path of ['/documents/admin', '/kiosk-pins', '/clients']) {
       const r = await a.get(path);
       expect(r.status, path).toBe(200);
     }

@@ -50,6 +50,8 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
         'headcount-plan',
         // The kiosk code is the last step of the onboarding desk (2026-10-22).
         'kiosk',
+        // The accounts she hires for.
+        'clients',
       ]),
     );
   });
@@ -59,7 +61,6 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
     for (const gone of [
       'payroll',
       'payroll-tax',
-      'clients',
       'audit',
       'analytics',
       'scheduling',

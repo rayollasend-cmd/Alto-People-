@@ -76,6 +76,7 @@ describe('hasCapability', () => {
         'manage:onboarding',
         'invite:onboarding',
         'view:org',
+        'view:clients',
         'view:documents',
         'manage:documents',
         'view:compliance',
@@ -103,6 +104,7 @@ describe('hasCapability', () => {
       'export:payroll-pii',
       'manage:scheduling',
       'manage:communications',
+      'manage:clients',
     ] as const) {
       expect(hasCapability('INTERNAL_RECRUITER', c), c).toBe(false);
     }
