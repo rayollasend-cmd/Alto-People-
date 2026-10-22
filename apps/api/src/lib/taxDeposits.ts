@@ -97,7 +97,7 @@ export async function accrueDepositsForRun(
   const payday = run.disbursedAt ?? new Date();
 
   const profile = await prisma.submitterProfile.findUnique({
-    where: { id: 'singleton' },
+    where: { tenantId: run.tenantId },
     select: { depositSchedule: true },
   });
   const schedule = profile?.depositSchedule ?? 'MONTHLY';

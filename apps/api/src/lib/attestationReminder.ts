@@ -15,6 +15,7 @@
 // DIGEST_CATEGORY.
 
 import type { PrismaClient } from '@prisma/client';
+import { tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -60,7 +61,7 @@ export async function runAttestationReminderSweep(
     try {
       const { periodStart } = periodForNow(config.cadence, now);
       const existing = await prisma.manualComplianceAttestation.findUnique({
-        where: { key_periodStart: { key: config.key, periodStart } },
+        where: { tenantId_key_periodStart: { tenantId: tenantIdForWrite(), key: config.key, periodStart } },
         select: { id: true },
       });
       if (existing) continue;

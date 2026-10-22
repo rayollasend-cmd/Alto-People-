@@ -709,9 +709,9 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
     );
   }
 
-  // Try to insert; on global pinHmac collision, regenerate up to a few
-  // times. 10k slots — collisions stay rare until the workforce gets
-  // large.
+  // Try to insert; on a pinHmac collision within the tenant, regenerate up
+  // to a few times. 10k slots per tenant — collisions stay rare until the
+  // workforce gets large.
   for (let attempt = 0; attempt < 6; attempt++) {
     const pin = input.pin ?? generatePin();
     const pinHmac = hmacPin(pin);
@@ -1061,7 +1061,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
   if (employeeNumber) {
     const pinHmac = hmacPin(employeeNumber);
     pin = await prisma.kioskPin.findUnique({
-      where: { pinHmac },
+      where: { tenantId_pinHmac: { tenantId: tenantIdForWrite(), pinHmac } },
       select: { id: true, clientId: true, associateId: true, pinEncrypted: true },
     });
   } else if (associateQuery) {
@@ -1192,6 +1192,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
           clockInAt: true,
           clientId: true,
           locationId: true,
+          location: { select: { timezone: true } },
         },
       }),
       prisma.kioskDevice.findMany({
@@ -1245,6 +1246,8 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
           clockInAt: openTimeEntry.clockInAt.toISOString(),
           clientId: openTimeEntry.clientId,
           locationId: openTimeEntry.locationId,
+          // The site's clock (one punch, one time).
+          locationTimezone: openTimeEntry.location?.timezone ?? null,
         }
       : null,
     clientsMatch,
@@ -1847,7 +1850,8 @@ function credentialLookup(input: { pin?: string | null; badgeToken?: string | nu
     return { kind: 'badge', badge, where: badge ? { associateId: badge.associateId } : { id: NO_MATCH } };
   }
   if (!input.pin) throw new HttpError(400, 'credential_required', 'Enter your clock-in number or scan your badge.');
-  return { kind: 'pin', badge: null, where: { pinHmac: hmacPin(input.pin) } };
+  // Decision 6: the four-digit number is unique within the device's tenant.
+  return { kind: 'pin', badge: null, where: { tenantId_pinHmac: { tenantId: tenantIdForWrite(), pinHmac: hmacPin(input.pin) } } };
 }
 
 /** The row, or null when a badge was reissued since this one was made. */

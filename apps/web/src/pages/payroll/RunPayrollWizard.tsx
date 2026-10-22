@@ -1236,6 +1236,9 @@ function PaycheckCard({
               {item.overtimeHours > 0 && (
                 <> · <span className="text-gold">{item.overtimeHours.toFixed(1)}h OT</span></>
               )}
+              {(item.doubleTimeHours ?? 0) > 0 && (
+                <> · <span className="text-gold">{(item.doubleTimeHours ?? 0).toFixed(1)}h DT</span></>
+              )}
               {item.rideCharges && item.rideCharges.amount > 0 && <> · {fmtMoney(item.rideCharges.amount)} van rides</>}
             </div>
           </div>
@@ -1408,11 +1411,22 @@ function HoursDrillDown({ item }: { item: PayrollRunPreviewItem }) {
         amount={item.overtimeHours.toFixed(2)}
         accent={item.overtimeHours > 0}
       />
+      {/* The multipliers the engine paid (lib/laborRules/hours): 1.5× and 2× unless a live jurisdiction says more. */}
       <DrillRow
-        label="Overtime pay (1.5×)"
-        amount={fmtMoney(item.overtimeHours * item.hourlyRate * 1.5)}
+        label={`Overtime pay (${item.overtimeMultiplier ?? 1.5}×)`}
+        amount={fmtMoney(item.overtimeHours * item.hourlyRate * (item.overtimeMultiplier ?? 1.5))}
         accent={item.overtimeHours > 0}
       />
+      {(item.doubleTimeHours ?? 0) > 0 && (
+        <>
+          <DrillRow label="Double-time hours" amount={(item.doubleTimeHours ?? 0).toFixed(2)} accent />
+          <DrillRow
+            label={`Double-time pay (${item.doubleMultiplier ?? 2}×)`}
+            amount={fmtMoney((item.doubleTimeHours ?? 0) * item.hourlyRate * (item.doubleMultiplier ?? 2))}
+            accent
+          />
+        </>
+      )}
       <DrillRow label="Hourly rate" amount={fmtMoney(item.hourlyRate)} />
       <DrillRow
         label="Pre-tax deductions"

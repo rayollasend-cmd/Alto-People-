@@ -11,7 +11,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { effectiveClientIdFilter } from '../lib/scope.js';
 import { enqueueAudit } from '../lib/audit.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
@@ -1398,7 +1398,7 @@ opsRouter.post(
       if (magicError) throw new HttpError(400, 'invalid_file_contents', magicError);
       const cleanName = sanitizeUploadFilename(req.file.originalname || 'photo.jpg');
       const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
-      const key = `ops-photos/${randomUUID()}-${sha}${extname(cleanName).toLowerCase() || '.jpg'}`;
+      const key = tenantBlobKey(`ops-photos/${randomUUID()}-${sha}${extname(cleanName).toLowerCase() || '.jpg'}`);
       await getBlobStore().put(key, req.file.buffer, req.file.mimetype);
       const photo = await prisma.opsTaskPhoto.create({
         data: {

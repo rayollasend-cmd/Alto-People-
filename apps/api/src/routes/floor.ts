@@ -9,7 +9,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
 import { enqueueAudit } from '../lib/audit.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyAllAdmins, notifyClientSupervisors, notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { send, statusForSendError } from '../lib/notifications.js';
@@ -107,7 +107,7 @@ floorRouter.post('/floor/incidents', requireCapability('report:incident'), uploa
       if (magicError) throw new HttpError(400, 'invalid_file_contents', magicError);
       const cleanName = sanitizeUploadFilename(req.file.originalname);
       const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
-      photoKey = `incidents/${randomUUID()}-${sha}${extname(cleanName).toLowerCase() || '.jpg'}`;
+      photoKey = tenantBlobKey(`incidents/${randomUUID()}-${sha}${extname(cleanName).toLowerCase() || '.jpg'}`);
       await getBlobStore().put(photoKey, req.file.buffer, req.file.mimetype);
     }
 

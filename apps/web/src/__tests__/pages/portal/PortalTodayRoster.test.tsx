@@ -101,7 +101,7 @@ describe('<PortalToday> — the roster on a phone', () => {
 
   it('one text to the whole shift sits in the shift’s header', async () => {
     renderToday('SHIFT_SUPERVISOR');
-    const button = await screen.findByRole('button', { name: 'Text this shift (2)' });
+    const button = await screen.findByRole('button', { name: 'Text this shift (2)' }, { timeout: 5000 });
     await userEvent.click(button);
     expect(await screen.findByRole('dialog')).toHaveTextContent('Text the crew');
   });

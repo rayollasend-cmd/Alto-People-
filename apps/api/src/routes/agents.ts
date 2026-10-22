@@ -627,7 +627,7 @@ agentsRouter.post('/decisions/:did/events', MANAGE, async (req, res, next) => {
   try {
     const { event, channel } = z.object({ event: z.enum(DECISION_EVENTS), channel: z.enum(['EMAIL', 'SMS', 'WHATSAPP', 'IN_APP', 'PAPER']).optional() }).strict().parse(req.body);
     const row = await markDecisionEvent(prisma, tenantIdForWrite(), Id.parse(req.params.did), event, req.user!.id, { channel });
-    res.json({ id: row.id, delivered: row.delivered });
+    res.json({ id: row.id, delivered: row.delivered, delivery: row.delivery });
   } catch (err) {
     next(err);
   }

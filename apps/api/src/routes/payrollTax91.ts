@@ -4,6 +4,7 @@ import { employerByEin, employersForYear } from '../lib/employment.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { can } from '@alto-people/shared';
@@ -305,8 +306,8 @@ payrollTax91Router.get(
       });
 
       const [orgSetting, submitter] = await Promise.all([
-        prisma.orgSetting.findUnique({ where: { id: 'singleton' } }),
-        prisma.submitterProfile.findUnique({ where: { id: 'singleton' } }),
+        prisma.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() } }),
+        prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } }),
       ]);
       const employer = {
         name: submitter?.name ?? orgSetting?.orgName ?? 'Employer',
@@ -366,11 +367,19 @@ payrollTax91Router.get('/tax-forms', VIEW, async (req, res) => {
     .enum(['DRAFT', 'FILED', 'AMENDED', 'VOIDED'])
     .optional()
     .parse(req.query.status);
+  // ?efileStatus=REJECTED: the forms an agency sent back (the Inbox's
+  // "Tax filings rejected" opens the Returns tab on exactly these).
+  const efileStatus = z
+    .enum(['SUBMITTED', 'SENT_TO_AGENCY', 'ACCEPTED', 'REJECTED'])
+    .optional()
+    .parse(req.query.efileStatus);
   const rows = await prisma.taxForm.findMany({
     where: {
+      tenantId: tenantIdForWrite(),
       ...(kind ? { kind } : {}),
       ...(taxYear ? { taxYear } : {}),
       ...(status ? { status } : {}),
+      ...(efileStatus ? { efileStatus } : {}),
     },
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
@@ -414,8 +423,8 @@ payrollTax91Router.get('/tax-forms/:id/mef.xml', VIEW, async (req, res) => {
   const f = await prisma.taxForm.findUnique({ where: { id: z.string().uuid().parse(req.params.id) } });
   if (!f) throw new HttpError(404, 'not_found', 'Form not found.');
   if (f.kind !== 'F941' && f.kind !== 'F940') throw new HttpError(409, 'not_mef', 'Only Forms 941 and 940 have an MeF return.');
-  const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
-  const org = await prisma.orgSetting.findFirst({ select: { orgName: true } });
+  const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
+  const org = await prisma.orgSetting.findFirst({ where: { tenantId: tenantIdForWrite() }, select: { orgName: true } });
   const filer = {
     ein: f.ein ?? profile?.ein ?? '',
     name: profile?.name ?? org?.orgName ?? 'Employer',
@@ -724,7 +733,7 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
       }, 0);
     const money = (n: number) =>
       n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
     const { pdf } = await renderTaxFormSummaryPdf({
       title: `Form W-3 transmittal totals — ${taxYear}`,
       employer: { name: profile?.name ?? 'Alto HR', ein: profile?.ein ?? '—' },
@@ -1631,7 +1640,7 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
     // Aggregate forms (941/940) render as labeled summary sheets — the
     // review-and-transcribe copy for the official form or e-file portal.
     if (form.kind === 'F941' || form.kind === 'F940') {
-      const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+      const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
       const amounts = (form.amounts ?? {}) as Record<string, unknown>;
       const lines = Object.entries(amounts).map(([key, v]) => ({
         // camelCase ? spaced words; numbers get currency formatting.
@@ -2044,7 +2053,7 @@ const SubmitterProfileBodySchema = z.object({
 });
 
 payrollTax91Router.get('/tax-forms/submitter', VIEW, async (_req, res) => {
-  const row = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+  const row = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
   res.json({ profile: row ?? null });
 });
 
@@ -2057,8 +2066,8 @@ payrollTax91Router.post('/tax-forms/submitter', MANAGE, async (req, res) => {
     irsTcc: input.irsTcc ?? null,
   };
   const row = await prisma.submitterProfile.upsert({
-    where: { id: 'singleton' },
-    create: { id: 'singleton', ...data },
+    where: { tenantId: tenantIdForWrite() },
+    create: { tenantId: tenantIdForWrite(), ...data },
     update: data,
   });
   res.json({ profile: row });
@@ -2091,7 +2100,7 @@ payrollTax91Router.get('/tax-forms/w2/efw2.txt', EXPORT_PII, async (req, res, ne
     };
 
     const submitter = await prisma.submitterProfile.findUnique({
-      where: { id: 'singleton' },
+      where: { tenantId: tenantIdForWrite() },
     });
     if (!submitter) {
       throw new HttpError(
@@ -2302,7 +2311,7 @@ payrollTax91Router.get(
       };
 
       const submitter = await prisma.submitterProfile.findUnique({
-        where: { id: 'singleton' },
+        where: { tenantId: tenantIdForWrite() },
       });
       if (!submitter) {
         throw new HttpError(
@@ -2534,7 +2543,7 @@ payrollTax91Router.get(
       };
 
       const submitter = await prisma.submitterProfile.findUnique({
-        where: { id: 'singleton' },
+        where: { tenantId: tenantIdForWrite() },
       });
       if (!submitter) {
         throw new HttpError(
@@ -2761,7 +2770,7 @@ payrollTax91Router.get(
       };
 
       const submitter = await prisma.submitterProfile.findUnique({
-        where: { id: 'singleton' },
+        where: { tenantId: tenantIdForWrite() },
       });
       if (!submitter) {
         throw new HttpError(

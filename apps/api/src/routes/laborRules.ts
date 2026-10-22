@@ -74,6 +74,9 @@ function summary(r: ReturnType<typeof rulesForSite>) {
     mealRequiredAfterHours: p.meal?.requiredAfterHours ?? null,
     restPerHours: p.rest?.perHours ?? null,
     restBetweenShiftsHours: p.restBetweenShifts?.minHours ?? null,
+    // Spread of hours / split shift (lib/laborRules/evaluate): the spread line in hours, and whether a split shift owes it.
+    spreadOfHoursHours: p.spreadOfHours?.premiumHours ? (p.spreadOfHours.thresholdHours ?? null) : null,
+    splitShiftPremium: !!(p.spreadOfHours?.premiumHours && p.spreadOfHours.splitGapMinutes != null),
     predictiveNoticeDays: p.predictive?.noticeDays ?? null,
     minorBands: p.minors?.bands?.length ?? 0,
   };

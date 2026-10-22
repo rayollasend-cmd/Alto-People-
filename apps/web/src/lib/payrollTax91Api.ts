@@ -124,8 +124,11 @@ export const listTaxForms = (params?: {
   kind?: TaxFormKind;
   taxYear?: number;
   status?: TaxFormStatus;
+  /** REJECTED: the forms an agency sent back. */
+  efileStatus?: NonNullable<TaxForm['efileStatus']>;
 }) => {
   const q = new URLSearchParams();
+  if (params?.efileStatus) q.set('efileStatus', params.efileStatus);
   if (params?.kind) q.set('kind', params.kind);
   if (params?.taxYear) q.set('taxYear', String(params.taxYear));
   if (params?.status) q.set('status', params.status);

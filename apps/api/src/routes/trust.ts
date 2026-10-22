@@ -85,7 +85,7 @@ trustRouter.post('/documents', MANAGE, upload.single('file'), async (req, res) =
 trustRouter.put('/soc2', MANAGE, async (req, res) => {
   const { reportIssuedOn } = Soc2ReportInputSchema.parse(req.body);
   const value = reportIssuedOn ? new Date(`${reportIssuedOn}T00:00:00.000Z`) : null;
-  await prisma.orgSetting.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', soc2ReportIssuedOn: value }, update: { soc2ReportIssuedOn: value } });
+  await prisma.orgSetting.upsert({ where: { tenantId: tenantIdForWrite() }, create: { tenantId: tenantIdForWrite(), soc2ReportIssuedOn: value }, update: { soc2ReportIssuedOn: value } });
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId: tenantIdForWrite(), action: 'trust.soc2_report_dated', entityType: 'OrgSetting', entityId: 'singleton', metadata: { reportIssuedOn } }, 'trust');
   __resetTrustCacheForTests();
   res.json({ reportIssuedOn });

@@ -51,8 +51,13 @@ import {
   S3BlobStore,
   createBlobStore,
   blobExistsForListing,
+  blobKeyTenant,
+  tenantBlobKey,
 } from '../../lib/blobStore.js';
 import { resolveStoragePath } from '../../lib/storage.js';
+import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 const TEST_DIR = `blobstore-test-${randomUUID().slice(0, 8)}`;
 
@@ -263,5 +268,63 @@ describe('blobExistsForListing (local driver in tests)', () => {
     const store = new LocalBlobStore();
     await store.put(key, Buffer.from('x'), 'application/octet-stream');
     expect(blobExistsForListing(key)).toBe(true);
+  });
+});
+
+describe('tenant prefix on new keys (Brief 2-1 §9.6)', () => {
+  const T2 = '22222222-2222-4222-8222-222222222222';
+
+  it('puts a new key under the tenant in context', async () => {
+    expect(await runWithTenant(T2, 'session', () => tenantBlobKey('i9/abc/front.jpg'))).toBe(`tenants/${T2}/i9/abc/front.jpg`);
+    // Outside any context: the write tenant is Alto HR's (tenantIdForWrite).
+    expect(tenantBlobKey('letters/x.pdf')).toBe(`tenants/${ALTO_TENANT_ID}/letters/x.pdf`);
+  });
+
+  it('takes an explicit tenant, is idempotent and strips a leading slash', () => {
+    expect(tenantBlobKey('/trust/soc2.pdf', T2)).toBe(`tenants/${T2}/trust/soc2.pdf`);
+    const once = tenantBlobKey('a.pdf', T2);
+    expect(tenantBlobKey(once, ALTO_TENANT_ID)).toBe(once);
+  });
+
+  it('reads the tenant back from a key, and null from a key written before the prefix', () => {
+    expect(blobKeyTenant(`tenants/${T2}/messages/m.jpg`)).toBe(T2);
+    expect(blobKeyTenant('messages/m.jpg')).toBeNull();
+    expect(blobKeyTenant('f3a8-abcd.pdf')).toBeNull();
+  });
+
+  it('a tenant key round-trips through the local driver and the escape guard still holds', async () => {
+    const store = new LocalBlobStore();
+    const key = tenantBlobKey(`${TEST_DIR}/tenant-key.bin`, T2);
+    await store.put(key, Buffer.from('t2'), 'application/octet-stream');
+    expect((await store.get(key))!.toString()).toBe('t2');
+    await store.delete(key);
+    await rm(resolveStoragePath(`tenants/${T2}`), { recursive: true, force: true });
+    await expect(store.put(tenantBlobKey('../../../escape.txt', T2), Buffer.from('x'), 'text/plain')).rejects.toThrow('storage path escape attempt');
+  });
+
+  it('every blob write in the API builds its key with tenantBlobKey', () => {
+    // A new upload path that forgets the prefix fails here, not in a tenant's bucket.
+    const src = join(__dirname, '..', '..');
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (name === '__tests__') continue;
+        if (statSync(full).isDirectory()) walk(full);
+        else if (name.endsWith('.ts')) files.push(full);
+      }
+    };
+    walk(src);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const text = readFileSync(file, 'utf8');
+      for (const m of text.matchAll(/getBlobStore\(\)\.put\(\s*([^,]+),/g)) {
+        const arg = m[1]!.trim();
+        const ok = arg.startsWith('tenantBlobKey(') || new RegExp(`\\b${arg.replace(/[^A-Za-z0-9_$]/g, '')}\\s*=\\s*tenantBlobKey\\(`).test(text);
+        if (!ok) offenders.push(`${relative(src, file)}: put(${arg}, …)`);
+      }
+    }
+    expect(files.length).toBeGreaterThan(100);
+    expect(offenders).toEqual([]);
   });
 });

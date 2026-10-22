@@ -5,6 +5,7 @@ import { enqueueAudit } from './audit.js';
 import { recordCandidateEvent } from './candidateEvents.js';
 import { env } from '../config/env.js';
 import { expireStaleInvites } from './onboardingUndo.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Candidates who have gone quiet close on their own.
@@ -43,16 +44,17 @@ const DAY = 86_400_000;
  * or after now, when no sweep has run yet (the first one is about to).
  */
 export async function closingStartsAt(now: Date): Promise<Date> {
-  const row = await prisma.orgSetting.findUnique({ where: { id: 'singleton' }, select: { recruitingCleanupSince: true } });
+  const row = await prisma.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { recruitingCleanupSince: true } });
   const since = row?.recruitingCleanupSince ?? now;
   return new Date(since.getTime() + GRACE_DAYS * DAY);
 }
 
 /** Start the grace clock on the first sweep; later sweeps leave it be. Safe to race. */
 async function startGraceClock(now: Date): Promise<Date> {
-  await prisma.orgSetting.createMany({ data: [{ id: 'singleton' }], skipDuplicates: true });
+  const tenantId = tenantIdForWrite();
+  await prisma.orgSetting.createMany({ data: [{ tenantId }], skipDuplicates: true });
   await prisma.orgSetting.updateMany({
-    where: { id: 'singleton', recruitingCleanupSince: null },
+    where: { tenantId, recruitingCleanupSince: null },
     data: { recruitingCleanupSince: now },
   });
   return closingStartsAt(now);

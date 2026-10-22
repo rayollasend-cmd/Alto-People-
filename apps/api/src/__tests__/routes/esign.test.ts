@@ -126,7 +126,7 @@ describe('POST /onboarding/applications/:id/esign/agreements/:agreementId/sign',
     expect(sig.typedName).toBe('Pat Hopeful');
     expect(sig.pdfHash).toBe(res.body.pdfHash);
     expect(sig.agreementId).toBe(agreementId);
-    expect(sig.signatureS3Key).toMatch(/^esign\//);
+    expect(sig.signatureS3Key).toMatch(/^tenants\/00000000-0000-4000-8000-000000000001\/esign\//); // Brief 2-1 §9.6: under the tenant
 
     const doc = await prisma.documentRecord.findUniqueOrThrow({ where: { id: res.body.documentId } });
     expect(doc.kind).toBe('SIGNED_AGREEMENT');

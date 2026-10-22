@@ -19,7 +19,9 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useI18n } from '@/lib/i18n';
 
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** Sun…Sat in the reader's language: Jan 4, 2026 was a Sunday (local midnight, so no zone shifts it). */
+const dayName = (dayOfWeek: number) => fmtWeekdayTz(new Date(2026, 0, 4 + dayOfWeek));
+const DAY_INDEXES = [0, 1, 2, 3, 4, 5, 6];
 
 /**
  * One-tap starting points for a new hire (role walk, floor 11). With no
@@ -99,7 +101,7 @@ export function AvailabilityEditor() {
     queryKey: ['AvailabilityEditor', 'drafts'],
     queryFn: () => getMyAvailability(),
   });
-  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load availability.' : null);
+  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('avail.loadFailed') : null);
   const loading = refreshQuery.isPending;
   useEffect(() => {
     const res = refreshQuery.data;
@@ -147,7 +149,7 @@ export function AvailabilityEditor() {
     // fail inline with the offending rows highlighted instead of a
     // round-trip error.
     if (drafts.some(isInvalidRange)) {
-      setError('End time must be after start time.');
+      setError(t('avail.endAfterStart'));
       return;
     }
     setSubmitting(true);
@@ -159,9 +161,9 @@ export function AvailabilityEditor() {
       }));
       const res = await replaceMyAvailability({ windows: payload });
       setDrafts(fromAPI(res.windows));
-      setInfo('Saved.');
+      setInfo(t('avail.saved'));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Save failed.');
+      setError(err instanceof ApiError ? err.message : t('avail.saveFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -170,9 +172,9 @@ export function AvailabilityEditor() {
   return (
     <section id="availability" className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-2xl text-white">My availability</h2>
+        <h2 className="text-2xl text-white">{t('avail.title')}</h2>
         <span className="text-xs text-silver/70">
-          Used by HR to suggest you for open shifts
+          {t('avail.usedBy')}
         </span>
       </div>
 
@@ -228,9 +230,9 @@ export function AvailabilityEditor() {
                       }
                       size="sm"
                     >
-                      {DAYS.map((d, i) => (
-                        <option key={d} value={i}>
-                          {d}
+                      {DAY_INDEXES.map((i) => (
+                        <option key={i} value={i}>
+                          {dayName(i)}
                         </option>
                       ))}
                     </Select>
@@ -243,7 +245,7 @@ export function AvailabilityEditor() {
                       onClick={() => removeWindow(idx)}
                       className="text-silver/70 hover:text-alert hover:bg-transparent"
                     >
-                      Remove
+                      {t('avail.remove')}
                     </Button>
                   </div>
                   <input
@@ -264,7 +266,7 @@ export function AvailabilityEditor() {
                   />
                   {isInvalidRange(w) && (
                     <p className="col-span-12 text-xs text-alert" role="alert">
-                      End time must be after start time.
+                      {t('avail.endAfterStart')}
                     </p>
                   )}
                 </li>
@@ -278,7 +280,7 @@ export function AvailabilityEditor() {
               size="sm"
               onClick={addWindow}
             >
-              + Add window
+              {t('avail.addWindow')}
             </Button>
             <Button
               type="button"
@@ -287,7 +289,7 @@ export function AvailabilityEditor() {
               loading={submitting}
               disabled={submitting}
             >
-              {submitting ? 'Saving…' : 'Save'}
+              {submitting ? t('avail.saving') : t('avail.save')}
             </Button>
             {info && <span className="text-sm text-success ml-2">{info}</span>}
           </div>
@@ -296,7 +298,7 @@ export function AvailabilityEditor() {
               className="mt-2"
               action={
                 <Button size="sm" variant="secondary" onClick={refresh}>
-                  Retry
+                  {t('avail.retry')}
                 </Button>
               }
             >
@@ -318,6 +320,7 @@ export function AvailabilityEditor() {
  * not time off.
  */
 function DaysOffEditor() {
+  const { t } = useI18n();
   const [exceptions, setExceptions] = useState<AvailabilityException[] | null>(null);
   const [date, setDate] = useState('');
   const [note, setNote] = useState('');
@@ -336,8 +339,8 @@ function DaysOffEditor() {
   useEffect(() => {
     if (!dataQuery.isError) return;
     const err = dataQuery.error;
-    setError(err instanceof ApiError ? err.message : 'Failed to load days off.');
-  }, [dataQuery.isError, dataQuery.error]);
+    setError(err instanceof ApiError ? err.message : t('avail.daysOffLoadFailed'));
+  }, [dataQuery.isError, dataQuery.error, t]);
 
   const add = async () => {
     if (!date || saving) return;
@@ -355,7 +358,7 @@ function DaysOffEditor() {
       setDate('');
       setNote('');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add that day.');
+      setError(err instanceof ApiError ? err.message : t('avail.dayOffAddFailed'));
     } finally {
       setSaving(false);
     }
@@ -366,7 +369,7 @@ function DaysOffEditor() {
       await deleteAvailabilityException(id);
       setExceptions((prev) => (prev ?? []).filter((x) => x.id !== id));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not remove that day.');
+      setError(err instanceof ApiError ? err.message : t('avail.dayOffRemoveFailed'));
     }
   };
 
@@ -384,7 +387,7 @@ function DaysOffEditor() {
   return (
     <div className="mt-5 pt-4 border-t border-navy-secondary">
       <h3 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2">
-        Days off (one-time)
+        {t('avail.daysOffTitle')}
       </h3>
       {exceptions && exceptions.length > 0 && (
         <ul className="flex flex-wrap gap-2 mb-3">
@@ -398,7 +401,7 @@ function DaysOffEditor() {
               <button
                 type="button"
                 onClick={() => remove(x.id)}
-                aria-label={`Remove day off ${x.date}`}
+                aria-label={t('avail.removeDayOff', { date: x.date })}
                 // Bare × glyph was a ~14px tap target; pad the hit area
                 // without inflating the chip visually.
                 className="grid place-items-center h-9 w-9 -my-2 -mr-2 text-silver/60 hover:text-alert active:text-alert rounded"
@@ -411,8 +414,7 @@ function DaysOffEditor() {
       )}
       {exceptions && exceptions.length === 0 && (
         <p className="text-xs text-silver/70 mb-3">
-          No upcoming days off. Add a date you can't work and it blocks swap
-          offers, pickups, and auto-scheduling for that day.
+          {t('avail.noDaysOff')}
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -421,7 +423,7 @@ function DaysOffEditor() {
           value={date}
           min={minDate}
           onChange={(e) => setDate(e.target.value)}
-          aria-label="Day off date"
+          aria-label={t('avail.dayOffDate')}
           className="px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base"
         />
         <input
@@ -429,12 +431,12 @@ function DaysOffEditor() {
           value={note}
           onChange={(e) => setNote(e.target.value)}
           maxLength={200}
-          placeholder="Reason (optional)"
-          aria-label="Day off reason"
+          placeholder={t('avail.reasonOptional')}
+          aria-label={t('avail.dayOffReason')}
           className="px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base w-44"
         />
         <Button type="button" variant="outline" size="sm" onClick={add} disabled={!date || saving}>
-          Add day off
+          {t('avail.addDayOff')}
         </Button>
       </div>
       {error && (

@@ -23,6 +23,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { scopeParams } from './scope';
@@ -243,10 +244,15 @@ export function PortalCandidates() {
         <>
           <Card className="animate-enter">
             <CardContent>
-              <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
-                {t('portal.candWaiting')}
-                {waiting.length > 0 && <Badge variant="pending">{waiting.length}</Badge>}
-              </h2>
+              <SectionTitle
+                size="sm"
+                title={
+                  <span className="flex items-center gap-2">
+                    {t('portal.candWaiting')}
+                    {waiting.length > 0 && <Badge variant="pending">{waiting.length}</Badge>}
+                  </span>
+                }
+              />
               {waiting.length === 0 ? (
                 <p className="text-sm text-silver/60">{t('portal.candNone')}</p>
               ) : (
@@ -257,7 +263,7 @@ export function PortalCandidates() {
           {answered.length > 0 && (
             <Card className="animate-enter">
               <CardContent>
-                <h2 className="mb-3 text-sm font-medium text-white">{t('portal.candAnswered')}</h2>
+                <SectionTitle size="sm" title={t('portal.candAnswered')} />
                 <ul className="divide-y divide-navy-secondary/60">{answered.map(card)}</ul>
               </CardContent>
             </Card>

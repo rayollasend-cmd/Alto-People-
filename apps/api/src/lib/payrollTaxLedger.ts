@@ -65,7 +65,7 @@ export function agencyNameFor(kind: TaxAgencyKind, jurisdiction: string): string
 /** The schedule an account starts on before the customer sets the agency's own. */
 async function defaultFrequency(db: Db, kind: TaxAgencyKind): Promise<DepositFrequency> {
   if (kind === 'FEDERAL_WITHHOLDING') {
-    const profile = await db.submitterProfile.findUnique({ where: { id: 'singleton' }, select: { depositSchedule: true } });
+    const profile = await db.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { depositSchedule: true } });
     return profile?.depositSchedule === 'SEMIWEEKLY' ? 'SEMIWEEKLY' : 'MONTHLY';
   }
   if (kind === 'STATE_WITHHOLDING') return 'MONTHLY';

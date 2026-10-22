@@ -10,6 +10,12 @@ selected by `STORAGE_DRIVER`:
   Object keys are exactly the relative keys already stored in
   `DocumentRecord.s3Key`, so switching drivers never rewrites database rows.
 
+**Tenant prefix (Brief 2-1 §9.6, 2026-10-22):** every object written since
+then lives under `tenants/<tenantId>/…` (`tenantBlobKey` in `blobStore.ts`;
+a test fails any new `put` that skips it). Older objects keep the key their
+row stores and read exactly as before; `scripts/rekey-blobs-by-tenant.ts`
+(dry run by default) copies them under their tenant when wanted.
+
 ## Driver matrix
 
 | | `STORAGE_DRIVER=local` (default) | `STORAGE_DRIVER=s3` |

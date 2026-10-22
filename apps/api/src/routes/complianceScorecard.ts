@@ -1456,8 +1456,9 @@ complianceScorecardRouter.post(
       }
 
       const row = await prisma.manualComplianceAttestation.upsert({
-        where: { key_periodStart: { key: input.key, periodStart } },
+        where: { tenantId_key_periodStart: { tenantId: tenantIdForWrite(), key: input.key, periodStart } },
         create: {
+          tenantId: tenantIdForWrite(),
           key: input.key,
           periodStart,
           periodEnd: expected.periodEnd,
@@ -2220,8 +2221,9 @@ complianceScorecardRouter.post(
       }
 
       const row = await prisma.complianceActionState.upsert({
-        where: { actionKey: input.actionId },
+        where: { tenantId_actionKey: { tenantId: tenantIdForWrite(), actionKey: input.actionId } },
         create: {
+          tenantId: tenantIdForWrite(),
           actionKey: input.actionId,
           status: input.status ?? 'OPEN',
           assigneeUserId: input.assigneeUserId ?? null,

@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
 
@@ -17,6 +18,11 @@ import { scopeActiveAssociates } from '../lib/scope.js';
  * Search: GET /skills/search?q=python returns associates ordered by
  * proficiency, optionally filtered to a minimum level. The killer
  * staffing query — "find me everyone who knows Python at advanced+".
+ *
+ * Self-claims (wave 2): a signed-in person adds skills to their own record
+ * (/me/skills) — the permission is the session's own associate, never an
+ * id in the body. A self-claim is pending until someone with manage:org
+ * verifies it; the claims waiting are GET /associate-skills/pending.
  */
 
 export const skills111Router = Router();
@@ -116,6 +122,7 @@ skills111Router.post('/associate-skills', MANAGE, async (req, res) => {
       // Reset verification — a level change needs re-verification.
       verifiedById: null,
       verifiedAt: null,
+      selfClaimedAt: null,
     },
   });
   res.status(201).json({ id: row.id });
@@ -125,16 +132,122 @@ skills111Router.post(
   '/associate-skills/:id/verify',
   MANAGE,
   async (req, res) => {
+    // Only a skill on someone in the caller's tenant and reach.
+    const row = await prisma.associateSkill.findFirst({
+      where: { id: String(req.params.id), associate: { is: scopeActiveAssociates(req.user!, { former: true }) } },
+      select: { id: true, associateId: true, selfClaimedAt: true },
+    });
+    if (!row) throw new HttpError(404, 'not_found', 'Skill not found.');
     await prisma.associateSkill.update({
-      where: { id: req.params.id },
+      where: { id: row.id },
       data: {
         verifiedById: req.user!.id,
         verifiedAt: new Date(),
       },
     });
+    if (row.selfClaimedAt) {
+      enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'skills.self_claim_verified', entityType: 'AssociateSkill', entityId: row.id, metadata: { associateId: row.associateId } }, 'skills');
+    }
     res.json({ ok: true });
   },
 );
+
+/** Self-claims waiting on a verifier, for the people in the caller's reach (oldest first). */
+skills111Router.get('/associate-skills/pending', MANAGE, async (req, res) => {
+  const rows = await prisma.associateSkill.findMany({
+    where: { tenantId: tenantIdForWrite(), selfClaimedAt: { not: null }, verifiedAt: null, associate: { is: scopeActiveAssociates(req.user!) } },
+    include: { skill: { select: { name: true, category: true } }, associate: { select: { id: true, firstName: true, lastName: true } } },
+    orderBy: { selfClaimedAt: 'asc' },
+    take: 200,
+  });
+  res.json({
+    claims: rows.map((r) => ({
+      id: r.id,
+      associateId: r.associate.id,
+      name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
+      skillName: r.skill.name,
+      category: r.skill.category,
+      level: r.level,
+      yearsExperience: r.yearsExperience,
+      notes: r.notes,
+      claimedAt: r.selfClaimedAt!.toISOString(),
+    })),
+  });
+});
+
+/* ----- My skills (self-claims) ------------------------------------------- */
+
+const SelfClaimSchema = z.object({
+  skillId: z.string().uuid(),
+  level: z.enum(LEVELS),
+  yearsExperience: z.number().int().min(0).max(60).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
+});
+
+function ownAssociateId(req: { user?: { associateId: string | null } }): string {
+  const id = req.user?.associateId;
+  if (!id) throw new HttpError(403, 'no_associate', 'Skills belong to a person record, and this account isn’t linked to one.');
+  return id;
+}
+
+/** My skills, and the catalog I can pick from. */
+skills111Router.get('/me/skills', requireAuth, async (req, res) => {
+  const associateId = ownAssociateId(req);
+  const [mine, catalog] = await Promise.all([
+    prisma.associateSkill.findMany({
+      where: { associateId },
+      include: { skill: { select: { name: true, category: true } } },
+      orderBy: { skill: { name: 'asc' } },
+      take: 200,
+    }),
+    prisma.skill.findMany({ where: { tenantId: tenantIdForWrite() }, select: { id: true, name: true, category: true }, orderBy: { name: 'asc' }, take: 500 }),
+  ]);
+  res.json({
+    skills: mine.map((r) => ({
+      id: r.id,
+      skillId: r.skillId,
+      skillName: r.skill.name,
+      category: r.skill.category,
+      level: r.level,
+      yearsExperience: r.yearsExperience,
+      verified: r.verifiedAt !== null,
+      selfClaimed: r.selfClaimedAt !== null,
+    })),
+    catalog,
+  });
+});
+
+/** Add (or change) a skill on my own record: pending until someone verifies it. */
+skills111Router.post('/me/skills', requireAuth, async (req, res) => {
+  const associateId = ownAssociateId(req);
+  const input = SelfClaimSchema.parse(req.body);
+  const skill = await prisma.skill.findFirst({ where: { id: input.skillId, tenantId: tenantIdForWrite() }, select: { id: true, name: true } });
+  if (!skill) throw new HttpError(404, 'skill_not_found', 'That skill isn’t in the list.');
+  const existing = await prisma.associateSkill.findUnique({ where: { associateId_skillId: { associateId, skillId: skill.id } } });
+  // A verified skill at the same level stays verified; any change goes back for verification.
+  if (existing?.verifiedAt && existing.level === input.level && (input.yearsExperience ?? null) === existing.yearsExperience) {
+    res.json({ id: existing.id, pending: false });
+    return;
+  }
+  const now = new Date();
+  const row = await prisma.associateSkill.upsert({
+    where: { associateId_skillId: { associateId, skillId: skill.id } },
+    create: { associateId, skillId: skill.id, level: input.level, yearsExperience: input.yearsExperience ?? null, notes: input.notes ?? null, selfClaimedAt: now },
+    update: { level: input.level, yearsExperience: input.yearsExperience ?? null, notes: input.notes ?? null, verifiedById: null, verifiedAt: null, selfClaimedAt: now },
+  });
+  enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'skills.self_claimed', entityType: 'AssociateSkill', entityId: row.id, metadata: { associateId, skill: skill.name, level: input.level } }, 'skills');
+  res.status(existing ? 200 : 201).json({ id: row.id, pending: true });
+});
+
+/** Take back a claim of mine that nobody has verified yet. */
+skills111Router.delete('/me/skills/:id', requireAuth, async (req, res) => {
+  const associateId = ownAssociateId(req);
+  const row = await prisma.associateSkill.findFirst({ where: { id: String(req.params.id), associateId }, select: { id: true, verifiedAt: true } });
+  if (!row) throw new HttpError(404, 'not_found', 'Skill not found.');
+  if (row.verifiedAt) throw new HttpError(409, 'verified', 'A verified skill is on your record; ask HR to change it.');
+  await prisma.associateSkill.delete({ where: { id: row.id } });
+  res.status(204).end();
+});
 
 skills111Router.delete('/associate-skills/:id', MANAGE, async (req, res) => {
   // Only a skill on someone in the caller's tenant and reach.
@@ -177,6 +290,8 @@ skills111Router.get('/associate-skills', VIEW, async (req, res) => {
       notes: r.notes,
       verifiedAt: r.verifiedAt?.toISOString() ?? null,
       verifiedByEmail: r.verifiedBy?.email ?? null,
+      /** The person added it themselves; pending until verified. */
+      selfClaimedAt: r.selfClaimedAt?.toISOString() ?? null,
     })),
   });
 });

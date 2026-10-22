@@ -18,7 +18,6 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
   fmtPayRate,
-  fmtTime,
   ymdLocal,
   ymdToIsoEndExclusive,
   ymdToIsoStart,
@@ -247,7 +246,9 @@ export function AssociateTimeView({
   // Approaching-overtime nudge. Sum this workweek's worked minutes (the Sat
   // 00:00 → Fri workweek payroll counts, lib/workweek) from loaded history
   // plus any in-progress shift, and warn as they near the 40h/week overtime
-  // line. Directional, not a payroll figure — breaks may differ.
+  // line. The 40h line is only the warning's yardstick; an overtime FIGURE
+  // is the server's (each entry's share of the labor-rules split — daily
+  // rules where a jurisdiction pays them), never minutes − 40h here.
   const WEEKLY_OT_MIN = 40 * 60;
   const OT_WARN_MIN = 35 * 60;
   const weekStart = workweekStart();
@@ -267,8 +268,16 @@ export function AssociateTimeView({
       )
       .reduce((sum, e) => sum + (e.minutesElapsed ?? 0), 0) + liveMinutes;
   const weekHours = (weekMinutes / 60).toFixed(1);
+  const weekOvertimeMin = (entries ?? [])
+    .filter((e) => new Date(e.clockInAt) >= weekStart && e.status !== 'REJECTED')
+    .reduce((sum, e) => sum + (e.hours ? e.hours.overtimeMinutes + e.hours.doubleTimeMinutes : 0), 0);
   const overtimeNudge =
-    weekMinutes >= WEEKLY_OT_MIN
+    weekOvertimeMin >= 1
+      ? {
+          tone: 'border-alert/40 bg-alert/[0.07] text-silver',
+          text: `You've logged ${weekHours}h this workweek — ${(weekOvertimeMin / 60).toFixed(1)}h of it is overtime. Check with your manager if that's unexpected.`,
+        }
+      : weekMinutes >= WEEKLY_OT_MIN
       ? {
           tone: 'border-alert/40 bg-alert/[0.07] text-silver',
           text: `You've logged ${weekHours}h this workweek — past the 40h line, so additional hours count as overtime. Check with your manager if that's unexpected.`,
@@ -299,7 +308,7 @@ export function AssociateTimeView({
           <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Your clock</div>
           {active ? (
             <div className="text-sm text-white">
-              On the clock since {fmtTime(active.clockInAt)} ·{' '}
+              On the clock since {fmtPunchTime(active.clockInAt, active.locationTimezone)} ·{' '}
               <span className="font-semibold tabular-nums text-gold">{formatHM(liveMinutes)}</span>
               {onBreak && <span className="text-warning"> · on break</span>}
             </div>
@@ -379,7 +388,7 @@ export function AssociateTimeView({
               {formatHM(liveMinutes)}
             </div>
             <div className="text-sm text-silver mb-6">
-              since {fmtTime(active.clockInAt)}
+              since {fmtPunchTime(active.clockInAt, active.locationTimezone)}
               {active.clockInLat != null && active.clockInLng != null && (
                 // Raw decimal coordinates mean nothing to a person — turn
                 // the punch location into a tappable map pin instead.

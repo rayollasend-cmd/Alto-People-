@@ -48,6 +48,8 @@ function SummaryList({ s }: { s: LaborRuleSummary }) {
     ['Meal required after', hours(s.mealRequiredAfterHours, 'No meal law')],
     ['Rest period per', hours(s.restPerHours, 'No rest law')],
     ['Rest between shifts', hours(s.restBetweenShiftsHours)],
+    ['Spread of hours', hours(s.spreadOfHoursHours ?? null)],
+    ['Split-shift premium', s.splitShiftPremium ? 'Applies' : 'No'],
     ['Schedule notice', s.predictiveNoticeDays === null ? 'No notice law' : `${s.predictiveNoticeDays} days`],
     ['Minors’ age bands', String(s.minorBands)],
   ];

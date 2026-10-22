@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
-import { getFederalW4, saveFederalW4, type FederalW4Facts, type FederalW4Input } from '@/lib/payrollDeskApi';
+import { getFederalW4, lockInLetterUrl, saveFederalW4, uploadLockInLetter, type FederalW4Facts, type FederalW4Input } from '@/lib/payrollDeskApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -44,6 +44,17 @@ export function FederalW4Card({ associateId }: { associateId: string }) {
       toast.success('Federal W-4 facts saved.');
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not save.'),
+  });
+  // The letter itself, filed in the person's documents beside the facts it sets.
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const upload = useMutation({
+    mutationFn: (file: File) => uploadLockInLetter(associateId, file),
+    onSuccess: (next) => {
+      qc.setQueryData(['payroll', 'federal-w4', associateId], next);
+      setDraft((d) => (d ? { ...d, lockInLetter: next.lockInLetter } : next));
+      toast.success('Letter filed in their documents.');
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Could not upload the letter.'),
   });
 
   if (q.isLoading) return <Skeleton className="h-48" />;
@@ -147,6 +158,40 @@ export function FederalW4Card({ associateId }: { associateId: string }) {
             <Button variant="outline" size="sm" className="mt-2" onClick={() => setDraft({ ...draft, lockIn: { filingStatus: 'SINGLE', multipleJobs: false, effectiveDate: new Date().toISOString().slice(0, 10) } })}>
               Record a lock-in letter
             </Button>
+          )}
+          {(lock || draft.lockInLetter) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-sm">
+              {draft.lockInLetter ? (
+                <>
+                  <span className="text-ink-muted">Letter on file:</span>
+                  {draft.lockInLetter.available ? (
+                    <a className="text-gold underline underline-offset-2" href={lockInLetterUrl(associateId)} target="_blank" rel="noreferrer">
+                      {draft.lockInLetter.filename}
+                    </a>
+                  ) : (
+                    <span className="text-warning">{draft.lockInLetter.filename} (file missing, upload it again)</span>
+                  )}
+                  <span className="text-xs text-ink-muted">uploaded {fmtDate(draft.lockInLetter.uploadedAt)}</span>
+                </>
+              ) : (
+                <span className="text-ink-muted">The letter itself isn’t on file yet.</span>
+              )}
+              <input
+                ref={fileRef}
+                type="file"
+                accept="application/pdf,image/png,image/jpeg"
+                className="hidden"
+                aria-label="Lock-in letter file"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) upload.mutate(f);
+                }}
+              />
+              <Button variant="outline" size="sm" className="ml-auto" loading={upload.isPending} onClick={() => fileRef.current?.click()}>
+                {draft.lockInLetter ? 'Replace the letter' : 'Upload the letter'}
+              </Button>
+            </div>
           )}
         </div>
 

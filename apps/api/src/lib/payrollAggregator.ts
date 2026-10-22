@@ -15,15 +15,14 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { findInChunks } from './chunkedIn.js';
 import { computeRetroPay, summarizeRetro, type RetroCandidate } from './retroPay.js';
-import { evaluateLivePay, loadLiveRules } from './laborRules/live.js';
+import { loadPayContext } from './laborRules/payContext.js';
+import { penaltyAmount, splitHours } from './laborRules/hours.js';
 import { localParts } from './laborRules/evaluate.js';
-import { loadRoundingPolicies, roundPunches } from './punchRounding.js';
 import { unpaidPremiums } from './predictabilityPay.js';
 import { tenantIdForWrite } from './tenant.js';
 import {
   payableMs,
   round2,
-  splitWeeklyOvertime,
   sumApprovedHours,
 } from './payroll.js';
 import {
@@ -224,9 +223,13 @@ export interface ProjectedItem {
   hourlyRate: number;
   /** DEFAULT = the editable fallback rate because no comp record exists. */
   rateSource: 'OVERRIDE' | 'COMP' | 'DEFAULT' | 'SALARY';
-  /** Federal weekly OT split: regular vs overtime hours. */
+  /** The labor-rules engine's split (lib/laborRules/hours): regular, overtime and — under a live jurisdiction's daily rule — double time. */
   regularHours: number;
   overtimeHours: number;
+  doubleTimeHours: number;
+  /** The multipliers the overtime and double-time lines were paid at. */
+  overtimeMultiplier: number;
+  doubleMultiplier: number;
   earnings: ProjectedEarning[];
   grossPay: number;
   preTaxDeductions: number;
@@ -417,18 +420,9 @@ export async function aggregatePayrollProjection(
   // meal a worker attested they waived honoured and one they said they
   // didn't get paid as the premium.
   const laborTenantId = tenantIdForWrite();
-  const [liveRules, rounding] = await Promise.all([loadLiveRules(tx, laborTenantId), loadRoundingPolicies(tx, laborTenantId)]);
-  if (rounding.any) {
-    for (const [id, list] of byAssociate) {
-      byAssociate.set(
-        id,
-        list.map((e) => {
-          const r = roundPunches(rounding.forSite(e.locationId), e.clockInAt, e.clockOutAt);
-          return r.rounded ? { ...e, clockInAt: r.clockInAt, clockOutAt: r.clockOutAt } : e;
-        }),
-      );
-    }
-  }
+  const pay = await loadPayContext(tx, laborTenantId);
+  const liveRules = pay.rules;
+  for (const [id, list] of byAssociate) byAssociate.set(id, list.map(pay.forPay));
   const mealAttestation = new Map<string, string>();
   const premiumsByAssociate = new Map<string, Awaited<ReturnType<typeof unpaidPremiums>>>();
   if (liveRules.any && entries.length > 0) {
@@ -895,36 +889,37 @@ export async function aggregatePayrollProjection(
         hourlyRateByAssociate.get(associateId) ??
         defaultRate;
       const siteRef = (e: (typeof group)[number]) => (e.location ? { id: e.location.id, state: e.location.state, city: e.location.city } : null);
-      if (liveRules.any && group.some((e) => liveRules.activationFor(siteRef(e)))) {
-        // A LIVE jurisdiction: the engine splits the hours (daily, weekly,
-        // seventh-day, double time) and names the premiums, under the rows
-        // counsel signed; the person's other entries count as paid today.
-        const lp = evaluateLivePay(
-          liveRules,
-          group
-            .filter((e) => e.clockOutAt)
-            .map((e) => ({
-              id: e.id,
-              clockInAt: e.clockInAt,
-              clockOutAt: e.clockOutAt!,
-              breaks: e.breaks,
-              site: e.location ? { id: e.location.id, state: e.location.state, city: e.location.city, timezone: e.location.timezone } : null,
-              mealWaived: mealAttestation.get(e.id) === 'WAIVED',
-            })),
-        );
-        otSplit = { regularHours: lp.regularHours, overtimeHours: lp.overtimeHours };
-        flsaOtHours = splitWeeklyOvertime(group).overtimeHours;
-        overtimeMultiplier = lp.overtimeMultiplier;
-        doubleTimeHours = lp.doubleTimeHours;
-        doubleMultiplier = lp.doubleMultiplier;
-        regularPay = round2(otSplit.regularHours * hourlyRate);
+      // The labor-rules engine splits the hours (lib/laborRules/hours) — the
+      // one split the sheet, the statement and every estimate also use. At a
+      // LIVE jurisdiction it applies the signed rows (daily, weekly, seventh
+      // day, double time) and names the premiums; everywhere else it is the
+      // federal weekly split pay has always used.
+      const split = splitHours(
+        liveRules,
+        group.map((e) => ({
+          id: e.id,
+          clockInAt: e.clockInAt,
+          clockOutAt: e.clockOutAt,
+          breaks: e.breaks,
+          site: e.location ? { id: e.location.id, state: e.location.state, city: e.location.city, timezone: e.location.timezone } : null,
+          mealWaived: mealAttestation.get(e.id) === 'WAIVED',
+        })),
+      );
+      otSplit = { regularHours: split.regularHours, overtimeHours: split.overtimeHours };
+      flsaOtHours = split.flsaOvertimeHours;
+      regularPay = round2(otSplit.regularHours * hourlyRate);
+      if (split.live) {
+        overtimeMultiplier = split.overtimeMultiplier;
+        doubleTimeHours = split.doubleTimeHours;
+        doubleMultiplier = split.doubleMultiplier;
         overtimePay = round2(otSplit.overtimeHours * hourlyRate * overtimeMultiplier);
         doubleTimePay = round2(doubleTimeHours * hourlyRate * doubleMultiplier);
-        const mealDays = new Set(lp.penalties.filter((p) => p.kind === 'MEAL').map((p) => p.entryId ?? p.date));
-        for (const p of lp.penalties) {
-          const amount = round2(p.hours * hourlyRate + (p.cents ?? 0) / 100);
+        const mealDays = new Set(split.penalties.filter((p) => p.kind === 'MEAL').map((p) => p.entryId ?? p.date));
+        for (const p of split.penalties) {
+          const amount = round2(penaltyAmount(p, hourlyRate));
           if (amount <= 0) continue;
-          laborPremiums.push({ kind: 'PREMIUM', hours: p.hours || null, rate: p.hours ? hourlyRate : null, amount, isTaxable: true, note: p.label });
+          const lineRate = p.rateCents != null ? p.rateCents / 100 : hourlyRate;
+          laborPremiums.push({ kind: 'PREMIUM', hours: p.hours || null, rate: p.hours ? lineRate : null, amount, isTaxable: true, note: p.label });
         }
         // The worker said they didn't get their meal break: the premium is owed even where the punches look clean.
         for (const e of group) {
@@ -937,9 +932,6 @@ export async function aggregatePayrollProjection(
           laborPremiums.push({ kind: 'PREMIUM', hours: ph, rate: hourlyRate, amount: round2(ph * hourlyRate), isTaxable: true, note: `Meal premium — no meal break reported (${cite})` });
         }
       } else {
-        otSplit = splitWeeklyOvertime(group);
-        flsaOtHours = otSplit.overtimeHours;
-        regularPay = round2(otSplit.regularHours * hourlyRate);
         overtimePay = round2(otSplit.overtimeHours * hourlyRate * 1.5);
       }
     }
@@ -1546,6 +1538,9 @@ export async function aggregatePayrollProjection(
       rateSource,
       regularHours: otSplit.regularHours,
       overtimeHours: otSplit.overtimeHours,
+      doubleTimeHours,
+      overtimeMultiplier,
+      doubleMultiplier,
       earnings,
       grossPay,
       preTaxDeductions,

@@ -18,6 +18,8 @@
 import { writeFileSync } from 'node:fs';
 import { PrismaClient } from '@prisma/client';
 import { dailyOvertimeLookback, type LookbackEntry, type LookbackWeek } from '../src/lib/dailyOvertimeLookback.js';
+import { loadLiveRules } from '../src/lib/laborRules/live.js';
+import { ALTO_TENANT_ID } from '../src/lib/tenant.js';
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
@@ -35,6 +37,8 @@ const prisma = new PrismaClient();
 type Row = LookbackWeek & { runId: string; periodStart: string; periodEnd: string; runStatus: string; associateName: string };
 
 async function main() {
+  // What the engine paid is its own split under the tenant's live rules (Alto HR's; the script is single-tenant).
+  const liveRules = await loadLiveRules(prisma, process.env.TENANT_ID ?? ALTO_TENANT_ID);
   const runs = await prisma.payrollRun.findMany({
     where: {
       status: { in: ['FINALIZED', 'DISBURSED'] },
@@ -67,7 +71,7 @@ async function main() {
         clockInAt: true,
         clockOutAt: true,
         breaks: { select: { startedAt: true, endedAt: true } },
-        location: { select: { state: true, timezone: true } },
+        location: { select: { id: true, state: true, city: true, timezone: true } },
         associate: { select: { state: true } },
       },
     });
@@ -80,9 +84,11 @@ async function main() {
       location: e.location ? { timezone: e.location.timezone } : null,
       siteState: e.location?.state ?? null,
       siteTimezone: e.location?.timezone ?? null,
+      siteId: e.location?.id ?? null,
+      siteCity: e.location?.city ?? null,
       associateState: e.associate.state ?? null,
     }));
-    for (const w of dailyOvertimeLookback(lookbackEntries, rateByAssociate)) {
+    for (const w of dailyOvertimeLookback(lookbackEntries, rateByAssociate, liveRules)) {
       rows.push({
         ...w,
         runId: run.id,

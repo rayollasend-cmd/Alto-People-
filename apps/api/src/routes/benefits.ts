@@ -197,13 +197,21 @@ benefitsRouter.post(
 
 async function enrollAssociate(
   associateId: string,
-  input: { planId: string; electedAmountCentsPerPeriod: number; effectiveDate: string; rothElection?: boolean },
+  input: { planId: string; electedAmountCentsPerPeriod: number; effectiveDate: string; rothElection?: boolean; lifeCoverageCents?: number },
   selfService: boolean
 ): Promise<BenefitsEnrollment> {
   const plan = await prisma.benefitsPlan.findUnique({ where: { id: input.planId } });
   if (!plan) throw new HttpError(404, 'plan_not_found', 'Plan not found');
   if (!plan.isActive) {
     throw new HttpError(409, 'plan_inactive', 'This plan is no longer offered');
+  }
+  // Group-term life: the face amount is what payroll taxes over $50,000
+  // (lib/groupTermLife), so a life election carries it and nothing else does.
+  if (plan.kind === 'LIFE_INSURANCE' && input.lifeCoverageCents === undefined) {
+    throw new HttpError(400, 'coverage_required', 'Enter the coverage amount. Payroll needs it to tax coverage over $50,000.');
+  }
+  if (plan.kind !== 'LIFE_INSURANCE' && input.lifeCoverageCents !== undefined) {
+    throw new HttpError(400, 'coverage_not_life', 'A coverage amount goes with a life insurance plan only.');
   }
   // For self-service, the plan must belong to the associate's client.
   // (HR-side enrollment can override later when we add admin endpoints.)
@@ -232,6 +240,7 @@ async function enrollAssociate(
       effectiveDate: new Date(input.effectiveDate),
       // Roth applies to 401(k)/403(b) deferrals only.
       rothElection: input.rothElection === true && (plan.kind === 'RETIREMENT_401K' || plan.kind === 'RETIREMENT_403B'),
+      lifeCoverageCents: plan.kind === 'LIFE_INSURANCE' ? (input.lifeCoverageCents ?? null) : null,
     },
     include: { plan: { select: { kind: true, name: true } } },
   });
@@ -270,6 +279,7 @@ function toEnrollment(e: {
   effectiveDate: Date;
   terminationDate: Date | null;
   rothElection?: boolean;
+  lifeCoverageCents?: number | null;
   plan: { kind: string; name: string };
 }): BenefitsEnrollment {
   return {
@@ -282,5 +292,6 @@ function toEnrollment(e: {
     planKind: e.plan.kind as BenefitsEnrollment['planKind'],
     planName: e.plan.name,
     rothElection: e.rothElection ?? false,
+    lifeCoverageCents: e.lifeCoverageCents ?? null,
   };
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, Banknote, FileText, Landmark, Receipt, Scale } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Banknote, FileText, HeartPulse, Landmark, PiggyBank, Receipt, Scale } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtMoney } from '@/lib/format';
@@ -18,7 +18,8 @@ import type { CashForecast, CashLine, CashWeek } from './financeTypes';
 
 /**
  * The cash forecast, every line: where the cash stands today (the Books
- * balance), payroll, deposits and vendor bills going out, statements coming
+ * balance), payroll, deposits, retirement plan contributions, benefit
+ * carrier premiums and vendor bills going out, statements coming
  * in on their terms — week by week with the projected balance, the low
  * point marked, and the cash floor from Settings shaded. A payday is never
  * dropped: with nobody on the schedule it shows at the last run's net,
@@ -31,6 +32,8 @@ const KIND_ICON: Record<CashLine['kind'], typeof Banknote> = {
   GARNISHMENT: Scale,
   RECEIVABLE: Receipt,
   BILL: FileText,
+  RETIREMENT: PiggyBank,
+  BENEFITS: HeartPulse,
 };
 
 const KIND_LABEL: Record<CashLine['kind'], string> = {
@@ -39,6 +42,8 @@ const KIND_LABEL: Record<CashLine['kind'], string> = {
   GARNISHMENT: 'Garnishment remittance',
   RECEIVABLE: 'Client payment',
   BILL: 'Vendor bill',
+  RETIREMENT: 'Retirement plan',
+  BENEFITS: 'Benefit carrier',
 };
 
 const CONFIDENCE_LABEL: Record<CashLine['confidence'], string> = {

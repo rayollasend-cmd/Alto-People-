@@ -106,6 +106,16 @@ describe('the Rules routes', () => {
 
     const sets = await admin.get('/labor-rules/sets');
     expect(sets.body.sets.every((s: { shipped: boolean; source: string }) => s.shipped && s.source.length > 10)).toBe(true);
+
+    // Version 2 of the New York and California packs (audit 2026-10-21 #11): spread of hours and split shifts.
+    const ny = await siteIn('NY', 'Albany');
+    const ca = await siteIn('CA', 'Los Angeles');
+    const nyOne = await admin.get(`/labor-rules/sites/${ny.id}?date=2026-10-15`);
+    expect(nyOne.body.summary).toMatchObject({ spreadOfHoursHours: 10, splitShiftPremium: true });
+    expect(nyOne.body.origin['spreadOfHours.thresholdHours']).toBe('US-NY 2026-01-01 v2');
+    const caOne = await admin.get(`/labor-rules/sites/${ca.id}?date=2026-10-15`);
+    expect(caOne.body.summary).toMatchObject({ spreadOfHoursHours: null, splitShiftPremium: true });
+    expect(one.body.summary).toMatchObject({ spreadOfHoursHours: null, splitShiftPremium: false });
   });
 
   it('are not an associate’s to read (view:payroll reaches every associate; these need process:payroll, manage:org or view:executive)', async () => {

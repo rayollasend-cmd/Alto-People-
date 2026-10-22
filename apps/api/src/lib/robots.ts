@@ -32,6 +32,7 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { fleetConnector, fleetProviderFromEnv, registerSimulatedRobot, type FleetRobotStatus } from './fleet/index.js';
 import { displayName } from './messaging.js';
+import { shiftTimezone } from './shiftZone.js';
 
 /**
  * Brief 3-1 — the robot registry behind /robots.
@@ -103,7 +104,7 @@ export async function ensureRobotProfile(db: Db, workerId: string, tenantId: str
   const externalId = `sim-${workerId.slice(0, 8)}`;
   registerSimulatedRobot(externalId);
   return db.robotProfile.create({
-    data: { workerId, tenantId, manufacturer: 'Unknown', model: w.name, serial: `pending-${workerId.slice(0, 8)}`, connectorProvider: 'SIMULATED', connectorExternalId: externalId },
+    data: { workerId, tenantId: tenantId ?? undefined, manufacturer: 'Unknown', model: w.name, serial: `pending-${workerId.slice(0, 8)}`, connectorProvider: 'SIMULATED', connectorExternalId: externalId },
   });
 }
 
@@ -168,7 +169,7 @@ export async function storeSample(db: Db, workerId: string, tenantId: string | n
   await db.robotStatusSample.create({
     data: {
       workerId,
-      tenantId,
+      tenantId: tenantId ?? undefined,
       at: reading.at,
       status: reading.status,
       batteryPct: reading.batteryPct,
@@ -180,7 +181,7 @@ export async function storeSample(db: Db, workerId: string, tenantId: string | n
     },
   });
   if (reading.status === 'ERROR' && previous?.status !== 'ERROR') {
-    await db.robotEvent.create({ data: { workerId, tenantId, kind: 'ERROR', at: reading.at, note: reading.errorCode ?? 'The fleet reported an error.', metadata: { errorCode: reading.errorCode } } });
+    await db.robotEvent.create({ data: { workerId, tenantId: tenantId ?? undefined, kind: 'ERROR', at: reading.at, note: reading.errorCode ?? 'The fleet reported an error.', metadata: { errorCode: reading.errorCode } } });
   }
 }
 
@@ -224,7 +225,7 @@ export async function listZones(db: Db, locationId: string, tenantId: string | n
 export async function createZone(db: Db, locationId: string, input: SafetyZoneInput, tenantId: string | null, actorUserId: string): Promise<SiteSafetyZoneSummary> {
   const site = await db.site.findUnique({ where: { id: locationId }, select: { id: true } });
   if (!site) throw new HttpError(404, 'site_not_found', 'No such site.');
-  const z = await db.siteSafetyZone.create({ data: { locationId, tenantId, name: input.name, shape: input.shape as Prisma.InputJsonValue, robotsAllowedWhenOccupied: input.robotsAllowedWhenOccupied ?? false } });
+  const z = await db.siteSafetyZone.create({ data: { locationId, tenantId: tenantId ?? undefined, name: input.name, shape: input.shape as Prisma.InputJsonValue, robotsAllowedWhenOccupied: input.robotsAllowedWhenOccupied ?? false } });
   enqueueAudit({ actorUserId, clientId: null, action: 'robot.zone_created', entityType: 'SiteSafetyZone', entityId: z.id, metadata: { locationId, name: input.name } }, 'robots');
   return zoneSummary(z);
 }
@@ -279,7 +280,7 @@ export async function listChecklistTemplates(db: Db, locationId: string | null, 
 
 export async function upsertChecklistTemplate(db: Db, input: ChecklistTemplateInput, tenantId: string | null, actorUserId: string, id?: string): Promise<RobotChecklistTemplateSummary> {
   const data = { locationId: input.locationId ?? null, name: input.name, items: input.items as Prisma.InputJsonValue, active: input.active ?? true };
-  const t = id ? await db.robotChecklistTemplate.update({ where: { id }, data }) : await db.robotChecklistTemplate.create({ data: { ...data, tenantId } });
+  const t = id ? await db.robotChecklistTemplate.update({ where: { id }, data }) : await db.robotChecklistTemplate.create({ data: { ...data, tenantId: tenantId ?? undefined } });
   enqueueAudit({ actorUserId, clientId: null, action: id ? 'robot.checklist_template_updated' : 'robot.checklist_template_created', entityType: 'RobotChecklistTemplate', entityId: t.id, metadata: { name: input.name, items: input.items.length } }, 'robots');
   return templateSummary(t);
 }
@@ -623,7 +624,7 @@ export async function getRobot(db: Db, id: string, now: Date = new Date()): Prom
       where: { workerId: id, endsAt: { gte: now }, status: { in: ['ASSIGNED', 'DRAFT'] } },
       orderBy: { startsAt: 'asc' },
       take: 20,
-      select: { id: true, startsAt: true, endsAt: true, position: true, status: true, locationRel: { select: { name: true } } },
+      select: { id: true, startsAt: true, endsAt: true, position: true, status: true, locationRel: { select: { name: true, timezone: true } } },
     }),
   ]);
   const passedShiftIds = new Set((await db.robotChecklistRun.findMany({ where: { workerId: id, allPassed: true, shiftId: { in: shifts.map((s) => s.id) } }, select: { shiftId: true } })).map((r) => r.shiftId));
@@ -633,6 +634,6 @@ export async function getRobot(db: Db, id: string, now: Date = new Date()): Prom
     createdAt: w.createdAt.toISOString(),
     commissionings: commissionings.map(commissioningSummary),
     recentEvents: recentEvents.map(eventSummary),
-    upcomingShifts: shifts.map((s) => ({ id: s.id, startsAt: s.startsAt.toISOString(), endsAt: s.endsAt.toISOString(), position: s.position, locationName: s.locationRel?.name ?? null, status: s.status, checklistDone: passedShiftIds.has(s.id) })),
+    upcomingShifts: shifts.map((s) => ({ id: s.id, startsAt: s.startsAt.toISOString(), endsAt: s.endsAt.toISOString(), position: s.position, locationName: s.locationRel?.name ?? null, timezone: shiftTimezone(s.locationRel), status: s.status, checklistDone: passedShiftIds.has(s.id) })),
   };
 }

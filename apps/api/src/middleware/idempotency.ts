@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from './error.js';
 import { logger } from '../lib/logger.js';
+import { runForEachTenant } from '../lib/tenantJobs.js';
 
 /**
  * Optional Idempotency-Key support for mutating endpoints.
@@ -203,14 +204,20 @@ export async function idempotent(
 }
 
 /** Hourly sweep of expired rows (double the TTL for slack). */
+/** Drop expired replay records, once per tenant (inside its context, like every other job). */
+export async function sweepIdempotencyRecords(now: number = Date.now()): Promise<number> {
+  let deleted = 0;
+  await runForEachTenant('idempotency-cleanup', async () => {
+    const r = await prisma.idempotencyRecord.deleteMany({ where: { createdAt: { lt: new Date(now - 2 * TTL_MS) } } });
+    deleted += r.count;
+  });
+  return deleted;
+}
+
 export function startIdempotencyCleanupCron(): void {
   const HOURLY = 60 * 60 * 1000;
   const timer = setInterval(() => {
-    void prisma.idempotencyRecord
-      .deleteMany({
-        where: { createdAt: { lt: new Date(Date.now() - 2 * TTL_MS) } },
-      })
-      .catch((err) => logger.warn({ err }, 'idempotency sweep failed'));
+    void sweepIdempotencyRecords().catch((err) => logger.warn({ err }, 'idempotency sweep failed'));
   }, HOURLY);
   timer.unref();
 }

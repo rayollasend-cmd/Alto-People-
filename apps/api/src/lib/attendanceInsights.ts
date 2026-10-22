@@ -20,6 +20,8 @@ import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from './tenant.js';
 import { effectiveClientIdFilter, scopeAssociatesIncludingFormer, scopeShifts, scopeTimeEntries, scopeWhere } from './scope.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
+import { loadLiveRules } from './laborRules/live.js';
+import { splitByPerson } from './laborRules/hours.js';
 import { teamScope } from './delegations.js';
 import { EMPLOYED_WHERE } from './activeDefinition.js';
 import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
@@ -236,85 +238,92 @@ interface OvertimeSlice {
 }
 
 /**
- * Overtime as the FLSA counts it: each person's hours past 40 in a
- * workweek, net of unpaid meal breaks. The hours past the line are placed
- * on the punches that crossed it, so they can be shown by day and store.
- * An open punch counts to now.
+ * Overtime as the paycheck counts it: each person's hours split by the
+ * labor-rules engine (lib/laborRules/hours) — past 40 in a workweek, or a
+ * live jurisdiction's daily and double-time rules — net of every break,
+ * the week in the site's zone. The engine fills a week chronologically, so
+ * the overtime sits on the punches that ran past the line and can be shown
+ * by day and store. An open punch counts to now.
  *
  * Two passes, so a large company's weeks are counted in full: first every
- * punch in range, page by page, as bare times — gross hours per person and
- * week; then, for only the person-weeks whose gross passes 40 (net can't
- * pass it if gross doesn't), the punches with their breaks and stores.
- *
- * Weeks are the company's workweek (payroll's overtime lookback uses the
- * site's zone — the two can differ by an evening at a week's edge), and a
- * client-bound caller sees the hours at their client only.
+ * punch the people in reach have in range (every client: overtime is the
+ * person's whole week), as bare times — gross hours per person and week;
+ * then, for only the person-weeks that can hold overtime (gross past 40,
+ * or any hour at a live site), the punches with their breaks and stores.
+ * A client-bound caller sees the overtime that landed at their client only.
  */
 async function overtimeSlices(user: SessionUser, weeks: Week[], now: Date): Promise<Array<OvertimeSlice & { week: number }>> {
   const from = weeks[0]!.start;
   const to = weeks[weeks.length - 1]!.end;
-  const where = scopeWhere<Prisma.TimeEntryWhereInput>({ tenantId: tenantIdForWrite(), status: { not: 'REJECTED' }, clockInAt: { gte: from, lt: to } }, scopeTimeEntries(user));
+  const tenantId = tenantIdForWrite();
+  const base: Prisma.TimeEntryWhereInput = { tenantId, status: { not: 'REJECTED' }, clockInAt: { gte: from, lt: to } };
+  const where = scopeWhere<Prisma.TimeEntryWhereInput>(base, scopeTimeEntries(user));
+  const rules = await loadLiveRules(prisma, tenantId);
 
-  // Pass 1: gross hours per person-week.
+  // The people in reach, then every punch they have in range (bare times).
+  const reach = (await prisma.timeEntry.groupBy({ by: ['associateId'], where })).map((g) => g.associateId);
+  if (reach.length === 0) return [];
   const gross = new Map<string, number>();
-  for (let cursor: string | undefined; ; ) {
-    const page = await prisma.timeEntry.findMany({
-      where,
-      select: { id: true, associateId: true, clockInAt: true, clockOutAt: true },
-      orderBy: { id: 'asc' },
-      take: PAGE,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    });
-    for (const e of page) {
-      const week = weekIndexOf(weeks, e.clockInAt);
-      if (week < 0) continue;
-      const key = `${e.associateId}|${week}`;
-      gross.set(key, (gross.get(key) ?? 0) + Math.max(0, (e.clockOutAt ?? now).getTime() - e.clockInAt.getTime()) / HOUR_MS);
+  const liveWeek = new Set<string>();
+  for (let i = 0; i < reach.length; i += 1_000) {
+    const ids = reach.slice(i, i + 1_000);
+    for (let cursor: string | undefined; ; ) {
+      const page = await prisma.timeEntry.findMany({
+        where: { ...base, associateId: { in: ids } },
+        select: { id: true, associateId: true, clockInAt: true, clockOutAt: true, location: { select: { id: true, state: true, city: true } } },
+        orderBy: { id: 'asc' },
+        take: PAGE,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      for (const e of page) {
+        const week = weekIndexOf(weeks, e.clockInAt);
+        if (week < 0) continue;
+        const key = `${e.associateId}|${week}`;
+        gross.set(key, (gross.get(key) ?? 0) + Math.max(0, (e.clockOutAt ?? now).getTime() - e.clockInAt.getTime()) / HOUR_MS);
+        if (rules.any && rules.activationFor(e.location)) liveWeek.add(key);
+      }
+      if (page.length < PAGE) break;
+      cursor = page[page.length - 1]!.id;
     }
-    if (page.length < PAGE) break;
-    cursor = page[page.length - 1]!.id;
   }
-  const over = new Set([...gross].filter(([, h]) => h > ATTENDANCE_OVERTIME_THRESHOLD_HOURS).map(([k]) => k));
+  const over = new Set([...gross].filter(([k, h]) => h > ATTENDANCE_OVERTIME_THRESHOLD_HOURS || liveWeek.has(k)).map(([k]) => k));
   if (over.size === 0) return [];
   const people = [...new Set([...over].map((k) => k.split('|')[0]!))];
 
-  // Pass 2: those people's punches, in order, with breaks and stores.
+  // Pass 2: those people's punches with breaks and stores — all of them for
+  // the split, and which of them are in the caller's reach.
   const entries = [];
+  const inReach = new Set<string>();
   for (let i = 0; i < people.length; i += 1_000) {
-    entries.push(
-      ...(await prisma.timeEntry.findMany({
-        where: scopeWhere<Prisma.TimeEntryWhereInput>(where, { associateId: { in: people.slice(i, i + 1_000) } }),
+    const ids = people.slice(i, i + 1_000);
+    const [all, mine] = await Promise.all([
+      prisma.timeEntry.findMany({
+        where: { ...base, associateId: { in: ids } },
         select: {
+          id: true,
           associateId: true,
           clockInAt: true,
           clockOutAt: true,
           locationId: true,
-          location: { select: { timezone: true } },
+          location: { select: { id: true, state: true, city: true, timezone: true } },
           shift: { select: { locationId: true, locationRel: { select: { timezone: true } } } },
           breaks: { select: { type: true, startedAt: true, endedAt: true } },
         },
-      })),
-    );
+      }),
+      prisma.timeEntry.findMany({ where: scopeWhere<Prisma.TimeEntryWhereInput>(where, { associateId: { in: ids } }), select: { id: true } }),
+    ]);
+    entries.push(...all);
+    for (const m of mine) inReach.add(m.id);
   }
-  entries.sort((a, b) => a.clockInAt.getTime() - b.clockInAt.getTime());
+  const work = entries.map((e) => ({ ...e, clockOutAt: e.clockOutAt ?? now, site: e.location }));
+  const { byEntry } = splitByPerson(rules, work);
 
-  const totals = new Map<string, number>();
   const out: Array<OvertimeSlice & { week: number }> = [];
-  for (const e of entries) {
+  for (const e of work) {
     const week = weekIndexOf(weeks, e.clockInAt);
-    const key = `${e.associateId}|${week}`;
-    if (week < 0 || !over.has(key)) continue;
-    const end = (e.clockOutAt ?? now).getTime();
-    let ms = Math.max(0, end - e.clockInAt.getTime());
-    for (const b of e.breaks) {
-      if (b.type !== 'MEAL') continue;
-      ms -= Math.max(0, (b.endedAt ?? new Date(end)).getTime() - b.startedAt.getTime());
-    }
-    const hours = Math.max(0, ms / HOUR_MS);
-    const before = totals.get(key) ?? 0;
-    const after = before + hours;
-    totals.set(key, after);
-    const past = after - Math.max(before, ATTENDANCE_OVERTIME_THRESHOLD_HOURS);
+    if (week < 0 || !over.has(`${e.associateId}|${week}`) || !inReach.has(e.id)) continue;
+    const share = byEntry.get(e)!;
+    const past = share.overtimeHours + share.doubleTimeHours;
     if (past <= 0) continue;
     out.push({
       week,
@@ -324,7 +333,7 @@ async function overtimeSlices(user: SessionUser, weeks: Week[], now: Date): Prom
       timezone: e.location?.timezone ?? e.shift?.locationRel?.timezone ?? companyWorkweek().timezone,
     });
   }
-  return out;
+  return out.sort((a, b) => a.at.getTime() - b.at.getTime());
 }
 
 /* ---- Trends -------------------------------------------------------------- */

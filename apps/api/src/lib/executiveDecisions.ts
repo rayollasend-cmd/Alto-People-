@@ -20,6 +20,9 @@ import { env } from '../config/env.js';
 import { accountPhotoUrlFor } from './profilePhotoUrl.js';
 import { companyWorkweek, startOfWeekUTC } from './timeAnomalies.js';
 import { localDateKey } from './timezone.js';
+import { payFor, splitByPerson } from './laborRules/hours.js';
+import { loadLiveRules } from './laborRules/live.js';
+import { tenantIdForWrite } from './tenant.js';
 
 const DAY_MS = 24 * 3600_000;
 
@@ -271,45 +274,36 @@ async function generateRaw(
   } else if (target.marginTarget) {
     // Pace check against last complete org week at standard rates.
     const lastWeekStart = startOfWeekUTC(new Date(thisWeekStart.getTime() - 36 * 3600_000));
-    const entries = await prisma.timeEntry.findMany({
-      where: { ...T,
-        status: { in: ['APPROVED', 'COMPLETED'] },
-        clockInAt: { gte: lastWeekStart, lt: thisWeekStart },
-      },
-      select: {
-        associateId: true,
-        clockInAt: true,
-        clockOutAt: true,
-        breaks: { select: { startedAt: true, endedAt: true } },
-      },
-      take: 20_000,
-    });
-    const perAssoc = new Map<string, number>();
-    for (const e of entries) {
-      if (!e.clockOutAt) continue;
-      let ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
-      for (const b of e.breaks) {
-        const bEnd = b.endedAt ? b.endedAt.getTime() : e.clockOutAt.getTime();
-        ms -= Math.max(0, bEnd - b.startedAt.getTime());
-      }
-      perAssoc.set(
-        e.associateId,
-        (perAssoc.get(e.associateId) ?? 0) + Math.max(0, Math.round(ms / 60_000)),
-      );
+    const [entries, rules] = await Promise.all([
+      prisma.timeEntry.findMany({
+        where: { ...T,
+          status: { in: ['APPROVED', 'COMPLETED'] },
+          clockInAt: { gte: lastWeekStart, lt: thisWeekStart },
+        },
+        select: {
+          id: true,
+          associateId: true,
+          clockInAt: true,
+          clockOutAt: true,
+          breaks: { select: { type: true, startedAt: true, endedAt: true } },
+          location: { select: { id: true, state: true, city: true, timezone: true } },
+        },
+        take: 20_000,
+      }),
+      loadLiveRules(prisma, T.tenantId ?? tenantIdForWrite()),
+    ]);
+    // The week split as pay splits it (lib/laborRules/hours): per person,
+    // overtime and double time at their multipliers, not a flat "past 40".
+    const { byPerson } = splitByPerson(rules, entries.map((e) => ({ id: e.id, associateId: e.associateId, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location })));
+    let hours = 0;
+    let billed = 0;
+    let payCost = 0;
+    for (const sp of byPerson.values()) {
+      hours += sp.regularHours + sp.overtimeHours + sp.doubleTimeHours;
+      billed += payFor(sp, env.DEFAULT_ASSOCIATE_BILL_RATE, sp);
+      payCost += payFor(sp, env.DEFAULT_ASSOCIATE_PAY_RATE, sp);
     }
-    let workedMin = 0;
-    let otMin = 0;
-    for (const m of perAssoc.values()) {
-      workedMin += m;
-      otMin += Math.max(0, m - 2_400);
-    }
-    const hours = workedMin / 60;
-    const otHours = otMin / 60;
-    const billed = hours * env.DEFAULT_ASSOCIATE_BILL_RATE + otHours * env.DEFAULT_ASSOCIATE_BILL_RATE * 0.5;
-    const cost =
-      (hours * env.DEFAULT_ASSOCIATE_PAY_RATE + otHours * env.DEFAULT_ASSOCIATE_PAY_RATE * 0.5) *
-        (1 + env.LABOR_BURDEN_PERCENT / 100) +
-      hours * env.LABOR_OVERHEAD_PER_HOUR;
+    const cost = payCost * (1 + env.LABOR_BURDEN_PERCENT / 100) + hours * env.LABOR_OVERHEAD_PER_HOUR;
     const margin = billed - cost;
     const weeklyPace = Number(target.marginTarget) / 13;
     if (weeklyPace > 0 && margin < weeklyPace * 0.85) {

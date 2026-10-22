@@ -30,6 +30,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { toast } from '@/components/ui/Toaster';
@@ -165,7 +166,7 @@ export function FinancialChangesQueue() {
           {query.isPending ? (
             <Skeleton className="h-40" />
           ) : rows.length === 0 ? (
-            <p className="py-8 text-center text-sm text-silver">Nothing here. New changes appear the moment they are made.</p>
+            <EmptyState title="Nothing here." description="New changes appear the moment they are made." />
           ) : (
             <DataGrid<FinancialChangeRow>
               id="financial-changes"

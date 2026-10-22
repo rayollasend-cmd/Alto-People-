@@ -239,7 +239,7 @@ describe('tax filing through TaxBandits', () => {
   it('e-files a 941, records the acceptance as filed; a rejection lands in the Inbox', async () => {
     const { a } = await hr();
     const { connection } = await connect(a, { kind: 'TAX_FILING', provider: 'TAXBANDITS', credentials: { clientId: 'cid', clientSecret: 'csecret', userToken: 'ut' } });
-    await prisma.submitterProfile.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', userId: 'ALTO0001', ein: '123456789', name: 'Alto HR', addressLine1: '1 Main', city: 'Destin', state: 'FL', zip5: '32541', contactName: 'Pat', contactPhone: '8505550100', contactEmail: 'pay@example.com' }, update: { ein: '123456789' } });
+    await prisma.submitterProfile.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { userId: 'ALTO0001', ein: '123456789', name: 'Alto HR', addressLine1: '1 Main', city: 'Destin', state: 'FL', zip5: '32541', contactName: 'Pat', contactPhone: '8505550100', contactEmail: 'pay@example.com' }, update: { ein: '123456789' } });
     const form = await prisma.taxForm.create({ data: { kind: 'F941', taxYear: 2026, quarter: 3, amounts: { totalWages: '1000.00', totalFederalWithheld: '100.00' }, status: 'DRAFT' } });
     mockFetch(
       { match: /testoauth\.expressauth\.net\/v2\/tbsauth$/, reply: () => ({ body: { AccessToken: 'tok', ExpiresIn: 3600 } }) },

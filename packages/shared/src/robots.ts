@@ -216,7 +216,8 @@ export interface RobotDetail extends RobotRow {
   createdAt: string;
   commissionings: RobotCommissioningSummary[];
   recentEvents: RobotEventSummary[];
-  upcomingShifts: Array<{ id: string; startsAt: string; endsAt: string; position: string; locationName: string | null; status: string; checklistDone: boolean }>;
+  /** `timezone`: the site's IANA zone — the shift is read on its clock. */
+  upcomingShifts: Array<{ id: string; startsAt: string; endsAt: string; position: string; locationName: string | null; timezone: string; status: string; checklistDone: boolean }>;
 }
 
 /* ------------------------------------------------------------ input ---- */

@@ -63,9 +63,12 @@ export async function runUsageSnapshots(db: Db, now: Date = new Date()): Promise
       const d = new Date(`${day}T12:00:00Z`);
       d.setUTCDate(d.getUTCDate() - 1);
       day = ymd(d);
-      const have = await db.usageSnapshot.count({ where: { tenantId: t.id, day: new Date(`${day}T00:00:00Z`) } });
-      if (have >= WORKER_TYPES.length) continue;
-      wrote += await runWithTenant(t.id, 'job', () => snapshotDay(db, t.id, day));
+      // Each tenant's reads and writes run in its own context (enforce mode
+      // refuses a tenant-keyed query with none; so does the database wall).
+      wrote += await runWithTenant(t.id, 'job', async () => {
+        const have = await db.usageSnapshot.count({ where: { tenantId: t.id, day: new Date(`${day}T00:00:00Z`) } });
+        return have >= WORKER_TYPES.length ? 0 : snapshotDay(db, t.id, day);
+      });
     }
   }
   return wrote;
@@ -154,9 +157,12 @@ export async function runMonthClose(db: Db, now: Date = new Date()): Promise<num
   const tenants = await db.tenant.findMany({ where: { status: 'ACTIVE', NOT: { plan: 'internal' } }, select: { id: true } });
   let n = 0;
   for (const t of tenants) {
-    const inv = await db.billingInvoice.findUnique({ where: { tenantId_month: { tenantId: t.id, month: prev } }, select: { status: true } });
-    if (inv && inv.status !== 'DRAFT') continue;
-    if (await runWithTenant(t.id, 'job', () => invoiceMonth(db, t.id, prev))) n += 1;
+    const invoiced = await runWithTenant(t.id, 'job', async () => {
+      const inv = await db.billingInvoice.findUnique({ where: { tenantId_month: { tenantId: t.id, month: prev } }, select: { status: true } });
+      if (inv && inv.status !== 'DRAFT') return false;
+      return invoiceMonth(db, t.id, prev);
+    });
+    if (invoiced) n += 1;
   }
   return n;
 }

@@ -7,6 +7,7 @@ import { publicBaseUrl } from './emailLayout.js';
 import { SmsNotConfiguredError, SmsOptedOutError, sendSms } from './sms.js';
 import { pushConfigured, sendPushToUser } from './webPush.js';
 import { apnsConfigured, fcmConfigured } from './nativePush.js';
+import { withIdentityScope } from './tenant.js';
 
 /**
  * Thrown by send() for a PUSH row when no push transport (VAPID, APNs or
@@ -329,10 +330,15 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
   // credentials). Continuing to mail hard-bounced/complaining addresses
   // tanks domain reputation for every other recipient, so this throws —
   // never a silent "pretend it sent".
-  const suppression = await prisma.emailSuppression.findUnique({
-    where: { email: to.trim().toLowerCase() },
-    select: { reason: true },
-  });
+  // Decision 5 (multi-tenancy §10): one sending domain, so one list — an
+  // address any tenant's mail bounced from is suppressed for every tenant.
+  // The email is unique across the platform, so this is a key lookup, not a search.
+  const suppression = await withIdentityScope(() =>
+    prisma.emailSuppression.findUnique({
+      where: { email: to.trim().toLowerCase() },
+      select: { reason: true },
+    }),
+  );
   if (suppression) {
     console.warn(
       `[notifications.send] suppressed email to ${to} — address is on the ` +

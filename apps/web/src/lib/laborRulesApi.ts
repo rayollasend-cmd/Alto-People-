@@ -11,6 +11,10 @@ export interface LaborRuleSummary {
   mealRequiredAfterHours: number | null;
   restPerHours: number | null;
   restBetweenShiftsHours: number | null;
+  /** A day's spread past this many hours owes an hour at the minimum wage (NY 10); absent on older APIs. */
+  spreadOfHoursHours?: number | null;
+  /** A split shift owes an hour at the minimum wage (CA, NY). */
+  splitShiftPremium?: boolean;
   predictiveNoticeDays: number | null;
   minorBands: number;
 }

@@ -5,6 +5,7 @@ import { Coffee, FileSignature } from 'lucide-react';
 import { useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { fmtPunchDateTime } from './punchFormat';
 import { acknowledgeBreakFlag, decideCorrection, listBreakFlags, listCorrections, type BreakFlag, type CorrectionKind, type CorrectionRequest, type CorrectionStatus } from '@/lib/laborLiveApi';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
@@ -48,9 +49,10 @@ const STATUS_LABEL: Record<CorrectionStatus, string> = {
   WITHDRAWN: 'Withdrawn',
 };
 
-const t = (iso: string | null | undefined) => (iso ? fmtDateTime(iso) : '—');
+/** A punch on its site's clock (one punch, one time). */
+const t = (iso: string | null | undefined, tz?: string | null) => (iso ? fmtPunchDateTime(iso, tz) : '—');
 
-function TimesRow({ label, before, after }: { label: string; before: string | null | undefined; after: string | null | undefined }) {
+function TimesRow({ label, before, after, tz }: { label: string; before: string | null | undefined; after: string | null | undefined; tz?: string | null }) {
   const changed = !!after && after !== before;
   return (
     <div className="grid grid-cols-[6rem_1fr] gap-2 text-sm">
@@ -58,11 +60,11 @@ function TimesRow({ label, before, after }: { label: string; before: string | nu
       <dd className="text-ink">
         {changed ? (
           <>
-            <span className="text-ink-muted line-through">{t(before)}</span> <span aria-hidden="true">→</span> <span className="font-medium">{t(after)}</span>
-            <span className="sr-only">changed from {t(before)} to {t(after)}</span>
+            <span className="text-ink-muted line-through">{t(before, tz)}</span> <span aria-hidden="true">→</span> <span className="font-medium">{t(after, tz)}</span>
+            <span className="sr-only">changed from {t(before, tz)} to {t(after, tz)}</span>
           </>
         ) : (
-          t(before ?? after)
+          t(before ?? after, tz)
         )}
       </dd>
     </div>
@@ -102,8 +104,8 @@ function CorrectionCard({ r, onDeny }: { r: CorrectionRequest; onDeny: (r: Corre
           </span>
         </div>
         <dl className="space-y-1">
-          <TimesRow label="Clock-in" before={r.before?.clockInAt ?? null} after={r.proposedClockIn} />
-          <TimesRow label="Clock-out" before={r.before?.clockOutAt ?? null} after={r.proposedClockOut} />
+          <TimesRow label="Clock-in" before={r.before?.clockInAt ?? null} after={r.proposedClockIn} tz={r.timezone} />
+          <TimesRow label="Clock-out" before={r.before?.clockOutAt ?? null} after={r.proposedClockOut} tz={r.timezone} />
         </dl>
         {r.reason && <p className="text-sm text-ink">“{r.reason}”</p>}
         {r.attestationText && (
@@ -250,7 +252,7 @@ export function BreakFlagsDesk() {
                       {f.rest === 'NO' && <Badge size="sm" variant="pending">Missed a rest break</Badge>}
                     </div>
                     <p className="text-xs text-ink-muted">
-                      Shift {t(f.clockInAt)} – {f.clockOutAt ? fmtDateTime(f.clockOutAt) : 'still open'}
+                      Shift {t(f.clockInAt, f.timezone)} – {f.clockOutAt ? t(f.clockOutAt, f.timezone) : 'still open'}
                       {f.siteName ? ` · ${f.siteName}` : ''}
                     </p>
                     {f.note && <p className="text-sm text-ink">“{f.note}”</p>}

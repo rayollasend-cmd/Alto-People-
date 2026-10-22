@@ -4,9 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/timeApi', () => ({ listMyTimeEntries: vi.fn() }));
 vi.mock('@/lib/schedulingApi', () => ({ listMyShifts: vi.fn() }));
+vi.mock('@/components/EarningsCard', () => ({ useMyEarnings: vi.fn(() => ({ data: undefined })) }));
 
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
+import { useMyEarnings } from '@/components/EarningsCard';
 import { MyWeekHours } from '@/pages/time/MyWeekHours';
 import { workweekStart } from '@/lib/workweek';
 
@@ -15,7 +17,13 @@ function thisWeek(hoursAfterSaturdayMidnight: number): Date {
   return new Date(workweekStart().getTime() + hoursAfterSaturdayMidnight * 3_600_000);
 }
 
-const entry = (minutes: number) => ({ status: 'APPROVED', netMinutes: minutes, minutesElapsed: minutes }) as never;
+const entry = (minutes: number, split?: { ot?: number; dt?: number }) =>
+  ({
+    status: 'APPROVED',
+    netMinutes: minutes,
+    minutesElapsed: minutes,
+    ...(split ? { hours: { regularMinutes: minutes - (split.ot ?? 0) - (split.dt ?? 0), overtimeMinutes: split.ot ?? 0, doubleTimeMinutes: split.dt ?? 0, overtimeMultiplier: 1.5, doubleMultiplier: 2 } } : {}),
+  }) as never;
 const shift = (startH: number, hours: number) =>
   ({
     status: 'ASSIGNED',
@@ -41,11 +49,37 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     expect(screen.getByText('4h to go')).toBeInTheDocument();
   });
 
-  it('past 40 hours it says so — that is overtime', async () => {
+  it('names the overtime the server split — the paycheck’s — not hours minus 40', async () => {
+    // 42 h worked; the server put 2 h of the last punch in overtime.
+    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [...Array.from({ length: 5 }, () => entry(7 * 60, { ot: 0 })), entry(7 * 60, { ot: 120 })] });
+    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
+    renderIt();
+    expect(await screen.findByText('2h of overtime this week')).toBeInTheDocument();
+  });
+
+  it('a daily-overtime state: 30 hours can already carry overtime, and the tile says so', async () => {
+    // Three live-California 10-hour days: 2 h overtime each, though the week is under 40.
+    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entry(600, { ot: 120 }), entry(600, { ot: 120 }), entry(600, { ot: 120 })] });
+    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
+    renderIt();
+    expect(await screen.findByText('6h of overtime this week')).toBeInTheDocument();
+  });
+
+  it('never works out overtime itself: past 40 with no server split names none', async () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: Array.from({ length: 6 }, () => entry(7 * 60)) });
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
     renderIt();
-    expect(await screen.findByText('2h past 40 — this is overtime')).toBeInTheDocument();
+    expect(await screen.findByText('42h')).toBeInTheDocument();
+    expect(screen.queryByText(/overtime this week/)).not.toBeInTheDocument();
+  });
+
+  it('the schedule’s projected overtime comes from the earnings estimate', async () => {
+    vi.mocked(useMyEarnings).mockReturnValue({ data: { overtime: { projectedOtHours: 4 } } } as never);
+    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entry(4 * 60)] });
+    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift(10, 4)] });
+    renderIt();
+    expect(await screen.findByText('Your schedule adds up to 4h of overtime this week')).toBeInTheDocument();
+    vi.mocked(useMyEarnings).mockReturnValue({ data: undefined } as never);
   });
 
   it('stays out of the way with nothing worked or scheduled', async () => {

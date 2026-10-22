@@ -174,7 +174,7 @@ export interface HosSettings {
 
 export async function hosSettings(db: Db = prisma): Promise<HosSettings & { preTripRequired: boolean; driverShiftLocationId: string | null }> {
   const row = await db.transportSettings.findUnique({
-    where: { id: 'default' },
+    where: { tenantId: tenantIdForWrite() },
     select: { driverMaxHoursPerDay: true, driverMinRestHours: true, preTripRequired: true, driverShiftLocationId: true },
   });
   return {

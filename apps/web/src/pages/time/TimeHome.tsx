@@ -4,7 +4,7 @@ import { ArrowLeft, ScanLine } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
-import { fmtTime } from '@/lib/format';
+import { fmtPunchTime } from './punchFormat';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { Button } from '@/components/ui/Button';
 import { useAuth, useTerm } from '@/lib/auth';
@@ -119,7 +119,7 @@ function TabletClockStrip() {
           {q.data === undefined
             ? '…'
             : active
-              ? t('timeHome.onClockSince', { time: fmtTime(active.clockInAt) })
+              ? t('timeHome.onClockSince', { time: fmtPunchTime(active.clockInAt, active.locationTimezone) })
               : t('timeHome.notClockedIn')}
         </div>
         <div className="text-xs text-silver">{t('time.tabletClockHint')}</div>

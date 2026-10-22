@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { scopeAssociates } from './scope.js';
+import { shiftTimezone } from './shiftZone.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { tenantIdForWrite } from './tenant.js';
 
@@ -35,6 +36,8 @@ export interface RiskShift {
   storeId: string | null;
   storeName: string | null;
   position: string;
+  /** The store's IANA zone: the shift is read on its clock. */
+  timezone: string;
 }
 
 export interface RiskItem {
@@ -159,7 +162,7 @@ export async function buildExpirationRisk(user: SessionUser, q: RiskQuery, now =
             assignedAssociateId: true,
             locationId: true,
             clientId: true,
-            locationRel: { select: { name: true } },
+            locationRel: { select: { name: true, timezone: true } },
             qualReqs: { select: { qualificationId: true } },
           },
         }),
@@ -191,6 +194,7 @@ export async function buildExpirationRisk(user: SessionUser, q: RiskQuery, now =
     storeId: s.locationId,
     storeName: s.locationRel?.name ?? null,
     position: s.position,
+    timezone: shiftTimezone(s.locationRel),
   });
 
   const items: RiskItem[] = kept.map((r) => {

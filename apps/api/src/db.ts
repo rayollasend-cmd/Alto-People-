@@ -3,6 +3,7 @@ import { adoptFromResult, guardTenantQuery } from './lib/tenantGuard.js';
 import { auditRequestStore, markRequestAudited, trackSideAudit } from './lib/auditRequestContext.js';
 import { AUDITED_MODELS, auditDiff, updatedFields } from './lib/auditDiff.js';
 import { queueScheduleRecompute } from './lib/payScheduleTriggers.js';
+import { rlsEnabled, rlsSettings, setConfigSql } from './lib/tenantRls.js';
 
 // Singleton across `tsx watch` reloads — without this, dev mode opens a new
 // Prisma connection pool on every file change and exhausts Postgres slots.
@@ -10,10 +11,25 @@ declare global {
   var __altoPrisma__: PrismaClient | undefined;
 }
 
-function makeClient(): PrismaClient {
+/**
+ * The app's client. `datasourceUrl` is for the database-wall proof
+ * (__tests__/tenancy/rlsWall.test.ts), which connects as a non-owner role.
+ */
+export function createPrismaClient(opts: { datasourceUrl?: string } = {}): PrismaClient {
   const base = new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
+    ...(opts.datasourceUrl ? { datasourceUrl: opts.datasourceUrl } : {}),
   });
+
+  // Brief 2-1 step four, the database wall (lib/tenantRls). With
+  // TENANCY_RLS=on a statement that is not already in a transaction runs in
+  // a two-statement batch that first tells Postgres its tenant; a
+  // transaction does it once, first (see the $transaction wrapper below).
+  // Off (the default), this is a pass-through.
+  const scoped = <T,>(operation: string | undefined, run: () => Prisma.PrismaPromise<T>): Promise<T> => {
+    if (!rlsEnabled()) return run();
+    return base.$transaction([base.$executeRaw(setConfigSql(rlsSettings(operation))), run()]).then((r) => r[1] as T);
+  };
 
   // Retry transient "Can't reach database" errors. Neon's serverless Postgres
   // auto-suspends after idle and takes a moment to wake — the first query
@@ -30,7 +46,7 @@ function makeClient(): PrismaClient {
   const workerIdFor = async (associateId: string | null | undefined): Promise<string | null | undefined> => {
     if (associateId === undefined) return undefined;
     if (associateId === null) return null;
-    const w = await base.worker.findUnique({ where: { associateId }, select: { id: true } });
+    const w = await scoped('findUnique', () => base.worker.findUnique({ where: { associateId }, select: { id: true } }));
     return w?.id ?? null;
   };
   const syncShiftData = async (data: Record<string, unknown> | undefined): Promise<void> => {
@@ -59,7 +75,7 @@ function makeClient(): PrismaClient {
     return ids.filter((x): x is string => !!x);
   };
 
-  return base.$extends({
+  const extended = base.$extends({
     query: {
       associateAssignment: {
         async create({ args, query }) {
@@ -117,7 +133,7 @@ function makeClient(): PrismaClient {
           return query(args);
         },
       },
-      $allOperations: async ({ args, query, model, operation }) => {
+      $allOperations: async ({ args, query, model, operation, ...rest }) => {
         // Brief 2-1, step two: the tenant wall in observe mode (lib/tenantGuard).
         args = guardTenantQuery(model, operation, args) as typeof args;
         // Brief 2-3 step 1: a direct audit insert counts as this request's audit row (the floor stands down).
@@ -129,7 +145,9 @@ function makeClient(): PrismaClient {
             const d = delays[i];
             if (d > 0) await new Promise((r) => setTimeout(r, d));
             try {
-              return await query(args);
+              // Inside a transaction its tenant was set when it began.
+              const inTransaction = !!(rest as { __internalParams?: { transaction?: unknown } }).__internalParams?.transaction;
+              return await (inTransaction ? query(args) : scoped(operation, () => query(args) as Prisma.PrismaPromise<unknown>));
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               if (!/P1001|Can't reach database server|connection/i.test(msg)) throw err;
@@ -155,12 +173,36 @@ function makeClient(): PrismaClient {
     },
   }) as unknown as PrismaClient;
 
+  // A transaction tells Postgres its tenant once, as its first statement: an
+  // interactive one through its own client, a batch by a leading statement.
+  // The tenant is the one in context when the transaction is opened.
+  const transaction = ((arg: unknown, options?: unknown) => {
+    if (!rlsEnabled()) return (extended.$transaction as (a: unknown, o?: unknown) => Promise<unknown>)(arg, options);
+    const settings = rlsSettings();
+    if (Array.isArray(arg)) {
+      return extended
+        .$transaction([extended.$executeRaw(setConfigSql(settings)), ...(arg as Prisma.PrismaPromise<unknown>[])], options as { isolationLevel?: Prisma.TransactionIsolationLevel })
+        .then((r) => r.slice(1));
+    }
+    const fn = arg as (tx: Prisma.TransactionClient) => Promise<unknown>;
+    return extended.$transaction(async (tx) => {
+      await tx.$executeRaw(setConfigSql(settings));
+      return fn(tx);
+    }, options as { maxWait?: number; timeout?: number; isolationLevel?: Prisma.TransactionIsolationLevel });
+  }) as PrismaClient['$transaction'];
+  return new Proxy(extended, {
+    get(target, prop) {
+      if (prop === '$transaction') return transaction;
+      return Reflect.get(target, prop) as unknown;
+    },
+  });
+
   async function auditedUpdate(model: string, args: { where: object; data: object }, run: () => Promise<unknown>): Promise<unknown> {
     const fields = updatedFields(args.data);
     const watch = AUDITED_MODELS[model];
     if (!fields.some((f) => watch === null || watch?.includes(f))) return run();
     const delegate = (base as unknown as Record<string, { findUnique(a: object): Promise<Record<string, unknown> | null> }>)[model[0]!.toLowerCase() + model.slice(1)]!;
-    const before = await delegate.findUnique({ where: args.where }).catch(() => null);
+    const before = await scoped('findUnique', () => delegate.findUnique({ where: args.where }) as Prisma.PrismaPromise<Record<string, unknown> | null>).catch(() => null);
     const result = (await run()) as Record<string, unknown> | null;
     // A narrowed `select` may leave the fields out of the result; the update's own values fill in.
     const after = result ? { ...before, ...Object.fromEntries(fields.filter((f) => !(f in result)).map((f) => [f, (args.data as Record<string, unknown>)[f]])), ...result } : null;
@@ -169,8 +211,8 @@ function makeClient(): PrismaClient {
       const ctx = auditRequestStore.getStore();
       const tenantId = (after?.tenantId ?? before?.tenantId ?? null) as string | null;
       trackSideAudit(
-        base.auditLog
-          .create({
+        scoped('create', () =>
+          base.auditLog.create({
             data: {
               actorUserId: ctx?.actorUserId ?? null,
               ...(tenantId ? { tenantId } : {}),
@@ -179,15 +221,15 @@ function makeClient(): PrismaClient {
               entityId: String(after?.id ?? before?.id ?? ''),
               metadata: { changed: diff.changed, before: diff.before, after: diff.after, requestId: ctx?.requestId ?? null } as Prisma.InputJsonObject,
             },
-          })
-          .catch((err) => console.error(`[db] before/after audit for ${model} failed:`, err)),
+          }),
+        ).catch((err) => console.error(`[db] before/after audit for ${model} failed:`, err)),
       );
     }
     return result;
   }
 }
 
-export const prisma: PrismaClient = globalThis.__altoPrisma__ ?? makeClient();
+export const prisma: PrismaClient = globalThis.__altoPrisma__ ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== 'production') {
   globalThis.__altoPrisma__ = prisma;

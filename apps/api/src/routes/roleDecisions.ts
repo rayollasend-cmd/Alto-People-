@@ -55,6 +55,9 @@ function queueUser(req: Request) {
     clientId: (u as { clientId?: string | null }).clientId ?? null,
     associateId: (u as { associateId?: string | null }).associateId ?? null,
     locationId: (u as { locationId?: string | null }).locationId ?? null,
+    // A site- or region-limited account's reach (company-wide items such as contract duties skip it).
+    scopeSiteIds: u.scopeSiteIds,
+    scopeRegionIds: u.scopeRegionIds,
   };
 }
 
@@ -433,7 +436,7 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
     throw new HttpError(404, 'not_found', 'That item is not in your queue (it may have been resolved).');
   }
   const existing = await prisma.decisionClaim.findUnique({
-    where: { key: input.key },
+    where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } },
     include: { claimedBy: { select: CLAIMER_SELECT } },
   });
 
@@ -449,8 +452,8 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
       );
     }
     await prisma.decisionClaim.upsert({
-      where: { key: input.key },
-      create: { key: input.key, claimedById: req.user!.id, note: input.note ?? null },
+      where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } },
+      create: { tenantId: tenantIdForWrite(), key: input.key, claimedById: req.user!.id, note: input.note ?? null },
       update: {
         claimedById: req.user!.id,
         claimedAt: new Date(),
@@ -464,7 +467,7 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
     if (existing.claimedById !== req.user!.id && existing.assignedById !== req.user!.id) {
       throw new HttpError(403, 'not_yours', 'Only the person who has it (or who assigned it) can release it.');
     }
-    await prisma.decisionClaim.delete({ where: { key: input.key } });
+    await prisma.decisionClaim.delete({ where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } } });
   } else if (input.action === 'assign') {
     if (!input.targetUserId) {
       throw new HttpError(400, 'target_required', 'Pick the colleague to assign this to.');
@@ -488,8 +491,9 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
       throw new HttpError(400, 'invalid_target', 'That person is not in your collaboration circle.');
     }
     await prisma.decisionClaim.upsert({
-      where: { key: input.key },
+      where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } },
       create: {
+        tenantId: tenantIdForWrite(),
         key: input.key,
         claimedById: input.targetUserId,
         assignedById: req.user!.id,
@@ -515,8 +519,9 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
     const days = input.days ?? 1;
     const until = new Date(Date.now() + days * 86_400_000);
     await prisma.decisionClaim.upsert({
-      where: { key: input.key },
+      where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } },
       create: {
+        tenantId: tenantIdForWrite(),
         key: input.key,
         claimedById: req.user!.id,
         postponedUntil: until,
@@ -543,8 +548,9 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
     // Escalate: stamp it and ping every org admin + chairman with the
     // item and note.
     await prisma.decisionClaim.upsert({
-      where: { key: input.key },
+      where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } },
       create: {
+        tenantId: tenantIdForWrite(),
         key: input.key,
         claimedById: req.user!.id,
         note: input.note ?? null,
@@ -741,11 +747,11 @@ roleDecisionsRouter.get('/decisions/item', requireAuth, async (req: Request, res
       include: { actorUser: { select: CLAIMER_SELECT } },
     }),
     prisma.decisionClaim.findUnique({
-      where: { key },
+      where: { tenantId_key: { tenantId: tenantIdForWrite(), key } },
       include: { claimedBy: { select: CLAIMER_SELECT } },
     }),
     prisma.decisionNextStep.findUnique({
-      where: { key },
+      where: { tenantId_key: { tenantId: tenantIdForWrite(), key } },
       include: { owner: { select: CLAIMER_SELECT } },
     }),
     computeItemFacts(key),
@@ -820,8 +826,9 @@ roleDecisionsRouter.post(
       await prisma.decisionNextStep.deleteMany({ where: { key: input.key } });
     } else {
       await prisma.decisionNextStep.upsert({
-        where: { key: input.key },
+        where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } },
         create: {
+          tenantId: tenantIdForWrite(),
           key: input.key,
           text: input.text,
           ownerId: input.ownerUserId ?? req.user!.id,
@@ -897,7 +904,7 @@ roleDecisionsRouter.post('/decisions/comment', requireAuth, async (req: Request,
     targets.add(input.mentionUserId);
   }
   const claim = await prisma.decisionClaim.findUnique({
-    where: { key: input.key },
+    where: { tenantId_key: { tenantId: tenantIdForWrite(), key: input.key } },
     select: { claimedById: true },
   });
   if (claim && claim.claimedById !== req.user!.id) targets.add(claim.claimedById);
@@ -982,6 +989,8 @@ roleDecisionsRouter.patch('/plan/:id', requireAuth, async (req: Request, res: Re
 
 roleDecisionsRouter.delete('/plan/:id', requireAuth, async (req: Request, res: Response) => {
   const id = z.string().uuid().parse(req.params.id);
-  await prisma.workPlanItem.deleteMany({ where: { id, userId: req.user!.id } });
+  // Only the caller's own item: anyone else's (or another tenant's) id is not found, as on PATCH.
+  const { count } = await prisma.workPlanItem.deleteMany({ where: { id, userId: req.user!.id } });
+  if (count === 0) throw new HttpError(404, 'not_found', 'Plan item not found.');
   res.json({ ok: true });
 });

@@ -343,6 +343,19 @@ export interface JobPostingRecord {
 export const listJobPostings = () =>
   apiFetch<{ postings: JobPostingRecord[] }>('/job-postings');
 
+/** What a posting for this client pays, from its rate cards in force today (pay rates only). */
+export interface RateCardPay {
+  clientId: string;
+  clientName: string;
+  rates: Array<{ position: string; payRate: number; effectiveFrom: string }>;
+  suggested: { minPay: number; maxPay: number; payUnit: 'HOUR'; position: string | null } | null;
+}
+export const payFromRateCard = (clientId: string, position?: string) => {
+  const q = new URLSearchParams({ clientId });
+  if (position) q.set('position', position);
+  return apiFetch<RateCardPay>(`/job-postings/pay-from-rate-card?${q.toString()}`);
+};
+
 export const createJobPosting = (input: {
   clientId?: string | null;
   title: string;

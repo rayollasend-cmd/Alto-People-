@@ -76,7 +76,7 @@ export async function buildBoardPack(s: ExecutiveSummary, refId: string): Promis
     ],
   );
   pdf.para(
-    'Weeks run Saturday 00:00 through Friday 24:00, Florida-local — the org FLSA workweek. Overtime is the weekly over-40 tail per associate.',
+    'Weeks run Saturday 00:00 through Friday 24:00, Florida-local — the org FLSA workweek. Overtime is split the way payroll splits it: hours past 40 in a workweek, plus a live state’s daily and double-time rules.',
     { muted: true, size: 8.5 },
   );
 

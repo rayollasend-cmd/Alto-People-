@@ -56,7 +56,7 @@ describe('the HR administrator’s Needs-you', () => {
     const leaveItem = items.find((i) => i.key === `leave:notice:${leave.id}`);
     expect(leaveItem?.label).toMatch(/^Send Lia Leave the leave notice by \d{4}-\d{2}-\d{2}$/);
     expect(leaveItem?.linkUrl).toBe(`/leave?case=${leave.id}`);
-    expect(items.find((i) => i.key === 'onboarding:idle-drafts')).toMatchObject({ label: '1 onboarding draft idle more than 7 days', linkUrl: '/onboarding?status=DRAFT' });
+    expect(items.find((i) => i.key === 'onboarding:idle-drafts')).toMatchObject({ label: '1 onboarding draft idle more than 7 days', linkUrl: '/onboarding?status=IDLE_DRAFTS' });
 
     // Finance still sees the money.
     const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });

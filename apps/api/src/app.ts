@@ -203,6 +203,7 @@ import { accessCertificationsRouter } from './routes/accessCertifications.js';
 import { shiftWindowsRouter } from './routes/shiftWindows.js';
 import { floorTeamRouter } from './routes/floorTeam.js';
 import { floorRouter } from './routes/floor.js';
+import { openShiftInvitesRouter } from './routes/openShiftInvites.js';
 import { callOutsRouter } from './routes/callOuts.js';
 import { voiceRouter } from './routes/voice.js';
 import { retentionRouter } from './routes/retention.js';
@@ -876,6 +877,8 @@ export function createApp() {
   // The floor from a phone: incidents with a photo, flags, the week, a text
   // to the crew, the handover, and "Cover this shift" (routes/floor.ts).
   app.use('/', floorRouter);
+  // Open-shift invitations: Rebroadcast, sent/declined counts, the associate's "Not for me" (lib/openShiftInvites).
+  app.use('/', openShiftInvitesRouter);
   // Call-outs: a worker's "I can't make it" from any channel, and the leads' view (lib/callOuts).
   app.use('/', callOutsRouter);
   // Retention desk: flight-risk scores with their reasons, and the plays leads take (lib/retention).

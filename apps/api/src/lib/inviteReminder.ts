@@ -9,6 +9,7 @@ import { generateInviteToken } from './inviteToken.js';
 import { onboardingReminderTemplate, inviteTemplate } from './emailTemplates.js';
 import { portalDisplayName, portalInviteTemplate, portalScopeForUser } from './portalInvite.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { dueReminderItems, isTaskOpen, markItemsReminded, reminderCutoff } from './onboardingReminders.js';
 
 /**
  * Phase 17 — invite reminder sweep.
@@ -239,7 +240,10 @@ export const PROGRESS_REMINDER_AFTER_DAYS = 3;
 
 export interface ProgressSweepResult {
   scanned: number;
+  /** People emailed (one email each, however many tasks it named). */
   reminded: number;
+  /** Tasks those emails named. */
+  items: number;
   escalated: number;
   errors: { applicationId: string; error: string }[];
 }
@@ -248,26 +252,37 @@ export interface ProgressSweepResult {
  * The invite sweep only covers people who never logged in. This one covers
  * the bigger population: associates who ACCEPTED and then stalled mid-
  * checklist. Anyone on an open DRAFT application with no task completed in
- * PROGRESS_REMINDER_AFTER_DAYS days gets an email naming the outstanding
- * tasks (with their real progress); the 2nd+ reminder also escalates to
- * HR so a human follows up.
+ * PROGRESS_REMINDER_AFTER_DAYS days is reminded of the outstanding tasks
+ * (with their real progress); an application's 2nd+ reminder also
+ * escalates to HR so a human follows up.
+ *
+ * Reminders answer to lib/onboardingReminders: one per TASK per 3 days
+ * (OnboardingTask.remindedAt, shared with the stale-nudge sweep), never
+ * for a task that is done, and everything due for one person — across all
+ * their applications — goes out as ONE email.
  */
 export async function runProgressReminderSweep(
   prisma: PrismaClient = defaultPrisma,
   now: Date = new Date()
 ): Promise<ProgressSweepResult> {
-  const idleCutoff = new Date(
-    now.getTime() - PROGRESS_REMINDER_AFTER_DAYS * 24 * 60 * 60 * 1000,
-  );
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const idleCutoff = new Date(now.getTime() - PROGRESS_REMINDER_AFTER_DAYS * DAY_MS);
   const apps = await prisma.application.findMany({
     where: {
       deletedAt: null,
       status: 'DRAFT',
       submittedAt: null,
-      OR: [
-        { progressRemindedAt: null },
-        { progressRemindedAt: { lt: idleCutoff } },
-      ],
+      // Only applications with an open task that is due a reminder.
+      checklist: {
+        is: {
+          tasks: {
+            some: {
+              status: { notIn: ['DONE', 'SKIPPED'] },
+              OR: [{ remindedAt: null }, { remindedAt: { lte: reminderCutoff(now) } }],
+            },
+          },
+        },
+      },
     },
     include: {
       associate: {
@@ -277,90 +292,110 @@ export async function runProgressReminderSweep(
         },
       },
       client: { select: { name: true } },
-      checklist: { include: { tasks: true } },
+      checklist: { include: { tasks: { orderBy: { order: 'asc' } } } },
     },
     orderBy: { invitedAt: 'asc' },
     take: 200,
   });
 
+  type App = (typeof apps)[number];
+  type Task = NonNullable<App['checklist']>['tasks'][number];
+  interface DueApp {
+    app: App;
+    due: Task[];
+    percent: number;
+    idleDays: number;
+  }
+  const byUser = new Map<string, { firstName: string; apps: DueApp[] }>();
   const errors: { applicationId: string; error: string }[] = [];
-  let reminded = 0;
-  let escalated = 0;
 
   for (const app of apps) {
+    const user = app.associate.user;
+    // Not accepted yet → the invite sweep's job, not ours.
+    if (!user || user.status !== 'ACTIVE') continue;
+    const tasks = app.checklist?.tasks ?? [];
+    if (tasks.length === 0) continue;
+    const open = tasks.filter(isTaskOpen);
+    if (open.length === 0) continue;
+    // "Idle" = nothing completed recently (and the invite itself is old).
+    const lastActivityMs = Math.max(
+      app.invitedAt.getTime(),
+      ...tasks.filter((t) => t.completedAt).map((t) => t.completedAt!.getTime()),
+    );
+    if (lastActivityMs > idleCutoff.getTime()) continue;
+    const due = dueReminderItems(open, now);
+    if (due.length === 0) continue;
+    const entry = byUser.get(user.id) ?? { firstName: app.associate.firstName, apps: [] };
+    entry.apps.push({
+      app,
+      due,
+      percent: Math.round(((tasks.length - open.length) / tasks.length) * 100),
+      idleDays: Math.floor((now.getTime() - lastActivityMs) / DAY_MS),
+    });
+    byUser.set(user.id, entry);
+  }
+
+  let reminded = 0;
+  let items = 0;
+  let escalated = 0;
+  const orgName = getBrandingSync().orgName;
+  const placeOf = (d: DueApp) => d.app.client?.name ?? orgName;
+
+  for (const [userId, person] of byUser) {
     try {
-      const user = app.associate.user;
-      // Not accepted yet → the invite sweep's job, not ours.
-      if (!user || user.status !== 'ACTIVE') continue;
-      const tasks = app.checklist?.tasks ?? [];
-      if (tasks.length === 0) continue;
-      const open = tasks.filter(
-        (t) => t.status !== 'DONE' && t.status !== 'SKIPPED',
-      );
-      if (open.length === 0) continue;
-      // "Idle" = nothing completed recently (and the invite itself is old).
-      const lastActivityMs = Math.max(
-        app.invitedAt.getTime(),
-        ...tasks
-          .filter((t) => t.completedAt)
-          .map((t) => t.completedAt!.getTime()),
-      );
-      if (lastActivityMs > idleCutoff.getTime()) continue;
-
-      const done = tasks.length - open.length;
-      const percent = Math.round((done / tasks.length) * 100);
-      const idleDays = Math.floor(
-        (now.getTime() - lastActivityMs) / (24 * 60 * 60 * 1000),
-      );
-      const taskLines = open
-        .slice(0, 8)
-        .map((t) => `  • ${t.title}`)
-        .join('\n');
-      const linkPath = `/onboarding/me/${app.id}`;
-      void notifyUser(user.id, {
-        subject: `[Reminder] ${open.length} onboarding task${open.length === 1 ? '' : 's'} still open — ${app.client?.name ?? getBrandingSync().orgName}`,
-        body:
-          `Hi ${app.associate.firstName},\n\n` +
-          `Your onboarding for ${app.client?.name ?? getBrandingSync().orgName} is ${percent}% complete, ` +
-          `but nothing has moved in ${idleDays} day${idleDays === 1 ? '' : 's'}. ` +
-          `Still outstanding:\n\n${taskLines}\n\n` +
-          `Pick up where you left off: ${publicBaseUrl()}${linkPath}`,
+      const n = person.apps.reduce((sum, d) => sum + d.due.length, 0);
+      const only = person.apps.length === 1 ? person.apps[0]! : null;
+      const sections = person.apps.map((d) => {
+        const linkPath = `/onboarding/me/${d.app.id}`;
+        return (
+          `Your onboarding for ${placeOf(d)} is ${d.percent}% complete, ` +
+          `but nothing has moved in ${d.idleDays} day${d.idleDays === 1 ? '' : 's'}. ` +
+          `Still outstanding:\n\n${d.due.slice(0, 8).map((t) => `  • ${t.title}`).join('\n')}` +
+          `${d.due.length > 8 ? `\n  • and ${d.due.length - 8} more` : ''}\n\n` +
+          `Pick up where you left off: ${publicBaseUrl()}${linkPath}`
+        );
+      });
+      void notifyUser(userId, {
+        subject: `[Reminder] ${n} onboarding task${n === 1 ? '' : 's'} still open${only ? ` — ${placeOf(only)}` : ''}`,
+        body: `Hi ${person.firstName},\n\n${sections.join('\n\n')}`,
         category: 'onboarding.progress_reminder',
-        linkUrl: linkPath,
+        linkUrl: `/onboarding/me/${person.apps[0]!.app.id}`,
       });
-
-      const newCount = app.progressRemindCount + 1;
-      await prisma.application.update({
-        where: { id: app.id },
-        data: { progressRemindedAt: now, progressRemindCount: newCount },
-      });
+      await markItemsReminded(person.apps.flatMap((d) => d.due.map((t) => t.id)), now, prisma);
       reminded++;
+      items += n;
 
-      // Second-and-later nags escalate to HR — the associate has now been
-      // reminded before and is still stuck.
-      if (newCount >= 2) {
-        void notifyAllAdmins({
-          subject: `Onboarding stalled: ${app.associate.firstName} at ${percent}% (${idleDays}d idle)`,
-          body:
-            `${app.associate.firstName}'s onboarding for ${app.client?.name ?? getBrandingSync().orgName} has been idle ` +
-            `${idleDays} days at ${percent}% despite ${newCount} reminders. ` +
-            `Outstanding: ${open.map((t) => t.title).join(', ')}. ` +
-            `Open it: ${publicBaseUrl()}/onboarding/applications/${app.id}`,
-          category: 'onboarding',
-          linkUrl: `/onboarding/applications/${app.id}`, // the bell row opens it too
-          emailRoles: ADMIN_EMAIL_HIRING,
+      for (const d of person.apps) {
+        const newCount = d.app.progressRemindCount + 1;
+        await prisma.application.update({
+          where: { id: d.app.id },
+          data: { progressRemindedAt: now, progressRemindCount: newCount },
         });
-        escalated++;
+        // Second-and-later reminders escalate to HR — the associate has
+        // been reminded before and is still stuck.
+        if (newCount >= 2) {
+          void notifyAllAdmins({
+            subject: `Onboarding stalled: ${person.firstName} at ${d.percent}% (${d.idleDays}d idle)`,
+            body:
+              `${person.firstName}'s onboarding for ${placeOf(d)} has been idle ` +
+              `${d.idleDays} days at ${d.percent}% despite ${newCount} reminders. ` +
+              `Outstanding: ${d.due.map((t) => t.title).join(', ')}. ` +
+              `Open it: ${publicBaseUrl()}/onboarding/applications/${d.app.id}`,
+            category: 'onboarding',
+            linkUrl: `/onboarding/applications/${d.app.id}`, // the bell row opens it too
+            emailRoles: ADMIN_EMAIL_HIRING,
+          });
+          escalated++;
+        }
       }
     } catch (err) {
-      errors.push({
-        applicationId: app.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      for (const d of person.apps) {
+        errors.push({ applicationId: d.app.id, error: err instanceof Error ? err.message : String(err) });
+      }
     }
   }
 
-  return { scanned: apps.length, reminded, escalated, errors };
+  return { scanned: apps.length, reminded, items, escalated, errors };
 }
 
 let timer: NodeJS.Timeout | null = null;

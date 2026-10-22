@@ -23,7 +23,7 @@ beforeEach(async () => {
   setGeocoderForTests(async () => ({ lat: 30.39, lng: -86.49 }));
   // The pre-trip check has its own suite (transportDriverPack); these are
   // about the charge, so the fleet runs with it switched off.
-  await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
+  await prisma.transportSettings.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { preTripRequired: false }, update: { preTripRequired: false } });
 });
 afterAll(async () => {
   setGeocoderForTests(null);
@@ -96,7 +96,7 @@ describe('the signed written authorization', () => {
     expect(consent.documentId).toBeTruthy();
     const doc = await prisma.documentRecord.findUniqueOrThrow({ where: { id: consent.documentId! } });
     expect(doc).toMatchObject({ kind: 'SIGNED_AGREEMENT', status: 'VERIFIED', associateId: s.kim.id, mimeType: 'application/pdf' });
-    expect(doc.s3Key).toMatch(/^esign\/ride-authorization\//);
+    expect(doc.s3Key).toMatch(/^tenants\/00000000-0000-4000-8000-000000000001\/esign\/ride-authorization\//); // Brief 2-1 §9.6: under the tenant
     const sig = await prisma.signature.findUniqueOrThrow({ where: { id: consent.signatureId! } });
     expect(sig).toMatchObject({ documentId: doc.id, typedName: 'Kim Nguyen', signerUserId: s.kimUser.id, associateId: s.kim.id });
     expect(sig.pdfHash).toMatch(/^[0-9a-f]{64}$/);
@@ -212,7 +212,7 @@ describe('the configurable rate', () => {
     expect(changed.body.rates[0]).toMatchObject({ fareCents: 600, effectiveFrom: ymd(new Date()), effectiveTo: null });
     expect(changed.body.rates[1]).toMatchObject({ fareCents: 500, effectiveTo: ymd(new Date(Date.now() - 86_400_000)) });
     // The settings row mirrors the rate in force.
-    expect(await prisma.transportSettings.findUniqueOrThrow({ where: { id: 'default' } })).toMatchObject({ fareCents: 600, noShowFeeCents: 150 });
+    expect(await prisma.transportSettings.findUniqueOrThrow({ where: { tenantId: '00000000-0000-4000-8000-000000000001' } })).toMatchObject({ fareCents: 600, noShowFeeCents: 150 });
     // The ride booked at the old rate keeps it.
     expect(await prisma.ride.findUniqueOrThrow({ where: { id: before.id } })).toMatchObject({ fareCents: 500, noShowFeeCents: 100 });
 

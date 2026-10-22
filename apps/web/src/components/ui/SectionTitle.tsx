@@ -36,6 +36,17 @@ interface SectionTitleProps {
   trailing?: React.ReactNode;
   /** Render the title in font-display for a touch more presence — use sparingly. */
   display?: boolean;
+  /**
+   * md (default): a section of a page. sm: a card's own label in a dense
+   * grid of cards (the client portal's tiles) — the same rung, one step
+   * smaller, so a dozen tiles don't shout over the page title.
+   */
+  size?: 'md' | 'sm';
+  /**
+   * A long title with controls beside it: the title wraps instead of
+   * truncating, and the trailing slot drops under it on a narrow screen.
+   */
+  wrap?: boolean;
   as?: 'h2' | 'h3' | 'h4';
   className?: string;
   id?: string;
@@ -48,6 +59,8 @@ export function SectionTitle({
   description,
   trailing,
   display = false,
+  size = 'md',
+  wrap = false,
   as: As = 'h2',
   className,
   id,
@@ -59,7 +72,7 @@ export function SectionTitle({
           {eyebrow}
         </div>
       )}
-      <div className="flex items-center justify-between gap-3">
+      <div className={cn('flex items-center justify-between gap-3', wrap && 'flex-wrap gap-y-1')}>
         <div className="flex items-center gap-2 min-w-0">
           {Icon && (
             <Icon
@@ -70,8 +83,9 @@ export function SectionTitle({
           <As
             id={id}
             className={cn(
-              'text-white leading-tight truncate',
-              display ? 'text-xl' : 'text-base font-medium',
+              'text-white leading-tight',
+              !wrap && 'truncate',
+              display ? 'text-xl' : size === 'sm' ? 'text-sm font-medium' : 'text-base font-medium',
             )}
           >
             {title}

@@ -3,6 +3,7 @@ import { MessageSquareText } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { textCrew, type CrewTextResult } from '@/lib/floorApi';
+import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
@@ -29,6 +30,7 @@ export function CrewTextDialog({
   /** Send it some other way (e.g. one text per client); defaults to one /floor/crew-text call. */
   send?: (body: string) => Promise<CrewTextResult>;
 }) {
+  const { t } = useI18n();
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const send = async () => {
@@ -38,20 +40,20 @@ export function CrewTextDialog({
       const r = sendOverride ? await sendOverride(body.trim()) : await textCrew({ shiftIds, body: body.trim() });
       // Honest outcome: a text with no provider behind it was never sent.
       if (r.notConfigured) {
-        toast.error(`Nothing was sent — ${r.notConfigured}`);
+        toast.error(t('crewText.notSent', { reason: r.notConfigured }));
         return;
       }
       const notes: string[] = [];
-      if (r.noPhone.length) notes.push(`No phone on file: ${r.noPhone.join(', ')}.`);
-      if (r.optedOut > 0) notes.push(`${r.optedOut} opted out of texts.`);
-      if (r.failed > 0) notes.push(`${r.failed} could not be delivered — see the communications log.`);
-      const summary = `Sent to ${r.sent}.${notes.length ? ` ${notes.join(' ')}` : ''}`;
+      if (r.noPhone.length) notes.push(t('crewText.noPhone', { names: r.noPhone.join(', ') }));
+      if (r.optedOut > 0) notes.push(t('crewText.optedOut', { n: r.optedOut }));
+      if (r.failed > 0) notes.push(t('crewText.failed', { n: r.failed }));
+      const summary = `${t('crewText.sentTo', { n: r.sent })}${notes.length ? ` ${notes.join(' ')}` : ''}`;
       if (r.sent === 0 && (r.failed > 0 || r.optedOut > 0)) toast.error(summary);
       else toast.success(summary);
       setBody('');
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not send the text.');
+      toast.error(err instanceof ApiError ? err.message : t('crewText.sendFailed'));
     } finally {
       setBusy(false);
     }
@@ -62,21 +64,21 @@ export function CrewTextDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <MessageSquareText className="h-5 w-5 text-gold" aria-hidden="true" />
-            Text the crew
+            {t('crewText.title')}
           </DialogTitle>
           <DialogDescription>
-            {label} · {count} {count === 1 ? 'person' : 'people'}. One SMS each, kept in the log.
+            {count === 1 ? t('crewText.descOne', { label }) : t('crewText.descMany', { label, n: count })}
           </DialogDescription>
         </DialogHeader>
-        <Field label="Message" required>
-          {(p) => <Textarea {...p} value={body} onChange={(e) => setBody(e.target.value)} rows={4} maxLength={600} placeholder="Dock 2 opens at 5:45 today — come in the side door." autoFocus />}
+        <Field label={t('crewText.message')} required>
+          {(p) => <Textarea {...p} value={body} onChange={(e) => setBody(e.target.value)} rows={4} maxLength={600} placeholder={t('crewText.placeholder')} autoFocus />}
         </Field>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-            Cancel
+            {t('crewText.cancel')}
           </Button>
           <Button onClick={() => void send()} loading={busy} disabled={busy || !body.trim()}>
-            Send to {count}
+            {t('crewText.sendTo', { n: count })}
           </Button>
         </DialogFooter>
       </DialogContent>

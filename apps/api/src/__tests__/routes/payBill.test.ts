@@ -11,6 +11,7 @@ import { flushPendingAudits } from '../../lib/audit.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import { setTenantProfile, invalidateTenantProfile } from '../../lib/tenantProfile.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
+import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
 
 /**
  * BEYOND — the pay ↔ bill link: retro pay rebilled by contract, premiums
@@ -137,6 +138,26 @@ describe('retro pay rebills the client', () => {
 });
 
 describe('premiums bill by contract', () => {
+  it('the engine’s double-time line bills only the premium beyond the overtime rate — its hours are already on the statement as overtime', async () => {
+    const { user: finance } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const a = await createClient('Coastal DT');
+    await card(a.id, 'Picker', 20, 30);
+    await terms(a.id, { premiumRules: { DOUBLE_TIME: { mode: 'BILL_MARKUP' } } });
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Diaz' });
+    await work(ana.id, a.id, new Date('2026-05-05T13:00:00Z'), 14, 'Picker');
+    const r = await run('2026-05-04', '2026-05-10');
+    // Paid by the labor-rules engine (a live California day): 8 regular, 4 overtime at $30, 2 double time at $40.
+    await item(r.id, ana.id, 360, [
+      { kind: 'REGULAR', hours: 8, rate: 20, amount: 160 },
+      { kind: 'OVERTIME', hours: 4, rate: 30, amount: 120 },
+      { kind: 'DOUBLE_TIME', hours: 2, rate: 40, amount: 80, notes: 'Double time' },
+    ]);
+    await onPayrollFinalized(prisma, r.id, finance.id);
+    const rows = await prisma.billingAdjustment.findMany({ where: { kind: 'PREMIUM', clientId: a.id } });
+    // $80 − 2 h × $30 = $20 of premium, × 1.5 markup = $30 (not $80 × 1.5 = $120 on top of the hours billed).
+    expect(rows.map((x) => [x.ruleKey, Number(x.payAmount), Number(x.amount)])).toEqual([['DOUBLE_TIME', 20, 30]]);
+  });
+
   it('double time at the markup, meal premiums at cost + 10%, holiday not billable, predictability to the exact store — and the predictability pay line is never billed twice', async () => {
     const { user: finance } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
     const a = await createClient('Coastal');
@@ -226,6 +247,34 @@ describe('margin per paycheck and the reconciliation', () => {
     expect(check.statements.map((s) => s.number)).toEqual([7]);
     expect(report.unbilled).toEqual([expect.objectContaining({ kind: 'HOURS', hours: 10, payAmount: 200, reason: 'NO_STATEMENT', clientName: 'Coastal' })]);
     expect(report.totals.gapPay).toBe(200);
+  });
+
+  it('a two-client week: the reconciliation prices each client’s hours exactly as its statement billed them — the overtime once, on the hours that ran past 40', async () => {
+    const a = await createClient('Coastal A');
+    const b = await createClient('Harbor B');
+    await card(a.id, 'Picker', 20, 30);
+    await card(b.id, 'Picker', 20, 30);
+    const rosa = await createAssociate({ firstName: 'Rosa', lastName: 'Two' });
+    const weekStart = startOfWeekUTC(new Date(Date.now() - 40 * DAY));
+    const ymd = (x: Date) => x.toISOString().slice(0, 10);
+    // Saturday–Tuesday 8 h at A (32), Wednesday–Thursday 8 h at B: 48 h, the last 8 overtime — all at B.
+    for (let i = 0; i < 4; i++) await work(rosa.id, a.id, new Date(weekStart.getTime() + i * DAY + 9 * 3_600_000), 8, 'Picker');
+    for (let i = 4; i < 6; i++) await work(rosa.id, b.id, new Date(weekStart.getTime() + i * DAY + 9 * 3_600_000), 8, 'Picker');
+    const end = new Date(weekStart.getTime() + 6 * DAY);
+    for (const c of [a, b]) await prisma.clientStatement.create({ data: { clientId: c.id, periodStart: d(ymd(weekStart)), periodEnd: d(ymd(end)), status: 'FINAL', number: c.id === a.id ? 11 : 12, snapshot: {} } });
+    const r = await run(ymd(weekStart), ymd(end));
+    await item(r.id, rosa.id, 1040, [
+      { kind: 'REGULAR', hours: 40, rate: 20, amount: 800 },
+      { kind: 'OVERTIME', hours: 8, rate: 30, amount: 240 },
+    ]);
+    const report = await reconcilePayPeriod(prisma, { periodStart: d(ymd(weekStart)), periodEnd: d(ymd(end)), runWhere: { tenantId: ALTO_TENANT_ID } });
+    const billedTo = (name: string) => report.paychecks.find((p) => p.clientName === name)!.billed;
+    const [snapA, snapB] = await Promise.all([a, b].map((c) => computeStatementSnapshot(prisma, c.id, d(ymd(weekStart)), new Date(end.getTime() + DAY))));
+    // A: 32 × $30. B: 8 × $30 + 8 × $45. (Before, A was also billed the 8 overtime hours at 1.5×.)
+    expect(snapA!.totals.hoursAmount).toBe(960);
+    expect(snapB!.totals.hoursAmount).toBe(600);
+    expect(billedTo('Coastal A')).toBe(960);
+    expect(billedTo('Harbor B')).toBe(600);
   });
 
   it('the Finance desk and the Inbox: "$200.00 of billable pay is not on any statement"; a store-bound account is refused company-wide margin', async () => {

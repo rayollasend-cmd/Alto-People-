@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { CalendarClock, ShieldCheck } from 'lucide-react';
 import { getExpirationRisk, type ExpirationRisk, type RiskItem } from '@/lib/expirations113Api';
 import { useTenant, useTerm } from '@/lib/auth';
-import { fmtDate, fmtDateTime, fmtDayShort } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtDayShort, fmtShiftTz, fmtWeekdayTz } from '@/lib/format';
 import { useMediaQuery } from '@/lib/useViewport';
 import { cn } from '@/lib/cn';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -111,6 +111,9 @@ export function RiskFilterBar({ data, filters, setFilters }: { data: ExpirationR
   );
 }
 
+/** "Fri, Jun 13" on the shift's own store clock (one shift, one day). */
+const shiftDay = (s: { startsAt: string; timezone?: string | null }) => `${fmtWeekdayTz(s.startsAt, s.timezone)}, ${fmtDateTz(s.startsAt, s.timezone)}`;
+
 const lapseText = (i: RiskItem) =>
   i.daysUntilExpiry < 0
     ? `Expired ${fmtDate(i.expiresAt)} · ${-i.daysUntilExpiry} ${-i.daysUntilExpiry === 1 ? 'day' : 'days'} ago`
@@ -137,7 +140,7 @@ export function ExpirationAtRisk({ filters, setFilters, onRenew }: { filters: Ri
       <p className="text-sm text-ink-muted" aria-live="polite">
         {atRisk.length === 0
           ? 'No scheduled shift is blocked by a lapsing credential.'
-          : `${atRisk.length} ${atRisk.length === 1 ? 'lapse blocks' : 'lapses block'} a scheduled shift — the soonest is ${fmtDayShort(atRisk[0]!.blockingShift!.startsAt)}.`}
+          : `${atRisk.length} ${atRisk.length === 1 ? 'lapse blocks' : 'lapses block'} a scheduled shift — the soonest is ${shiftDay(atRisk[0]!.blockingShift!)}.`}
         {others > 0 && ` ${others} more lapse within 30 days with no shift affected yet.`}
       </p>
       {atRisk.length === 0 ? (
@@ -165,7 +168,7 @@ export function ExpirationAtRisk({ filters, setFilters, onRenew }: { filters: Ri
                     <div className="min-w-[12rem] flex-1 text-sm">
                       <div className="flex items-center gap-1.5 text-ink">
                         <CalendarClock className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
-                        {fmtDateTime(s.startsAt)}
+                        {fmtShiftTz(s.startsAt, s.timezone)}
                       </div>
                       <div className="text-xs text-ink-muted">
                         {[s.position, s.storeName].filter(Boolean).join(' · ')} · {REQUIRED_BY[s.requiredBy](term)}
@@ -380,7 +383,7 @@ export function ExpirationTimeline({ filters, setFilters, onRenew }: { filters: 
                   <span className="flex-1 text-ink-muted">
                     {i.qualificationName} · {lapseText(i)}
                   </span>
-                  {i.blockingShift && <Badge variant="destructive">Blocks a shift {fmtDayShort(i.blockingShift.startsAt)}</Badge>}
+                  {i.blockingShift && <Badge variant="destructive">Blocks a shift {shiftDay(i.blockingShift)}</Badge>}
                   {onRenew && (
                     <Button size="sm" variant="ghost" onClick={() => onRenew(i)}>
                       Mark renewed

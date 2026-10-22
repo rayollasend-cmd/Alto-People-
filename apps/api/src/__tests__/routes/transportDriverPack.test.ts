@@ -136,7 +136,7 @@ describe('the pre-trip check', () => {
 
   it('a fleet that switched the check off starts the run as before; a van out of service never leaves', async () => {
     const f = await fleet();
-    await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
+    await prisma.transportSettings.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { preTripRequired: false }, update: { preTripRequired: false } });
     await prisma.van.update({ where: { id: f.van.id }, data: { outOfServiceAt: new Date(), outOfServiceReason: 'brakes' } });
     const parked = await f.driverAgent.post(`/transport/driver/runs/${f.run.id}/start`);
     expect(parked.status).toBe(409);
@@ -249,7 +249,7 @@ describe('incidents', () => {
 describe('the rider\'s thumb and the drop-off word', () => {
   it('finishing the run tells each rider (once), and a finished ride can be rated; the director reads the trend', async () => {
     const f = await fleet();
-    await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
+    await prisma.transportSettings.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { preTripRequired: false }, update: { preTripRequired: false } });
     await f.driverAgent.post(`/transport/driver/runs/${f.run.id}/start`);
     await f.driverAgent.post(`/transport/driver/runs/${f.run.id}/arrived`).send({ rideIds: [f.ride.id] });
     expect((await f.driverAgent.post(`/transport/driver/rides/${f.ride.id}/board`)).status).toBe(200);

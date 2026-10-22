@@ -137,6 +137,14 @@ export async function statementContext(db: Db, o: { statementId: string; clientI
 }
 
 /**
+ * How the invoice explains overtime: the hours are the ones the person was
+ * paid overtime on (the labor-rules engine, across all their assignments);
+ * the rate is the contract's.
+ */
+const OT_NOTE = (s: Pick<StatementSnapshot, 'overtimeBilling' | 'totals'>): string =>
+  `overtime is the part of a person's week paid as overtime — past 40 hours across all assignments, or a state's daily line where it applies — ${s.overtimeBilling === 'STRAIGHT' ? 'billed at straight time per the contract' : 'billed at 1.5× per the contract'}${(s.totals.doubleTimeHours ?? 0) > 0 ? '; double-time hours bill like overtime, and any double-time premium per the contract' : ''}`;
+
+/**
  * Older and seeded snapshots can lack fields (the SLA block, the split
  * totals); the invoice — and every screen — reads a complete one.
  */
@@ -154,6 +162,7 @@ export function completeStatementSnapshot(snap: StatementSnapshot, fallbackName:
       hours: t.hours ?? 0,
       regularHours: t.regularHours ?? t.hours ?? 0,
       otHours: t.otHours ?? 0,
+      ...(t.doubleTimeHours ? { doubleTimeHours: t.doubleTimeHours } : {}),
       amount: t.amount ?? 0,
       hoursAmount: t.hoursAmount,
       adjustmentsAmount: t.adjustmentsAmount,
@@ -221,7 +230,7 @@ export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer
   }
 
   // ---- Billed services ------------------------------------------------------
-  y = k.section('Billed services', y, `${fmt.hours(s.totals.hours)} h · ${fmt.hours(s.totals.regularHours)} regular, ${fmt.hours(s.totals.otHours)} overtime`);
+  y = k.section('Billed services', y, `${fmt.hours(s.totals.hours)} h · ${fmt.hours(s.totals.regularHours)} regular, ${fmt.hours(s.totals.otHours)} overtime${s.totals.doubleTimeHours ? `, ${fmt.hours(s.totals.doubleTimeHours)} double time` : ''}`);
   y = k.table({
     y,
     rows: s.lines,
@@ -327,12 +336,12 @@ export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer
       {
         tone: 'info',
         title: 'How to pay',
-        body: `Pay by ACH or check payable to ${payTo.replace(/\.$/, '')}.${input.remitTo?.instructions ? ` ${input.remitTo.instructions.replace(/\.$/, '')}.` : ''} Put ${label} on the payment so it applies to this invoice.${input.financeEmail ? ` Questions about this invoice: ${input.financeEmail}.` : ''} Hours are approved time net of unpaid breaks; overtime is the part of a person's week beyond 40 hours across all assignments${s.overtimeBilling === 'STRAIGHT' ? ', billed at straight time per the contract' : ', billed at 1.5× per the contract'}.`,
+        body: `Pay by ACH or check payable to ${payTo.replace(/\.$/, '')}.${input.remitTo?.instructions ? ` ${input.remitTo.instructions.replace(/\.$/, '')}.` : ''} Put ${label} on the payment so it applies to this invoice.${input.financeEmail ? ` Questions about this invoice: ${input.financeEmail}.` : ''} Hours are approved time net of unpaid breaks; ${OT_NOTE(s)}.`,
       },
       y,
     );
   } else {
-    y = k.callout({ body: `Hours are approved time net of unpaid breaks. Overtime is the part of a person's week beyond 40 hours across all assignments${s.overtimeBilling === 'STRAIGHT' ? ', billed at straight time per the contract' : ', billed at 1.5× per the contract'}.${input.finalizedByEmail && input.finalizedAt ? ` Finalized ${fmt.date(input.finalizedAt)} by ${input.finalizedByEmail}.` : ''}` }, y);
+    y = k.callout({ body: `Hours are approved time net of unpaid breaks. ${OT_NOTE(s).replace(/^o/, 'O')}.${input.finalizedByEmail && input.finalizedAt ? ` Finalized ${fmt.date(input.finalizedAt)} by ${input.finalizedByEmail}.` : ''}` }, y);
   }
 
   // ---- Remittance stub ------------------------------------------------------

@@ -7,7 +7,8 @@ import type {
 } from '@alto-people/shared';
 import { tryDecryptString } from './crypto.js';
 import { readRoutingNumber } from './payoutMethod.js';
-import { buildPayrollSheet, type PayrollSheetInputRow } from './payrollSheet.js';
+import { PAYROLL_SHEET_ENTRY_INCLUDE, buildPayrollSheetForPay } from './payrollSheet.js';
+import { payFor } from './laborRules/hours.js';
 
 /**
  * External payroll sheet — the handoff file for an outside payroll bureau.
@@ -27,9 +28,10 @@ import { buildPayrollSheet, type PayrollSheetInputRow } from './payrollSheet.js'
  *     routing number in a bureau file is an unpaid worker, and in a
  *     three-hundred-row spreadsheet nobody sees the empty cell.
  *
- * Hours reuse `buildPayrollSheet`, so regular/overtime split the same way the
- * internal payroll sheet splits it (ISO week, Monday-anchored, 40h cap). The
- * two sheets agreeing matters — they get reconciled against each other.
+ * Hours reuse the internal payroll sheet's builder (buildPayrollSheetForPay),
+ * so regular / overtime / double time split exactly as the paycheck splits
+ * them (lib/laborRules/hours). The two sheets agreeing matters — they get
+ * reconciled against each other.
  */
 
 export interface ExternalPayrollRow {
@@ -60,6 +62,14 @@ export interface ExternalPayrollRow {
    *  authorized rides only, capped so the period never falls below the
    *  applicable minimum wage (dollars). Null when nothing is owed. */
   rideCharges: number | null;
+  /** Hours past a live jurisdiction's double-time line (CA past 12 a day); 0 elsewhere. */
+  doubleTimeHours: number;
+  /**
+   * Hourly gross for the hours at the engine's multipliers (lib/laborRules/hours.payFor):
+   * what the paycheck's hour lines add up to. Null for salaried rows or no rate.
+   * Not a bureau column — the on-screen batch recorder suggests it.
+   */
+  hoursGross: number | null;
 }
 
 /** One financial change, as the packet's "Changes since last packet" lists it. */
@@ -151,24 +161,12 @@ export async function buildExternalPayrollSheet(
   const entries = await prisma.timeEntry.findMany({
     where,
     orderBy: { clockInAt: 'asc' },
-    include: {
-      // state drives the OT thresholds (see PayrollSheetInputRow.state).
-      associate: { select: { firstName: true, lastName: true, state: true } },
-      breaks: true,
-    },
+    include: PAYROLL_SHEET_ENTRY_INCLUDE,
     take: MAX_ENTRIES,
   });
 
-  const hoursSheet = buildPayrollSheet(
-    entries.map<PayrollSheetInputRow>((e) => ({
-      associateId: e.associateId,
-      associateName: `${e.associate.firstName} ${e.associate.lastName}`,
-      clockInAt: e.clockInAt,
-      clockOutAt: e.clockOutAt,
-      breaks: e.breaks,
-      state: e.associate.state,
-    })),
-  );
+  // The internal sheet's builder, through the paycheck's inputs: the two sheets reconcile.
+  const hoursSheet = await buildPayrollSheetForPay(prisma, entries);
 
   const associateIds = hoursSheet.associates.map((a) => a.associateId);
   if (associateIds.length === 0) {
@@ -328,14 +326,16 @@ export async function buildExternalPayrollSheet(
       const rate = money(comp?.amount);
       const regular = a.regularMinutes / 60;
       const overtime = a.overtimeMinutes / 60;
-      const gross = rate === null || comp?.payType !== 'HOURLY' ? 0 : Math.round((regular * rate + overtime * rate * 1.5) * 100) / 100;
+      const doubleTime = a.doubleTimeMinutes / 60;
+      const gross = rate === null || comp?.payType !== 'HOURLY' ? 0 : Math.round(payFor({ regularHours: regular, overtimeHours: overtime, doubleTimeHours: doubleTime }, rate, a) * 100) / 100;
       const plan = await planRideCharges(prisma, {
         associateId: a.associateId,
         availableNet: gross,
         grossPay: gross,
         regularHours: regular,
         overtimeHours: overtime,
-        hoursWorked: regular + overtime,
+        doubleTimeHours: doubleTime,
+        hoursWorked: regular + overtime + doubleTime,
         taxState: personById.get(a.associateId)?.state ?? null,
         periodEnd: input.to.slice(0, 10),
         clientId: input.clientId ?? null,
@@ -438,6 +438,8 @@ export async function buildExternalPayrollSheet(
       regularHours: hours(a.regularMinutes),
       overtimeHours: hours(a.overtimeMinutes),
       rideCharges: ridePlan && ridePlan.totalCents > 0 ? ridePlan.totalCents / 100 : null,
+      doubleTimeHours: hours(a.doubleTimeMinutes),
+      hoursGross: comp?.payType === 'HOURLY' && payRate != null ? Math.round(payFor({ regularHours: a.regularMinutes / 60, overtimeHours: a.overtimeMinutes / 60, doubleTimeHours: a.doubleTimeMinutes / 60 }, payRate, a) * 100) / 100 : null,
     };
   });
 
@@ -482,4 +484,7 @@ export const EXTERNAL_PAYROLL_COLUMNS: Array<{
   // After Flags on purpose (same rule): a bureau that already maps Flags by
   // position keeps its mapping.
   { key: 'rideCharges', label: 'Van Ride Charges', width: 16 },
+  // Last, same rule: hours past a live jurisdiction's double-time line
+  // (California past 12 a day). 0 wherever no such rule is live.
+  { key: 'doubleTimeHours', label: 'Double-Time Hours', width: 16 },
 ];

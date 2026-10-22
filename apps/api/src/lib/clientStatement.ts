@@ -2,6 +2,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { currentRateCards } from './rateCards.js';
 import { env } from '../config/env.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
+import { splitByPerson } from './laborRules/hours.js';
+import { loadPayContext } from './laborRules/payContext.js';
 import { readyAdjustments, termsFor, type SnapshotAdjustment } from './payBillLink.js';
 
 type Db = Prisma.TransactionClient | PrismaClient;
@@ -11,9 +13,24 @@ type Db = Prisma.TransactionClient | PrismaClient;
  *
  * Approved time in the period, priced with the same resolution chain the
  * labor-cost report uses (shift's own bill rate → per-(client, position)
- * default → org SOW standards), with the weekly CROSS-CLIENT 40h overtime
- * rule: hours an associate worked anywhere count toward the threshold, and
- * the over-threshold tail billed to this client goes at 1.5×.
+ * default → org SOW standards).
+ *
+ * WHICH hours are overtime is the labor-rules engine's answer — the split
+ * the paycheck pays (lib/laborRules/hours.splitHours), over everything the
+ * person worked in the week, at every client (cross-client), with punch
+ * rounding and live jurisdictions exactly as pay applies them. The client is
+ * never billed on a different overtime split than the associate is paid on.
+ *
+ * HOW those hours are billed is the client's contract (lib/payBillLink
+ * BillingTerms), not labor law: the law decides what the worker is owed; the
+ * contract decides what the client pays for it.
+ *   - MULTIPLIED (the default): overtime hours at the engine's overtime
+ *     multiplier (1.5×) of the bill rate; STRAIGHT: at straight time.
+ *   - Double-time hours (a live jurisdiction's daily rule, CA past 12 h) are
+ *     hours worked beyond overtime and are billed like overtime; what double
+ *     time pays beyond the overtime rate is a premium the contract bills or
+ *     not (the DOUBLE_TIME premium rule), as an adjustment when payroll
+ *     finalizes (payBillLink.linkPremiums) — never twice.
  *
  * The result is a plain-JSON snapshot: DRAFT statements recompute it on
  * demand; FINAL statements freeze it forever.
@@ -45,6 +62,8 @@ export interface StatementSnapshot {
     hours: number;
     regularHours: number;
     otHours: number;
+    /** Hours past a live jurisdiction's double-time line, billed like overtime (absent on older snapshots). */
+    doubleTimeHours?: number;
     /** What the client owes: subtotal + sales tax (hours + adjustments before 2026-10-21). */
     amount: number;
     /** The hours alone, and the adjustments alone (absent on older snapshots). */
@@ -97,27 +116,13 @@ export async function clientSalesTaxRate(db: Db, clientId: string): Promise<numb
   return Number(c.salesTaxRatePct);
 }
 
-function netMinutes(e: {
-  clockInAt: Date;
-  clockOutAt: Date | null;
-  breaks: Array<{ startedAt: Date; endedAt: Date | null }>;
-}): number {
-  if (!e.clockOutAt) return 0;
-  let ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
-  for (const b of e.breaks) {
-    const bEnd = (b.endedAt ?? e.clockOutAt).getTime();
-    ms -= Math.max(0, bEnd - b.startedAt.getTime());
-  }
-  return Math.max(0, ms / 60_000);
-}
-
 export async function computeStatementSnapshot(
   db: Db,
   clientId: string,
   periodStart: Date,
   periodEndExclusive: Date,
 ): Promise<StatementSnapshot> {
-  const [client, entries, rateDefaults, positions, locations] = await Promise.all([
+  const [client, entries, rateDefaults, positions, locations, pay] = await Promise.all([
     db.client.findUniqueOrThrow({ where: { id: clientId }, select: { name: true, salesTaxable: true, salesTaxRatePct: true } }),
     db.timeEntry.findMany({
       where: {
@@ -126,11 +131,12 @@ export async function computeStatementSnapshot(
         clockInAt: { gte: periodStart, lt: periodEndExclusive },
       },
       select: {
+        id: true,
         associateId: true,
         locationId: true,
         clockInAt: true,
         clockOutAt: true,
-        breaks: { select: { startedAt: true, endedAt: true } },
+        breaks: { select: { type: true, startedAt: true, endedAt: true } },
         shift: { select: { position: true, hourlyRate: true, startsAt: true } },
       },
       orderBy: { clockInAt: 'asc' },
@@ -146,12 +152,13 @@ export async function computeStatementSnapshot(
       where: { clientId },
       select: { id: true, name: true },
     }),
+    // What pay splits hours by: live rules and punch rounding.
+    loadPayContext(db),
   ]);
 
   // The contract in force at the period's end: overtime at the multiplier or straight time.
   const terms = await termsFor(db, clientId, new Date(periodEndExclusive.getTime() - 1));
-  const otMult = terms.overtimeBilling === 'STRAIGHT' ? 1 : 1.5;
-  const otLabel = otMult === 1 ? 'overtime (straight time per contract)' : 'overtime (1.5×)';
+  const straight = terms.overtimeBilling === 'STRAIGHT';
 
   const billDefault = new Map(
     rateDefaults
@@ -161,11 +168,13 @@ export async function computeStatementSnapshot(
   const isLead = new Map(positions.map((p) => [p.name, p.isLead]));
   const locationName = new Map(locations.map((l) => [l.id, l.name]));
 
-  // Cross-client weekly totals: every approved minute the period's
-  // associates worked ANYWHERE in the covering weeks feeds the threshold.
+  // Everything the period's associates worked in the covering weeks, at any
+  // client: the engine counts their week once, the way their paycheck does.
+  // A day of slack before the earliest week covers a site west of the
+  // company zone; earlier hours sit in their own (earlier) week.
   const associateIds = [...new Set(entries.map((e) => e.associateId))];
-  const weekStarts = new Set(entries.map((e) => startOfWeekUTC(e.clockInAt).getTime()));
-  const minWeek = weekStarts.size ? new Date(Math.min(...weekStarts)) : periodStart;
+  const weekStarts = entries.map((e) => startOfWeekUTC(e.clockInAt).getTime());
+  const minWeek = weekStarts.length ? new Date(Math.min(...weekStarts) - 86_400_000) : periodStart;
   const allEntries = associateIds.length
     ? await db.timeEntry.findMany({
         where: {
@@ -174,101 +183,82 @@ export async function computeStatementSnapshot(
           clockInAt: { gte: minWeek, lt: periodEndExclusive },
         },
         select: {
+          id: true,
           associateId: true,
+          locationId: true,
           clockInAt: true,
           clockOutAt: true,
-          breaks: { select: { startedAt: true, endedAt: true } },
+          breaks: { select: { type: true, startedAt: true, endedAt: true } },
+          location: { select: { id: true, state: true, city: true, timezone: true } },
         },
         take: 100_000,
       })
     : [];
-  const weekTotals = new Map<string, number>(); // `${associateId}:${weekStart}` → min
-  for (const e of allEntries) {
-    const k = `${e.associateId}:${startOfWeekUTC(e.clockInAt).getTime()}`;
-    weekTotals.set(k, (weekTotals.get(k) ?? 0) + netMinutes(e));
-  }
+  const { byEntry, byPerson } = splitByPerson(
+    pay.rules,
+    allEntries.map((raw) => {
+      const e = pay.forPay(raw);
+      return { id: e.id, associateId: e.associateId, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location };
+    }),
+  );
+  const shareById = new Map([...byEntry].map(([e, h]) => [e.id!, h]));
 
-  const OT_MIN = 40 * 60;
-  // Per (associate, week): this client's minutes, and the over-40h tail
-  // attributable to this client (bounded by this client's own minutes).
-  const clientWeekMin = new Map<string, number>();
-  for (const e of entries) {
-    const k = `${e.associateId}:${startOfWeekUTC(e.clockInAt).getTime()}`;
-    clientWeekMin.set(k, (clientWeekMin.get(k) ?? 0) + netMinutes(e));
-  }
-  const otShare = new Map<string, number>();
-  for (const [k, cMin] of clientWeekMin) {
-    const total = weekTotals.get(k) ?? cMin;
-    otShare.set(k, Math.max(0, Math.min(cMin, total - OT_MIN)));
-  }
-
-  // Walk each (associate, week)'s entries chronologically; the OT tail is
-  // the LAST minutes worked, so later entries absorb the 1.5× first from
-  // the end. Aggregate lines per (position band, reg/OT).
+  // Aggregate lines per (position band, bucket) at each hour's own bill rate.
   const lineAgg = new Map<string, { hours: number; amount: number }>();
   const storeAgg = new Map<string, { hours: number; amount: number }>();
-  let regularMin = 0;
-  let otMin = 0;
+  let regularH = 0;
+  let otH = 0;
+  let dtH = 0;
   let totalAmount = 0;
 
-  // Group entries by (associate, week), keep chronological order.
-  const byWeek = new Map<string, typeof entries>();
   for (const e of entries) {
-    const k = `${e.associateId}:${startOfWeekUTC(e.clockInAt).getTime()}`;
-    const arr = byWeek.get(k) ?? [];
-    arr.push(e);
-    byWeek.set(k, arr);
-  }
-  for (const [k, weekEntries] of byWeek) {
-    let otLeft = otShare.get(k) ?? 0;
-    // Absorb OT from the end of the week backwards.
-    for (let i = weekEntries.length - 1; i >= 0; i--) {
-      const e = weekEntries[i];
-      const min = netMinutes(e);
-      if (min <= 0) continue;
-      const entryOt = Math.min(min, otLeft);
-      otLeft -= entryOt;
-      const entryReg = min - entryOt;
+    const share = shareById.get(e.id);
+    if (!share || share.workedHours <= 0) continue;
+    // Overtime bills at the multiplier the paycheck paid it at (1.5× unless a live rule set says more), or straight per contract.
+    const otMult = straight ? 1 : (byPerson.get(e.associateId)?.overtimeMultiplier ?? 1.5);
+    const otLabel = straight ? 'overtime (straight time per contract)' : `overtime (${otMult}×)`;
+    const dtLabel = straight ? 'double time (straight time per contract)' : `double time (billed at ${otMult}×)`;
 
-      const position = e.shift?.position ?? null;
-      const lead = position ? (isLead.get(position) ?? false) : false;
-      const rate =
-        e.shift?.hourlyRate != null
-          ? Number(e.shift.hourlyRate)
-          : position && billDefault.has(position)
-            ? billDefault.get(position)!
-            : lead
-              ? env.DEFAULT_LEAD_BILL_RATE
-              : env.DEFAULT_ASSOCIATE_BILL_RATE;
+    const position = e.shift?.position ?? null;
+    const lead = position ? (isLead.get(position) ?? false) : false;
+    const rate =
+      e.shift?.hourlyRate != null
+        ? Number(e.shift.hourlyRate)
+        : position && billDefault.has(position)
+          ? billDefault.get(position)!
+          : lead
+            ? env.DEFAULT_LEAD_BILL_RATE
+            : env.DEFAULT_ASSOCIATE_BILL_RATE;
 
-      const band = lead ? 'Lead' : 'Associate';
-      const posLabel = position ?? 'Unscheduled work';
-      for (const [suffix, minutes, mult] of [
-        ['regular', entryReg, 1],
-        [otLabel, entryOt, otMult],
-      ] as const) {
-        if (minutes <= 0) continue;
-        const hours = minutes / 60;
-        const amount = hours * rate * mult;
-        const key = `${band} — ${posLabel} — ${suffix}`;
-        const agg = lineAgg.get(key) ?? { hours: 0, amount: 0 };
-        agg.hours += hours;
-        agg.amount += amount;
-        lineAgg.set(key, agg);
-        totalAmount += amount;
-      }
-      regularMin += entryReg;
-      otMin += entryOt;
-
-      const store = e.locationId
-        ? (locationName.get(e.locationId) ?? 'Unknown site')
-        : 'No site recorded';
-      const s = storeAgg.get(store) ?? { hours: 0, amount: 0 };
-      s.hours += min / 60;
-      const entryRate = rate;
-      s.amount += (entryReg / 60) * entryRate + (entryOt / 60) * entryRate * otMult;
-      storeAgg.set(store, s);
+    const band = lead ? 'Lead' : 'Associate';
+    const posLabel = position ?? 'Unscheduled work';
+    let entryAmount = 0;
+    for (const [suffix, hours, mult] of [
+      ['regular', share.regularHours, 1],
+      [otLabel, share.overtimeHours, otMult],
+      [dtLabel, share.doubleTimeHours, otMult],
+    ] as const) {
+      if (hours <= 0) continue;
+      const amount = hours * rate * mult;
+      const key = `${band} — ${posLabel} — ${suffix}`;
+      const agg = lineAgg.get(key) ?? { hours: 0, amount: 0 };
+      agg.hours += hours;
+      agg.amount += amount;
+      lineAgg.set(key, agg);
+      entryAmount += amount;
     }
+    totalAmount += entryAmount;
+    regularH += share.regularHours;
+    otH += share.overtimeHours;
+    dtH += share.doubleTimeHours;
+
+    const store = e.locationId
+      ? (locationName.get(e.locationId) ?? 'Unknown site')
+      : 'No site recorded';
+    const s = storeAgg.get(store) ?? { hours: 0, amount: 0 };
+    s.hours += share.workedHours;
+    s.amount += entryAmount;
+    storeAgg.set(store, s);
   }
 
   // ----- Service levels ----------------------------------------------------
@@ -347,9 +337,10 @@ export async function computeStatementSnapshot(
     ...(adjustments.length ? { adjustments } : {}),
     overtimeBilling: terms.overtimeBilling,
     totals: {
-      hours: round2((regularMin + otMin) / 60),
-      regularHours: round2(regularMin / 60),
-      otHours: round2(otMin / 60),
+      hours: round2(regularH + otH + dtH),
+      regularHours: round2(regularH),
+      otHours: round2(otH),
+      ...(dtH > 0 ? { doubleTimeHours: round2(dtH) } : {}),
       ...totalsWithTax({ hoursAmount: totalAmount, adjustmentsAmount, salesTaxRatePct: client.salesTaxable && client.salesTaxRatePct != null ? Number(client.salesTaxRatePct) : null }),
     },
     sla: {

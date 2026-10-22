@@ -9,6 +9,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Textarea } from '@/components/ui/Input';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DeskChip, SectionHead } from './RelayParts';
 import { DESK_LABELS, relayApi, type ActivityNote, type AgendaItem, type Desk } from './relayTypes';
@@ -31,10 +32,7 @@ export function MondayPack({ agenda, lens }: { agenda: AgendaItem[]; lens: Desk 
       <SectionHead icon={ClipboardList} title="The Monday pack" meta="ranked by what’s bleeding" id="relay-monday" />
       <Card className="p-4">
         {items.length === 0 ? (
-          <p className="flex items-center gap-2 text-sm text-success">
-            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            Nothing on the agenda. Silence means green.
-          </p>
+          <EmptyState size="sm" icon={CheckCircle2} title="Nothing on the agenda." description="Silence means green." />
         ) : (
           <ul className="space-y-2.5">
             {items.map((a, i) => (

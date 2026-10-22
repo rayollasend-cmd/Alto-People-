@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { AtSign, ChevronLeft, ShieldCheck, ShieldX } from 'lucide-react';
 import { ApiError, NetworkError } from '@/lib/api';
 import { confirmEmailChange } from '@/lib/settingsApi';
+import { AuthCardTitle, AuthHero } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 
 /**
@@ -59,21 +60,14 @@ export function ConfirmEmailChange() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in">
-          <h1 className="font-display text-4xl md:text-5xl text-gold mb-2 leading-none">
-            Confirm email change
-          </h1>
-          <p className="text-silver text-xs md:text-sm tracking-[0.3em] uppercase">
-            Alto People
-          </p>
+          <AuthHero title="Confirm email change" eyebrow="Alto People" />
         </div>
 
         <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
           {state === 'pending' && (
             <>
               <AtSign className="mx-auto h-12 w-12 text-gold mb-4 animate-pulse" />
-              <h2 className="text-xl md:text-2xl text-white mb-2">
-                Confirming your new email…
-              </h2>
+              <AuthCardTitle size="md">Confirming your new email…</AuthCardTitle>
               <p className="text-silver text-sm">
                 One moment.
               </p>
@@ -82,9 +76,7 @@ export function ConfirmEmailChange() {
           {state === 'done' && (
             <>
               <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-              <h2 className="text-xl md:text-2xl text-white mb-2">
-                Email updated
-              </h2>
+              <AuthCardTitle size="md">Email updated</AuthCardTitle>
               <p className="text-silver text-sm mb-6">
                 Your sign-in email has been changed. Every existing session
                 has been signed out. Sign in again with your new email to
@@ -101,9 +93,7 @@ export function ConfirmEmailChange() {
           {state === 'error' && (
             <>
               <ShieldX className="mx-auto h-12 w-12 text-alert mb-4" />
-              <h2 className="text-xl md:text-2xl text-white mb-2">
-                Couldn't confirm
-              </h2>
+              <AuthCardTitle size="md">Couldn't confirm</AuthCardTitle>
               <p className="text-silver text-sm mb-6">{error}</p>
               <Button asChild variant="secondary" className="w-full">
                 <Link to="/login">

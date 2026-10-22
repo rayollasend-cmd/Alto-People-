@@ -6,6 +6,7 @@ import { listShiftTemplates } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { colorForPosition } from '@/lib/positionColor';
 
 /**
@@ -145,16 +146,19 @@ export function TemplatesRail({ clientId, onManage }: Props) {
           </div>
         )}
         {templates && templates.length === 0 && (
-          <div className="text-center px-3 py-6 text-xs text-silver/70">
-            No templates yet.
-            <button
-              type="button"
-              onClick={onManage}
-              className="block mx-auto mt-2 text-gold hover:text-gold-bright underline underline-offset-2"
-            >
-              Create one
-            </button>
-          </div>
+          <EmptyState
+            size="sm"
+            title="No templates yet."
+            action={
+              <button
+                type="button"
+                onClick={onManage}
+                className="text-gold hover:text-gold-bright underline underline-offset-2"
+              >
+                Create one
+              </button>
+            }
+          />
         )}
         {templates?.map((t) => (
           <TemplateChip key={t.id} template={t} />

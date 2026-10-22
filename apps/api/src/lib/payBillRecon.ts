@@ -1,8 +1,12 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
 import { cardOn, loadRateCards, type RateCard } from './rateCards.js';
-import { premiumKeyOf, termsFor, PREMIUM_LABEL, type BillingTerms, type PremiumKey } from './payBillLink.js';
-import { netWorkedMinutes, startOfWeekUTC } from './timeAnomalies.js';
+import { isEngineDoubleTime, overtimeRateOf, premiumCost, premiumKeyOf, termsFor, PREMIUM_LABEL, type BillingTerms, type PremiumKey } from './payBillLink.js';
+import { startOfWeekUTC } from './timeAnomalies.js';
+import { payFor, splitByPerson } from './laborRules/hours.js';
+import { loadLiveRules } from './laborRules/live.js';
+import { loadPayContext } from './laborRules/payContext.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Margin per paycheck and the payroll-to-invoice reconciliation (BEYOND).
@@ -29,7 +33,6 @@ import { netWorkedMinutes, startOfWeekUTC } from './timeAnomalies.js';
 type Db = PrismaClient | Prisma.TransactionClient;
 
 const DAY_MS = 86_400_000;
-const OT_MIN = 40 * 60;
 /** Work older than this with no statement at all is a gap, not just "not billed yet". */
 export const UNBILLED_GRACE_DAYS = 10;
 
@@ -120,6 +123,10 @@ interface EntryRow {
   clientId: string | null;
   clockInAt: Date;
   minutes: number;
+  /** The entry's share of the labor-rules engine's split (lib/laborRules/hours), in hours. */
+  share: { regularHours: number; overtimeHours: number; doubleTimeHours: number };
+  /** The person's overtime multiplier that week (the statement bills MULTIPLIED overtime at it). */
+  otMultiplier: number;
   position: string | null;
   shiftBillRate: number | null;
 }
@@ -180,6 +187,7 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
       payrollRunId: true,
       associateId: true,
       grossPay: true,
+      hourlyRate: true,
       employerFica: true,
       employerMedicare: true,
       employerFuta: true,
@@ -192,24 +200,39 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
   if (!items.length) return report;
 
   // Approved time behind every check, from the start of the first week touched (the OT line is weekly).
-  const minStart = startOfWeekUTC(new Date(Math.min(...runs.map((r) => r.periodStart.getTime()))));
+  // A day of slack: a site west of the company zone starts its week later (the engine weeks by the site's zone).
+  const minStart = new Date(startOfWeekUTC(new Date(Math.min(...runs.map((r) => r.periodStart.getTime())))).getTime() - DAY_MS);
   const maxEndEx = new Date(Math.max(...runs.map((r) => r.periodEnd.getTime())) + DAY_MS);
   const associateIds = [...new Set(items.map((i) => i.associateId))];
   const rawEntries = await db.timeEntry.findMany({
     where: { associateId: { in: associateIds }, status: 'APPROVED', clockInAt: { gte: minStart, lt: maxEndEx } },
-    select: { associateId: true, clientId: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, shift: { select: { position: true, hourlyRate: true } } },
+    select: { id: true, associateId: true, clientId: true, locationId: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: { select: { id: true, state: true, city: true, timezone: true } }, shift: { select: { position: true, hourlyRate: true } } },
     orderBy: { clockInAt: 'asc' },
     take: 200_000,
   });
-  const entries: EntryRow[] = rawEntries
-    .map((e) => ({
-      associateId: e.associateId,
-      clientId: e.clientId,
-      clockInAt: e.clockInAt,
-      minutes: netWorkedMinutes({ clockInAt: e.clockInAt, clockOutAt: e.clockOutAt }, e.breaks),
-      position: e.shift?.position ?? null,
-      shiftBillRate: e.shift?.hourlyRate != null ? Number(e.shift.hourlyRate) : null,
-    }))
+  // The statement's own split (lib/clientStatement): the engine over each
+  // person's whole week, through the paycheck's inputs — so what this
+  // reconciliation calls billed is what the statement billed.
+  const pay = await loadPayContext(db);
+  const work = rawEntries.map((raw) => {
+    const e = pay.forPay(raw);
+    return { raw, h: { id: e.id, associateId: e.associateId, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location } };
+  });
+  const { byEntry, byPerson } = splitByPerson(pay.rules, work.map((w) => w.h));
+  const entries: EntryRow[] = work
+    .map(({ raw: e, h }) => {
+      const share = byEntry.get(h)!;
+      return {
+        associateId: e.associateId,
+        clientId: e.clientId,
+        clockInAt: e.clockInAt,
+        minutes: share.workedHours * 60,
+        share,
+        otMultiplier: byPerson.get(e.associateId)?.overtimeMultiplier ?? 1.5,
+        position: e.shift?.position ?? null,
+        shiftBillRate: e.shift?.hourlyRate != null ? Number(e.shift.hourlyRate) : null,
+      };
+    })
     .filter((e) => e.minutes > 0);
 
   const clientIds = [...new Set(entries.map((e) => e.clientId).filter((x): x is string => !!x))];
@@ -251,31 +274,6 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
     return lead ? env.DEFAULT_LEAD_BILL_RATE : env.DEFAULT_ASSOCIATE_BILL_RATE;
   };
 
-  // Weekly totals per associate (all clients) and per (associate, week, client) — the statement's OT rule.
-  const weekKey = (e: EntryRow) => `${e.associateId}:${startOfWeekUTC(e.clockInAt).getTime()}`;
-  const weekTotal = new Map<string, number>();
-  const clientWeek = new Map<string, EntryRow[]>();
-  for (const e of entries) {
-    weekTotal.set(weekKey(e), (weekTotal.get(weekKey(e)) ?? 0) + e.minutes);
-    if (!e.clientId) continue;
-    const k = `${weekKey(e)}:${e.clientId}`;
-    const arr = clientWeek.get(k) ?? [];
-    arr.push(e);
-    clientWeek.set(k, arr);
-  }
-  // OT minutes per entry: each client's over-40 tail, absorbed from the week's last entries back.
-  const otOf = new Map<EntryRow, number>();
-  for (const [k, list] of clientWeek) {
-    const total = weekTotal.get(k.split(':').slice(0, 2).join(':')) ?? 0;
-    const cMin = list.reduce((s, e) => s + e.minutes, 0);
-    let left = Math.max(0, Math.min(cMin, total - OT_MIN));
-    for (let i = list.length - 1; i >= 0 && left > 0; i--) {
-      const take = Math.min(list[i].minutes, left);
-      otOf.set(list[i], take);
-      left -= take;
-    }
-  }
-
   const burdenPct = env.LABOR_BURDEN_PERCENT / 100;
   const overheadPerHour = env.LABOR_OVERHEAD_PER_HOUR;
 
@@ -297,7 +295,9 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
       if (!slices.has(c)) slices.set(c, { minutes: 0, billed: 0, pending: 0, statements: new Map() });
       return slices.get(c)!;
     };
-    const baseWages = item.earnings.filter((e) => (e.kind === 'REGULAR' && !e.notes) || e.kind === 'OVERTIME').reduce((s, e) => s + Number(e.amount), 0);
+    // Wages for the hours themselves: regular and overtime lines, and the engine's double-time hours at the overtime rate (the rest of that line is premium, below).
+    const otRate = overtimeRateOf(item);
+    const baseWages = item.earnings.reduce((s, e) => s + ((e.kind === 'REGULAR' && !e.notes) || e.kind === 'OVERTIME' ? Number(e.amount) : isEngineDoubleTime(e) ? Number(e.amount) - premiumCost(e, otRate) : 0), 0);
     const payPerMin = totalMin > 0 ? baseWages / totalMin : 0;
 
     // Unbilled hours, grouped per (client, reason) so a 40-hour week is one row.
@@ -309,10 +309,10 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
       report.hours.paid += e.minutes / 60;
       const st = statementFor(e.clientId, e.clockInAt);
       const t = await terms(e.clientId, st ? st.periodEnd : e.clockInAt);
-      const otMult = t.overtimeBilling === 'STRAIGHT' ? 1 : 1.5;
-      const ot = otOf.get(e) ?? 0;
+      // Priced as the statement prices it: overtime and double-time hours at the contract's overtime billing.
+      const otMult = t.overtimeBilling === 'STRAIGHT' ? 1 : e.otMultiplier;
       const rate = billRate(e, st ? st.periodEnd : e.clockInAt);
-      const amount = ((e.minutes - ot) / 60) * rate + (ot / 60) * rate * otMult;
+      const amount = e.share.regularHours * rate + (e.share.overtimeHours + e.share.doubleTimeHours) * rate * otMult;
       if (st) s.statements.set(st.id, { id: st.id, clientId: st.clientId, number: st.number, status: st.status });
       if (st?.status === 'FINAL') {
         s.billed += amount;
@@ -363,8 +363,8 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
     for (const line of item.earnings) {
       const isPredict = line.kind === 'PREMIUM' && !!line.notes && / — shift /.test(line.notes);
       const key: PremiumKey | null = isPredict ? 'PREDICTABILITY' : premiumKeyOf({ kind: line.kind, notes: line.notes, rate: line.rate == null ? null : Number(line.rate) });
-      const paid = Number(line.amount);
-      if (!key || paid <= 0) continue;
+      const paid = premiumCost(line, otRate);
+      if (!key || paid <= 0.004) continue;
       report.premiums.paid += paid;
       if (!clientShares.length) continue;
       for (const share of clientShares) {
@@ -537,16 +537,17 @@ export interface StoreRunningCost {
 
 /**
  * What this org week (Sat→Fri) has cost so far at each store: every
- * approved, completed and live minute at the person's hourly rate, past 40
- * hours at 1.5× (all stores combined, the overtime falling where it was
- * worked), loaded with the burden and overhead. `entryWhere` is the
+ * approved, completed and live minute at the person's hourly rate, split
+ * by the labor-rules engine as pay splits it (all stores combined, the
+ * overtime and double time falling where they were worked, at their
+ * multipliers), loaded with the burden and overhead. `entryWhere` is the
  * caller's reach (scopeTimeEntries) — ANDed with the tenant by the route.
  */
 export async function runningPayrollCost(db: Db, entryWhere: Prisma.TimeEntryWhereInput, weekStart: Date, now: Date = new Date()): Promise<{ stores: StoreRunningCost[]; totals: { hours: number; wages: number; loadedCost: number; onClockNow: number } }> {
   const weekEnd = new Date(weekStart.getTime() + 7 * DAY_MS);
   const rows = await db.timeEntry.findMany({
     where: { AND: [entryWhere, { status: { in: ['APPROVED', 'COMPLETED', 'ACTIVE'] }, clockInAt: { gte: weekStart, lt: weekEnd } }] },
-    select: { associateId: true, locationId: true, clockInAt: true, clockOutAt: true, status: true, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
+    select: { id: true, associateId: true, locationId: true, clockInAt: true, clockOutAt: true, status: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: { select: { id: true, state: true, city: true, timezone: true } } },
     orderBy: { clockInAt: 'asc' },
     take: 100_000,
   });
@@ -559,20 +560,31 @@ export async function runningPayrollCost(db: Db, entryWhere: Prisma.TimeEntryWhe
   for (const c of comps) if (!rateOf.has(c.associateId)) rateOf.set(c.associateId, Number(c.amount));
   const siteOf = new Map(sites.map((s) => [s.id, s]));
   const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
-  const cum = new Map<string, number>();
   const by = new Map<string | null, StoreRunningCost>();
-  for (const r of rows) {
-    const minutes = r.clockOutAt
-      ? netWorkedMinutes({ clockInAt: r.clockInAt, clockOutAt: r.clockOutAt }, r.breaks)
-      : r.status === 'ACTIVE'
-        ? Math.min(16 * 60, Math.max(0, Math.round((now.getTime() - r.clockInAt.getTime()) / 60_000)))
-        : 0;
+  // The week split as pay splits it (lib/laborRules/hours): each person's
+  // whole week across stores, a live jurisdiction's daily rules included,
+  // the overtime on the hours that ran past the line; a running punch counts
+  // to now (at most 16 h, so a forgotten clock-out can't run away).
+  const live = await loadLiveRules(db, tenantIdForWrite());
+  const work = rows.map((r) => ({
+    r,
+    h: {
+      id: r.id,
+      associateId: r.associateId,
+      clockInAt: r.clockInAt,
+      clockOutAt: r.clockOutAt ?? (r.status === 'ACTIVE' && now > r.clockInAt ? new Date(Math.min(now.getTime(), r.clockInAt.getTime() + 16 * 3_600_000)) : null),
+      breaks: r.breaks,
+      site: r.location,
+    },
+  }));
+  const { byEntry, byPerson } = splitByPerson(live, work.map((w) => w.h));
+  for (const { r, h } of work) {
+    const share = byEntry.get(h)!;
+    const minutes = share.workedHours * 60;
     if (minutes <= 0) continue;
-    const before = cum.get(r.associateId) ?? 0;
-    cum.set(r.associateId, before + minutes);
-    const ot = Math.max(0, before + minutes - OT_MIN) - Math.max(0, before - OT_MIN);
+    const ot = (share.overtimeHours + share.doubleTimeHours) * 60;
     const rate = rateOf.get(r.associateId) ?? env.DEFAULT_ASSOCIATE_PAY_RATE;
-    const wages = ((minutes - ot) / 60) * rate + (ot / 60) * rate * 1.5;
+    const wages = payFor(share, rate, byPerson.get(r.associateId)!);
     const site = r.locationId ? siteOf.get(r.locationId) : undefined;
     const s = by.get(r.locationId) ?? { siteId: r.locationId, siteName: site?.name ?? 'No store recorded', clientName: site?.client?.name ?? null, hours: 0, overtimeHours: 0, wages: 0, loadedCost: 0, onClockNow: 0 };
     s.hours += minutes / 60;

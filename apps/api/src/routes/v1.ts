@@ -189,7 +189,7 @@ defineRoute(v1Router, {
     const tenantId = tenantIdForWrite();
     const site = await prisma.site.findFirst({ where: { id: body.siteId, tenantId, deletedAt: null, isActive: true }, select: { id: true } });
     if (!site) throw new HttpError(404, 'site_not_found', 'Site not found.');
-    if (await prisma.associate.findUnique({ where: { email: body.email }, select: { id: true } })) {
+    if (await prisma.associate.findUnique({ where: { tenantId_email: { tenantId, email: body.email } }, select: { id: true } })) {
       throw new HttpError(409, 'worker_exists', 'Someone with this email is already on file.');
     }
     const workerId = await prisma.$transaction(async (tx) => {

@@ -712,7 +712,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
 
   const exportCsv = () => {
     downloadCsv(`enrollments-${ymdLocal()}.csv`, [
-      ['Course', term('worker'), 'Status', 'Completed', 'Expires', 'Score', 'Assigned'],
+      [t('learning.colCourse'), term('worker'), t('learning.colStatus'), t('learning.colCompleted'), t('learning.colExpires'), t('learning.colScore'), t('learning.colAssigned')],
       ...filtered.map((e) => [
         e.courseTitle,
         e.associateName,
@@ -906,11 +906,11 @@ function ExpiringTab() {
 
   const exportCsv = () => {
     downloadCsv(`expiring-${days}d-${ymdLocal()}.csv`, [
-      ['Course', term('worker'), 'Required', 'Expires', 'Days left'],
+      [t('learning.colCourse'), term('worker'), t('lrn.required'), t('learning.colExpires'), t('learning.colDaysLeft')],
       ...(rows ?? []).map((e) => [
         e.courseTitle,
         e.associateName,
-        e.isRequired ? 'Yes' : 'No',
+        e.isRequired ? t('me.yes') : t('me.no'),
         fmtDate(e.expiresAt),
         e.daysLeft,
       ]),

@@ -12,7 +12,7 @@ import { tenantJob } from './tenantJobs.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { benchFor } from './scope.js';
 import { notifyUser } from './notify.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
+import { INVITE_CATEGORY, inviteMessage, recordInvites } from './openShiftInvites.js';
 import { runShiftFill } from './workforceAgent.js';
 import { runScheduleRepair } from './scheduleRepair.js';
 import { runAttendanceConfirm } from './attendanceConfirm.js';
@@ -21,7 +21,7 @@ import { runCoverageForecast } from './coverageForecast.js';
 const SWEEP_SECONDS = 15 * 60;
 const HORIZON_MS = 48 * 3600_000;
 const MAX_INVITES_PER_SHIFT_PER_SWEEP = 20;
-const CATEGORY = 'shift_autofill';
+const CATEGORY = INVITE_CATEGORY;
 
 export interface AutofillResult {
   shiftsScanned: number;
@@ -50,7 +50,7 @@ export async function runShiftAutofillSweep(
       endsAt: true,
       location: true,
       client: { select: { name: true } },
-      locationRel: { select: { name: true } },
+      locationRel: { select: { name: true, timezone: true } },
     },
     take: 100,
   });
@@ -87,34 +87,42 @@ export async function runShiftAutofillSweep(
           },
         },
       },
-      select: { id: true },
+      select: { id: true, associateId: true },
       take: 60,
     });
     if (candidates.length === 0) continue;
-    // Invite each person once per shift — the notification itself is the
-    // dedup record.
-    const already = await prisma.notification.findMany({
-      where: {
-        recipientUserId: { in: candidates.map((c) => c.id) },
-        category: CATEGORY,
-        linkUrl,
-      },
-      select: { recipientUserId: true },
-    });
+    // Invite each person once per shift. The invite row is the record (it
+    // feeds the managers' sent/declined counts); the notification stays a
+    // second dedup key for invitations sent before the rows existed. Someone
+    // who said "Not for me" is not asked again.
+    const [already, rows] = await Promise.all([
+      prisma.notification.findMany({
+        where: {
+          recipientUserId: { in: candidates.map((c) => c.id) },
+          category: CATEGORY,
+          linkUrl,
+        },
+        select: { recipientUserId: true },
+      }),
+      prisma.openShiftInvite.findMany({
+        where: { shiftId: shift.id, associateId: { in: candidates.flatMap((c) => (c.associateId ? [c.associateId] : [])) } },
+        select: { associateId: true, sendCount: true, declinedAt: true },
+      }),
+    ]);
     const invited = new Set(already.map((n) => n.recipientUserId));
+    const handled = new Set(rows.filter((r) => r.sendCount > 0 || r.declinedAt).map((r) => r.associateId));
+    const message = inviteMessage(shift);
+    const asked: string[] = [];
     let sentForShift = 0;
     for (const c of candidates) {
-      if (invited.has(c.id)) continue;
+      if (invited.has(c.id) || (c.associateId && handled.has(c.associateId))) continue;
       if (sentForShift >= MAX_INVITES_PER_SHIFT_PER_SWEEP) break;
-      await notifyUser(c.id, {
-        subject: `Open shift: ${shift.position} at ${shift.client?.name ?? shift.locationRel?.name ?? shift.location ?? ''}`,
-        body: `${formatTimeInZone(shift.startsAt, DEFAULT_TIMEZONE)}–${formatTimeInZone(shift.endsAt, DEFAULT_TIMEZONE)}${shift.location ? ` · ${shift.location}` : ''}. First come, first served — tap to claim it.`,
-        category: CATEGORY,
-        linkUrl,
-      });
+      await notifyUser(c.id, { ...message, category: CATEGORY, linkUrl });
+      if (c.associateId) asked.push(c.associateId);
       sentForShift += 1;
       invitesSent += 1;
     }
+    await recordInvites(prisma, shift.id, asked, now);
   }
   return { shiftsScanned: shifts.length, invitesSent };
 }

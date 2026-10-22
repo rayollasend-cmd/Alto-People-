@@ -9,6 +9,7 @@ import type {
 } from '@alto-people/shared';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { AuthCardTitle, AuthHero } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
@@ -159,12 +160,7 @@ export function AcceptInvite() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt={t('common.logoAlt')} />
-          <h1 className="font-display text-5xl md:text-6xl text-gold mb-2 leading-none">
-            Alto People
-          </h1>
-          <p className="text-silver text-xs md:text-sm tracking-[0.3em] uppercase">
-            {t('ai.tagline')}
-          </p>
+          <AuthHero title="Alto People" eyebrow={t('ai.tagline')} size="lg" />
         </div>
 
         <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3">
@@ -180,9 +176,7 @@ export function AcceptInvite() {
 
           {!loading && error && !invite && (
             <>
-              <h2 className="text-2xl md:text-3xl text-white mb-3">
-                {t('ai.problemTitle')}
-              </h2>
+              <AuthCardTitle className="mb-3">{t('ai.problemTitle')}</AuthCardTitle>
               <ErrorBanner className="mb-4">{error}</ErrorBanner>
 
               {renewSent ? (
@@ -242,11 +236,11 @@ export function AcceptInvite() {
 
           {!loading && invite && (
             <form onSubmit={handleSubmit} noValidate>
-              <h2 className="text-2xl md:text-3xl text-white mb-1">
+              <AuthCardTitle>
                 {invite.firstName
                   ? t('ai.welcomeName', { name: invite.firstName })
                   : t('ai.welcome')}
-              </h2>
+              </AuthCardTitle>
               <p className="text-silver text-sm mb-1">
                 {t('ai.setPasswordIntro')}
               </p>

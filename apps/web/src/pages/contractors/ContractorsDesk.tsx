@@ -64,7 +64,7 @@ export function ContractorsDesk() {
       breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Contractors' }]}
       secondaryActions={
         <Button asChild variant="ghost" size="sm">
-          <Link to="/payroll/tax">1099 forms</Link>
+          <Link to="/payroll/taxes?tab=returns">1099 forms</Link>
         </Button>
       }
     >

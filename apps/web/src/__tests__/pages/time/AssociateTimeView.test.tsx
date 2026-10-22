@@ -216,6 +216,27 @@ describe("<AssociateTimeView> overtime nudge", () => {
   });
 });
 
+describe('<AssociateTimeView> overtime from the server', () => {
+  it('names the overtime the server split this week, even under 40 hours (a daily rule)', async () => {
+    vi.mocked(getActiveTimeEntry).mockResolvedValueOnce({ active: null });
+    const start = new Date(workweekStart().getTime() + 60_000);
+    vi.mocked(listMyTimeEntries).mockResolvedValueOnce({
+      entries: [
+        entry({
+          id: 'ca-1',
+          clockInAt: start.toISOString(),
+          clockOutAt: new Date(start.getTime() + 10 * 3_600_000).toISOString(),
+          minutesElapsed: 600,
+          status: 'APPROVED',
+          hours: { regularMinutes: 480, overtimeMinutes: 120, doubleTimeMinutes: 0, overtimeMultiplier: 1.5, doubleMultiplier: 2 },
+        }),
+      ],
+    });
+    renderView();
+    expect(await screen.findByText(/10.0h this workweek — 2.0h of it is overtime/)).toBeInTheDocument();
+  });
+});
+
 describe('<AssociateTimeView> grouped history', () => {
   const at = (dateStr: string, time: string) => {
     const [y, m, d] = dateStr.split('-').map(Number);

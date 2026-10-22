@@ -22,7 +22,8 @@ import {
   type InboxItem,
   type TeamTimeEntry,
 } from '@/lib/teamApi';
-import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtPunchDateTime } from '@/pages/time/punchFormat';
 import { downloadCsv } from '@/lib/csv';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
@@ -793,8 +794,8 @@ function TimesheetsTab() {
           ...(clientsOn
             ? [{ key: 'client', header: 'Client', accessor: (e: TeamTimeEntry) => e.clientName, sortable: true, cardMeta: true, className: 'text-silver', cell: (e: TeamTimeEntry) => e.clientName ?? '—' }]
             : []),
-          { key: 'in', header: 'Clock in', accessor: (e) => e.clockInAt, sortable: true, searchable: false, cardMeta: true, className: 'text-silver tabular-nums', cell: (e) => fmtDateTime(e.clockInAt) },
-          { key: 'out', header: 'Clock out', accessor: (e) => e.clockOutAt, sortable: true, searchable: false, className: 'text-silver tabular-nums', cell: (e) => (e.clockOutAt ? fmtDateTime(e.clockOutAt) : '—') },
+          { key: 'in', header: 'Clock in', accessor: (e) => e.clockInAt, sortable: true, searchable: false, cardMeta: true, className: 'text-silver tabular-nums', cell: (e) => fmtPunchDateTime(e.clockInAt, e.locationTimezone) },
+          { key: 'out', header: 'Clock out', accessor: (e) => e.clockOutAt, sortable: true, searchable: false, className: 'text-silver tabular-nums', cell: (e) => (e.clockOutAt ? fmtPunchDateTime(e.clockOutAt, e.locationTimezone) : '—') },
           {
             key: 'hours',
             header: 'Hours',

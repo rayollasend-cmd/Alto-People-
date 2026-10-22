@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * ONE DEFINITION OF "ACTIVE" (Brief 1A-2).
@@ -74,7 +75,7 @@ export interface Placement {
 const ACTIVE_ID_BATCH = 10_000;
 
 export async function activeWindowDays(db: Db = defaultPrisma): Promise<number> {
-  const row = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { activeWindowDays: true } });
+  const row = await db.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { activeWindowDays: true } });
   return row?.activeWindowDays ?? DEFAULT_ACTIVE_WINDOW_DAYS;
 }
 

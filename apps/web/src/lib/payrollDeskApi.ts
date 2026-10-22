@@ -89,6 +89,8 @@ export interface FederalW4Facts {
   nonresidentAlien: boolean;
   pre2020Allowances: number | null;
   lockIn: { filingStatus: 'SINGLE' | 'MARRIED_FILING_JOINTLY' | 'HEAD_OF_HOUSEHOLD'; multipleJobs: boolean; effectiveDate: string | null } | null;
+  /** The IRS letter itself, filed in the person's documents. */
+  lockInLetter?: { documentId: string; filename: string; mimeType: string; uploadedAt: string; available: boolean } | null;
   effective: { filingStatus: string | null; exempt: boolean; nonresidentAlien: boolean; pre2020Allowances: number | null; flags: string[] } | null;
 }
 
@@ -107,6 +109,20 @@ export function getFederalW4(associateId: string): Promise<FederalW4Facts> {
 export function saveFederalW4(associateId: string, body: FederalW4Input): Promise<FederalW4Facts> {
   return apiFetch<FederalW4Facts>(`/payroll/federal-w4/${associateId}`, { method: 'PUT', body });
 }
+
+/** File the IRS lock-in letter (PDF or photo) in the person's documents. */
+export async function uploadLockInLetter(associateId: string, file: File): Promise<FederalW4Facts> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`/api/payroll/federal-w4/${associateId}/lock-in-letter`, { method: 'POST', credentials: 'include', body: fd });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `Couldn’t upload the letter (${res.status}).`);
+  }
+  return res.json();
+}
+
+export const lockInLetterUrl = (associateId: string) => `/api/payroll/federal-w4/${associateId}/lock-in-letter`;
 
 /* ===== Pay change context and the mass pay change (finance walk 13) ======= */
 

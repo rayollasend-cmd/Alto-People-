@@ -64,7 +64,11 @@ export function useAudienceWords() {
     },
     staleTime: 5 * 60_000,
   });
-  return (t: { clientId: string | null; departmentId: string | null; costCenterId: string | null }, a: BroadcastAudience) => {
+  return (t: { clientId: string | null; departmentId: string | null; costCenterId: string | null; recipientAssociateIds?: string[] | null }, a: BroadcastAudience) => {
+    // An explicit list ("Message selected"): the people picked, as many as are still in reach.
+    if (t.recipientAssociateIds && t.recipientAssociateIds.length > 0) {
+      return `${plural(a.people, 'selected person', 'selected people')}`;
+    }
     const where = [
       t.clientId ? clients.find((c) => c.id === t.clientId)?.name : null,
       t.departmentId ? targets.data?.departments.find((d) => d.id === t.departmentId)?.name : null,
@@ -123,11 +127,18 @@ export function useSendBroadcast() {
 
 export function BroadcastDrawer({
   broadcast,
+  recipients = null,
   onClose,
   onSaved,
 }: {
   /** Null = create; a DRAFT broadcast = edit in place. */
   broadcast: Broadcast | null;
+  /**
+   * An explicit list of people ("Message selected" on People). The
+   * client / department / cost-center targeting gives way to it; the API
+   * still sends only to the active people in the sender's reach.
+   */
+  recipients?: ReadonlyArray<{ id: string; name: string }> | null;
   onClose: () => void;
   /** After a save (and a send, when "Save & send" was used). */
   onSaved: () => void;
@@ -164,14 +175,21 @@ export function BroadcastDrawer({
   const availability = new Map((channelsQuery.data?.channels ?? []).map((c) => [c.channel, c]));
   const templates = useQuery({ queryKey: ['dirComms', 'broadcast-templates'], queryFn: listBroadcastTemplates, enabled: !isEdit });
 
+  // The explicit list: the people picked, or a saved draft's own list.
+  const recipientIds = useMemo(
+    () => (recipients?.length ? recipients.map((r) => r.id) : broadcast?.recipientAssociateIds?.length ? broadcast.recipientAssociateIds : null),
+    [recipients, broadcast],
+  );
   // The audience, counted as the targeting changes.
-  const target = { clientId: clientId || null, departmentId: departmentId || null, costCenterId: costCenterId || null };
+  const target = recipientIds
+    ? { clientId: null, departmentId: null, costCenterId: null, recipientAssociateIds: recipientIds }
+    : { clientId: clientId || null, departmentId: departmentId || null, costCenterId: costCenterId || null };
   const [debounced, setDebounced] = useState(target);
   useEffect(() => {
     const t = setTimeout(() => setDebounced(target), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, departmentId, costCenterId]);
+  }, [clientId, departmentId, costCenterId, recipientIds]);
   const audience = useQuery({ queryKey: ['dirComms', 'audience', debounced], queryFn: () => broadcastAudienceCount(debounced) });
 
   const applyTemplate = (id: string) => {
@@ -180,9 +198,12 @@ export function BroadcastDrawer({
     setTitle(t.title);
     setBody(t.body);
     setChannels(t.channels.length ? t.channels : ['IN_APP']);
-    setClientId(t.clientId ?? '');
-    setDepartmentId(t.departmentId ?? '');
-    setCostCenterId(t.costCenterId ?? '');
+    // A template's wording and channels; its targeting gives way to the people picked.
+    if (!recipientIds) {
+      setClientId(t.clientId ?? '');
+      setDepartmentId(t.departmentId ?? '');
+      setCostCenterId(t.costCenterId ?? '');
+    }
   };
 
   const toggleChannel = (c: BroadcastChannel) => {
@@ -260,7 +281,7 @@ export function BroadcastDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{isEdit ? 'Edit broadcast' : 'New broadcast'}</DrawerTitle>
+        <DrawerTitle>{isEdit ? 'Edit broadcast' : recipientIds ? `Message ${recipientIds.length === 1 ? '1 person' : `${recipientIds.length.toLocaleString()} people`}` : 'New broadcast'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {!isEdit && (templates.data?.broadcasts.length ?? 0) > 0 && (
@@ -317,7 +338,16 @@ export function BroadcastDrawer({
           })()}
         </fieldset>
 
-        {targetsQuery.isError || clientsError ? (
+        {recipientIds ? (
+          <div>
+            <p className="text-sm font-medium text-ink">To</p>
+            <p className="mt-1 text-sm text-ink" data-testid="broadcast-recipients">
+              {recipients?.length
+                ? `${recipients.slice(0, 5).map((r) => r.name).join(', ')}${recipients.length > 5 ? ` and ${(recipients.length - 5).toLocaleString()} more` : ''}`
+                : `${recipientIds.length.toLocaleString()} people picked on People`}
+            </p>
+          </div>
+        ) : targetsQuery.isError || clientsError ? (
           <ErrorBanner
             action={
               <Button

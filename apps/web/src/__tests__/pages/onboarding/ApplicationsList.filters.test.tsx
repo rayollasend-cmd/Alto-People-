@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -110,3 +110,72 @@ describe('ApplicationsList — filters drive the fetch', () => {
     await waitFor(() => expect(screen.queryByText('Dana Draft')).not.toBeInTheDocument());
   });
 });
+
+/**
+ * Role walk HR 15: on a phone the filters (client, status, invited, saved
+ * views) took the whole first screen before the single row. Below sm they
+ * sit behind one "Filters (n)" chip that opens a bottom sheet; the search
+ * stays on the page and the rows are the first screen.
+ */
+describe('ApplicationsList — on a phone the filters sit behind one chip', () => {
+  const original = window.matchMedia;
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.mocked(getApplicationStats).mockResolvedValue(stats);
+    vi.mocked(listApplications).mockImplementation(async (filters) => {
+      const applications =
+        filters.status === 'SUBMITTED'
+          ? [summary('00000000-0000-4000-8000-000000000002', 'Sam Submitted', 'SUBMITTED')]
+          : [summary('00000000-0000-4000-8000-000000000001', 'Dana Draft', 'DRAFT')];
+      return { applications, total: applications.length, page: 1, pageSize: 50 };
+    });
+    // jsdom's matchMedia stub matches every min-width; a phone matches none.
+    window.matchMedia = ((query: string) =>
+      ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }) as unknown as MediaQueryList) as typeof window.matchMedia;
+  });
+  afterEach(() => {
+    window.matchMedia = original;
+  });
+
+  const renderList = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000 } } });
+    return render(
+      <MemoryRouter initialEntries={['/onboarding']}>
+        <QueryClientProvider client={qc}>
+          <TooltipProvider>
+            <ApplicationsList />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  };
+
+  it('shows the rows and the search, with the filters folded into "Filters"', async () => {
+    renderList();
+    expect(await screen.findByText('Dana Draft')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search by name or email…')).toBeInTheDocument();
+    // No status chips and no invited-date row on the page itself.
+    expect(screen.queryByRole('button', { name: /^Submitted/ })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Filter by invite date' })).toBeNull();
+    const chip = screen.getByTestId('onboarding-filter-chip');
+    expect(chip).toHaveTextContent(/^Filters$/);
+    expect(chip).toHaveAttribute('aria-haspopup', 'dialog');
+  });
+
+  it('the chip opens a sheet holding the filters; picking one narrows the list and the chip counts it', async () => {
+    renderList();
+    await screen.findByText('Dana Draft');
+    await userEvent.click(screen.getByTestId('onboarding-filter-chip'));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByRole('group', { name: 'Filter by invite date' })).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole('button', { name: /^Submitted/ }));
+    await waitFor(() =>
+      expect(listApplications).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'SUBMITTED', page: 1 })),
+    );
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText('Sam Submitted')).toBeInTheDocument();
+    expect(screen.getByTestId('onboarding-filter-chip')).toHaveTextContent('Filters (1)');
+  });
+});
+

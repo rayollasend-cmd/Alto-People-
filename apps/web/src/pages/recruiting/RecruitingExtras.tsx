@@ -20,6 +20,7 @@ import {
   listReferrals,
   markReferralBonusPaid,
   openJobPosting,
+  payFromRateCard,
   setJobPostingOpenings,
   updateJobPosting,
   jobFeedUrl,
@@ -1430,12 +1431,29 @@ export function NewPostingDrawer({
   const [location, setLocation] = useState(seed?.location ?? '');
   const [minSalary, setMinSalary] = useState('');
   const [maxSalary, setMaxSalary] = useState('');
+  // Once the recruiter types a pay, the rate card never overwrites it.
+  const [payEdited, setPayEdited] = useState(false);
   const [openings, setOpenings] = useState(String(seed?.openings ?? 1));
   const [schedule, setSchedule] = useState<JobPostingSchedule | ''>(seed?.schedule ?? '');
   const [payUnit, setPayUnit] = useState<'HOUR' | 'YEAR' | ''>('HOUR');
   const [syndicate, setSyndicate] = useState(true);
   const [saving, setSaving] = useState(false);
   const { clients, error: clientsError, reload: reloadClients } = useClients();
+  // The client's rate card: a posting opened from a staffing gap starts at
+  // the pay the client agreed, not a blank (role walk HR 5).
+  const rateCard = useQuery({
+    queryKey: ['recruiting', 'rate-card-pay', clientId],
+    queryFn: () => payFromRateCard(clientId),
+    enabled: !!clientId,
+    staleTime: 5 * 60_000,
+  });
+  const suggested = rateCard.data?.clientId === clientId ? rateCard.data.suggested : null;
+  useEffect(() => {
+    if (!suggested || payEdited) return;
+    setMinSalary(suggested.minPay.toFixed(2));
+    setMaxSalary(suggested.maxPay.toFixed(2));
+    setPayUnit('HOUR');
+  }, [suggested, payEdited]);
 
   // Save & open is the usual intent: a posting nobody can see fills nothing.
   const onSubmit = async (open: boolean) => {
@@ -1607,7 +1625,16 @@ export function NewPostingDrawer({
         </div>
         {seed && (
           <p className="text-xs text-ink-muted">
-            Filled in from the staffing gap. Pay is left for you: set what the client agreed for this store.
+            {suggested
+              ? 'Filled in from the staffing gap, with pay from the client’s rate card. Check it before you open the posting.'
+              : 'Filled in from the staffing gap. Set the pay the client agreed for this store.'}
+          </p>
+        )}
+        {clientId && rateCard.data && rateCard.data.clientId === clientId && (
+          <p className="text-xs text-ink-muted" data-testid="rate-card-pay">
+            {rateCard.data.rates.length === 0
+              ? `${rateCard.data.clientName} has no rate card yet, so pay isn’t filled in.`
+              : `${rateCard.data.clientName}’s rate card: ${rateCard.data.rates.map((r) => `${r.position} ${fmtMoney(r.payRate)}/h`).join(' · ')}`}
           </p>
         )}
         <div className="grid grid-cols-[1fr_1fr_8rem] gap-3">
@@ -1617,7 +1644,10 @@ export function NewPostingDrawer({
               type="number"
               className="mt-1"
               value={minSalary}
-              onChange={(e) => setMinSalary(e.target.value)}
+              onChange={(e) => {
+                setPayEdited(true);
+                setMinSalary(e.target.value);
+              }}
             />
           </div>
           <div>
@@ -1626,7 +1656,10 @@ export function NewPostingDrawer({
               type="number"
               className="mt-1"
               value={maxSalary}
-              onChange={(e) => setMaxSalary(e.target.value)}
+              onChange={(e) => {
+                setPayEdited(true);
+                setMaxSalary(e.target.value);
+              }}
             />
           </div>
           <div>

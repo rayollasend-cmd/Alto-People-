@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 95 — Worktags: multi-dimensional categorical tags on
@@ -228,7 +229,7 @@ worktags95Router.get('/worktags/report', VIEW, async (req, res) => {
   const categoryKey = z.string().parse(req.query.categoryKey);
   const entityKind = z.enum(ENTITY_KINDS).parse(req.query.entityKind);
   const category = await prisma.worktagCategory.findUnique({
-    where: { key: categoryKey },
+    where: { tenantId_key: { tenantId: tenantIdForWrite(), key: categoryKey } },
   });
   if (!category) throw new HttpError(404, 'not_found', 'Category not found.');
 

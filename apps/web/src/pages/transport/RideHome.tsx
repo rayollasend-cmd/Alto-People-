@@ -624,7 +624,7 @@ function NextRideHero({
   );
 
   const vanChip = next.run?.van.plate ? (
-    <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-1 font-mono text-xs font-bold tracking-wider text-[#0B1832]">
+    <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-1 font-mono text-xs font-bold tracking-wider text-on-accent">
       {next.run.van.plate}
     </span>
   ) : null;
@@ -857,7 +857,7 @@ function CrewDialog({ rideId, onClose }: { rideId: string; onClose: () => void }
             <div className="rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 text-center">
               <div className="text-2xs font-medium uppercase tracking-wider text-silver">{t('ride.lookFor')}</div>
               {crew.van.plate && (
-                <div className="mx-auto mt-2 inline-block rounded-md border-2 border-[#0B1832] bg-white px-4 py-1.5 font-mono text-2xl font-bold tracking-widest text-[#0B1832]">
+                <div className="mx-auto mt-2 inline-block rounded-md border-2 border-on-accent bg-white px-4 py-1.5 font-mono text-2xl font-bold tracking-widest text-on-accent">
                   {crew.van.plate}
                 </div>
               )}

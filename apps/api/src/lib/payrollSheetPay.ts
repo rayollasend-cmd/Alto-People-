@@ -36,6 +36,8 @@ export interface PayrollSheetPaid {
   associates: PayrollSheetAssociatePaid[];
   totalRegularMinutes: number;
   totalOvertimeMinutes: number;
+  /** Hours past a live jurisdiction's double-time line (0 where none is live). */
+  totalDoubleTimeMinutes: number;
   totalMinutes: number;
   totalGross: number;
   totalFederalIncomeTax: number;
@@ -84,6 +86,7 @@ export function attachEarnings(
     associates,
     totalRegularMinutes: sheet.totalRegularMinutes,
     totalOvertimeMinutes: sheet.totalOvertimeMinutes,
+    totalDoubleTimeMinutes: sheet.totalDoubleTimeMinutes ?? 0,
     totalMinutes: sheet.totalMinutes,
     totalGross: sum((p) => p.grossPay),
     totalFederalIncomeTax: sum((p) => p.federalIncomeTax),

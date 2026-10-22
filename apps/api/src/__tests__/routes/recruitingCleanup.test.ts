@@ -104,7 +104,7 @@ describe('the first sweep closes nothing without warning', () => {
     expect(first).toMatchObject({ candidatesClosed: 0, invitesExpired: 0 });
     expect(first.graceUntil).not.toBeNull();
     expect((await prisma.candidate.findUniqueOrThrow({ where: { id: overdue.id } })).stage).toBe('APPLIED');
-    const since = (await prisma.orgSetting.findUniqueOrThrow({ where: { id: 'singleton' } })).recruitingCleanupSince!;
+    const since = (await prisma.orgSetting.findUniqueOrThrow({ where: { tenantId: '00000000-0000-4000-8000-000000000001' } })).recruitingCleanupSince!;
 
     // Both are on the dashboard, and neither closes before the grace ends.
     const home = (await a.get('/recruiting/home')).body;
@@ -116,7 +116,7 @@ describe('the first sweep closes nothing without warning', () => {
 
     // A later sweep doesn't restart the clock.
     await runRecruitingCleanup(new Date(Date.now() + 2 * DAY));
-    expect((await prisma.orgSetting.findUniqueOrThrow({ where: { id: 'singleton' } })).recruitingCleanupSince).toEqual(since);
+    expect((await prisma.orgSetting.findUniqueOrThrow({ where: { tenantId: '00000000-0000-4000-8000-000000000001' } })).recruitingCleanupSince).toEqual(since);
     expect((await prisma.candidate.findUniqueOrThrow({ where: { id: overdue.id } })).stage).toBe('APPLIED');
 
     // Once it's over, both close.

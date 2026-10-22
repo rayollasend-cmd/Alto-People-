@@ -426,8 +426,8 @@ recruitingRouter.put('/source-spend', MANAGE, async (req, res, next) => {
     const source = sourceKey(input.source)!;
     const month = new Date(`${input.month}-01T00:00:00.000Z`);
     const row = await prisma.recruitingSourceSpend.upsert({
-      where: { source_month: { source, month } },
-      create: { source, month, amount: input.amount, note: input.note || null, updatedById: req.user!.id },
+      where: { tenantId_source_month: { tenantId: tenantIdForWrite(), source, month } },
+      create: { tenantId: tenantIdForWrite(), source, month, amount: input.amount, note: input.note || null, updatedById: req.user!.id },
       update: { amount: input.amount, note: input.note || null, updatedById: req.user!.id },
     });
     auditRecruiting(req, 'source_spend_saved', 'RecruitingSourceSpend', row.id, {

@@ -106,6 +106,37 @@ describe('<MyTimesheet>', () => {
     expect(screen.getAllByRole('button', { name: /report an issue/i })).toHaveLength(2);
   });
 
+  it('overtime and double time are the server’s split, and the estimated gross pays them at their multipliers', async () => {
+    // One live-California 13-hour day: the server split it 8 regular / 4 overtime / 1 double time.
+    vi.mocked(listMyTimeEntries).mockResolvedValue({
+      entries: [
+        entryFixture({
+          minutesElapsed: 780,
+          netMinutes: 780,
+          breaks: [],
+          hours: { regularMinutes: 480, overtimeMinutes: 240, doubleTimeMinutes: 60, overtimeMultiplier: 1.5, doubleMultiplier: 2 },
+        }),
+      ],
+    });
+    renderSheet();
+    expect(await screen.findByText('includes 4h overtime')).toBeInTheDocument();
+    expect(screen.getByText('and 1h double time')).toBeInTheDocument();
+    // 8 × $20 + 4 × $30 + 1 × $40 = $320 — what the paycheck pays, not 13 × $20.
+    expect(screen.getAllByText('$320.00').length).toBeGreaterThan(0);
+  });
+
+  it('works out no overtime itself: a 45-hour week with no server split shows none', async () => {
+    vi.mocked(listMyTimeEntries).mockResolvedValue({
+      entries: Array.from({ length: 5 }, (_, i) =>
+        entryFixture({ id: `e${i}`, clockInAt: `2026-07-0${i + 4}T14:00:00.000Z`, clockOutAt: `2026-07-0${i + 4}T23:00:00.000Z`, minutesElapsed: 540, netMinutes: 540, breaks: [] }),
+      ),
+    });
+    renderSheet();
+    await waitFor(() => expect(listMyTimeEntries).toHaveBeenCalled());
+    await screen.findAllByText('9h');
+    expect(screen.queryByText(/overtime/)).not.toBeInTheDocument();
+  });
+
   it('renders the empty state when there are no punches', async () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [] });
     renderSheet();

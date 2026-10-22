@@ -32,7 +32,7 @@ import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prism
 
 beforeEach(async () => {
   await truncateAll();
-  await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
+  await prisma.transportSettings.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { preTripRequired: false }, update: { preTripRequired: false } });
 });
 afterAll(async () => {
   await prisma.$disconnect();
@@ -446,12 +446,13 @@ describe('transport walk 9 — fuel from the pump, service due by miles', () => 
     const d = await day([12, 12]);
     await prisma.van.update({ where: { id: d.vans[0]!.id }, data: { driverUserId: d.driver.id, odometerMiles: 40_000 } });
     await prisma.vanServiceEntry.create({ data: { vanId: d.vans[0]!.id, kind: 'OIL_CHANGE', occurredAt: new Date('2026-09-01T00:00:00Z'), odometerMiles: 35_300, costCents: 8_000 } });
-    const res = await d.driverAgent.post(`/transport/driver/vans/${d.vans[0]!.id}/fuel`).send({ gallons: 18.4, costCents: 6_212, odometerMiles: 40_120, photoKey: 'photos/receipt.jpg' });
+    const res = await d.driverAgent.post(`/transport/driver/vans/${d.vans[0]!.id}/fuel`).send({ gallons: 18.4, costCents: 6_212, odometerMiles: 40_120, photoKey: '0b1c2d3e-0000-4000-8000-000000000001.jpg' });
     expect(res.status).toBe(201);
     expect(res.body.entry).toMatchObject({ kind: 'FUEL', costCents: 6_212, odometerMiles: 40_120 });
     const entry = await prisma.vanServiceEntry.findUniqueOrThrow({ where: { id: res.body.entry.id } });
     expect(entry.createdById).toBe(d.driver.id);
-    expect(entry.notes).toBe('18.4 gal · receipt photo: photos/receipt.jpg');
+    expect(entry.notes).toBe('18.4 gal');
+    expect(entry.photoS3Key).toBe('0b1c2d3e-0000-4000-8000-000000000001.jpg');
     expect((await prisma.van.findUniqueOrThrow({ where: { id: d.vans[0]!.id } })).odometerMiles).toBe(40_120);
     // Not theirs, never driven: no.
     const other = await loginAs(d.driver2.email);

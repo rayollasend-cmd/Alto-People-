@@ -21,10 +21,17 @@
  *   Not assessed: California's double time past 12 hours a day and on the
  *   seventh consecutive day (the state table has no double-time tier); the
  *   report says so beside its totals.
+ *
+ *   What the engine PAID comes from the engine itself (lib/laborRules/hours
+ *   splitHours with the tenant's live rules), not a re-derived "past 40": a
+ *   jurisdiction a tenant took LIVE already pays its daily overtime, and
+ *   those hours must not be reported as paid at straight time. The law side
+ *   stays on the state table because it covers states no pack ships yet.
  */
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { payableMs, round2, type PayableEntry } from './payroll.js';
 import { dateKeyInZone, startOfWeekForSite, companyWorkweek } from './timeAnomalies.js';
+import { NO_LIVE_RULES, splitHours, type HoursEntry, type PayRules } from './laborRules/hours.js';
 
 export interface LookbackEntry extends PayableEntry {
   associateId: string;
@@ -33,6 +40,9 @@ export interface LookbackEntry extends PayableEntry {
   siteTimezone: string | null;
   /** The associate's home state, used only when the site gives none. */
   associateState: string | null;
+  /** The work site's id and city, so a site- or city-level live activation resolves. */
+  siteId?: string | null;
+  siteCity?: string | null;
 }
 
 export interface LookbackWeek {
@@ -45,7 +55,7 @@ export interface LookbackWeek {
   dailyOvertimeHours: number;
   /** Daily overtime plus the weekly overtime left after it (no hour counted twice). */
   lawOvertimeHours: number;
-  /** What the engine paid as overtime: the week's hours past 40. */
+  /** What the engine paid as overtime (and double time) that week: its own split, under the live rules. */
   enginePaidOvertimeHours: number;
   /** Overtime hours the engine paid at straight time. */
   straightTimeOvertimeHours: number;
@@ -55,14 +65,12 @@ export interface LookbackWeek {
   difference: number;
 }
 
-const WEEKLY_THRESHOLD = 40;
-
 /**
  * Weeks with straight-time overtime, for one paid period. Only weeks with a
  * nonzero difference are returned. `rateByAssociate` is the hourly rate on
  * each payroll item (salaried items, rate 0, are skipped).
  */
-export function dailyOvertimeLookback(entries: LookbackEntry[], rateByAssociate: Map<string, number>): LookbackWeek[] {
+export function dailyOvertimeLookback(entries: LookbackEntry[], rateByAssociate: Map<string, number>, rules: PayRules = NO_LIVE_RULES): LookbackWeek[] {
   type Week = { associateId: string; weekStart: number; ms: number; days: Map<string, { ms: number; threshold: number | null }>; states: Set<string> };
   const weeks = new Map<string, Week>();
   for (const e of entries) {
@@ -86,6 +94,24 @@ export function dailyOvertimeLookback(entries: LookbackEntry[], rateByAssociate:
     weeks.set(key, w);
   }
 
+  // What the engine paid, per person and week: its split's overtime and double-time shares.
+  const paidOt = new Map<string, number>();
+  const people = new Map<string, Array<{ e: LookbackEntry; h: HoursEntry }>>();
+  for (const e of entries) {
+    if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
+    const list = people.get(e.associateId) ?? [];
+    list.push({ e, h: { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: { id: e.siteId ?? '', state: e.siteState, city: e.siteCity ?? null, timezone: e.siteTimezone } } });
+    people.set(e.associateId, list);
+  }
+  for (const [associateId, list] of people) {
+    const split = splitHours(rules, list.map((x) => x.h));
+    split.entries.forEach((share, i) => {
+      const e = list[i]!.e;
+      const key = `${associateId}|${startOfWeekForSite(e.clockInAt, e.siteTimezone ?? companyWorkweek().timezone).getTime()}`;
+      paidOt.set(key, (paidOt.get(key) ?? 0) + share.overtimeHours + share.doubleTimeHours);
+    });
+  }
+
   const out: LookbackWeek[] = [];
   for (const w of weeks.values()) {
     const weekHours = w.ms / 3_600_000;
@@ -94,8 +120,9 @@ export function dailyOvertimeLookback(entries: LookbackEntry[], rateByAssociate:
       if (d.threshold === null) continue;
       daily += Math.max(0, d.ms / 3_600_000 - d.threshold);
     }
-    const law = daily + Math.max(0, weekHours - daily - WEEKLY_THRESHOLD);
-    const engine = Math.max(0, weekHours - WEEKLY_THRESHOLD);
+    // The law side's weekly line: 40 in every state the table holds (its weeklyOTHoursThreshold).
+    const law = daily + Math.max(0, weekHours - daily - 40);
+    const engine = paidOt.get(`${w.associateId}|${w.weekStart}`) ?? 0;
     const straight = round2(Math.max(0, law - engine));
     if (straight <= 0) continue;
     const rate = rateByAssociate.get(w.associateId) ?? 0;

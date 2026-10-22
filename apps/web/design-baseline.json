@@ -1,17 +1,14 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1484,
-    "raw-heading": 142,
+    "brand-text": 1436,
+    "raw-heading": 99,
     "pill": 37,
-    "hex": 33,
-    "loading-text": 4,
-    "empty-text": 18
+    "empty-text": 5
   },
   "files": {
     "src/pages/AcceptInvite.tsx": {
-      "brand-text": 3,
-      "raw-heading": 3
+      "brand-text": 1
     },
     "src/pages/AdminDashboard.tsx": {
       "brand-text": 2
@@ -19,10 +16,6 @@
     "src/pages/AssociateDashboard.tsx": {
       "brand-text": 5,
       "raw-heading": 1
-    },
-    "src/pages/ConfirmEmailChange.tsx": {
-      "brand-text": 3,
-      "raw-heading": 4
     },
     "src/pages/ExecutiveDashboard.tsx": {
       "brand-text": 30,
@@ -34,17 +27,13 @@
       "raw-heading": 2
     },
     "src/pages/ForgotPassword.tsx": {
-      "brand-text": 4,
-      "raw-heading": 3
+      "brand-text": 2
     },
     "src/pages/Install.tsx": {
-      "brand-text": 4,
-      "raw-heading": 3
+      "brand-text": 1
     },
     "src/pages/Login.tsx": {
-      "brand-text": 8,
-      "hex": 2,
-      "raw-heading": 3
+      "brand-text": 5
     },
     "src/pages/ManagerDashboard.tsx": {
       "brand-text": 3
@@ -57,16 +46,14 @@
       "brand-text": 10
     },
     "src/pages/ResetPassword.tsx": {
-      "brand-text": 4,
-      "raw-heading": 3
+      "brand-text": 2
     },
     "src/pages/RouterErrorPage.tsx": {
       "brand-text": 2,
       "raw-heading": 1
     },
     "src/pages/Settings.tsx": {
-      "brand-text": 14,
-      "hex": 2
+      "brand-text": 14
     },
     "src/pages/SupervisorDashboard.tsx": {
       "brand-text": 8
@@ -90,21 +77,16 @@
       "brand-text": 3
     },
     "src/pages/admin/AgentDecisionRecordTab.tsx": {
-      "brand-text": 6,
-      "loading-text": 1
+      "brand-text": 6
     },
     "src/pages/admin/AgentGatesPanel.tsx": {
       "brand-text": 1
     },
     "src/pages/admin/AgentRegistryAdmin.tsx": {
-      "brand-text": 18,
-      "loading-text": 1
+      "brand-text": 18
     },
     "src/pages/admin/BillingHome.tsx": {
       "brand-text": 6
-    },
-    "src/pages/admin/BrandingHome.tsx": {
-      "hex": 3
     },
     "src/pages/admin/ComplianceEvidenceHome.tsx": {
       "brand-text": 1
@@ -154,7 +136,6 @@
     },
     "src/pages/analytics/RetentionSection.tsx": {
       "brand-text": 2,
-      "empty-text": 1,
       "raw-heading": 1
     },
     "src/pages/approvals/ApprovalsHome.tsx": {
@@ -306,8 +287,7 @@
       "brand-text": 3
     },
     "src/pages/hotline/HotlineAdmin.tsx": {
-      "brand-text": 6,
-      "empty-text": 1
+      "brand-text": 6
     },
     "src/pages/hotline/HotlinePage.tsx": {
       "brand-text": 7,
@@ -396,8 +376,7 @@
       "brand-text": 3
     },
     "src/pages/onboarding/OnboardingAnalytics.tsx": {
-      "brand-text": 2,
-      "empty-text": 1
+      "brand-text": 2
     },
     "src/pages/onboarding/TemplateEditor.tsx": {
       "brand-text": 2,
@@ -439,8 +418,7 @@
       "brand-text": 3
     },
     "src/pages/ops/OpsBoard.tsx": {
-      "brand-text": 8,
-      "empty-text": 1
+      "brand-text": 8
     },
     "src/pages/ops/OpsFloorFeed.tsx": {
       "brand-text": 2
@@ -492,24 +470,19 @@
       "brand-text": 1
     },
     "src/pages/payroll/AssociatePayrollView.tsx": {
-      "brand-text": 12,
-      "hex": 1
+      "brand-text": 12
     },
     "src/pages/payroll/BranchEnrollmentDialog.tsx": {
       "brand-text": 1
     },
     "src/pages/payroll/FinancialChangesQueue.tsx": {
-      "brand-text": 5,
-      "empty-text": 1
+      "brand-text": 5
     },
     "src/pages/payroll/GarnishmentsView.tsx": {
       "brand-text": 1
     },
     "src/pages/payroll/LaborOverridesSection.tsx": {
       "brand-text": 3
-    },
-    "src/pages/payroll/PayrollCompliance.tsx": {
-      "brand-text": 5
     },
     "src/pages/payroll/PayrollConfigView.tsx": {
       "brand-text": 2
@@ -527,20 +500,17 @@
       "brand-text": 2
     },
     "src/pages/payrollTax/PayrollTaxHome.tsx": {
-      "brand-text": 12
+      "brand-text": 9
     },
     "src/pages/payrules/PayRulesHome.tsx": {
       "brand-text": 13
     },
     "src/pages/people/PeopleDirectory.tsx": {
       "brand-text": 26,
-      "empty-text": 1,
-      "raw-heading": 1,
-      "loading-text": 1
+      "raw-heading": 1
     },
     "src/pages/people/ProgramSection.tsx": {
-      "brand-text": 1,
-      "loading-text": 1
+      "brand-text": 1
     },
     "src/pages/performance/AdminReviewsView.tsx": {
       "brand-text": 3
@@ -558,32 +528,25 @@
       "empty-text": 1
     },
     "src/pages/portal/ClientPortalHome.tsx": {
-      "brand-text": 25,
-      "raw-heading": 9
+      "brand-text": 16
     },
     "src/pages/portal/PortalCandidates.tsx": {
-      "brand-text": 3,
-      "raw-heading": 2
+      "brand-text": 1
     },
     "src/pages/portal/PortalHistory.tsx": {
-      "brand-text": 17,
-      "raw-heading": 6
+      "brand-text": 11
     },
     "src/pages/portal/PortalOps.tsx": {
-      "brand-text": 20,
-      "raw-heading": 2
+      "brand-text": 18
     },
     "src/pages/portal/PortalRequests.tsx": {
-      "brand-text": 2,
-      "raw-heading": 1
+      "brand-text": 1
     },
     "src/pages/portal/PortalSchedule.tsx": {
-      "brand-text": 5,
-      "raw-heading": 2
+      "brand-text": 3
     },
     "src/pages/portal/PortalToday.tsx": {
-      "brand-text": 7,
-      "raw-heading": 2
+      "brand-text": 4
     },
     "src/pages/portal/ServiceReportDialog.tsx": {
       "brand-text": 1
@@ -595,8 +558,7 @@
       "brand-text": 6
     },
     "src/pages/pulse/PulseHome.tsx": {
-      "brand-text": 7,
-      "empty-text": 1
+      "brand-text": 7
     },
     "src/pages/ramp/RampHome.tsx": {
       "brand-text": 3
@@ -613,7 +575,6 @@
     },
     "src/pages/recruiting/RecruitingAnalytics.tsx": {
       "brand-text": 5,
-      "empty-text": 1,
       "raw-heading": 1
     },
     "src/pages/recruiting/RecruitingExtras.tsx": {
@@ -653,8 +614,7 @@
       "pill": 1
     },
     "src/pages/relay/RelayRail.tsx": {
-      "brand-text": 2,
-      "empty-text": 1
+      "brand-text": 2
     },
     "src/pages/relay/RelayRequests.tsx": {
       "brand-text": 6,
@@ -689,12 +649,10 @@
       "brand-text": 3
     },
     "src/pages/scheduling/DraftsDialog.tsx": {
-      "brand-text": 1,
-      "empty-text": 1
+      "brand-text": 1
     },
     "src/pages/scheduling/LaborCostsHome.tsx": {
       "brand-text": 27,
-      "hex": 5,
       "pill": 2,
       "raw-heading": 1
     },
@@ -724,8 +682,7 @@
       "raw-heading": 1
     },
     "src/pages/scheduling/TemplatesRail.tsx": {
-      "brand-text": 2,
-      "empty-text": 1
+      "brand-text": 2
     },
     "src/pages/scheduling/TimeGridWeekView.tsx": {
       "brand-text": 6
@@ -811,7 +768,6 @@
     },
     "src/pages/transport/DriverHome.tsx": {
       "brand-text": 30,
-      "hex": 1,
       "pill": 4,
       "raw-heading": 2
     },
@@ -820,7 +776,6 @@
     },
     "src/pages/transport/RideHome.tsx": {
       "brand-text": 25,
-      "hex": 3,
       "raw-heading": 5
     },
     "src/pages/transport/RideStrip.tsx": {
@@ -832,7 +787,6 @@
     },
     "src/pages/transport/TransportHome.tsx": {
       "brand-text": 35,
-      "hex": 1,
       "pill": 2,
       "raw-heading": 5
     },
@@ -854,9 +808,6 @@
     "src/pages/worktags/WorktagsHome.tsx": {
       "brand-text": 2
     },
-    "src/components/AuditTimeline.tsx": {
-      "empty-text": 1
-    },
     "src/components/CelebrationRibbon.tsx": {
       "brand-text": 1
     },
@@ -864,8 +815,7 @@
       "brand-text": 1
     },
     "src/components/DecisionRoom.tsx": {
-      "brand-text": 10,
-      "empty-text": 1
+      "brand-text": 10
     },
     "src/components/DocumentCapture.tsx": {
       "brand-text": 1
@@ -963,9 +913,6 @@
     },
     "src/components/templates/RecordTemplate.tsx": {
       "raw-heading": 1
-    },
-    "src/components/transport/LiveMap.tsx": {
-      "hex": 15
     }
   }
 }

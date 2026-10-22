@@ -42,7 +42,7 @@ import {
 } from '@/lib/timeApi';
 import type { ClockInRequestRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtRelativeDayTz, fmtTime, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtRelativeDayTz, fmtShiftTz, fmtTime, parseYmd, ymdLocal } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
@@ -154,8 +154,9 @@ const requestsQuery = {
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
-/** "Today · 9:00 PM", "Tomorrow · 6:00 AM", "Sat, Sep 19 · 6:00 AM". */
-const when = (iso: string) => `${fmtRelativeDayTz(iso)} · ${fmtTime(iso)}`;
+/** "Today · 9:00 PM", "Tomorrow · 6:00 AM", "Sat, Sep 19 · 6:00 AM" — on
+ *  the shift's own store clock (one shift, one time). */
+const when = (iso: string, tz?: string | null) => `${fmtRelativeDayTz(iso, tz)} · ${fmtShiftTz(iso, tz, { day: false })}`;
 
 
 /** The queues on the desk, in the order they are worked. */
@@ -1658,12 +1659,12 @@ function SwapsPanel() {
                     <div className="text-xs text-silver mt-0.5">
                       {s.shiftPosition}
                       {showClient && ` · ${s.shiftClientName ?? '—'}`} ·{' '}
-                      <span className="tabular-nums">{when(s.shiftStartsAt)}</span>
+                      <span className="tabular-nums">{when(s.shiftStartsAt, s.shiftTimezone)}</span>
                     </div>
                     {s.inExchange && (
                       <div className="text-xs text-gold/90 mt-0.5 tabular-nums">
                         Trade — {s.requesterName} takes: {s.inExchange.position} ·{' '}
-                        {when(s.inExchange.startsAt)}
+                        {when(s.inExchange.startsAt, s.inExchange.timezone)}
                       </div>
                     )}
                     {s.note && (
@@ -1831,7 +1832,7 @@ function PickupsPanel() {
                     </div>
                     <div className="text-xs text-silver mt-0.5 tabular-nums">
                       {showClient && `${c.shiftClientName ?? '—'} · `}
-                      {when(c.shiftStartsAt)}
+                      {when(c.shiftStartsAt, c.shiftTimezone)}
                     </div>
                   </div>
                 </div>

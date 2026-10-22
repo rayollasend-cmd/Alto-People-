@@ -109,7 +109,7 @@ export async function recordInboundEvent(input: {
   try {
     return await prisma.providerEvent.create({
       data: {
-        tenantId: input.connection.tenantId,
+        tenantId: input.connection.tenantId ?? undefined,
         connectionId: input.connection.connectionId,
         kind: input.kind,
         direction: 'IN',
@@ -155,7 +155,7 @@ export async function recordOutboundEvent(input: {
   await prisma.providerEvent
     .create({
       data: {
-        tenantId: input.connection.tenantId,
+        tenantId: input.connection.tenantId ?? undefined,
         connectionId: input.connection.connectionId,
         kind: input.kind,
         direction: 'OUT',

@@ -195,7 +195,7 @@ describe('POST /onboarding/applications/:id/i9/documents (mobile camera upload)'
     const doc = await prisma.documentRecord.findUniqueOrThrow({ where: { id: res.body.documentId } });
     expect(doc.associateId).toBe(associate.id);
     expect(doc.kind).toBe('ID');
-    expect(doc.s3Key).toMatch(/^i9\//);
+    expect(doc.s3Key).toMatch(/^tenants\/00000000-0000-4000-8000-000000000001\/i9\//); // Brief 2-1 §9.6: under the tenant
   });
 
   it('rejects missing file (400)', async () => {

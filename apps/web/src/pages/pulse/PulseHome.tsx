@@ -620,9 +620,7 @@ function NewSurveyDrawer({
                   ))}
                 </Select>
                 {departments !== null && departments.length === 0 && (
-                  <div className="text-xs text-silver mt-1">
-                    No departments defined yet.
-                  </div>
+                  <EmptyState size="sm" className="mt-1" title="No departments defined yet." />
                 )}
               </>
             )}

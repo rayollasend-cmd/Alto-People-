@@ -41,6 +41,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { PortalRequests, type RequestPrefill } from './PortalRequests';
@@ -613,12 +614,16 @@ export function ClientPortalHome() {
               )}
             </div>
             <div className="md:col-span-8">
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-sm font-medium text-white">{t('portal.curveTitle')}</h2>
-                <span className="text-xs text-silver/60 tabular-nums">
-                  {t('portal.todayMeta', { filled: data.today.filled, open: data.today.open })}
-                </span>
-              </div>
+              <SectionTitle
+                size="sm"
+                className="mb-0"
+                title={t('portal.curveTitle')}
+                trailing={
+                  <span className="text-xs text-silver/60 tabular-nums">
+                    {t('portal.todayMeta', { filled: data.today.filled, open: data.today.open })}
+                  </span>
+                }
+              />
               <div className="mt-2">
                 <CoverageCurve
                   points={curve}
@@ -768,12 +773,16 @@ export function ClientPortalHome() {
         {/* ---- Today by shift (the full list lives on /portal/today) ---- */}
         <Card className="animate-enter xl:col-span-5" style={enterStagger(2)}>
           <CardContent>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-medium text-white">{t('portal.todayByShift')}</h2>
-              <Link to={`/portal/today${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
-                {t('portal.todayOpen')}
-              </Link>
-            </div>
+            <SectionTitle
+              size="sm"
+              className="mb-0"
+              title={t('portal.todayByShift')}
+              trailing={
+                <Link to={`/portal/today${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                  {t('portal.todayOpen')}
+                </Link>
+              }
+            />
             {waves.length === 0 ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.noShiftsToday')}</p>
             ) : (
@@ -837,10 +846,7 @@ export function ClientPortalHome() {
         {/* ---- Your Alto lead ------------------------------------------ */}
         <Card className="animate-enter xl:col-span-3" style={enterStagger(3)}>
           <CardContent>
-            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-              <HardHat className="h-4 w-4 text-gold" aria-hidden="true" />
-              {t('portal.leadTitle')}
-            </h2>
+            <SectionTitle size="sm" className="mb-0" icon={HardHat} title={t('portal.leadTitle')} />
             {data.leads.people.length === 0 ? (
               <p className="mt-3 text-sm text-silver/60">
                 {data.leads.supportEmail ? t('portal.leadNoneEmail') : t('portal.leadNone')}
@@ -909,24 +915,30 @@ export function ClientPortalHome() {
         {/* ---- Last night's work (ops evidence) ------------------------- */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(4)}>
           <CardContent>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-                <ClipboardCheck className="h-4 w-4 text-gold" aria-hidden="true" />
-                {opsLive.length > 0 ? t('portal.opsNowTitle') : t('portal.opsTodayTitle')}
-                {opsLive.length > 0 && (
-                  <span className="ml-1 inline-flex items-center gap-1 text-2xs font-normal text-success">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+            <SectionTitle
+              size="sm"
+              className="mb-0"
+              icon={ClipboardCheck}
+              title={
+                <>
+                  {opsLive.length > 0 ? t('portal.opsNowTitle') : t('portal.opsTodayTitle')}
+                  {opsLive.length > 0 && (
+                    <span className="ml-1 inline-flex items-center gap-1 text-2xs font-normal text-success">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+                      </span>
+                      {t('portal.opsNowLine', { count: opsLive.length })}
                     </span>
-                    {t('portal.opsNowLine', { count: opsLive.length })}
-                  </span>
-                )}
-              </h2>
-              <Link to={`/portal/ops${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
-                {t('portal.opsOpen')}
-              </Link>
-            </div>
+                  )}
+                </>
+              }
+              trailing={
+                <Link to={`/portal/ops${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                  {t('portal.opsOpen')}
+                </Link>
+              }
+            />
             {!opsDay ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.opsNone')}</p>
             ) : (
@@ -1027,15 +1039,17 @@ export function ClientPortalHome() {
         {/* ---- This week: fill by day ------------------------------------ */}
         <Card className="animate-enter xl:col-span-7" style={enterStagger(5)}>
           <CardContent>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-                <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
-                {t('portal.week')}
-              </h2>
-              <span className="text-xs text-silver/60 tabular-nums">
-                {fmtDate(parseYmd(data.week.start))} – {fmtDate(parseYmd(data.week.end))}
-              </span>
-            </div>
+            <SectionTitle
+              size="sm"
+              className="mb-0"
+              icon={CalendarDays}
+              title={t('portal.week')}
+              trailing={
+                <span className="text-xs text-silver/60 tabular-nums">
+                  {fmtDate(parseYmd(data.week.start))} – {fmtDate(parseYmd(data.week.end))}
+                </span>
+              }
+            />
             <div className="mt-3">
               <WeekFillChart
                 days={weekDays}
@@ -1067,20 +1081,22 @@ export function ClientPortalHome() {
         {/* ---- Reliability (4 weeks) ------------------------------------ */}
         <Card className="animate-enter xl:col-span-5" style={enterStagger(6)}>
           <CardContent>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-                <ShieldCheck className="h-4 w-4 text-gold" aria-hidden="true" />
-                {t('portal.reliability')}
-              </h2>
-              <span
-                className={cn(
-                  'text-2xl font-bold leading-none tracking-tight',
-                  data.reliability.grade ? GRADE_STYLE[data.reliability.grade] : 'text-silver/50',
-                )}
-              >
-                {data.reliability.grade ?? '—'}
-              </span>
-            </div>
+            <SectionTitle
+              size="sm"
+              className="mb-0"
+              icon={ShieldCheck}
+              title={t('portal.reliability')}
+              trailing={
+                <span
+                  className={cn(
+                    'text-2xl font-bold leading-none tracking-tight',
+                    data.reliability.grade ? GRADE_STYLE[data.reliability.grade] : 'text-silver/50',
+                  )}
+                >
+                  {data.reliability.grade ?? '—'}
+                </span>
+              }
+            />
             <div className="mt-3">
               <ReliabilityChart
                 weeks={relWeeks}
@@ -1144,7 +1160,7 @@ export function ClientPortalHome() {
         {/* ---- Crew clearance ------------------------------------------- */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(7)}>
           <CardContent>
-            <h2 className="text-sm font-medium text-white">{t('portal.clearance')}</h2>
+            <SectionTitle size="sm" className="mb-0" title={t('portal.clearance')} />
             {cl.total === 0 ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.clNone')}</p>
             ) : (
@@ -1185,7 +1201,7 @@ export function ClientPortalHome() {
         {/* ---- Safety ---------------------------------------------------- */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(8)}>
           <CardContent>
-            <h2 className="text-sm font-medium text-white">{t('portal.safety')}</h2>
+            <SectionTitle size="sm" className="mb-0" title={t('portal.safety')} />
             <div className="mt-2 text-4xl font-bold tracking-tight text-white">
               {data.safety.daysSinceLast === null ? '365+' : data.safety.daysSinceLast}
               <span className="ml-2 text-base font-normal text-silver">{t('portal.safetyDays')}</span>
@@ -1202,7 +1218,7 @@ export function ClientPortalHome() {
         {/* ---- Statements ------------------------------------------------ */}
         <Card className="animate-enter xl:col-span-4" style={enterStagger(9)}>
           <CardContent>
-            <h2 className="text-sm font-medium text-white">{t('portal.statements')}</h2>
+            <SectionTitle size="sm" className="mb-0" title={t('portal.statements')} />
             {data.statements.length === 0 ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>
             ) : (

@@ -4,8 +4,10 @@ import { DEFAULT_TIMEZONE } from './timezone.js';
 import { dateKeyInZone } from './timeAnomalies.js';
 import { placedClientIds } from './openShiftEligibility.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
+import { payFor } from './laborRules/hours.js';
 import { rideRateOn } from './rideAuthorization.js';
 import { accountPhotoUrlFor } from './profilePhotoUrl.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Transportation — the Alto vans.
@@ -59,6 +61,15 @@ export interface TransportSettingsView {
 export const MAX_DAYS_AHEAD = 30;
 const H = 3_600_000;
 
+/** A transport photo's blob name, as POST /transport/photos hands it back ("<uuid>.jpg"). */
+export const TRANSPORT_PHOTO_NAME = /^[0-9a-f-]{36}\.(png|jpg|webp|bin)$/;
+
+/** Where a stored transport photo is served (GET /transport/photos/:name);
+ *  null for none, or for a key that route could never serve. */
+export function transportPhotoUrl(key: string | null | undefined): string | null {
+  return key && TRANSPORT_PHOTO_NAME.test(key) ? `/transport/photos/${key}` : null;
+}
+
 /** How a ride at `targetAt` can be requested right now. */
 export type RideNotice = 'planned' | 'short_notice' | 'closed' | 'too_far';
 
@@ -85,10 +96,10 @@ export function noticeFor(
 
 export async function getTransportSettings(db: Db = prisma): Promise<TransportSettingsView> {
   const row =
-    (await db.transportSettings.findUnique({ where: { id: 'default' } })) ??
+    (await db.transportSettings.findUnique({ where: { tenantId: tenantIdForWrite() } })) ??
     (await db.transportSettings.upsert({
-      where: { id: 'default' },
-      create: { id: 'default' },
+      where: { tenantId: tenantIdForWrite() },
+      create: { tenantId: tenantIdForWrite() },
       update: {},
     }));
   // The fare and fee come from the effective-dated rate; the settings row
@@ -347,6 +358,11 @@ export interface RideChargeInput {
   grossPay: number;
   regularHours: number;
   overtimeHours: number;
+  /** Hours paid at double time (a live jurisdiction's daily rule); 0 or absent elsewhere. */
+  doubleTimeHours?: number;
+  /** The multipliers pay applied (lib/laborRules/hours): 1.5× and 2× unless a live rule set says more. */
+  overtimeMultiplier?: number;
+  doubleMultiplier?: number;
   /** Used when the regular/overtime split is empty (salaried items). */
   hoursWorked: number;
   /** Two-letter state whose minimum wage applies; null → federal. */
@@ -363,7 +379,9 @@ export interface RideChargeGuard {
   minimumWageCents: number;
   regularHours: number;
   overtimeHours: number;
-  /** Hours × minimum wage (overtime at 1.5×): the pay the period must keep. */
+  /** Double-time hours in the floor (at the minimum wage × the double multiplier). Absent on older items. */
+  doubleTimeHours?: number;
+  /** Hours × minimum wage (overtime and double time at their multipliers): the pay the period must keep. */
   floorCents: number;
   grossCents: number;
   /** grossCents − floorCents, never negative: what the guard lets through. */
@@ -410,10 +428,14 @@ export async function planRideCharges(db: Db, input: RideChargeInput): Promise<R
   });
   const policy = getLaborPolicy(input.taxState);
   const minimumWageCents = Math.max(policy.minimumWageCents, FEDERAL_MINIMUM_WAGE_CENTS);
-  const split = input.regularHours + input.overtimeHours > 0;
+  const dt = input.doubleTimeHours ?? 0;
+  const split = input.regularHours + input.overtimeHours + dt > 0;
   const regularHours = split ? input.regularHours : input.hoursWorked;
   const overtimeHours = split ? input.overtimeHours : 0;
-  const floorCents = Math.round(regularHours * minimumWageCents + overtimeHours * minimumWageCents * 1.5);
+  const doubleTimeHours = split ? dt : 0;
+  // The floor is the hours' pay at the minimum wage, at the multipliers the
+  // paycheck applied — double time included (a CA day past 12 h).
+  const floorCents = Math.round(payFor({ regularHours, overtimeHours, doubleTimeHours }, minimumWageCents, { overtimeMultiplier: input.overtimeMultiplier ?? 1.5, doubleMultiplier: input.doubleMultiplier ?? 2 }));
   const grossCents = Math.round(input.grossPay * 100);
   const roomCents = Math.max(0, grossCents - floorCents);
   const netCents = Math.max(0, Math.round(input.availableNet * 100));
@@ -451,6 +473,7 @@ export async function planRideCharges(db: Db, input: RideChargeInput): Promise<R
       minimumWageCents,
       regularHours,
       overtimeHours,
+      ...(doubleTimeHours > 0 ? { doubleTimeHours } : {}),
       floorCents,
       grossCents,
       roomCents,

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, HeartPulse, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { MAX_LIFE_COVERAGE_CENTS } from '@alto-people/shared';
 import type {
   BenefitsEnrollment,
   BenefitsPlan,
@@ -338,6 +339,12 @@ function EnrollmentRow({
         </Badge>
         <div className="text-white font-medium">{enrollment.planName}</div>
         <div className="text-xs text-silver mt-0.5">
+          {enrollment.planKind === 'LIFE_INSURANCE' && enrollment.lifeCoverageCents ? (
+            <>
+              {fmtMoney(enrollment.lifeCoverageCents / 100)} coverage
+              {' · '}
+            </>
+          ) : null}
           {fmtMoney(enrollment.electedAmountCentsPerPeriod / 100)}/period · effective{' '}
           {fmtDate(enrollment.effectiveDate)}
           {enrollment.terminationDate && (
@@ -394,6 +401,12 @@ function EnrollDialog({
   const [dateError, setDateError] = useState<string | null>(null);
   const [roth, setRoth] = useState(false);
   const isRetirement = plan?.kind === 'RETIREMENT_401K' || plan?.kind === 'RETIREMENT_403B';
+  // Group-term life: the face amount drives the imputed income on each check
+  // (IRS Pub 15-B), so a life election asks for it; the worker's own share
+  // per check may be $0 when the employer pays the premium.
+  const isLife = plan?.kind === 'LIFE_INSURANCE';
+  const [coverage, setCoverage] = useState('');
+  const [coverageError, setCoverageError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -406,6 +419,8 @@ function EnrollDialog({
     setAmountError(null);
     setDateError(null);
     setRoth(false);
+    setCoverage('');
+    setCoverageError(null);
   }, [plan]);
 
   // Live math for the annualized line under the amount field. 26 biweekly
@@ -413,6 +428,8 @@ function EnrollDialog({
   const cents = Math.round(Number(amount) * 100);
   const centsValid = amount !== '' && Number.isFinite(cents) && cents > 0;
   const employerMatchCents = plan?.employerContributionCentsPerPeriod ?? 0;
+  const coverageCents = Math.round(Number(coverage) * 100);
+  const coverageValid = coverage !== '' && Number.isFinite(coverageCents) && coverageCents > 0;
 
   const submit = async () => {
     if (!plan) return;
@@ -420,8 +437,12 @@ function EnrollDialog({
       setAmountError('Enter a valid dollar amount.');
       return;
     }
-    if (cents === 0) {
+    if (cents === 0 && !isLife) {
       setAmountError('Election must be more than $0.00 — to stop contributing, don’t enroll (or end an existing enrollment).');
+      return;
+    }
+    if (isLife && (!coverageValid || coverageCents < 100_000 || coverageCents > MAX_LIFE_COVERAGE_CENTS)) {
+      setCoverageError(`Enter the coverage amount, from $1,000 to ${fmtMoney(MAX_LIFE_COVERAGE_CENTS / 100)}.`);
       return;
     }
     // Validate, but send the raw YYYY-MM-DD. Converting to an ISO
@@ -439,6 +460,7 @@ function EnrollDialog({
         electedAmountCentsPerPeriod: cents,
         effectiveDate: coverageStarts,
         ...(isRetirement ? { rothElection: roth } : {}),
+        ...(isLife ? { lifeCoverageCents: coverageCents } : {}),
       });
       toast.success(`Enrolled in ${plan.name}.`);
       onEnrolled();
@@ -462,11 +484,40 @@ function EnrollDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {isLife && (
+            <Field
+              label="Coverage amount (USD)"
+              required
+              error={coverageError}
+              hint="The face amount of the policy. Coverage over $50,000 is taxable: the IRS cost of the part over $50,000 is added to your taxable pay each check. It isn’t paid to you."
+            >
+              {(p) => (
+                <Input
+                  type="number"
+                  step="1000"
+                  min="1000"
+                  inputMode="numeric"
+                  value={coverage}
+                  onChange={(e) => {
+                    setCoverage(e.target.value);
+                    setCoverageError(null);
+                  }}
+                  {...p}
+                />
+              )}
+            </Field>
+          )}
           <Field
-            label="Election amount (USD/period)"
+            label={isLife ? 'Your share per check (USD)' : 'Election amount (USD/period)'}
             required
             error={amountError}
-            hint={isRetirement && roth ? 'Roth — taken after tax; qualified withdrawals are tax-free.' : 'Pre-tax — reduces your taxable wages on the paystub.'}
+            hint={
+              isLife
+                ? '0 when your employer pays the whole premium.'
+                : isRetirement && roth
+                  ? 'Roth — taken after tax; qualified withdrawals are tax-free.'
+                  : 'Pre-tax — reduces your taxable wages on the paystub.'
+            }
           >
             {(p) => (
               <Input
@@ -478,7 +529,7 @@ function EnrollDialog({
                   setAmount(e.target.value);
                   setAmountError(null);
                 }}
-                autoFocus
+                autoFocus={!isLife}
                 {...p}
               />
             )}

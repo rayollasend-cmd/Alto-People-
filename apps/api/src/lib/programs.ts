@@ -17,6 +17,7 @@ import {
 } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from './tenant.js';
 import { netWorkedMinutes, orgDateKey } from './timeAnomalies.js';
 
 /**
@@ -51,7 +52,7 @@ export const DEFAULT_ALERT_SETTINGS: ProgramAlertSettings = {
 };
 
 export async function getAlertSettings(db: Db = defaultPrisma): Promise<ProgramAlertSettings> {
-  const row = await db.programAlertSetting.findUnique({ where: { id: 'singleton' } });
+  const row = await db.programAlertSetting.findUnique({ where: { tenantId: tenantIdForWrite() } });
   if (!row) return DEFAULT_ALERT_SETTINGS;
   return {
     programEndDays: row.programEndDays,
@@ -72,7 +73,7 @@ export async function saveAlertSettings(db: Db, input: ProgramAlertSettings, act
     petitionEndDays: norm(input.petitionEndDays),
     updatedById: actorUserId,
   };
-  await db.programAlertSetting.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', ...data }, update: data });
+  await db.programAlertSetting.upsert({ where: { tenantId: tenantIdForWrite() }, create: { tenantId: tenantIdForWrite(), ...data }, update: data });
   return getAlertSettings(db);
 }
 
@@ -412,7 +413,7 @@ export async function syncProgramFromJ1(
 ): Promise<void> {
   const name = j1.sponsorAgency.trim();
   const sponsor = name
-    ? await db.sponsor.upsert({ where: { name }, create: { name, programType: 'J1_SWT' }, update: {}, select: { id: true } })
+    ? await db.sponsor.upsert({ where: { tenantId_name: { tenantId: tenantIdForWrite(), name } }, create: { tenantId: tenantIdForWrite(), name, programType: 'J1_SWT' }, update: {}, select: { id: true } })
     : null;
   const current = await db.program.findFirst({
     where: { associateId: j1.associateId, type: 'J1_SWT', closedAt: null },
@@ -467,7 +468,7 @@ export async function getSponsor(db: Db, id: string, now: Date = new Date()): Pr
 }
 
 export async function createSponsor(db: Db, input: SponsorInput): Promise<Sponsor> {
-  const dupe = await db.sponsor.findUnique({ where: { name: input.name }, select: { id: true } });
+  const dupe = await db.sponsor.findUnique({ where: { tenantId_name: { tenantId: tenantIdForWrite(), name: input.name } }, select: { id: true } });
   if (dupe) throw new HttpError(409, 'sponsor_exists', 'A sponsor with that name already exists.');
   const row = await db.sponsor.create({ data: { ...input }, include: { _count: { select: { programs: true } } } });
   return sponsorShape(row, 0);

@@ -5,6 +5,7 @@ import { env } from '../config/env.js';
 import { fieldKeyring } from './crypto.js';
 import type { EvidenceResult } from './evidence.js';
 import { inventory } from './keyring.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Brief 2-5 step 4 — the daily controls that collect their own evidence
@@ -150,7 +151,7 @@ export async function auditLogImmutability(db: Db): Promise<EvidenceResult> {
 export async function alertingResult(db: Db, rules: string[], now: Date = new Date()): Promise<EvidenceResult> {
   try {
     const { securityAlertsArmed } = await import('./securityAlerts.js');
-    const setting = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } });
+    const setting = await db.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { securityContactEmail: true } });
     const alerts = await db.securityAlert.findMany({ where: { rule: { in: rules }, createdAt: { gte: new Date(now.getTime() - 86_400_000) } }, select: { rule: true, deliveredTo: true } });
     const undelivered = alerts.filter((a) => a.deliveredTo.length === 0).length;
     const armed = securityAlertsArmed();

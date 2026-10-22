@@ -43,11 +43,13 @@ import { QueryError } from '@/components/ui/QueryError';
  * Back to shadow is one click with a reason.
  */
 
-const RULE_LABEL: Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS', string> = {
+const RULE_LABEL: Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS' | 'SPREAD_OF_HOURS' | 'SPLIT_SHIFT', string> = {
   OVERTIME: 'Overtime and double time',
   MEAL: 'Meal premiums',
   REST: 'Rest premiums',
   REST_BETWEEN_SHIFTS: 'Rest between shifts',
+  SPREAD_OF_HOURS: 'Spread of hours',
+  SPLIT_SHIFT: 'Split shifts',
 };
 
 const signedMoney = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${fmtMoney(Math.abs(n))}`;
@@ -173,7 +175,7 @@ function GoLiveDrawer({ j, attestation, onClose }: { j: LaborJurisdiction; attes
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not go live.'),
   });
   const d = report.data;
-  const byRule = useMemo(() => (d ? (Object.entries(d.byRule) as Array<[keyof typeof RULE_LABEL, number]>).filter(([, v]) => Math.abs(v) >= 0.005) : []), [d]);
+  const byRule = useMemo(() => (d ? (Object.entries(d.byRule) as Array<[keyof typeof RULE_LABEL, number | undefined]>).filter((r): r is [keyof typeof RULE_LABEL, number] => r[1] != null && Math.abs(r[1]) >= 0.005 && r[0] in RULE_LABEL) : []), [d]);
 
   return (
     <Drawer open onOpenChange={(o) => !o && onClose()}>

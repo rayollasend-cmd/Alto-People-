@@ -319,6 +319,8 @@ export const ApplicationStatsResponseSchema = /* @__PURE__ */ (() => z.object({
   avgPercent: z.number().min(0).max(100),
   staleSamples: z.array(ApplicationSummarySchema),
   bouncedSamples: z.array(ApplicationSummarySchema),
+  /** Drafts nobody has moved in 7 days — the "Idle drafts" filter and the Inbox's "drafts gone quiet". */
+  idleDrafts: z.number().int().nonnegative().optional(),
 }))();
 export type ApplicationStatsResponse = z.infer<
   typeof ApplicationStatsResponseSchema
@@ -1002,8 +1004,13 @@ export const BenefitsEnrollmentSchema = /* @__PURE__ */ (() => z.object({
   planName: z.string(),
   /** 401(k)/403(b): deferrals taken as designated Roth (after tax). */
   rothElection: z.boolean().optional(),
+  /** Group-term life: the face amount, in cents. Over $50,000 the cost is imputed income (IRS Pub 15-B). */
+  lifeCoverageCents: z.number().int().nonnegative().nullable().optional(),
 }))();
 export type BenefitsEnrollment = z.infer<typeof BenefitsEnrollmentSchema>;
+
+/** The most group-term life coverage an election may carry: $5,000,000. */
+export const MAX_LIFE_COVERAGE_CENTS = 500_000_000;
 
 export const BenefitsEnrollmentListResponseSchema = /* @__PURE__ */ (() => z.object({
   enrollments: z.array(BenefitsEnrollmentSchema),
@@ -1015,6 +1022,8 @@ export const BenefitsEnrollInputSchema = /* @__PURE__ */ (() => z.object({
   electedAmountCentsPerPeriod: z.number().int().nonnegative(),
   effectiveDate: z.string().date(),
   rothElection: z.boolean().optional(),
+  /** LIFE_INSURANCE only (required there): the coverage face amount, in whole dollars' cents, $1,000 to $5,000,000. */
+  lifeCoverageCents: z.number().int().min(100_000).max(MAX_LIFE_COVERAGE_CENTS).optional(),
 }))();
 export type BenefitsEnrollInput = z.infer<typeof BenefitsEnrollInputSchema>;
 
@@ -1119,6 +1128,22 @@ export const TimeEntrySchema = /* @__PURE__ */ (() => z.object({
   shiftStartsAt: z.string().datetime().nullable().optional(),
   shiftEndsAt: z.string().datetime().nullable().optional(),
   shiftPosition: z.string().nullable().optional(),
+  /**
+   * This entry's share of the labor-rules engine's split — the same split
+   * the paycheck pays (server lib/laborRules/hours): regular, overtime and
+   * double-time minutes, over the person's whole workweek at every client
+   * and site (overtime is the latest hours). Counts COMPLETED and ACTIVE
+   * time as if approved. Absent on REJECTED entries and older servers.
+   */
+  hours: z
+    .object({
+      regularMinutes: z.number().nonnegative(),
+      overtimeMinutes: z.number().nonnegative(),
+      doubleTimeMinutes: z.number().nonnegative(),
+      overtimeMultiplier: z.number().positive(),
+      doubleMultiplier: z.number().positive(),
+    })
+    .optional(),
 }))();
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
 
@@ -1513,6 +1538,16 @@ export const TimesheetRowSchema = /* @__PURE__ */ (() => z.object({
   status: TimesheetRowStatusSchema,
   /** Where this worker's week stands in Fieldglass (null: no client). */
   fieldglass: TimesheetFieldglassSchema.nullable().optional(),
+  /**
+   * How the paycheck splits these approved hours (server lib/laborRules/hours,
+   * over the worker's whole week at every client): regular, overtime and
+   * double time. Informational — the ST/OT/DT/Others buckets above follow the
+   * buyer's SOW (flat "Others" today), the way a statement bills overtime by
+   * the client's contract.
+   */
+  payHours: z
+    .object({ regular: z.number().nonnegative(), overtime: z.number().nonnegative(), doubleTime: z.number().nonnegative() })
+    .optional(),
 }))();
 export type TimesheetRow = z.infer<typeof TimesheetRowSchema>;
 
@@ -2258,6 +2293,8 @@ export const PublishPreflightResponseSchema = /* @__PURE__ */ (() => z.object({
       gapHours: z.number().nonnegative(),
       /** ISO start of the SECOND (short-rested) shift. */
       startsAt: z.string().datetime(),
+      /** That shift's store zone (one shift, one time). */
+      timezone: z.string().optional(),
       associateId: UuidSchema.optional(),
       /** [first, second] — the two shifts the gap sits between. */
       shiftIds: z.array(UuidSchema).optional(),
@@ -3150,6 +3187,10 @@ export const PayrollRunPreviewItemSchema = /* @__PURE__ */ (() => z.object({
   rateSource: z.enum(['OVERRIDE', 'COMP', 'DEFAULT', 'SALARY']).optional(),
   regularHours: z.number().nonnegative(),
   overtimeHours: z.number().nonnegative(),
+  /** The labor-rules engine's split: hours past a live jurisdiction's double-time line (0 elsewhere), and the multipliers paid. */
+  doubleTimeHours: z.number().nonnegative().optional(),
+  overtimeMultiplier: z.number().positive().optional(),
+  doubleMultiplier: z.number().positive().optional(),
   grossPay: z.number().nonnegative(),
   preTaxDeductions: z.number().nonnegative(),
   /** Gap 1 — 401(k)/403(b) sub-bucket; reduces FIT only, not FICA/Medicare. */
@@ -5368,8 +5409,12 @@ export const AutoFillCandidateSchema = /* @__PURE__ */ (() => z.object({
   hourlyRateCents: z.number().int().nonnegative().nullable().optional(),
   /** This shift's cost at that rate (straight time). */
   shiftCostCents: z.number().int().nonnegative().nullable().optional(),
-  /** The overtime premium this assignment adds (the half-time on the hours past 40). */
+  /** The overtime premium this assignment adds over straight time, as the paycheck would split the week (the labor-rules engine). */
   otPremiumCents: z.number().int().nonnegative().optional(),
+  /** Minutes of overtime and double time this assignment adds to the person's week (the engine's split: past 40, or a live daily rule). */
+  otMinutes: z.number().int().nonnegative().optional(),
+  /** Whether taking this shift adds overtime — the server's answer; the web never re-derives it from 40 hours. */
+  wouldBeOvertime: z.boolean().optional(),
   /** Last 90 days: late arrivals, no-shows, call-outs. */
   reliability: z.object({
     late: z.number().int().nonnegative(),
@@ -7513,6 +7558,8 @@ export const StatementSnapshotSchema = /* @__PURE__ */ (() => z.object({
     hours: z.number(),
     regularHours: z.number(),
     otHours: z.number(),
+    /** Hours past a live jurisdiction's double-time line, billed like overtime (lib/clientStatement); absent when none. */
+    doubleTimeHours: z.number().optional(),
     /** What the client owes: subtotal + sales tax. */
     amount: z.number(),
     hoursAmount: z.number().optional(),
@@ -7818,6 +7865,12 @@ export const REPORT_PERIOD_TOKENS = [
   'last-month',
   'month-to-date',
   'year-to-date',
+  // Date-range presets (HR walk 17: "terminations last quarter").
+  'last-quarter',
+  'quarter-to-date',
+  'last-30-days',
+  'last-90-days',
+  'last-year',
 ] as const;
 export const ReportPeriodTokenSchema = /* @__PURE__ */ (() => z.enum(REPORT_PERIOD_TOKENS))();
 export type ReportPeriodToken = z.infer<typeof ReportPeriodTokenSchema>;
@@ -7828,6 +7881,11 @@ export const REPORT_PERIOD_LABELS: Record<ReportPeriodToken, string> = {
   'last-month': 'Last month',
   'month-to-date': 'Month to date',
   'year-to-date': 'Year to date',
+  'last-quarter': 'Last quarter',
+  'quarter-to-date': 'Quarter to date',
+  'last-30-days': 'Last 30 days',
+  'last-90-days': 'Last 90 days',
+  'last-year': 'Last year',
 };
 
 /* -------------------------------------------------------------------------- *

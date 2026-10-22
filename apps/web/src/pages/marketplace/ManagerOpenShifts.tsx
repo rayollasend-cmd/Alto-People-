@@ -8,8 +8,8 @@ import { ApiError } from '@/lib/api';
 import { listShifts } from '@/lib/schedulingApi';
 import { listPendingClaims } from '@/lib/qualApi';
 import { listCallOuts, type CallOutItem } from '@/lib/callOutsApi';
-import { coverShift } from '@/lib/floorApi';
-import { useI18n } from '@/lib/i18n';
+import { listInviteCounts, rebroadcastShift, type InviteCounts, type RebroadcastResult } from '@/lib/openShiftInvitesApi';
+import { useI18n, type Translate } from '@/lib/i18n';
 import { fmtRelativeDayTz, fmtShiftRangeTz, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
@@ -21,8 +21,11 @@ import { Badge, Button, Card, CardContent, EmptyState, ErrorBanner, SkeletonRows
  * no list of open shifts — a dead end four clicks from the shifts
  * themselves. This is the real list: published, unfilled and not over
  * (the shared isOpenShift), soonest first, with what has already been
- * tried for each one (pending claims, a call-out's cover) and the two
- * things to do next: Assign, or ask the bench.
+ * tried for each one (who on the bench was asked and who passed, pending
+ * claims, a call-out's cover) and the two things to do next: Assign, or
+ * Rebroadcast — ask the eligible bench again (lib/openShiftInvites on the
+ * API: availability, time off and quiet hours respected; nobody who said
+ * no, nobody twice inside half an hour).
  */
 
 export const MANAGER_OPEN_WINDOW_DAYS = 14;
@@ -42,10 +45,19 @@ export function openShiftsForManager(shifts: readonly Shift[], now: Date = new D
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
 }
 
+/** The toast after a Rebroadcast: what went out, what waits, or why nobody was asked. */
+export function rebroadcastMessage(r: RebroadcastResult, t: Translate): { tone: 'success' | 'info'; text: string } {
+  if (r.sent > 0) {
+    const sent = t('mk.mgr.rebroadcastSent', { n: r.sent });
+    return { tone: 'success', text: r.held > 0 ? `${sent} ${t('mk.mgr.rebroadcastHeld', { n: r.held })}` : sent };
+  }
+  if (r.skipped.recent > 0) return { tone: 'info', text: t('mk.mgr.rebroadcastRecent') };
+  return { tone: 'info', text: t('mk.mgr.rebroadcastNone') };
+}
+
 export function ManagerOpenShifts() {
   const { t } = useI18n();
   const qc = useQueryClient();
-  const [asked, setAsked] = useState<Set<string>>(() => new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const from = ymdLocal(new Date());
@@ -57,6 +69,8 @@ export function ManagerOpenShifts() {
   const claimsQuery = useQuery({ queryKey: ['ClaimsTab', 'rows'], queryFn: () => listPendingClaims(), retry: false });
   // Cover state is decoration: a failed read leaves the rows without it.
   const callOutsQuery = useQuery({ queryKey: ['call-outs', 'week'], queryFn: () => listCallOuts('week'), retry: false });
+  // Who was asked and who passed is decoration too: a failed read leaves the counts off.
+  const invitesQuery = useQuery({ queryKey: ['open-shift-invites', MANAGER_OPEN_WINDOW_DAYS], queryFn: () => listInviteCounts(MANAGER_OPEN_WINDOW_DAYS), retry: false });
 
   const rows = useMemo(() => (shiftsQuery.data ? openShiftsForManager(shiftsQuery.data.shifts) : null), [shiftsQuery.data]);
   const claimsByShift = useMemo(() => {
@@ -69,16 +83,22 @@ export function ManagerOpenShifts() {
     for (const c of callOutsQuery.data?.items ?? []) m.set(c.shift.id, c.cover);
     return m;
   }, [callOutsQuery.data]);
+  const invitesByShift = useMemo(() => {
+    const m = new Map<string, InviteCounts>();
+    for (const c of invitesQuery.data?.counts ?? []) m.set(c.shiftId, c);
+    return m;
+  }, [invitesQuery.data]);
 
-  const askBench = async (s: Shift) => {
+  const rebroadcast = async (s: Shift) => {
     setBusyId(s.id);
     try {
-      await coverShift(s.id);
-      setAsked((prev) => new Set(prev).add(s.id));
-      toast.success(t('mk.mgr.asked'));
-      void qc.invalidateQueries({ queryKey: ['call-outs'] });
+      const r = await rebroadcastShift(s.id);
+      const msg = rebroadcastMessage(r, t);
+      if (msg.tone === 'success') toast.success(msg.text);
+      else toast(msg.text);
+      void qc.invalidateQueries({ queryKey: ['open-shift-invites'] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : t('mk.mgr.askFailed'));
+      toast.error(err instanceof ApiError ? err.message : t('mk.mgr.rebroadcastFailed'));
     } finally {
       setBusyId(null);
     }
@@ -130,7 +150,7 @@ export function ManagerOpenShifts() {
         {rows.map((s, i) => {
           const claims = claimsByShift.get(s.id) ?? 0;
           const cover = coverByShift.get(s.id);
-          const benchAsked = asked.has(s.id) || cover?.state === 'looking';
+          const invites = invitesByShift.get(s.id);
           return (
             <li key={s.id} style={enterStagger(i)} className="animate-enter">
               <Card>
@@ -147,6 +167,8 @@ export function ManagerOpenShifts() {
                       </span>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      {invites && invites.sent > 0 && <Badge variant="info">{t('mk.mgr.invited', { n: invites.sent })}</Badge>}
+                      {invites && invites.declined > 0 && <Badge variant="default">{t('mk.mgr.passed', { n: invites.declined })}</Badge>}
                       {claims > 0 && <Badge variant="pending">{t('mk.mgr.claims', { n: claims })}</Badge>}
                       {cover?.state === 'looking' && <Badge variant="accent">{t('mk.mgr.coverLooking')}</Badge>}
                       {cover?.state === 'uncovered' && <Badge variant="destructive">{t('mk.mgr.coverUncovered')}</Badge>}
@@ -156,12 +178,12 @@ export function ManagerOpenShifts() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => void askBench(s)}
-                      disabled={benchAsked || busyId === s.id}
+                      onClick={() => void rebroadcast(s)}
+                      disabled={busyId === s.id}
                       loading={busyId === s.id}
                     >
                       <Megaphone className="h-3.5 w-3.5" aria-hidden="true" />
-                      {benchAsked ? t('mk.mgr.asked') : t('mk.mgr.askBench')}
+                      {t('mk.mgr.rebroadcast')}
                     </Button>
                     <Button size="sm" asChild>
                       <Link to={`/scheduling?view=list&open=1&shift=${s.id}`}>

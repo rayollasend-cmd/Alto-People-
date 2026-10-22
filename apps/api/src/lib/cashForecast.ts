@@ -25,6 +25,16 @@ import { tenantIdForWrite } from './tenant.js';
  *   garnishments     pending remittances, assumed a week after payday
  *   bills            approved, unpaid vendor bills on their due date
  *                    (overdue ones expected this week)
+ *   retirement       401(k)/403(b) money withheld and matched but not yet
+ *                    sent to the recordkeeper (RetirementContribution rows
+ *                    on no SENT file), a few days after its payday; and,
+ *                    for each forecast payday, the same share of net the
+ *                    last paid run sent (estimated)
+ *   benefit carriers each carrier's monthly premium on the 1st: the active
+ *                    insurance elections' employee + employer share per
+ *                    check, times checks a year over 12 (estimated). A
+ *                    month already billed (an approved bill from a vendor
+ *                    of the carrier's name) is left to the bill line
  *   receivables      unpaid FINAL statements on their due date (terms),
  *                    overdue ones expected within the week
  *
@@ -34,7 +44,7 @@ import { tenantIdForWrite } from './tenant.js';
  * under the floor.
  */
 
-export type CashLineKind = 'PAYROLL' | 'TAX_DEPOSIT' | 'GARNISHMENT' | 'RECEIVABLE' | 'BILL';
+export type CashLineKind = 'PAYROLL' | 'TAX_DEPOSIT' | 'GARNISHMENT' | 'RECEIVABLE' | 'BILL' | 'RETIREMENT' | 'BENEFITS';
 
 export interface CashLine {
   date: string;
@@ -84,6 +94,31 @@ const addDays = (ymd: string, n: number) => {
 };
 const ymdOf = (d: Date) => d.toISOString().slice(0, 10);
 
+/** Days after a payday the plan's money is sent to the recordkeeper (DOL: as soon as it can be segregated). */
+export const RETIREMENT_REMIT_LAG_DAYS = 3;
+/** How far back an unsent contribution still counts as owed (older ones were sent outside Alto). */
+const RETIREMENT_LOOKBACK_DAYS = 45;
+const CHECKS_PER_YEAR: Record<string, number> = { WEEKLY: 52, BIWEEKLY: 26, SEMIMONTHLY: 24, MONTHLY: 12 };
+/** Plans whose premium goes to an insurance carrier (HSA / FSA / retirement money goes elsewhere). */
+const CARRIER_PLAN_KINDS = ['HEALTH_MEDICAL', 'DENTAL', 'VISION', 'LIFE_INSURANCE', 'DISABILITY'] as const;
+
+type ContributionRow = {
+  preTax: unknown;
+  roth: unknown;
+  catchUpPreTax: unknown;
+  catchUpRoth: unknown;
+  employerMatch: unknown;
+  safeHarbor: unknown;
+  loanRepayments: unknown;
+};
+/** Everything one paycheck sends the plan: deferrals, catch-up, match, safe harbor and loan repayments. */
+export function contributionTotal(c: ContributionRow): number {
+  const loans = Array.isArray(c.loanRepayments)
+    ? (c.loanRepayments as Array<{ amount?: unknown }>).reduce((sum, l) => sum + (Number(l?.amount) || 0), 0)
+    : 0;
+  return Number(c.preTax) + Number(c.roth) + Number(c.catchUpPreTax) + Number(c.catchUpRoth) + Number(c.employerMatch) + Number(c.safeHarbor) + loans;
+}
+
 export async function cashForecast(now: Date = new Date(), opts: { tenantId?: string; weeks?: number } = {}): Promise<CashForecast> {
   const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const horizonWeeks = opts.weeks ?? 4;
@@ -107,8 +142,8 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     (await prisma.payrollSchedule.findFirst({ where: { ...live, clientId: null }, orderBy: { createdAt: 'asc' }, select })) ??
     (await prisma.payrollSchedule.findFirst({ where: live, orderBy: { createdAt: 'asc' }, select }));
   const [lastRun, profile] = await Promise.all([
-    prisma.payrollRun.findFirst({ where: { ...T, status: 'DISBURSED', kind: 'REGULAR' }, orderBy: { disbursedAt: 'desc' }, select: { totalNet: true, totalTax: true, totalGross: true, items: { select: { employerFica: true, employerMedicare: true, fica: true, medicare: true, federalWithholding: true }, take: 10_000 } } }),
-    prisma.submitterProfile.findUnique({ where: { id: 'singleton' }, select: { depositSchedule: true } }),
+    prisma.payrollRun.findFirst({ where: { ...T, status: 'DISBURSED', kind: 'REGULAR' }, orderBy: { disbursedAt: 'desc' }, select: { id: true, totalNet: true, totalTax: true, totalGross: true, items: { select: { employerFica: true, employerMedicare: true, fica: true, medicare: true, federalWithholding: true }, take: 10_000 } } }),
+    prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { depositSchedule: true } }),
   ]);
   const depositSchedule = profile?.depositSchedule ?? 'MONTHLY';
   // The federal deposit a payday creates, as a share of net, from the last run paid.
@@ -119,6 +154,17 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
       0,
     );
     depositPerNet = fed / Number(lastRun.totalNet);
+  }
+  // What the last paid run sent the retirement plans, as a share of its net:
+  // each forecast payday sends about the same.
+  let retirementPerNet = 0;
+  if (lastRun && Number(lastRun.totalNet) > 0) {
+    const sent = await prisma.retirementContribution.findMany({
+      where: { ...T, payrollRunId: lastRun.id },
+      select: { preTax: true, roth: true, catchUpPreTax: true, catchUpRoth: true, employerMatch: true, safeHarbor: true, loanRepayments: true },
+      take: 10_000,
+    });
+    retirementPerNet = sent.reduce((sum, c) => sum + contributionTotal(c), 0) / Number(lastRun.totalNet);
   }
 
   if (schedule) {
@@ -200,9 +246,21 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
             label: `Federal deposit for the ${win.payDate} payday`,
             amount: -deposit,
             confidence: 'estimated',
-            linkUrl: '/payroll/tax',
+            linkUrl: '/payroll/taxes?tab=deposits',
           });
         }
+      }
+      const retirement = round2(net * retirementPerNet);
+      const remitOn = addDays(win.payDate, RETIREMENT_REMIT_LAG_DAYS);
+      if (retirement > 0 && inHorizon(remitOn)) {
+        lines.push({
+          date: remitOn,
+          kind: 'RETIREMENT',
+          label: `Retirement plan contributions from the ${win.payDate} payday`,
+          amount: -retirement,
+          confidence: 'estimated',
+          linkUrl: '/payroll/retirement',
+        });
       }
     }
   }
@@ -221,7 +279,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
       label: `${d.kind === 'FUTA' ? 'FUTA' : 'Federal 941'} deposit — ${d.periodLabel}${overdue ? ' (past due)' : ''}`,
       amount: -round2(Number(d.amount)),
       confidence: overdue ? 'overdue' : 'scheduled',
-      linkUrl: '/payroll/tax',
+      linkUrl: '/payroll/taxes?tab=deposits',
     });
   }
 
@@ -241,7 +299,45 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
       label: `Remit to ${r.payeeName}`,
       amount: -round2(Number(r.amount)),
       confidence: due < today ? 'overdue' : 'scheduled',
-      linkUrl: '/payroll/tax',
+      linkUrl: '/payroll/garnishments?tab=remittances',
+    });
+  }
+
+  // ---- Retirement plans: withheld and matched, not yet sent ---------------
+  const unsent = await prisma.retirementContribution.findMany({
+    where: { ...T, payDate: { gte: new Date(`${addDays(today, -RETIREMENT_LOOKBACK_DAYS)}T00:00:00Z`) } },
+    select: { planId: true, payDate: true, fileId: true, preTax: true, roth: true, catchUpPreTax: true, catchUpRoth: true, employerMatch: true, safeHarbor: true, loanRepayments: true, plan: { select: { name: true } } },
+    take: 20_000,
+  });
+  const fileIds = [...new Set(unsent.map((c) => c.fileId).filter((id): id is string => !!id))];
+  const sentFiles = new Set(
+    fileIds.length
+      ? (await prisma.retirementFile.findMany({ where: { id: { in: fileIds }, status: 'SENT' }, select: { id: true } })).map((f) => f.id)
+      : [],
+  );
+  const owedByPlanDay = new Map<string, { plan: string; payDate: string; amount: number }>();
+  for (const c of unsent) {
+    if (c.fileId && sentFiles.has(c.fileId)) continue;
+    const payDate = ymdOf(c.payDate);
+    const key = `${c.planId}|${payDate}`;
+    const cur = owedByPlanDay.get(key) ?? { plan: c.plan.name, payDate, amount: 0 };
+    cur.amount += contributionTotal(c);
+    owedByPlanDay.set(key, cur);
+  }
+  for (const o of owedByPlanDay.values()) {
+    const amount = round2(o.amount);
+    if (amount <= 0) continue;
+    const due = addDays(o.payDate, RETIREMENT_REMIT_LAG_DAYS);
+    const overdue = due < today;
+    const date = overdue ? today : due;
+    if (!inHorizon(date)) continue;
+    lines.push({
+      date,
+      kind: 'RETIREMENT',
+      label: `${o.plan} — contributions from the ${o.payDate} payday${overdue ? ' (not sent yet)' : ''}`,
+      amount: -amount,
+      confidence: overdue ? 'overdue' : 'scheduled',
+      linkUrl: '/payroll/retirement',
     });
   }
 
@@ -264,6 +360,61 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
       confidence: overdue ? 'overdue' : 'scheduled',
       linkUrl: `/books/bills/${b.id}`,
     });
+  }
+
+  // ---- Benefit carriers: each month's premium on the 1st -------------------
+  const firsts: string[] = [];
+  for (let d = `${today.slice(0, 7)}-01`; d < end; ) {
+    if (d >= today) firsts.push(d);
+    const [y, m] = d.split('-').map(Number) as [number, number];
+    d = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  }
+  if (firsts.length > 0) {
+    const checksPerYear = CHECKS_PER_YEAR[schedule?.frequency ?? 'BIWEEKLY'] ?? 26;
+    const elections = await prisma.benefitsEnrollment.findMany({
+      where: {
+        ...T,
+        plan: { kind: { in: [...CARRIER_PLAN_KINDS] } },
+        effectiveDate: { lte: new Date(`${firsts[firsts.length - 1]}T00:00:00Z`) },
+        OR: [{ terminationDate: null }, { terminationDate: { gt: new Date(`${firsts[0]}T00:00:00Z`) } }],
+        associate: { deletedAt: null },
+      },
+      select: {
+        electedAmountCentsPerPeriod: true,
+        effectiveDate: true,
+        terminationDate: true,
+        plan: { select: { name: true, carrierId: true, employerContributionCentsPerPeriod: true } },
+      },
+      take: 50_000,
+    });
+    const carrierIds = [...new Set(elections.map((e) => e.plan.carrierId).filter((id): id is string => !!id))];
+    const carriers = carrierIds.length ? await prisma.benefitCarrier.findMany({ where: { id: { in: carrierIds } }, select: { id: true, name: true } }) : [];
+    const carrierName = new Map(carriers.map((c) => [c.id, c.name]));
+    const norm = (x: string) => x.trim().toLowerCase();
+    const billed = new Set(bills.map((b) => `${norm(b.vendor.name)}|${ymdOf(b.dueDate).slice(0, 7)}`));
+    for (const first of firsts) {
+      const on = new Date(`${first}T00:00:00Z`);
+      const byPayee = new Map<string, number>();
+      for (const e of elections) {
+        if (e.effectiveDate > on || (e.terminationDate && e.terminationDate <= on)) continue;
+        const payee = (e.plan.carrierId && carrierName.get(e.plan.carrierId)) || e.plan.name;
+        const perCheckCents = e.electedAmountCentsPerPeriod + e.plan.employerContributionCentsPerPeriod;
+        byPayee.set(payee, (byPayee.get(payee) ?? 0) + perCheckCents);
+      }
+      for (const [payee, perCheckCents] of byPayee) {
+        const monthly = round2((perCheckCents * checksPerYear) / 12 / 100);
+        if (monthly <= 0) continue;
+        if (billed.has(`${norm(payee)}|${first.slice(0, 7)}`)) continue; // the carrier's invoice is already a bill line
+        lines.push({
+          date: first,
+          kind: 'BENEFITS',
+          label: `${payee} premiums — ${new Date(`${first}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })}`,
+          amount: -monthly,
+          confidence: 'estimated',
+          linkUrl: '/benefits/carriers',
+        });
+      }
+    }
   }
 
   // ---- Receivables -------------------------------------------------------

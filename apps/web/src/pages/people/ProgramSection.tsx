@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Plane } from 'lucide-react';
 import { PROGRAM_TYPE_LABELS, type ProgramSummary } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { fmtDate } from '@/lib/format';
 import { getAssociateProgram } from '@/lib/programsApi';
 
@@ -26,7 +27,7 @@ export function ProgramSection({ associateId }: { associateId: string }) {
     queryFn: () => getAssociateProgram(associateId).catch(() => ({ program: null, denied: true as const })),
     retry: false,
   });
-  if (q.isLoading) return <div className="text-xs text-silver/70">Loading…</div>;
+  if (q.isLoading) return <Skeleton className="h-16" />;
   const data = q.data;
   if (!data || ('denied' in data && data.denied)) return null;
   const p = data.program;

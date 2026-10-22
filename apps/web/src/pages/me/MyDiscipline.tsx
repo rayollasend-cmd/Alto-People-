@@ -182,7 +182,7 @@ function ActionCard({
               onChange={(e) => setSignature(e.target.value)}
               placeholder={a.associateName}
               invalid={signature.trim().length > 0 && !signatureMatches}
-              aria-label="Signature"
+              aria-label={t('record.signatureAria')}
             />
             {signature.trim().length > 0 && !signatureMatches && (
               <p role="alert" className="text-xs text-alert">

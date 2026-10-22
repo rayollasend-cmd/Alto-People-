@@ -191,6 +191,8 @@ export interface DutyMatch {
   hours: number;
   store: string | null;
   client: string | null;
+  /** The store's IANA zone: the offer reads the shift on its clock. */
+  timezone?: string | null;
 }
 
 export const getWcSummary = () => apiFetch<WcSummary>('/claims/workers-comp/summary');

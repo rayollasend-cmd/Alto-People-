@@ -47,6 +47,8 @@ import { countMovesThisWeek, countUnassigned } from './paySchedules.js';
 import { i9ReverificationWhere, i9RetentionWhere } from '../lib/hiringCompliance.js';
 import { certificationRequired } from '../lib/leaveOfAbsence.js';
 import { coverageGapPath, coverageGapsForUser } from '../lib/coverageGaps.js';
+import { overdueContractDuties, seesContractDuties } from '../lib/contractDuties.js';
+import { idleDraftsWhere } from '../lib/applicationFilters.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -295,16 +297,17 @@ const SOURCES: SourceDef[] = [
       }),
   },
   {
-    // Role walk HR 2: invites nobody has touched in a week. The applications
-    // list has no "idle" filter of its own, so the link opens the drafts.
+    // Role walk HR 2: invites nobody has touched in a week. The link opens
+    // the applications list's "Idle drafts" filter — the same predicate
+    // (lib/applicationFilters.IDLE_DRAFT_DAYS), so the count is the list.
     key: 'onboarding-stuck',
     label: 'Onboarding drafts gone quiet',
     description: 'Invited new hires who have not moved their paperwork in more than 7 days — a nudge now saves the start date.',
-    path: '/onboarding?status=DRAFT',
+    path: '/onboarding?status=IDLE_DRAFTS',
     visible: (u) => can(u, 'view:onboarding') && can(u, 'manage:onboarding'),
     count: (u) =>
       prisma.application.count({
-        where: { ...scopeApplications(u), status: 'DRAFT', updatedAt: { lt: new Date(Date.now() - 7 * DAY_MS) } },
+        where: { ...scopeApplications(u), ...idleDraftsWhere() },
       }),
   },
   {
@@ -444,7 +447,8 @@ const SOURCES: SourceDef[] = [
     urgency: 'legal',
     label: 'Tax filings rejected',
     description: 'The agency rejected an e-filed form. Fix what it named and file again.',
-    path: '/payroll/tax',
+    // The Returns tab lists the rejected W-2 / 1099 forms first (the old /payroll/tax redirects there too).
+    path: '/payroll/taxes?tab=returns',
     visible: (u) => can(u, 'process:payroll'),
     count: () => prisma.taxForm.count({ where: { tenantId: tenantIdForWrite(), efileStatus: 'REJECTED' } }),
   },
@@ -632,6 +636,25 @@ const SOURCES: SourceDef[] = [
       prisma.associateQualification.count({
         where: { AND: [expiringQualificationsWhere(u), { expiresAt: { lte: new Date(Date.now() + 30 * DAY_MS) } }] },
       }),
+  },
+  {
+    // Role walk HR 2: the client contracts' recurring duties (monthly report,
+    // Fieldglass timesheet, insurance certificates…) past due and not
+    // confirmed — one read with the HR home (lib/contractDuties).
+    key: 'contract-duties',
+    urgency: 'legal',
+    label: 'Contract duties overdue',
+    description: 'Duties the client contracts require that are past due and not confirmed on the compliance scorecard.',
+    path: '/compliance?tab=scorecard',
+    visible: (u) => seesContractDuties(u),
+    count: async (u) => {
+      const d = await overdueContractDuties(prisma, u);
+      return {
+        count: d.count,
+        dueAt: d.oldestDue ? `${d.oldestDue}T00:00:00.000Z` : null,
+        description: d.count ? `${d.items.map((i) => i.label).slice(0, 2).join('; ')}${d.count > 2 ? `; and ${d.count - 2} more` : ''}. The oldest was due ${d.oldestDue}.` : 'Every contract duty is confirmed for its period.',
+      };
+    },
   },
   {
     key: 'tasks',
@@ -888,6 +911,7 @@ const SOURCES: SourceDef[] = [
   },
   {
     key: 'payroll-missed-paydays',
+    urgency: 'money',
     label: 'Paydays with no run',
     description: 'Scheduled paydays that passed with no payroll run, and the approved hours they left unpaid. Pay them off-cycle from the payroll home.',
     path: '/payroll?ledger=missed',

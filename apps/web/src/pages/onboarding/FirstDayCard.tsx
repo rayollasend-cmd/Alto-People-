@@ -7,7 +7,7 @@ import { ApiError } from '@/lib/api';
 import { getFirstDay, patchFirstDay, type FirstDay } from '@/lib/onboardingApi';
 import { assignKioskPin } from '@/lib/kiosk99Api';
 import { assignShift, listShifts } from '@/lib/schedulingApi';
-import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { fmtDate, fmtShiftTz, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { AssociatePicker } from '@/components/ui/AssociatePicker';
 import { Button } from '@/components/ui/Button';
@@ -168,7 +168,7 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
         <Line done={!!fd.firstShift} label="First shift">
           {fd.firstShift ? (
             <span>
-              {fmtDateTime(fd.firstShift.startsAt)}
+              {fmtShiftTz(fd.firstShift.startsAt, fd.firstShift.timezone)}
               {fd.firstShift.locationName ? ` · ${fd.firstShift.locationName}` : ''}
             </span>
           ) : !fd.store ? (
@@ -263,7 +263,7 @@ function OpenShiftsPicker({
       {shifts.map((s) => (
         <li key={s.id} className="flex items-center justify-between gap-2 rounded-md border border-line px-3 py-1.5 text-sm">
           <span className="min-w-0 truncate text-ink">
-            {fmtDateTime(s.startsAt)} · {s.position}
+            {fmtShiftTz(s.startsAt, s.timezone)} · {s.position}
           </span>
           <Button
             size="sm"

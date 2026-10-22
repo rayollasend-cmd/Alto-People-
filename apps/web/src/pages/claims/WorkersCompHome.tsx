@@ -5,7 +5,7 @@ import { ArrowLeft, Download, HardHat, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
-import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney, fmtShiftTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   answerDutyOffer,
@@ -537,7 +537,7 @@ function DutyCard({ c, onChanged }: { c: WcClaim; onChanged: () => void }) {
           ) : (
             <ul className="divide-y divide-line">
               {matches.data.shifts.map((s) => {
-                const label = `${s.position}, ${fmtDateTime(s.startsAt)} (${s.hours} h)${s.store ? ` at ${s.store}` : ''}.`;
+                const label = `${s.position}, ${fmtShiftTz(s.startsAt, s.timezone)} (${s.hours} h)${s.store ? ` at ${s.store}` : ''}.`;
                 return (
                   <li key={s.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
                     <span className="min-w-0 flex-1 text-ink">{label}</span>

@@ -2,8 +2,10 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { notifyAssociate } from './notify.js';
-import { splitWeeklyOvertime } from './payroll.js';
+import { paidMinutesForRange } from '@alto-people/shared';
 import { startOfWeekForSite } from './timeAnomalies.js';
+import { loadLiveRules } from './laborRules/live.js';
+import { plannedEntry, splitHours, sumHours, type HoursEntry, type PayRules } from './laborRules/hours.js';
 import { assignWithinRules } from './shiftAssign.js';
 import { orgSettingIdFor } from './branding.js';
 
@@ -17,8 +19,17 @@ import { orgSettingIdFor } from './branding.js';
  *   an offer that jumps the line needs a reason, and the people passed over
  *   are recorded as skipped with that reason. No seniority lists.
  *
- *   "Lately" is the last four workweeks of approved time.
+ *   "Lately" is the last four workweeks of approved time. Overtime is the
+ *   labor-rules engine's (lib/laborRules/hours): the hours the paycheck pays
+ *   above straight time — past 40, or a live jurisdiction's daily and
+ *   double-time rules — so a California 10-hour day counts.
  */
+
+/** Overtime plus double time in a person's hours, as pay splits them. */
+const overtimeIn = (rules: PayRules, entries: readonly HoursEntry[]): number => {
+  const t = sumHours(splitHours(rules, entries).entries);
+  return t.overtimeHours + t.doubleTimeHours;
+};
 
 type Db = PrismaClient;
 const HOUR = 3_600_000;
@@ -38,10 +49,12 @@ export interface RotationCandidate {
   offer: { id: string; status: string; offeredAt: string; respondedAt: string | null; note: string | null } | null;
 }
 
-type ShiftRow = { id: string; clientId: string | null; locationId: string | null; startsAt: Date; endsAt: Date; status: string; assignedAssociateId: string | null; locationRel: { timezone: string | null } | null };
+const SITE_SELECT = { select: { id: true, state: true, city: true, timezone: true } } as const;
+
+type ShiftRow = { id: string; clientId: string | null; locationId: string | null; startsAt: Date; endsAt: Date; status: string; assignedAssociateId: string | null; locationRel: { id: string; state: string | null; city: string | null; timezone: string | null } | null };
 
 async function loadShift(db: Db, tenantId: string, shiftId: string, scope: Prisma.ShiftWhereInput): Promise<ShiftRow> {
-  const shift = await db.shift.findFirst({ where: { AND: [{ id: shiftId, tenantId }, scope] }, select: { id: true, clientId: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true, locationRel: { select: { timezone: true } } } });
+  const shift = await db.shift.findFirst({ where: { AND: [{ id: shiftId, tenantId }, scope] }, select: { id: true, clientId: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true, locationRel: SITE_SELECT } });
   if (!shift) throw new HttpError(404, 'shift_not_found', 'Shift not found.');
   return shift;
 }
@@ -50,7 +63,6 @@ async function loadShift(db: Db, tenantId: string, shiftId: string, scope: Prism
 export async function rankForShift(db: Db, tenantId: string, shiftId: string, scope: Prisma.ShiftWhereInput): Promise<{ shift: ShiftRow; candidates: RotationCandidate[]; enabled: boolean }> {
   const shift = await loadShift(db, tenantId, shiftId, scope);
   const tz = shift.locationRel?.timezone ?? null;
-  const hours = (shift.endsAt.getTime() - shift.startsAt.getTime()) / HOUR;
   const weekStart = startOfWeekForSite(shift.startsAt, tz);
   const weekEnd = new Date(weekStart.getTime() + 7 * 86_400_000);
   // Placed at the shift's store, or claiming it.
@@ -64,20 +76,27 @@ export async function rankForShift(db: Db, tenantId: string, shiftId: string, sc
   if (!people.length) return { shift, candidates: [], enabled: setting?.otEqualization ?? false };
   const pid = people.map((p) => p.id);
   const since = new Date(weekStart.getTime() - WEEKS * 7 * 86_400_000);
-  const [weekShifts, recent, offers] = await Promise.all([
-    db.shift.findMany({ where: { assignedAssociateId: { in: pid }, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: weekStart, lt: weekEnd }, id: { not: shift.id } }, select: { assignedAssociateId: true, startsAt: true, endsAt: true } }),
-    db.timeEntry.findMany({ where: { associateId: { in: pid }, status: 'APPROVED', clockInAt: { gte: since, lt: weekStart } }, select: { associateId: true, status: true, clockInAt: true, clockOutAt: true, breaks: { select: { startedAt: true, endedAt: true } }, location: { select: { timezone: true } } } }),
+  const [weekShifts, recent, offers, rules] = await Promise.all([
+    db.shift.findMany({ where: { assignedAssociateId: { in: pid }, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: weekStart, lt: weekEnd }, id: { not: shift.id } }, select: { assignedAssociateId: true, startsAt: true, endsAt: true, locationRel: SITE_SELECT } }),
+    db.timeEntry.findMany({ where: { associateId: { in: pid }, status: 'APPROVED', clockInAt: { gte: since, lt: weekStart } }, select: { associateId: true, status: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: SITE_SELECT } }),
     db.overtimeOffer.findMany({ where: { shiftId: shift.id }, orderBy: { offeredAt: 'desc' } }),
+    loadLiveRules(db, tenantId),
   ]);
+  const planned = (s: { startsAt: Date; endsAt: Date; locationRel: ShiftRow['locationRel'] }) =>
+    plannedEntry({ startsAt: s.startsAt, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(s.startsAt, s.endsAt), site: s.locationRel });
+  const target = planned(shift);
   // Overlapping a shift they already have: not a candidate.
   const busy = new Set(weekShifts.filter((s) => s.startsAt < shift.endsAt && s.endsAt > shift.startsAt).map((s) => s.assignedAssociateId!));
   const candidates = people
     .filter((p) => !busy.has(p.id))
     .map((p) => {
-      const weekHours = round2(weekShifts.filter((s) => s.assignedAssociateId === p.id).reduce((a, s) => a + (s.endsAt.getTime() - s.startsAt.getTime()) / HOUR, 0));
-      const wouldAdd = round2(Math.max(0, weekHours + hours - 40) - Math.max(0, weekHours - 40));
+      const theirWeek = weekShifts.filter((s) => s.assignedAssociateId === p.id);
+      const weekHours = round2(theirWeek.reduce((a, s) => a + (s.endsAt.getTime() - s.startsAt.getTime()) / HOUR, 0));
+      // What taking it adds in overtime, as the paycheck would split their week.
+      const others = theirWeek.map(planned);
+      const wouldAdd = round2(Math.max(0, overtimeIn(rules, [...others, target]) - overtimeIn(rules, others)));
       const mine = recent.filter((e) => e.associateId === p.id);
-      const recentOvertimeHours = mine.length ? splitWeeklyOvertime(mine.map((e) => ({ ...e, location: e.location?.timezone ? { timezone: e.location.timezone } : null }))).overtimeHours : 0;
+      const recentOvertimeHours = mine.length ? round2(overtimeIn(rules, mine.map((e) => ({ ...e, site: e.location })))) : 0;
       const o = offers.find((x) => x.associateId === p.id) ?? null;
       return {
         associateId: p.id,
@@ -148,9 +167,10 @@ export async function equalizationReport(db: Db, tenantId: string, associateScop
   const since = new Date(Date.now() - weeks * 7 * 86_400_000);
   const entries = await db.timeEntry.findMany({
     where: { status: 'APPROVED', clockInAt: { gte: since }, associate: { AND: [{ tenantId, deletedAt: null, deactivatedAt: null }, associateScope] } },
-    select: { associateId: true, status: true, clockInAt: true, clockOutAt: true, breaks: { select: { startedAt: true, endedAt: true } }, location: { select: { timezone: true } }, associate: { select: { firstName: true, lastName: true } } },
+    select: { associateId: true, status: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: SITE_SELECT, associate: { select: { firstName: true, lastName: true } } },
     take: 50_000,
   });
+  const rules = await loadLiveRules(db, tenantId);
   const offers = await db.overtimeOffer.groupBy({ by: ['associateId', 'status'], where: { tenantId, offeredAt: { gte: since } }, _count: { _all: true } });
   const byPerson = new Map<string, { name: string; list: typeof entries }>();
   for (const e of entries) {
@@ -159,9 +179,10 @@ export async function equalizationReport(db: Db, tenantId: string, associateScop
     byPerson.set(e.associateId, row);
   }
   const rows = [...byPerson.entries()].map(([associateId, v]) => {
-    const split = splitWeeklyOvertime(v.list.map((e) => ({ ...e, location: e.location?.timezone ? { timezone: e.location.timezone } : null })));
+    // As pay splits them: overtime here includes a live jurisdiction's double time.
+    const split = splitHours(rules, v.list.map((e) => ({ ...e, site: e.location })));
     const count = (s: string) => offers.find((o) => o.associateId === associateId && o.status === s)?._count._all ?? 0;
-    return { associateId, name: v.name, overtimeHours: split.overtimeHours, regularHours: split.regularHours, offered: count('OFFERED') + count('ACCEPTED') + count('DECLINED') + count('EXPIRED'), accepted: count('ACCEPTED'), declined: count('DECLINED'), skipped: count('SKIPPED') };
+    return { associateId, name: v.name, overtimeHours: round2(split.overtimeHours + split.doubleTimeHours), regularHours: split.regularHours, offered: count('OFFERED') + count('ACCEPTED') + count('DECLINED') + count('EXPIRED'), accepted: count('ACCEPTED'), declined: count('DECLINED'), skipped: count('SKIPPED') };
   });
   rows.sort((a, b) => b.overtimeHours - a.overtimeHours || a.name.localeCompare(b.name));
   const ot = rows.map((r) => r.overtimeHours);

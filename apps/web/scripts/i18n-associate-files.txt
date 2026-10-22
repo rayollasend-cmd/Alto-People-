@@ -13,6 +13,7 @@ src/pages/transport/ShiftMap.tsx
 src/pages/transport/TripMap.tsx
 src/pages/documents/AssociateDocumentsView.tsx
 src/pages/me/MeHome.tsx
+src/pages/me/MySkillsCard.tsx
 src/pages/me/MyDiscipline.tsx
 src/pages/me/MyWallet.tsx
 src/components/home/AssociateNeedsYou.tsx

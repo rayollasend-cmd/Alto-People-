@@ -12,6 +12,8 @@ import { useI18n, type Translate } from '@/lib/i18n';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { confirmMfaEnrollment, startMfaEnrollment } from '@/lib/settingsApi';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
+import { AuthCardTitle } from '@/components/ui/AuthHeading';
+import { QR_COLORS } from '@/lib/qrColors';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -191,7 +193,7 @@ export function Login() {
       const dataUrl = await QRCode.toDataURL(res.provisioningUri, {
         margin: 1,
         width: 176,
-        color: { dark: '#0f172a', light: '#ffffff' },
+        color: QR_COLORS,
       });
       setQrDataUrl(dataUrl);
     } catch (err) {
@@ -298,9 +300,7 @@ export function Login() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="text-xl text-white mb-1">
-              {t('login.title')}
-            </h2>
+            <AuthCardTitle size="sm">{t('login.title')}</AuthCardTitle>
             <p className="text-silver text-sm mb-6">
               {t('login.subtitle')}
             </p>
@@ -464,9 +464,7 @@ export function Login() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="text-2xl md:text-3xl text-white mb-1">
-              {t('login.mfaTitle')}
-            </h2>
+            <AuthCardTitle>{t('login.mfaTitle')}</AuthCardTitle>
             <p className="text-silver text-sm mb-6">
               {useRecovery ? t('login.mfaRecoveryDesc') : t('login.mfaCodeDesc')}
             </p>
@@ -551,9 +549,7 @@ export function Login() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="text-2xl md:text-3xl text-white mb-1">
-              {t('login.enrollTitle')}
-            </h2>
+            <AuthCardTitle>{t('login.enrollTitle')}</AuthCardTitle>
             <p className="text-silver text-sm mb-6">{t('login.enrollBody')}</p>
 
             {enroll ? (

@@ -1722,10 +1722,12 @@ export const MODULES: ModuleNav[] = [
   },
   {
     key: 'payroll-tax',
-    path: '/payroll/tax',
+    // The Payroll taxes desk's Returns tab (the old /payroll/tax redirects there);
+    // garnishment orders are on the garnishment desk.
+    path: '/payroll/taxes?tab=returns',
     label: 'Tax forms',
     description:
-      'Garnishment orders, quarterly 941/940 builders, W-2 / 1099 generation and e-file exports, and the employer submitter profile.',
+      'Quarterly 941/940 builders, W-2 / 1099 generation, e-file and the forms an agency rejected, and the employer submitter profile.',
     // Employer-side tax operations with company-wide garnishment PII —
     // process:payroll, never the view:payroll every associate holds for
     // their own paystubs. (An associate's own W-2s live at /me?tab=tax-docs.)
@@ -1737,7 +1739,7 @@ export const MODULES: ModuleNav[] = [
     path: '/payroll/compliance',
     label: 'Payroll compliance',
     description:
-      'Federal tax deposit deadlines, garnishment remittances owed to agencies, and state new-hire reporting.',
+      'State new-hire reporting, state pay notices, the 2026 Roth catch-up rule and paystub rules.',
     requires: 'process:payroll',
     group: 'compliance',
   },

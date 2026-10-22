@@ -22,6 +22,7 @@ import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { Select } from '@/components/ui/Select';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
+import { DEFAULT_BRAND_PRIMARY } from '@/lib/brandDefaults';
 import {
   deleteOrgLogo,
   getOrgBranding,
@@ -447,7 +448,7 @@ export function BrandingHome() {
                 }
                 error={
                   primaryColorTouched && !colorValid
-                    ? 'Use a hex value like #0F2A44.'
+                    ? `Use a hex value like ${DEFAULT_BRAND_PRIMARY}.`
                     : undefined
                 }
               >
@@ -457,7 +458,7 @@ export function BrandingHome() {
                       value={primaryColor}
                       onChange={(e) => setPrimaryColor(e.target.value)}
                       onBlur={() => setPrimaryColorTouched(true)}
-                      placeholder="#0F2A44"
+                      placeholder={DEFAULT_BRAND_PRIMARY}
                       maxLength={7}
                       className="font-mono"
                       {...p}
@@ -466,7 +467,7 @@ export function BrandingHome() {
                       className="h-9 w-9 rounded border border-navy-secondary"
                       style={{
                         background:
-                          colorValid && primaryColor !== '' ? primaryColor : '#0F2A44',
+                          colorValid && primaryColor !== '' ? primaryColor : DEFAULT_BRAND_PRIMARY,
                       }}
                       aria-hidden
                     />

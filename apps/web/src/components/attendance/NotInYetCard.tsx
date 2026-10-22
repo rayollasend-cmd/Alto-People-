@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { getLateNow, type LateNowPerson } from '@/lib/attendanceInsightsApi';
 import { raiseFloorFlag, textCrew } from '@/lib/floorApi';
 import { fmtTimeTz } from '@/lib/format';
+import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { toast } from '@/components/ui/Toaster';
 import { CrewTextDialog } from '@/components/floor/CrewTextDialog';
@@ -34,23 +35,23 @@ export const lateNowKey = (siteId?: string) => ['attendance', 'late-now', siteId
 /** tel:/sms: with digits (and a leading +) only — "(305) 555-0101 ext 2" dials wrong otherwise. */
 export const dialable = (phone: string) => phone.replace(/(?!^\+)[^\d]/g, '');
 
-const CALLED_OUT: Record<NonNullable<LateNowPerson['calledOutHow']>, string> = {
-  confirmed: 'Called out',
-  unconfirmed: 'Said they can’t make it · not confirmed',
-  'reminder-no': 'Said no to the reminder',
+const CALLED_OUT: Record<NonNullable<LateNowPerson['calledOutHow']>, MessageKey> = {
+  confirmed: 'notIn.calledOut',
+  unconfirmed: 'notIn.calledOutUnconfirmed',
+  'reminder-no': 'notIn.reminderNo',
 };
 
 /** Shifts someone has to cover — nobody is coming. */
 const needsCover = (p: LateNowPerson) => p.status === 'no-show-risk' || p.status === 'called-out' || p.status === 'on-leave';
 
-function lateness(p: LateNowPerson): string {
-  if (p.status === 'called-out') return CALLED_OUT[p.calledOutHow ?? 'confirmed'];
-  if (p.status === 'on-leave') return 'On approved time off';
-  if (p.minutesLate < 1) return 'Starting now';
+function lateness(t: Translate, p: LateNowPerson): string {
+  if (p.status === 'called-out') return t(CALLED_OUT[p.calledOutHow ?? 'confirmed']);
+  if (p.status === 'on-leave') return t('notIn.onLeave');
+  if (p.minutesLate < 1) return t('notIn.startingNow');
   const h = Math.floor(p.minutesLate / 60);
   const m = p.minutesLate % 60;
-  const span = h > 0 ? `${h}h ${m}m` : `${m} min`;
-  return p.status === 'due' ? `Started ${span} ago` : `${span} late`;
+  const span = h > 0 ? t('notIn.spanHm', { h, m }) : t('notIn.spanM', { m });
+  return p.status === 'due' ? t('notIn.startedAgo', { span }) : t('notIn.late', { span });
 }
 
 const STATUS_BADGE: Record<LateNowPerson['status'], 'outline' | 'pending' | 'destructive' | 'info'> = {
@@ -75,13 +76,14 @@ export function NotInYetCard({
   className?: string;
 }) {
   const { can } = useAuth();
+  const { t } = useI18n();
   // A watch-only lead can't cover — they raise the flag to whoever can.
   const canFlag = !canCover && can('report:incident');
   const flag = useMutation({
     mutationFn: (p: LateNowPerson) =>
-      raiseFloorFlag({ kind: 'NO_SHOW', associateId: p.associateId, shiftId: p.shiftId, clientId: p.clientId, note: `${p.name} isn’t in — ${lateness(p).toLowerCase()} for the ${fmtTimeTz(p.startsAt, p.timezone)} shift.` }),
-    onSuccess: (_r, p) => toast.success(`Flagged to the shift supervisor: ${p.name}.`),
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not raise the flag.'),
+      raiseFloorFlag({ kind: 'NO_SHOW', associateId: p.associateId, shiftId: p.shiftId, clientId: p.clientId, note: t('notIn.flagNote', { name: p.name, status: lateness(t, p).toLowerCase(), time: fmtTimeTz(p.startsAt, p.timezone) }) }),
+    onSuccess: (_r, p) => toast.success(t('notIn.flagged', { name: p.name })),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : t('notIn.flagFailed')),
   });
   const q = useQuery({
     queryKey: lateNowKey(siteId),
@@ -92,7 +94,7 @@ export function NotInYetCard({
   const [textOpen, setTextOpen] = useState(false);
 
   if (q.isPending) return <Skeleton className={cn('h-40', className)} />;
-  if (q.isError) return <QueryError what="who isn’t in yet" query={q} />;
+  if (q.isError) return <QueryError what={t('notIn.what')} query={q} />;
 
   const people = filter ? q.data.people.filter(filter) : q.data.people;
   // "Missing" is who we're still waiting on — not the ones who said they
@@ -129,28 +131,28 @@ export function NotInYetCard({
           icon={UserX}
           title={
             <>
-              Who isn’t in yet
+              {t('notIn.title')}
               {missing.length > 0 && <span className="ml-1.5 tabular-nums text-warning">{missing.length}</span>}
             </>
           }
           description={
             people.length > 0
-              ? `Shift started, no punch. Late after ${q.data.graceMinutes} minutes; find cover after ${q.data.noShowRiskMinutes}.`
+              ? t('notIn.desc', { grace: q.data.graceMinutes, risk: q.data.noShowRiskMinutes })
               : undefined
           }
           trailing={
             q.data.canText && textable.length > 0 ? (
               <Button size="sm" variant="secondary" onClick={() => setTextOpen(true)}>
                 <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                Text the {textable.length} late
+                {t('notIn.textLate', { n: textable.length })}
               </Button>
             ) : undefined
           }
         />
         {people.length === 0 ? (
-          <EmptyState size="sm" icon={CheckCircle2} title="Everyone’s in" description="Everyone whose shift has started has punched in." />
+          <EmptyState size="sm" icon={CheckCircle2} title={t('notIn.allInTitle')} description={t('notIn.allInDesc')} />
         ) : (
-          <ul className="divide-y divide-line" aria-label="Not in yet">
+          <ul className="divide-y divide-line" aria-label={t('notIn.listAria')}>
             {people.map((p) => (
               <li key={p.shiftId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
                 <Avatar src={photoUrl(p.associateId)} name={p.name} email="" size="sm" />
@@ -164,21 +166,21 @@ export function NotInYetCard({
                   </span>
                 </div>
                 <Badge variant={STATUS_BADGE[p.status]} size="sm" className="tabular-nums">
-                  {lateness(p)}
+                  {lateness(t, p)}
                 </Badge>
                 <div className="flex flex-wrap gap-1.5">
                   {p.phone && (
                     <>
                       <Button size="xs" variant="outline" asChild>
-                        <a href={`tel:${dialable(p.phone)}`} aria-label={`Call ${p.name}`}>
+                        <a href={`tel:${dialable(p.phone)}`} aria-label={t('notIn.callAria', { name: p.name })}>
                           <Phone className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                          Call
+                          {t('notIn.call')}
                         </a>
                       </Button>
                       <Button size="xs" variant="outline" asChild>
-                        <a href={`sms:${dialable(p.phone)}`} aria-label={`Text ${p.name}`}>
+                        <a href={`sms:${dialable(p.phone)}`} aria-label={t('notIn.textAria', { name: p.name })}>
                           <MessageSquareText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                          Text
+                          {t('notIn.text')}
                         </a>
                       </Button>
                     </>
@@ -188,7 +190,7 @@ export function NotInYetCard({
                     // call-outs desk (confirmed, released shifts) wouldn't list it.
                     <Button size="xs" asChild>
                       <Link to={`/scheduling?shift=${p.shiftId}`}>
-                        {p.status === 'no-show-risk' ? 'No-show → find cover' : 'Find cover'}
+                        {p.status === 'no-show-risk' ? t('notIn.noShowCover') : t('notIn.findCover')}
                         <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
                       </Link>
                     </Button>
@@ -196,7 +198,7 @@ export function NotInYetCard({
                   {canFlag && (p.status === 'no-show-risk' || p.status === 'late') && (
                     <Button size="xs" variant="outline" loading={flag.isPending && flag.variables?.shiftId === p.shiftId} onClick={() => flag.mutate(p)}>
                       <Flag className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                      Flag to supervisor
+                      {t('notIn.flagToSup')}
                     </Button>
                   )}
                 </div>
@@ -204,14 +206,14 @@ export function NotInYetCard({
             ))}
           </ul>
         )}
-        {canCover && needCover.length > 1 && <p className="text-xs text-ink-muted">{needCover.length} shifts need cover — each opens from its row.</p>}
+        {canCover && needCover.length > 1 && <p className="text-xs text-ink-muted">{t('notIn.needCover', { n: needCover.length })}</p>}
       </CardContent>
       {q.data.canText && textable.length > 0 && (
         <CrewTextDialog
           open={textOpen}
           onOpenChange={setTextOpen}
           shiftIds={textable.map((p) => p.shiftId)}
-          label="Late, not in yet"
+          label={t('notIn.crewLabel')}
           count={textable.length}
           send={sendToLate}
         />

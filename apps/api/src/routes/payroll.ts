@@ -645,6 +645,9 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
             grossPay: p.grossPay,
             regularHours: p.regularHours,
             overtimeHours: p.overtimeHours,
+            doubleTimeHours: p.doubleTimeHours,
+            overtimeMultiplier: p.overtimeMultiplier,
+            doubleMultiplier: p.doubleMultiplier,
             hoursWorked: p.hoursWorked,
             taxState: p.taxState,
             periodEnd: periodEndKey,
@@ -666,6 +669,9 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
         rateSource: p.rateSource,
         regularHours: p.regularHours,
         overtimeHours: p.overtimeHours,
+        doubleTimeHours: p.doubleTimeHours,
+        overtimeMultiplier: p.overtimeMultiplier,
+        doubleMultiplier: p.doubleMultiplier,
         grossPay: p.grossPay,
         preTaxDeductions: p.preTaxDeductions,
         preTaxRetirement: p.preTaxRetirement,
@@ -1394,6 +1400,9 @@ export async function aggregateAndPersistRun(
           grossPay: p.grossPay,
           regularHours: p.regularHours,
           overtimeHours: p.overtimeHours,
+          doubleTimeHours: p.doubleTimeHours,
+          overtimeMultiplier: p.overtimeMultiplier,
+          doubleMultiplier: p.doubleMultiplier,
           hoursWorked: p.hoursWorked,
           taxState: p.taxState,
           payrollRunId: run.id,
@@ -3007,7 +3016,7 @@ payrollRouter.get('/tax-deposits/:id/worksheet.pdf', PROCESS, async (req, res, n
   try {
     const deposit = await prisma.taxDeposit.findUnique({ where: { id: req.params.id } });
     if (!deposit) throw new HttpError(404, 'deposit_not_found', 'Tax deposit not found');
-    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
     const pdf = await renderEftpsWorksheetPdf({
       ein: profile?.ein ?? '—',
       companyName: profile?.name ?? 'Alto HR',
@@ -3169,7 +3178,7 @@ payrollRouter.get('/new-hire-report.csv', requireCapability('export:payroll-pii'
       typeof req.query.state === 'string' && /^[A-Za-z]{2}$/.test(req.query.state)
         ? req.query.state.toUpperCase()
         : null;
-    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
     if (!profile) {
       throw new HttpError(409, 'no_submitter_profile', 'Fill in the employer profile (EIN, address) first.');
     }
@@ -3359,7 +3368,7 @@ payrollRouter.get('/garnishment-remittances/:id/advice.pdf', PROCESS, async (req
       },
     });
     if (!remittance) throw new HttpError(404, 'not_found', 'Remittance not found');
-    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
     const pdf = await renderRemittanceAdvicePdf({
       companyName: profile?.name ?? 'Alto HR',
       ein: profile?.ein ?? '—',
@@ -4853,7 +4862,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
           w2Missing === 0
             ? `${allW2EligibleIds.length} eligible · ${w2Generated.size} on file.`
             : `${w2Missing} eligible employee(s) missing a W-2.`,
-        href: '/payroll/tax',
+        href: '/payroll/taxes?tab=returns',
       },
       {
         key: 'nec_generated',
@@ -4863,7 +4872,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
           necMissing === 0
             ? `${allNecEligibleIds.length} eligible · ${necGenerated.size} on file.`
             : `${necMissing} eligible contractor(s) missing a 1099-NEC.`,
-        href: '/payroll/tax',
+        href: '/payroll/taxes?tab=returns',
       },
       {
         key: 'misc_generated',
@@ -4873,7 +4882,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
           miscMissing === 0
             ? `${allMiscEligibleIds.length} eligible · ${miscGenerated.size} on file.`
             : `${miscMissing} eligible recipient(s) missing a 1099-MISC.`,
-        href: '/payroll/tax',
+        href: '/payroll/taxes?tab=returns',
       },
       {
         key: 'forms_filed',
@@ -4885,7 +4894,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
             : formsDraft === 0
               ? `All ${formsTotal} form(s) marked FILED.`
               : `${formsDraft} of ${formsTotal} form(s) still in DRAFT.`,
-        href: '/payroll/tax',
+        href: '/payroll/taxes?tab=returns',
       },
       {
         key: 'copies_sent',
@@ -4897,7 +4906,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
             : copiesUnsent === 0
               ? `All ${formsTotal} recipient copies distributed.`
               : `${copiesUnsent} of ${formsTotal} form(s) not yet emailed to the worker.`,
-        href: '/payroll/tax',
+        href: '/payroll/taxes?tab=returns',
       },
     ];
 

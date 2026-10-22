@@ -71,7 +71,7 @@ describe('incidents from the floor', () => {
     expect(row.locationId).toBe(w.site.id);
     expect(row.associateId).toBe(w.ana.id);
     expect(row.reportedById).toBe(w.lead.id);
-    expect(row.photoKey).toMatch(/^incidents\//);
+    expect(row.photoKey).toMatch(/^tenants\/00000000-0000-4000-8000-000000000001\/incidents\//); // Brief 2-1 §9.6: under the tenant
     // The photo is theirs to see, and HR's.
     expect((await sup.get(`/floor/incidents/${row.id}/photo`)).status).toBe(200);
     const hr = await loginAs(w.hr.email);

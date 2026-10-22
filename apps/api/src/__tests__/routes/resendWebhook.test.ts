@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
 import { env } from '../../config/env.js';
@@ -224,6 +224,7 @@ describe('POST /resend/webhook — event handling', () => {
   });
 
   it('ignores unhandled event types with 200 (logged IGNORED)', async () => {
+    await seedEmailNotification({ providerMessageId: 'x' });
     const res = await postWebhook({ type: 'email.opened', data: { email_id: 'x' } });
     expect(res.status).toBe(200);
     expect(res.body.ignored).toBe('unhandled_event_type');
@@ -233,18 +234,46 @@ describe('POST /resend/webhook — event handling', () => {
     expect(ev.status).toBe('IGNORED');
   });
 
-  it('ignores unknown message ids with 200 (logged IGNORED)', async () => {
+  it('drops unknown message ids with 200 and writes nothing (Brief 2-1 §9.4: no tenant, no row)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const res = await postWebhook({
       type: 'email.bounced',
-      data: { email_id: 'msg_not_ours', bounce: { type: 'Permanent' } },
+      data: { email_id: 'msg_not_ours', to: ['someone@example.com'], bounce: { type: 'Permanent' } },
     });
     expect(res.status).toBe(200);
     expect(res.body.ignored).toBe('unknown_message_id');
-    const ev = await prisma.resendWebhookEvent.findFirstOrThrow({
-      where: { eventType: 'email.bounced' },
-    });
-    expect(ev.status).toBe('IGNORED');
-    expect(ev.notes).toContain('msg_not_ours');
+    expect(await prisma.resendWebhookEvent.count()).toBe(0);
+    expect(await prisma.emailSuppression.count()).toBe(0);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('msg_not_ours'))).toBe(true);
+    // An unhandled type for a message nobody sent is dropped the same way.
+    const opened = await postWebhook({ type: 'email.opened', data: { email_id: 'msg_not_ours' } });
+    expect(opened.body.ignored).toBe('unhandled_event_type');
+    expect(await prisma.resendWebhookEvent.count()).toBe(0);
+    warn.mockRestore();
+  });
+
+  it('a second tenant\'s bounce flips that tenant\'s notification and files the event and suppression under it', async () => {
+    const T2 = '22222222-2222-4222-8222-222222222222';
+    await prisma.tenant.create({ data: { id: T2, slug: 'tenant-two', name: 'Tenant Two' } });
+    const n = await seedEmailNotification({ providerMessageId: 'msg_t2', recipientEmail: 't2-bounce@example.com' });
+    await prisma.notification.update({ where: { id: n.id }, data: { tenantId: T2 } });
+    const res = await postWebhook({ type: 'email.bounced', data: { email_id: 'msg_t2', bounce: { type: 'Permanent' } } }, { svixId: 'svix_t2' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect((await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).status).toBe('BOUNCED');
+    expect(await prisma.resendWebhookEvent.findUniqueOrThrow({ where: { svixId: 'svix_t2' } })).toMatchObject({ tenantId: T2, status: 'PROCESSED', notificationId: n.id });
+    expect(await prisma.emailSuppression.findUniqueOrThrow({ where: { email: 't2-bounce@example.com' } })).toMatchObject({ tenantId: T2, reason: 'BOUNCED' });
+  });
+
+  it('a bounce for an address another tenant already suppressed does not collide', async () => {
+    const T2 = '22222222-2222-4222-8222-222222222222';
+    await prisma.tenant.create({ data: { id: T2, slug: 'tenant-two', name: 'Tenant Two' } });
+    await prisma.emailSuppression.create({ data: { email: 'shared@example.com', reason: 'BOUNCED' } });
+    const n = await seedEmailNotification({ providerMessageId: 'msg_shared', recipientEmail: 'shared@example.com' });
+    await prisma.notification.update({ where: { id: n.id }, data: { tenantId: T2 } });
+    const res = await postWebhook({ type: 'email.bounced', data: { email_id: 'msg_shared', bounce: { type: 'Permanent' } } });
+    expect(res.status).toBe(200);
+    expect(await prisma.emailSuppression.count({ where: { email: 'shared@example.com' } })).toBe(1);
   });
 
   it('is idempotent by svix-id — duplicate delivery short-circuits', async () => {

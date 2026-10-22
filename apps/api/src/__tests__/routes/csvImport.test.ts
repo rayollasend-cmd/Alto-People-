@@ -191,7 +191,7 @@ describe('POST /onboarding/admin/import/commit', () => {
     expect(byLine.get(4)!.status).toBe('skipped');
     expect(byLine.get(4)!.reason).toContain('invalid');
 
-    const alice = await prisma.associate.findUniqueOrThrow({
+    const alice = await prisma.associate.findFirstOrThrow({
       where: { email: 'alice@example.com' },
     });
     expect(alice.phone).toBe('555-0100');
@@ -295,7 +295,7 @@ describe('POST /onboarding/admin/import/commit', () => {
       include: { checklist: { include: { tasks: true } } },
     });
     expect(application.checklist?.tasks.length).toBeGreaterThan(0);
-    const associate = await prisma.associate.findUniqueOrThrow({
+    const associate = await prisma.associate.findFirstOrThrow({
       where: { email: 'alice@example.com' },
     });
     expect(associate.phone).toBe('555-0100');

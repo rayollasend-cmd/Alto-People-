@@ -1,5 +1,5 @@
 import { Prisma, type W4FilingStatus } from '@prisma/client';
-import { startOfWeekForSite } from './timeAnomalies.js';
+import { weeklySplit } from './laborRules/hours.js';
 
 /**
  * PHASE 8 PLACEHOLDER WITHHOLDING.
@@ -109,40 +109,23 @@ export function pickHourlyRate(
 }
 
 /**
- * Wave 1.2 — Federal weekly overtime split (FLSA non-exempt rule).
+ * The federal weekly overtime split pay has always used: hours past 40 in a
+ * company workweek (the site's zone decides which week an hour falls in)
+ * at 1.5×, each week on its own. APPROVED, closed entries only.
  *
- * Hours over 40 in a single Mon–Sun workweek pay at 1.5x. We compute this
- * per-week (NOT per-period) because a biweekly period spans two weeks and
- * each must hit the cap independently. Returns total regular vs overtime
- * hours summed across all weeks in the input. The caller multiplies these
- * by the rate (1x and 1.5x) to get amounts.
- *
- * State-specific daily OT (e.g., CA >8h/day) is NOT applied here — that's
- * a Wave 2+ enhancement on top of this baseline.
+ * One implementation: the labor-rules engine's weeklySplit
+ * (lib/laborRules/hours). Pay itself goes through splitHours there, which
+ * adds the live jurisdictions' daily, seventh-day and double-time rules;
+ * this stays for the callers that want exactly the FLSA weekly figure.
  */
 export function splitWeeklyOvertime(
   entries: PayableEntry[]
 ): { regularHours: number; overtimeHours: number } {
-  // Bucket APPROVED net-of-break hours by the company workweek (the
-  // start day is a setting, Saturday by default) as the SITE sees it: a
-  // Central site's week turns at midnight Central. One convention
-  // everywhere: payroll, exports, statements and the OT radar must never
-  // disagree on which week an hour belongs to.
-  const weeks = new Map<string, number>();
-  for (const e of entries) {
-    if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
-    const ms = payableMs(e);
-    if (ms <= 0) continue;
-    const key = String(startOfWeekForSite(e.clockInAt, e.location?.timezone).getTime());
-    weeks.set(key, (weeks.get(key) ?? 0) + ms);
-  }
-  let reg = 0;
-  let ot = 0;
-  for (const ms of weeks.values()) {
-    const h = ms / (1000 * 60 * 60);
-    if (h <= 40) reg += h;
-    else { reg += 40; ot += h - 40; }
-  }
-  return { regularHours: round2(reg), overtimeHours: round2(ot) };
+  const { regularHours, overtimeHours } = weeklySplit(
+    entries
+      .filter((e) => e.status === 'APPROVED')
+      .map((e) => ({ clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location ? { id: '', state: null, city: null, timezone: e.location.timezone } : null })),
+  );
+  return { regularHours, overtimeHours };
 }
 

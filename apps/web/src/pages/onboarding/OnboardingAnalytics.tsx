@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { ListTemplate } from '@/components/templates';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -279,9 +280,7 @@ export function OnboardingAnalytics() {
 
 function EmptyHint() {
   return (
-    <p className="text-sm text-silver">
-      No completed applications in this window yet.
-    </p>
+    <EmptyState size="sm" title="No completed applications in this window yet." />
   );
 }
 

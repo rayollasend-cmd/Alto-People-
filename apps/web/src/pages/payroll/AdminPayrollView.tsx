@@ -813,7 +813,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to="/payroll/tax">
+                    <Link to="/payroll/taxes?tab=returns">
                       <FileText className="mr-2 h-4 w-4" />
                       {t('payrollHome.taxForms')}
                     </Link>

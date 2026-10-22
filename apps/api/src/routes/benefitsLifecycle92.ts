@@ -9,6 +9,7 @@ import { decryptString } from '../lib/crypto.js';
 import { employerFor } from '../lib/employment.js';
 import { hash1095cPdf, render1095cPdf, type F1095cMonth } from '../lib/f1095cPdf.js';
 import { buildAcaAirXml, type AirEmployee } from '../lib/acaAir.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 /**
  * Phase 92 — Benefits lifecycle: open enrollment, QLE, COBRA, ACA.
@@ -511,7 +512,7 @@ benefitsLifecycle92Router.get('/aca/1095c/:formId/pdf', VIEW, async (req, res) =
   });
   if (!form || form.kind !== 'F1095C' || !form.associate) throw new HttpError(404, 'not_found', 'Form not found.');
   const employer = await employerFor(prisma, form.associate.id, new Date(Date.UTC(form.taxYear, 11, 31)));
-  const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' }, select: { contactPhone: true } });
+  const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { contactPhone: true } });
   const ssn = readSsn(form.associate.w4Submission?.ssnEncrypted ?? null);
   const months = ((form.amounts as { months?: Array<F1095cMonth | null> }).months ?? Array(12).fill(null)) as Array<F1095cMonth | null>;
   const pdf = await render1095cPdf({
@@ -545,7 +546,7 @@ benefitsLifecycle92Router.get('/aca/air.xml', MANAGE, async (req, res) => {
   const transmittal = await prisma.taxForm.findFirst({ where: { kind: 'F1094C', taxYear: year, status: { not: 'VOIDED' } } });
   const counts = (transmittal?.amounts ?? {}) as { fullTimeByMonth?: number[]; totalByMonth?: number[] };
   const employer = await employerFor(prisma, forms[0].associate!.id, new Date(Date.UTC(year, 11, 31)));
-  const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' }, select: { contactName: true, contactPhone: true } });
+  const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { contactName: true, contactPhone: true } });
   const employees: AirEmployee[] = forms.map((f, i) => {
     const ssn = readSsn(f.associate!.w4Submission?.ssnEncrypted ?? null);
     return {

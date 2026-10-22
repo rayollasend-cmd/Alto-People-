@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, MessageSquare, UserRound, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtTime, parseYmd } from '@/lib/format';
+import { fmtDate, fmtShiftTz, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -66,12 +66,12 @@ function shiftNames(windows: FloorTeamWindow[]): string {
   return [...new Set(windows.map((w) => w.label))].join(' & ');
 }
 
-function Presence({ since }: { since: string | null }) {
+function Presence({ since, tz }: { since: string | null; tz?: string | null }) {
   const { t } = useI18n();
   return since ? (
     <span className="inline-flex items-center gap-1.5 text-xs text-success">
       <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
-      {t('floorUi.onClockSince', { time: fmtTime(since) })}
+      {t('floorUi.onClockSince', { time: fmtShiftTz(since, tz, { day: false }) })}
     </span>
   ) : (
     <span className="text-xs text-silver/70">{t('floorUi.offClock')}</span>
@@ -162,7 +162,7 @@ export function FloorTeamStrip({ className }: { className?: string }) {
                       </Badge>
                     )}
                   </div>
-                  <Presence since={m.onClockSince} />
+                  <Presence since={m.onClockSince} tz={m.onClockTimezone} />
                 </div>
                 <MessageButton userId={m.userId} name={m.name} />
               </li>
@@ -407,7 +407,7 @@ export function MyLeadStrip({ className }: { className?: string }) {
                   <span className="text-xs text-silver/70">{shiftNames(lead.windows)}</span>
                 )}
               </div>
-              <Presence since={lead.onClockSince} />
+              <Presence since={lead.onClockSince} tz={lead.onClockTimezone} />
             </div>
             <MessageButton userId={lead.userId} name={lead.name} />
           </div>

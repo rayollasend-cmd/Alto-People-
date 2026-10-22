@@ -1,8 +1,7 @@
 import { EfileAction, EfileStatus } from './EfileAction';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
+import { ChevronDown, Download, Plus, Receipt } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   build940,
@@ -11,24 +10,18 @@ import {
   taxFormMefUrl,
   f1095cPdfUrl,
   bulkSendTaxFormCopies,
-  createGarnishment,
   createTaxForm,
   createW2c,
-  deductGarnishment,
   fileTaxForm,
-  garnishmentLetterUrl,
   generateW2s,
   generate1099Necs,
   clearAssociateTin,
   getAssociateTin,
   saveAssociateTin,
   getSubmitterProfile,
-  listGarnishmentDeductions,
-  listGarnishments,
   listTaxForms,
   saveSubmitterProfile,
   sendRecipientCopy,
-  setGarnishmentStatus,
   taxFormPdfUrl,
   w3PdfUrl,
   voidTaxForm,
@@ -41,10 +34,6 @@ import {
   generate1099Miscs,
   f1099MiscBulkZipUrl,
   f1099MiscFireUrl,
-  type Garnishment,
-  type GarnishmentDeduction,
-  type GarnishmentKind,
-  type GarnishmentStatus,
   type SubmitterProfile,
   type SubmitterProfileInput,
   type TaxForm,
@@ -56,7 +45,6 @@ import type { ClientSummary } from '@alto-people/shared';
 import { useAuth, useTerm } from '@/lib/auth';
 import { pickOne } from '@/lib/validationCopy';
 import { useConfirm, usePrompt } from '@/lib/confirm';
-import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
 import {
   AssociatePicker,
@@ -80,569 +68,24 @@ import {
   Input,
   Select,
   SkeletonRows,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-  Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
-import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
-type Tab = 'garnishments' | 'taxforms';
-
-export function PayrollTaxHome() {
-  const { user } = useAuth();
-  const canManage = user ? hasCapability(user.role, 'process:payroll') : false;
-  const [tab, setTab] = useState<Tab>('garnishments');
-
-  return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-    <ListTemplate
-        title="Tax forms & garnishments"
-        subtitle="Garnishment orders and federal tax forms (941, 940, W-2, 1099-NEC, W-3)."
-        breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Tax forms' }]}
-        secondaryActions={
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/payroll/config">Tax rate tables</Link>
-          </Button>
-        }
-    >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
-          <TabsTrigger value="garnishments">
-            <Scale className="mr-2 h-4 w-4" /> Garnishments
-          </TabsTrigger>
-          <TabsTrigger value="taxforms">
-            <FileText className="mr-2 h-4 w-4" /> Tax forms
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="garnishments">
-          <GarnishmentsTab canManage={canManage} />
-        </TabsContent>
-        <TabsContent value="taxforms">
-          <TaxFormsTab canManage={canManage} />
-        </TabsContent>
-      </Tabs>
-    </ListTemplate>
-  );
-}
-
-const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
-  CHILD_SUPPORT: 'Child support',
-  TAX_LEVY: 'Tax levy',
-  STUDENT_LOAN: 'Student loan',
-  BANKRUPTCY: 'Bankruptcy',
-  CREDITOR: 'Creditor',
-  OTHER: 'Other',
-};
-
-function GarnishmentsTab({ canManage }: { canManage: boolean }) {
-  const confirm = useConfirm();
-  const term = useTerm();
-  const [showNew, setShowNew] = useState(false);
-  const [historyTarget, setHistoryTarget] = useState<Garnishment | null>(null);
-  const [deductTarget, setDeductTarget] = useState<Garnishment | null>(null);
-
-  const garnishmentsQuery = useQuery({ queryKey: ['payrollTax', 'garnishments'], queryFn: () => listGarnishments() });
-  const rows: Garnishment[] | null = garnishmentsQuery.data?.garnishments ?? null;
-  const loadError = garnishmentsQuery.error
-    ? garnishmentsQuery.error instanceof ApiError
-      ? garnishmentsQuery.error.message
-      : "Couldn't load garnishments."
-    : null;
-  const refresh = () => void garnishmentsQuery.refetch();
-
-  const onStatus = async (g: Garnishment, status: GarnishmentStatus) => {
-    if (status === g.status) return;
-    const nextLabel = statusLabel(status);
-    const ok = await confirm({
-      title: `Change status to ${nextLabel.toLowerCase()}?`,
-      description:
-        `${g.associateName}'s garnishment moves from ${statusLabel(g.status).toLowerCase()} to ${nextLabel.toLowerCase()}. ` +
-        'The change takes effect immediately and is recorded.' +
-        (status === 'TERMINATED'
-          ? ' Terminated garnishments stop withholding entirely.'
-          : ''),
-      confirmLabel: `Change to ${nextLabel.toLowerCase()}`,
-      destructive: status === 'TERMINATED',
-    });
-    if (!ok) return; // controlled select re-renders back to g.status
-    try {
-      await setGarnishmentStatus(g.id, status);
-      toast.success(`Garnishment status changed to ${nextLabel.toLowerCase()}.`);
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't update garnishment status. Try again.");
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New garnishment
-          </Button>
-        </div>
-      )}
-      <Card>
-        <CardContent className="p-0">
-          {loadError ? (
-            <div className="p-6">
-              <ErrorBanner
-                action={
-                  <Button size="sm" variant="secondary" onClick={refresh}>
-                    Retry
-                  </Button>
-                }
-              >
-                {loadError}
-              </ErrorBanner>
-            </div>
-          ) : rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon={Scale}
-              title="No garnishments"
-              description="Court-ordered withholdings (child support, tax levies, etc) appear here."
-            />
-          ) : (
-            <DataGrid<NonNullable<typeof rows>[number]>
-              id="garnishments"
-              caption="Garnishments"
-              rows={rows}
-              rowKey={(g) => g.id}
-              search={{ placeholder: `${term('worker')}, kind…` }}
-              urlState={false}
-              exportCsv={{ filename: 'garnishments' }}
-              columns={[
-                { key: 'associate', header: term('worker'), accessor: (g) => g.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'kind', header: 'Kind', accessor: (g) => GARN_KIND_LABEL[g.kind], sortable: true, cardMeta: true },
-                {
-                  key: 'withhold',
-                  header: 'Withhold',
-                  accessor: (g) => (g.amountPerRun ? `${fmtMoney(g.amountPerRun)}/run` : g.percentOfDisp ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.` : null),
-                  searchable: false,
-                  align: 'right',
-                  cardMeta: true,
-                  className: 'tabular-nums',
-                  cell: (g) => (g.amountPerRun ? `${fmtMoney(g.amountPerRun)}/run` : g.percentOfDisp ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.` : '—'),
-                },
-                {
-                  key: 'cap',
-                  header: 'Cap / progress',
-                  accessor: (g) => Number(g.amountWithheld),
-                  csv: (g) => (g.totalCap ? `${fmtMoney(g.amountWithheld)} / ${fmtMoney(g.totalCap)}` : fmtMoney(g.amountWithheld)),
-                  sortable: true,
-                  searchable: false,
-                  align: 'right',
-                  className: 'tabular-nums',
-                  cell: (g) => (g.totalCap ? `${fmtMoney(g.amountWithheld)} / ${fmtMoney(g.totalCap)}` : fmtMoney(g.amountWithheld)),
-                },
-                { key: 'status', header: 'Status', accessor: (g) => g.status, sortable: true, cell: (g) => <StatusBadge status={g.status} /> },
-                {
-                  key: 'actions',
-                  header: 'Actions',
-                  accessor: () => null,
-                  searchable: false,
-                  csv: () => '',
-                  align: 'right',
-                  stopRowClick: true,
-                  cell: (g) => (
-                    <div className="flex items-center justify-end gap-2">
-                      <Button asChild size="sm" variant="ghost" title="Download employer acknowledgment letter PDF">
-                        <a href={garnishmentLetterUrl(g.id)} target="_blank" rel="noreferrer">
-                          <Download className="mr-1 h-3 w-3" />
-                          Letter
-                        </a>
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setHistoryTarget(g)}>
-                        History
-                      </Button>
-                      {canManage && g.status === 'ACTIVE' && (
-                        <Button size="sm" variant="ghost" onClick={() => setDeductTarget(g)}>
-                          Manual deduct
-                        </Button>
-                      )}
-                      {canManage && (g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
-                        <Select size="sm" value={g.status} aria-label={`Status of ${g.associateName}'s garnishment`} onChange={(e) => onStatus(g, e.target.value as GarnishmentStatus)}>
-                          <option value="ACTIVE">{statusLabel('ACTIVE')}</option>
-                          <option value="SUSPENDED">{statusLabel('SUSPENDED')}</option>
-                          <option value="TERMINATED">{statusLabel('TERMINATED')}</option>
-                        </Select>
-                      )}
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          )}
-        </CardContent>
-      </Card>
-      {showNew && (
-        <NewGarnishmentDrawer
-          onClose={() => setShowNew(false)}
-          onSaved={() => {
-            setShowNew(false);
-            refresh();
-          }}
-        />
-      )}
-      {historyTarget && (
-        <GarnishmentHistoryDrawer
-          garnishment={historyTarget}
-          onClose={() => setHistoryTarget(null)}
-        />
-      )}
-      {deductTarget && (
-        <GarnishmentManualDeductDrawer
-          garnishment={deductTarget}
-          onClose={() => setDeductTarget(null)}
-          onSaved={() => {
-            setDeductTarget(null);
-            refresh();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function NewGarnishmentDrawer({
-  onClose,
-  onSaved,
-}: {
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const term = useTerm();
-  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
-  const [kind, setKind] = useState<GarnishmentKind>('CHILD_SUPPORT');
-  const [caseNumber, setCaseNumber] = useState('');
-  const [agencyName, setAgencyName] = useState('');
-  const [mode, setMode] = useState<'AMOUNT' | 'PERCENT'>('AMOUNT');
-  const [amount, setAmount] = useState('');
-  const [percent, setPercent] = useState('');
-  const [totalCap, setTotalCap] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [notes, setNotes] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const onSubmit = async () => {
-    if (!assoc || !startDate) {
-      toast.error(!assoc ? pickOne(term) : 'Enter a start date.');
-      return;
-    }
-    if (mode === 'AMOUNT' && !amount) {
-      toast.error('Amount required.');
-      return;
-    }
-    if (mode === 'PERCENT' && !percent) {
-      toast.error('Percent required.');
-      return;
-    }
-    setSaving(true);
-    try {
-      await createGarnishment({
-        associateId: assoc.id,
-        kind,
-        caseNumber: caseNumber.trim() || null,
-        agencyName: agencyName.trim() || null,
-        amountPerRun: mode === 'AMOUNT' ? Number(amount) : null,
-        percentOfDisp: mode === 'PERCENT' ? Number(percent) / 100 : null,
-        totalCap: totalCap ? Number(totalCap) : null,
-        startDate,
-        notes: notes.trim() || null,
-      });
-      toast.success('Garnishment created.');
-      onSaved();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't save garnishment. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <Drawer
-      open={true}
-      onOpenChange={(o) => !o && !saving && onClose()}
-      width="max-w-2xl"
-      confirmDiscard={() => !!assoc || caseNumber.trim().length > 0 || agencyName.trim().length > 0 || amount.trim().length > 0 || percent.trim().length > 0 || startDate.length > 0 || notes.trim().length > 0}
-    >
-      <DrawerHeader>
-        <DrawerTitle>New garnishment</DrawerTitle>
-      </DrawerHeader>
-      <DrawerBody className="space-y-4">
-        <div>
-          <Label>{term('worker')}</Label>
-          <div className="mt-1">
-            <AssociatePicker value={assoc} onChange={setAssoc} />
-          </div>
-        </div>
-        <div>
-          <Label>Kind</Label>
-          <Select
-            className="mt-1"
-            value={kind}
-            onChange={(e) => setKind(e.target.value as GarnishmentKind)}
-          >
-            {(Object.keys(GARN_KIND_LABEL) as GarnishmentKind[]).map((k) => (
-              <option key={k} value={k}>
-                {GARN_KIND_LABEL[k]}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Case number</Label>
-            <Input
-              className="mt-1"
-              value={caseNumber}
-              onChange={(e) => setCaseNumber(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Agency</Label>
-            <Input
-              className="mt-1"
-              value={agencyName}
-              onChange={(e) => setAgencyName(e.target.value)}
-            />
-          </div>
-        </div>
-        <div>
-          <Label>Withholding mode</Label>
-          <div className="flex gap-3 mt-1">
-            <label className="flex items-center gap-2 text-sm text-white">
-              <input
-                type="radio"
-                checked={mode === 'AMOUNT'}
-                onChange={() => setMode('AMOUNT')}
-              />
-              Fixed $/run
-            </label>
-            <label className="flex items-center gap-2 text-sm text-white">
-              <input
-                type="radio"
-                checked={mode === 'PERCENT'}
-                onChange={() => setMode('PERCENT')}
-              />
-              % of disposable
-            </label>
-          </div>
-        </div>
-        {mode === 'AMOUNT' ? (
-          <div>
-            <Label>Amount per pay run</Label>
-            <Input
-              type="number"
-              step="0.01"
-              className="mt-1"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </div>
-        ) : (
-          <div>
-            <Label>Percent of disposable earnings (%)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              max="100"
-              className="mt-1"
-              value={percent}
-              onChange={(e) => setPercent(e.target.value)}
-              placeholder="25"
-            />
-          </div>
-        )}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Total cap (optional)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              className="mt-1"
-              value={totalCap}
-              onChange={(e) => setTotalCap(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Start date</Label>
-            <Input
-              type="date"
-              className="mt-1"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-          </div>
-        </div>
-        <div>
-          <Label>Notes</Label>
-          <Textarea
-            className="mt-1"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-        </div>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Create'}
-        </Button>
-      </DrawerFooter>
-    </Drawer>
-  );
-}
-
-function GarnishmentHistoryDrawer({
-  garnishment,
-  onClose,
-}: {
-  garnishment: Garnishment;
-  onClose: () => void;
-}) {
-  const historyQuery = useQuery({
-    queryKey: ['payrollTax', 'garnishment-deductions', garnishment.id],
-    queryFn: () => listGarnishmentDeductions(garnishment.id),
-  });
-  const rows: GarnishmentDeduction[] | null = historyQuery.data?.deductions ?? null;
-  const error = historyQuery.error
-    ? historyQuery.error instanceof ApiError
-      ? historyQuery.error.message
-      : "Couldn't load history."
-    : null;
-
-  return (
-    <Drawer open onOpenChange={(v) => !v && onClose()}>
-      <DrawerHeader>
-        <DrawerTitle>Deduction history — {garnishment.associateName}</DrawerTitle>
-      </DrawerHeader>
-      <DrawerBody>
-        <div className="space-y-3 text-sm">
-          <div className="text-xs text-silver/70">
-            {GARN_KIND_LABEL[garnishment.kind]} · case {garnishment.caseNumber ?? '—'} ·
-            withheld {fmtMoney(garnishment.amountWithheld)}
-            {garnishment.totalCap && <> of {fmtMoney(garnishment.totalCap)}</>}
-          </div>
-          {error && <ErrorBanner>{error}</ErrorBanner>}
-          {rows === null && !error && <SkeletonRows count={4} />}
-          {rows && rows.length === 0 && (
-            <EmptyState
-              icon={Receipt}
-              title="No deductions yet"
-              description="Garnishment deductions appear here as payroll runs are processed or you record them manually."
-            />
-          )}
-          {rows && rows.length > 0 && (
-            <DataGrid<NonNullable<typeof rows>[number]>
-              id="garnishment-deductions"
-              caption="Deductions"
-              rows={rows}
-              rowKey={(d) => d.id}
-              search={false}
-              urlState={false}
-              exportCsv={false}
-              columnChooser={false}
-              columns={[
-                { key: 'date', header: 'Date', accessor: (d) => d.deductedOn, sortable: true, searchable: false, primary: true, cell: (d) => fmtDateTime(d.deductedOn) },
-                { key: 'run', header: 'Run', accessor: (d) => (d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual'), sortable: true, cardMeta: true, className: 'text-xs text-silver/70' },
-                { key: 'amount', header: 'Amount', accessor: (d) => Number(d.amount), csv: (d) => fmtMoney(d.amount), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (d) => fmtMoney(d.amount) },
-              ]}
-            />
-          )}
-        </div>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Close
-        </Button>
-      </DrawerFooter>
-    </Drawer>
-  );
-}
-
-function GarnishmentManualDeductDrawer({
-  garnishment,
-  onClose,
-  onSaved,
-}: {
-  garnishment: Garnishment;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [amount, setAmount] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const submit = async () => {
-    const n = Number(amount);
-    if (!Number.isFinite(n) || n <= 0) {
-      toast.error('Amount must be a positive number.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const r = await deductGarnishment(garnishment.id, n, null);
-      toast.success(
-        r.completed
-          ? 'Deduction recorded — the cap is reached, so the garnishment is now completed.'
-          : 'Deduction recorded.',
-      );
-      onSaved();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't record deduction.");
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Drawer open onOpenChange={(v) => !v && !saving && onClose()} confirmDiscard={() => amount.trim().length > 0}>
-      <DrawerHeader>
-        <DrawerTitle>Manual deduction — {garnishment.associateName}</DrawerTitle>
-      </DrawerHeader>
-      <DrawerBody>
-        <div className="space-y-3 text-sm">
-          <p className="text-xs text-silver/70">
-            Use this when a deduction needs to be recorded outside a payroll run (e.g.
-            retroactive correction). The amount withheld is incremented and the garnishment
-            is marked completed if the cap is reached.
-          </p>
-          <Label htmlFor="manual-deduct-amount">Amount</Label>
-          <Input
-            id="manual-deduct-amount"
-            type="number"
-            min="0.01"
-            step="0.01"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="e.g. 150.00"
-          />
-        </div>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={submit} disabled={saving}>
-          {saving ? 'Saving…' : 'Record deduction'}
-        </Button>
-      </DrawerFooter>
-    </Drawer>
-  );
-}
+/**
+ * Year-end and federal tax forms: the 941 / 940 builders, W-2 / W-2c,
+ * 1099-NEC / 1099-MISC generation, e-file, recipient copies and the
+ * employer submitter profile. Rendered on the Payroll taxes desk's Returns
+ * tab (/payroll/taxes?tab=returns) — the old /payroll/tax page redirects
+ * there, and its garnishments tab lives on the garnishment desk
+ * (/payroll/garnishments), so each desk appears once (finance walk 5).
+ */
 
 // ----- Tax forms --------------------------------------------------------
 
-const FORM_KIND_LABEL: Record<TaxFormKind, string> = {
+export const FORM_KIND_LABEL: Record<TaxFormKind, string> = {
   F941: 'Form 941 (Quarterly federal)',
   F940: 'Form 940 (Annual FUTA)',
   W2: 'W-2 (Annual employee)',
@@ -723,7 +166,7 @@ function TaxFormsWorkflowSteps({ rows }: { rows: TaxForm[] | null }) {
   );
 }
 
-function TaxFormsTab({ canManage }: { canManage: boolean }) {
+export function TaxFormsTab({ canManage }: { canManage: boolean }) {
   // An individual W-2 / 1099 PDF carries the recipient's full SSN and
   // now needs export:payroll-pii server-side; 941/940 summary sheets do
   // not and stay on view:payroll-documents.

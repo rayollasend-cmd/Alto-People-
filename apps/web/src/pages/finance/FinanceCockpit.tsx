@@ -32,6 +32,8 @@ import { DetailsTable } from '@/components/ui/charts';
 import { AgingBar, CashFlowChart, MarginChart } from './financeCharts';
 import type { BillingWeek, CashWeek, FinanceOverview, MarginTrend, PayCycle } from './financeTypes';
 import { useTenant } from '@/lib/auth';
+import { useInbox } from '@/lib/inboxApi';
+import type { InboxSource } from '@alto-people/shared';
 
 /**
  * The finance cockpit's working parts — each answers one question the
@@ -335,10 +337,25 @@ export function financeTasks(
   now: number,
   // Client statements and receivables exist only where there are clients
   // to bill (clientPortal + billRates); a direct employer never sees them.
-  opts: { statements?: boolean } = {},
+  // `inbox`: the /me/inbox sources, so a queue the Inbox counts (paydays
+  // that passed with no run) is the same item here, with the same link.
+  opts: { statements?: boolean; inbox?: ReadonlyArray<Pick<InboxSource, 'key' | 'count' | 'description' | 'path'>> } = {},
 ): FinanceTask[] {
   const statements = opts.statements ?? true;
   const tasks: Array<FinanceTask & { rank: number }> = [];
+  // People went unpaid: the most urgent thing on the list.
+  const missed = opts.inbox?.find((src) => src.key === 'payroll-missed-paydays');
+  if (missed && missed.count > 0) {
+    tasks.push({
+      key: 'missed',
+      rank: 0,
+      tone: 'alert',
+      icon: AlertTriangle,
+      title: t('fin.task.missed', { count: missed.count }),
+      sub: missed.description,
+      to: missed.path,
+    });
+  }
   const b = data.billing;
   // Rejected ones are the resubmit task's, not this one's.
   const toEnter = b ? b.toEnter - b.rejected : 0;
@@ -480,7 +497,8 @@ export function TodayList({ data, headless = false }: { data: FinanceOverview; h
   const { t } = useI18n();
   const tenant = useTenant();
   const now = useNow();
-  const tasks = financeTasks(data, t, now, { statements: tenant.moduleOn('clientPortal') && tenant.moduleOn('billRates') });
+  const inbox = useInbox();
+  const tasks = financeTasks(data, t, now, { statements: tenant.moduleOn('clientPortal') && tenant.moduleOn('billRates'), inbox: inbox.data?.sources });
   return (
     <Card className="h-full animate-enter" style={enterStagger(1)}>
       <CardContent>

@@ -60,6 +60,7 @@ export async function renderPayrollSheetPdf(data: PayrollSheetReportData): Promi
     [
       { label: 'Regular hours', value: hrs(sheet.totalRegularMinutes) },
       { label: 'Overtime hours', value: hrs(sheet.totalOvertimeMinutes), tone: sheet.totalOvertimeMinutes > 0 ? 'warn' : undefined },
+      ...(sheet.totalDoubleTimeMinutes > 0 ? [{ label: 'Double-time hours', value: hrs(sheet.totalDoubleTimeMinutes), tone: 'warn' as const }] : []),
       { label: 'Gross pay', value: fmt.money(sheet.totalGross) },
       { label: 'Taxes withheld', value: fmt.money(-(sheet.totalFederalIncomeTax + sheet.totalSocialSecurity + sheet.totalMedicare + sheet.totalStateIncomeTax)) },
       { label: 'Net pay', value: fmt.money(sheet.totalNet), emphasis: true },
@@ -77,6 +78,8 @@ export async function renderPayrollSheetPdf(data: PayrollSheetReportData): Promi
       { key: 'name', header: 'Person', width: 3.2, value: (a) => a.name, strong: true },
       { key: 'reg', header: 'Regular', width: 1.1, align: 'right', value: (a) => hrs(a.regularMinutes) },
       { key: 'ot', header: 'Overtime', width: 1.1, align: 'right', value: (a) => (a.overtimeMinutes ? hrs(a.overtimeMinutes) : '—'), color: (a) => (a.overtimeMinutes ? COLOR.warn : undefined) },
+      // Only where a live jurisdiction paid double time (lib/laborRules/hours), so every other sheet keeps its layout.
+      ...(sheet.totalDoubleTimeMinutes > 0 ? [{ key: 'dt', header: 'Double time', width: 1.1, align: 'right' as const, value: (a: (typeof sheet.associates)[number]) => (a.doubleTimeMinutes ? hrs(a.doubleTimeMinutes) : '—'), color: (a: (typeof sheet.associates)[number]) => (a.doubleTimeMinutes ? COLOR.warn : undefined) }] : []),
       { key: 'tot', header: 'Total', width: 1.1, align: 'right', value: (a) => hrs(a.totalMinutes) },
       { key: 'rate', header: 'Rate', width: 1.1, align: 'right', value: (a) => (a.pay.hasRate ? fmt.money(a.pay.hourlyRate) : 'No rate'), color: (a) => (a.pay.hasRate ? undefined : COLOR.bad) },
       { key: 'gross', header: 'Gross', width: 1.4, align: 'right', value: (a) => money(a.pay.grossPay, a.pay.hasRate) },
@@ -90,6 +93,7 @@ export async function renderPayrollSheetPdf(data: PayrollSheetReportData): Promi
       name: `Total · ${sheet.associates.length} people`,
       reg: hrs(sheet.totalRegularMinutes),
       ot: hrs(sheet.totalOvertimeMinutes),
+      ...(sheet.totalDoubleTimeMinutes > 0 ? { dt: hrs(sheet.totalDoubleTimeMinutes) } : {}),
       tot: hrs(sheet.totalMinutes),
       gross: fmt.money(sheet.totalGross),
       fit: fmt.money(sheet.totalFederalIncomeTax),

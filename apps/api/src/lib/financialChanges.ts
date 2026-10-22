@@ -18,6 +18,7 @@ import { getCurrentPeriod } from './payrollSchedule.js';
 import { tryDecryptString } from './crypto.js';
 import { financialChangeAlertEmail, financialChangeConfirmationEmail } from './emailContent.js';
 import { toEmailLang } from './emailLayout.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Financial-change alerts and verify-before-pay.
@@ -359,7 +360,7 @@ export async function financeRecipients(db: Db = prisma): Promise<{ users: Array
       where: { role: { in: [...FINANCE_ROLES] }, status: 'ACTIVE' },
       select: { id: true, email: true, associate: { select: { firstName: true } } },
     }),
-    db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { financeMailbox: true } }),
+    db.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { financeMailbox: true } }),
   ]);
   return {
     users: users.map((u) => ({ id: u.id, email: u.email, firstName: u.associate?.firstName ?? null })),
@@ -595,7 +596,7 @@ export interface PayoutResolution {
 }
 
 export async function loadUnverifiedPayoutPolicy(db: Db = prisma): Promise<UnverifiedPayoutPolicy> {
-  const org = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { unverifiedPayoutPolicy: true } });
+  const org = await db.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { unverifiedPayoutPolicy: true } });
   return org?.unverifiedPayoutPolicy ?? 'PREVIOUS_VERIFIED';
 }
 

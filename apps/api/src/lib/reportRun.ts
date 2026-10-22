@@ -25,6 +25,7 @@ import {
   scopePayrollRuns,
   scopeTimeEntries,
 } from './scope.js';
+import { COMPUTED_ENTITIES, loadComputedRows, needsComputedPath, runSpecOverRows } from './reportComputed.js';
 
 /**
  * Phase 96 — report execution, extracted from routes/reports96.ts so the
@@ -48,6 +49,14 @@ export const ENTITY_COLUMNS: Record<string, Record<string, string>> = {
     email: 'email',
     state: 'state',
     createdAt: 'createdAt',
+    hireDate: 'hireDate',
+    employmentType: 'employmentType',
+    separatedAt: 'separatedAt',
+    // Computed (lib/reportComputed): where the person works now, and whether
+    // they are still working (not separated, not paused) — headcount by store.
+    store: 'store',
+    client: 'client',
+    active: 'active',
   },
   // The right-hand side must be a REAL Prisma scalar. Several of these
   // named columns that don't exist on the model (clockIn/clockOut,
@@ -147,6 +156,10 @@ export const ENTITY_COLUMNS: Record<string, Record<string, string>> = {
     stage: 'stage',
     createdAt: 'createdAt',
   },
+  // Computed entities (wave 2, lib/reportComputed): pay changes from the
+  // compensation records, time to fill from posting → hire, overtime by
+  // store from the labor engine. Their columns are their own keys.
+  ...Object.fromEntries(Object.entries(COMPUTED_ENTITIES).map(([k, d]) => [k, Object.fromEntries(d.columns.map((c) => [c, c]))])),
 };
 
 // `period` takes a REPORT_PERIOD_TOKENS value (e.g. 'last-week') instead of
@@ -211,6 +224,7 @@ const NUMERIC_COLUMNS: Record<string, ReadonlySet<string>> = {
   PAYROLL_RUN: new Set(['totalGross', 'totalNet']),
   EXPENSE: new Set(['amount']),
   OFFER: new Set(['hourlyRate', 'salary']),
+  ...Object.fromEntries(Object.entries(COMPUTED_ENTITIES).map(([k, d]) => [k, new Set(d.numeric)])),
 };
 
 /**
@@ -224,6 +238,7 @@ export const ENTITY_CAPABILITY: Partial<Record<string, Capability>> = {
   LEAVE_CASE: 'manage:leave',
   HR_CASE: 'manage:onboarding',
   OFFER: 'view:recruiting',
+  ...Object.fromEntries(Object.entries(COMPUTED_ENTITIES).flatMap(([k, d]) => (d.capability ? [[k, d.capability]] : []))),
 };
 
 export function assertEntityAllowed(entity: string, user: SessionUser): void {
@@ -281,7 +296,9 @@ const isDateColumnKey = (c: string) =>
   c === 'periodEnd' ||
   c === 'clockIn' ||
   c === 'clockOut' ||
-  c === 'lastDayWorked';
+  c === 'lastDayWorked' ||
+  c === 'effectiveFrom' ||
+  c === 'weekStart';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -320,6 +337,32 @@ export function resolvePeriodWindow(
     case 'year-to-date': {
       const [y] = orgDateKey(now).split('-').map(Number);
       return { start: utcInstantOfLocalMidnight(`${y}-01-01`, ORG_TZ), end: now };
+    }
+    case 'quarter-to-date': {
+      const [y, m] = orgDateKey(now).split('-').map(Number);
+      const q = Math.floor((m! - 1) / 3) * 3 + 1;
+      return { start: utcInstantOfLocalMidnight(`${y}-${pad2(q)}-01`, ORG_TZ), end: now };
+    }
+    case 'last-quarter': {
+      const [y, m] = orgDateKey(now).split('-').map(Number);
+      const q = Math.floor((m! - 1) / 3) * 3 + 1; // this quarter's first month
+      const prevY = q === 1 ? y! - 1 : y!;
+      const prevQ = q === 1 ? 10 : q - 3;
+      return {
+        start: utcInstantOfLocalMidnight(`${prevY}-${pad2(prevQ)}-01`, ORG_TZ),
+        end: utcInstantOfLocalMidnight(`${y}-${pad2(q)}-01`, ORG_TZ),
+      };
+    }
+    case 'last-30-days':
+      return { start: new Date(now.getTime() - 30 * 86_400_000), end: now };
+    case 'last-90-days':
+      return { start: new Date(now.getTime() - 90 * 86_400_000), end: now };
+    case 'last-year': {
+      const [y] = orgDateKey(now).split('-').map(Number);
+      return {
+        start: utcInstantOfLocalMidnight(`${y! - 1}-01-01`, ORG_TZ),
+        end: utcInstantOfLocalMidnight(`${y}-01-01`, ORG_TZ),
+      };
     }
   }
 }
@@ -435,6 +478,13 @@ export async function runReport(
   const orderBy = buildOrderBy(entity, spec.sort);
   // The caller's tenant on every entity — tenancy is observe-only until enforce mode.
   const scoped = <T>(scope: T) => ({ AND: [specWhere, scope, { tenantId: tenantIdForWrite() }] });
+
+  // Computed columns and entities (lib/reportComputed): built rows, the same
+  // operators, sort and group-by applied in memory, the same caller scope.
+  if (needsComputedPath(entity, spec)) {
+    const rows = await loadComputedRows(entity, db, user, specWhere, now);
+    return runSpecOverRows(rows, spec, specWhere);
+  }
 
   if (spec.groupBy && spec.groupBy.length > 0) {
     return runAggregate(entity, spec, user, specWhere, db);

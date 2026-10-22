@@ -177,10 +177,10 @@ relayRouter.post('/relay/claims', STAFF, async (req, res, next) => {
     if (!holder || (holderId !== req.user!.id && !deskOf(holder.role))) {
       throw new HttpError(404, 'user_not_found', 'That person isn’t on a desk.');
     }
-    const key = { subjectType_subjectKey: { subjectType: input.subjectType, subjectKey: input.subjectKey } };
+    const key = { tenantId_subjectType_subjectKey: { tenantId: tenantIdForWrite(), subjectType: input.subjectType, subjectKey: input.subjectKey } };
     const row = await prisma.relayClaim.upsert({
       where: key,
-      create: { subjectType: input.subjectType, subjectKey: input.subjectKey, userId: holderId, claimedById: req.user!.id },
+      create: { tenantId: tenantIdForWrite(), subjectType: input.subjectType, subjectKey: input.subjectKey, userId: holderId, claimedById: req.user!.id },
       update: { userId: holderId, claimedById: req.user!.id, claimedAt: new Date() },
       select: { claimedAt: true },
     });

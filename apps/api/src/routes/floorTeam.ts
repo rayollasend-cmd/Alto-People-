@@ -73,9 +73,12 @@ async function windowsOf(userId: string) {
   }));
 }
 
-async function presence(u: { associateId: string | null }) {
+/** On the clock since when, and on which clock (the punch's site zone). */
+async function presence(u: { associateId: string | null }): Promise<{ onClockSince: string | null; onClockTimezone: string | null }> {
   const e = await onClockSince(prisma, u.associateId);
-  return e ? e.clockInAt.toISOString() : null;
+  if (!e) return { onClockSince: null, onClockTimezone: null };
+  const site = e.locationId ? await prisma.site.findFirst({ where: { id: e.locationId }, select: { timezone: true } }) : null;
+  return { onClockSince: e.clockInAt.toISOString(), onClockTimezone: site?.timezone ?? null };
 }
 
 /** A shift supervisor's floor team and hand-overs. */
@@ -104,7 +107,7 @@ async function leadView(lead: { id: string; clientId: string | null }) {
         name: personName(m),
         associateId: m.associateId,
         photoUrl: accountPhotoUrlFor(m),
-        onClockSince: await presence(m),
+        ...(await presence(m)),
         windows: await windowsOf(m.id),
         coveringToday: covers.some((c) => c.cover.id === m.id && c.fromDate <= today && c.toDate >= today),
       })),
@@ -152,7 +155,7 @@ floorTeamRouter.get('/me/floor-team', requireAuth, async (req, res) => {
           name: personName(lead),
           associateId: lead.associateId,
           photoUrl: accountPhotoUrlFor(lead),
-          onClockSince: await presence(lead),
+          ...(await presence(lead)),
           windows: await windowsOf(lead.id),
         }
       : null,

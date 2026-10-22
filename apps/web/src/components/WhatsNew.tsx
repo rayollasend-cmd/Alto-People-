@@ -99,7 +99,7 @@ export function WhatsNew() {
           variant="ghost"
           size="icon-sm"
           onClick={dismiss}
-          aria-label="Dismiss what's new"
+          aria-label={t('whatsnew.dismiss')}
           className="-mt-1.5 -mr-1.5"
         >
           <X className="h-4 w-4" aria-hidden="true" />

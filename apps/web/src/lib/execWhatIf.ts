@@ -141,3 +141,24 @@ export function whatIfWin(base: WhatIfBaseline, rates: WhatIfRates, input: WinIn
     topShareBeforePct: before.pct,
   };
 }
+
+/**
+ * The executive rate model: a year's margin at a bill and pay rate on the
+ * recent weeks' average volume. Overtime costs what the server's labor-rules
+ * engine priced it at — `premiumHours`, the straight-time hours the 1.5× and
+ * 2× multipliers add, as the paycheck pays them; an older API without it
+ * falls back to half an hour per overtime hour.
+ */
+export function rateWhatIfAnnualMargin(
+  weeks: Array<{ workedHours: number; otHours: number; premiumHours?: number }>,
+  bill: number,
+  pay: number,
+  rates: Pick<WhatIfRates, 'burdenPct' | 'overheadPerHour'>,
+): number {
+  if (weeks.length === 0) return 0;
+  const hours = weeks.reduce((n, w) => n + w.workedHours, 0) / weeks.length;
+  const premium = weeks.reduce((n, w) => n + (w.premiumHours ?? w.otHours * 0.5), 0) / weeks.length;
+  const billed = (hours + premium) * bill;
+  const cost = (hours + premium) * pay * (1 + rates.burdenPct / 100) + hours * rates.overheadPerHour;
+  return (billed - cost) * 52;
+}

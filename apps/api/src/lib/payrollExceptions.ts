@@ -17,7 +17,9 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { findInChunks } from './chunkedIn.js';
 import { isStateTaxSupported, primeStateAcknowledgments, stateAwaitingReview, supportedStates } from './payrollTax.js';
 import { mdCountyRate } from './stateWithholding.js';
-import { sumApprovedHours, splitWeeklyOvertime } from './payroll.js';
+import { sumApprovedHours } from './payroll.js';
+import { loadPayContext } from './laborRules/payContext.js';
+import { splitHours } from './laborRules/hours.js';
 import { computeRetroPay, summarizeRetro } from './retroPay.js';
 import { prevailingWageRunExceptions } from './certifiedPayroll.js';
 import { complianceRunExceptions } from './payrollComplianceChecks.js';
@@ -124,9 +126,10 @@ export async function computePayrollExceptions(
     include: {
       // Same net-of-breaks basis as the aggregator — exception hour totals
       // must match what the run will actually pay.
-      breaks: { select: { startedAt: true, endedAt: true } },
-      // The work site decides the work-state and local taxes (lib/taxEngine).
-      location: { select: { state: true, city: true, zip: true, timezone: true } },
+      breaks: { select: { type: true, startedAt: true, endedAt: true } },
+      // The work site decides the work-state and local taxes (lib/taxEngine),
+      // and (when live) the labor rules the hours split by.
+      location: { select: { id: true, state: true, city: true, zip: true, timezone: true } },
       associate: {
         select: {
           id: true,
@@ -198,6 +201,8 @@ export async function computePayrollExceptions(
   }
 
   const exceptions: PayrollExceptionRow[] = [...scheduleWarnings];
+  // The paycheck's own inputs (live rules, punch rounding): overtime here is the run's overtime.
+  const pay = await loadPayContext(tx);
   // Which added states this tenant's payroll admin has reviewed.
   await primeStateAcknowledgments(tx);
   // …and which local jurisdictions.
@@ -252,15 +257,18 @@ export async function computePayrollExceptions(
     // 4. OT_SPIKE — > 20 OT hours in this period. 20h was picked because
     //    every state's typical workweek expects ~0–8h OT/week, so 20+ in
     //    a single biweekly period is a real outlier worth a second look.
-    const ot = splitWeeklyOvertime(group);
-    if (ot.overtimeHours > 20) {
+    //    Split by the labor-rules engine exactly as the run will pay it —
+    //    a live jurisdiction's daily overtime and double time count.
+    const split = splitHours(pay.rules, group.map(pay.forPay).map((e) => ({ ...e, site: e.location })));
+    const otHours = Math.round((split.overtimeHours + split.doubleTimeHours) * 100) / 100;
+    if (otHours > 20) {
       exceptions.push({
         associateId,
         associateName,
         kind: 'OT_SPIKE',
         severity: SEVERITY.OT_SPIKE,
-        message: `${ot.overtimeHours.toFixed(1)} hours of overtime in this period.`,
-        detail: { overtimeHours: ot.overtimeHours },
+        message: `${otHours.toFixed(1)} hours of overtime in this period.`,
+        detail: { overtimeHours: split.overtimeHours, ...(split.doubleTimeHours > 0 ? { doubleTimeHours: split.doubleTimeHours } : {}) },
       });
     }
 

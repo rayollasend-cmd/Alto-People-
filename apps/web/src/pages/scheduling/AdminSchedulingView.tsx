@@ -122,7 +122,6 @@ import {
   fmtRelativeDayTz,
   fmtShiftRangeTz,
   fmtShiftTz,
-  fmtTime,
   fmtTimeTz,
   fmtWeekdayTz,
   browserTimeZone,
@@ -496,10 +495,11 @@ function csvRow(s: Shift, withBillRate = true, withClient = true): Array<string 
   const start = new Date(s.startsAt);
   const end = new Date(s.endsAt);
   const hours = (s.scheduledMinutes / 60).toFixed(2);
+  // The store's clock, as the grid shows it (one shift, one time).
   return [
-    fmtDate(start),
-    fmtTime(start),
-    fmtTime(end),
+    fmtDateTz(start, s.timezone),
+    fmtTimeTz(start, s.timezone),
+    fmtTimeTz(end, s.timezone),
     hours,
     s.position,
     ...(withClient ? [s.clientName ?? ''] : []),

@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import { Clock3, FileSignature, Hourglass } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtTime, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateTz, parseYmd } from '@/lib/format';
+import { fmtPunchTime } from './punchFormat';
 import {
   answerMyOtOffer,
   finishPromptedCorrection,
@@ -107,7 +108,7 @@ function FixDialog({ data, open, onClose, prompted }: { data: MyCorrections; ope
     onError: (err) => toast.error(err instanceof ApiError ? err.message : t('timefix.error')),
   });
   const shiftLabel = (e: MyCorrections['entries'][number]) =>
-    t('timefix.on', { date: fmtDate(e.clockInAt), from: fmtTime(e.clockInAt), to: e.clockOutAt ? fmtTime(e.clockOutAt) : t('timefix.stillOpen') }) + (e.siteName ? ` · ${e.siteName}` : '');
+    t('timefix.on', { date: e.timezone ? fmtDateTz(e.clockInAt, e.timezone) : fmtDate(e.clockInAt), from: fmtPunchTime(e.clockInAt, e.timezone), to: e.clockOutAt ? fmtPunchTime(e.clockOutAt, e.timezone) : t('timefix.stillOpen') }) + (e.siteName ? ` · ${e.siteName}` : '');
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -216,7 +217,7 @@ function OffersSection() {
                     {o.shift.siteName ? ` · ${o.shift.siteName}` : ''}
                   </div>
                   <div className="text-sm text-ink-muted">
-                    {fmtDate(o.shift.startsAt)}, {fmtTime(o.shift.startsAt)} – {fmtTime(o.shift.endsAt)}
+                    {o.shift.timezone ? fmtDateTz(o.shift.startsAt, o.shift.timezone) : fmtDate(o.shift.startsAt)}, {fmtPunchTime(o.shift.startsAt, o.shift.timezone)} – {fmtPunchTime(o.shift.endsAt, o.shift.timezone)}
                     {o.wouldAddOvertimeHours > 0 ? ` · ${t('offers.overtime', { hours: o.wouldAddOvertimeHours })}` : ''}
                   </div>
                 </div>

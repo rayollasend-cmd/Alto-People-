@@ -53,7 +53,7 @@ export interface ChangeReport {
   people: number;
   amountDifference: number;
   premiumAmount: number;
-  byRule: Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS', number>;
+  byRule: Partial<Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS' | 'SPREAD_OF_HOURS' | 'SPLIT_SHIFT', number>>;
   rows: ChangeReportPerson[];
   signables: Array<{ id: string; label: string; source: string; status: string }>;
 }
@@ -168,6 +168,8 @@ export interface CorrectionRequest {
   status: CorrectionStatus;
   workDate: string | null;
   siteName: string | null;
+  /** The site's IANA zone: punches are read on its clock. */
+  timezone?: string | null;
   timeEntryId: string | null;
   proposedClockIn: string | null;
   proposedClockOut: string | null;
@@ -185,7 +187,7 @@ export interface CorrectionRequest {
 export interface MyCorrections {
   attestation: string;
   requests: CorrectionRequest[];
-  entries: Array<{ id: string; clockInAt: string; clockOutAt: string | null; status: string; siteName: string | null }>;
+  entries: Array<{ id: string; clockInAt: string; clockOutAt: string | null; status: string; siteName: string | null; timezone?: string | null }>;
   sites: Array<{ id: string; name: string }>;
 }
 
@@ -219,6 +221,7 @@ export interface BreakFlag {
   clockInAt: string | null;
   clockOutAt: string | null;
   siteName: string | null;
+  timezone?: string | null;
   createdAt: string;
 }
 export const listBreakFlags = () => apiFetch<{ truncated: boolean; flags: BreakFlag[] }>('/time-corrections/break-flags');

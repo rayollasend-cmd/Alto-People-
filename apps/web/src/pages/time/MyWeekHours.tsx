@@ -9,14 +9,17 @@ import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { workweekBounds } from '@/lib/workweek';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useMyEarnings } from '@/components/EarningsCard';
 
 /**
  * The week at a glance, on the Time page: hours worked (every punch this
  * week, the running one included) against hours scheduled — the Sat→Fri
- * workweek payroll and overtime run on (lib/workweek) — and how close that
- * runs to the 40-hour overtime line.
+ * workweek payroll and overtime run on (lib/workweek). The overtime it
+ * names is the server's — each punch's share of the labor-rules split the
+ * paycheck pays (daily rules included where they're paid), and the
+ * schedule's projected overtime from the earnings estimate — never
+ * "minutes − 40h" worked out here.
  */
-const OT_MIN = 40 * 60;
 
 export function MyWeekHours() {
   const { t } = useI18n();
@@ -34,6 +37,8 @@ export function MyWeekHours() {
     queryKey: ['me', 'shifts'],
     queryFn: () => listMyShifts(),
   });
+  // Decorative: the projected-overtime line only. A failed fetch just leaves it off.
+  const earnings = useMyEarnings();
   if (entries.isError || shifts.isError) {
     return (
       <QueryError
@@ -61,8 +66,13 @@ export function MyWeekHours() {
 
   const pct = scheduled > 0 ? Math.min(100, Math.round((worked / scheduled) * 100)) : 100;
   const toGo = Math.max(0, scheduled - worked);
-  const overtime = Math.max(0, worked - OT_MIN);
-  const heading = Math.max(worked, scheduled) > OT_MIN;
+  const overtime = Math.round(
+    entries.data.entries
+      .filter((e) => e.status !== 'REJECTED')
+      .reduce((n, e) => n + (e.hours ? e.hours.overtimeMinutes + e.hours.doubleTimeMinutes : 0), 0),
+  );
+  const projectedOtHours = earnings.data?.overtime?.projectedOtHours ?? 0;
+  const heading = projectedOtHours > 0;
 
   return (
     <section
@@ -98,7 +108,7 @@ export function MyWeekHours() {
         <p className={cn('mt-2 text-xs', overtime > 0 ? 'text-warning' : 'text-silver')}>
           {overtime > 0
             ? t('week.overtime', { hours: fmtHours(overtime / 60) })
-            : t('week.headingOver', { hours: fmtHours((scheduled - OT_MIN) / 60) })}
+            : t('week.headingOver', { hours: fmtHours(projectedOtHours) })}
         </p>
       )}
     </section>

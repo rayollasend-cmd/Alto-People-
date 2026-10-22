@@ -2,6 +2,7 @@ import type { TenantModule } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { runWithTenant, withPlatformScope } from './tenant.js';
 import { moduleOn } from './tenantProfile.js';
+import { withTenantTelemetry } from './tenantTelemetry.js';
 
 /**
  * Brief 2-1b step 0 (and 2-1 §9.4): timed jobs run per tenant.
@@ -58,7 +59,8 @@ export async function runForEachTenant(name: string, fn: (tenantId: string) => P
     }
     ran += 1;
     try {
-      await runWithTenant(id, 'job', () => fn(id));
+      // §9.6: each tenant's run gets its own Sentry scope tagged with the tenant.
+      await withTenantTelemetry(id, 'job', () => runWithTenant(id, 'job', () => fn(id)));
     } catch (err) {
       failed += 1;
       console.error(`[alto-people/api] job ${name} failed for tenant ${id}:`, err);
@@ -74,5 +76,5 @@ export function tenantJob(name: string, fn: () => Promise<unknown> | unknown, op
 
 /** Wrap a platform-wide job so each tick runs under the audited platform scope. */
 export function platformJob<T>(_name: string, fn: () => Promise<T> | T): () => Promise<T> {
-  return () => Promise.resolve(withPlatformScope(fn));
+  return () => Promise.resolve(withTenantTelemetry('platform', 'platform', () => withPlatformScope(fn)));
 }

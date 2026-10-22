@@ -28,6 +28,8 @@ const TABLES = [
   'BankHolidayOverride',
   // PAYEXP: one row per organization, no foreign key.
   'DailyPayPolicy',
+  // Per-tenant counters (pay-check numbers, migration C): no foreign key.
+  'TenantCounter',
   'AuditLog',
   'ComplianceEvidenceSignoff',
   'ComplianceEvidence',

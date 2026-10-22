@@ -5,6 +5,7 @@ import { enqueueAudit } from './audit.js';
 import { HttpError } from '../middleware/error.js';
 import { sendRecorded } from './financialChanges.js';
 import { notifyUser } from './notify.js';
+import { tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
 
 /**
@@ -164,7 +165,7 @@ export async function sendStatementReminderNow(db: Db, statementId: string, now:
   const last = DUNNING_STAGES[DUNNING_STAGES.length - 1]!.stage;
   if (s.reminderStage >= last) throw new HttpError(409, 'reminders_exhausted', 'Every reminder in the cadence has already gone to this client.');
   const stage = Math.min(last, Math.max(s.dueAt ? stageDue(s.dueAt, now) : 0, s.reminderStage + 1));
-  const org = await db.orgSetting.findFirst({ select: { orgName: true } });
+  const org = await db.orgSetting.findFirst({ where: { tenantId: tenantIdForWrite() }, select: { orgName: true } });
   const { recipients } = await sendStatementReminder(db, s, stage, now, org?.orgName ?? 'Finance');
   return { stage, recipients };
 }
@@ -185,7 +186,7 @@ export async function runStatementDunning(now: Date = new Date(), db: PrismaClie
     select: candidateSelect,
     take: 2000,
   });
-  const org = await db.orgSetting.findFirst({ select: { orgName: true } });
+  const org = await db.orgSetting.findFirst({ where: { tenantId: tenantIdForWrite() }, select: { orgName: true } });
   const orgName = org?.orgName ?? 'Finance';
   let sent = 0;
   let skippedPaused = 0;

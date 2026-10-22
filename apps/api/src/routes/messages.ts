@@ -9,7 +9,7 @@ import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
@@ -477,7 +477,7 @@ messagesRouter.post(
       if (magicError) throw new HttpError(400, 'invalid_file_contents', magicError);
       const cleanName = sanitizeUploadFilename(req.file.originalname);
       const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
-      const key = `messages/${randomUUID()}-${sha}${extname(cleanName).toLowerCase() || '.jpg'}`;
+      const key = tenantBlobKey(`messages/${randomUUID()}-${sha}${extname(cleanName).toLowerCase() || '.jpg'}`);
       await getBlobStore().put(key, req.file.buffer, req.file.mimetype);
       const caption = typeof req.body?.body === 'string' ? req.body.body : '';
       const m = await appendMessage(user, req.params.id, {

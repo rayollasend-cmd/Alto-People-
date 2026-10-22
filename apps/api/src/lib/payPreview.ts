@@ -6,6 +6,8 @@ import { dailyPaidInWindow } from './dailyPay.js';
 import { dueAtFor, targetHoursFor } from './hrCaseSla.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyManager } from './notify.js';
 import { payableMs } from './payroll.js';
+import { splitHours } from './laborRules/hours.js';
+import { loadPayContext } from './laborRules/payContext.js';
 import { computePaycheckTaxes, type PayFrequency } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
 import { submitCorrection } from './timeCorrections.js';
@@ -98,7 +100,7 @@ export async function buildPayPreview(db: PrismaClient, associateId: string, now
   const [entries, item, check, comp, schedule] = await Promise.all([
     db.timeEntry.findMany({
       where: { associateId, clockInAt: { gte: periodStart, lt: periodEndExclusive }, status: { in: ['APPROVED', 'COMPLETED'] } },
-      select: { id: true, clockInAt: true, clockOutAt: true, status: true, breaks: { select: { startedAt: true, endedAt: true } }, location: { select: { name: true } } },
+      select: { id: true, locationId: true, clockInAt: true, clockOutAt: true, status: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: { select: { id: true, name: true, state: true, city: true, timezone: true } } },
       orderBy: { clockInAt: 'asc' },
     }),
     db.payrollItem.findFirst({
@@ -152,21 +154,23 @@ export async function buildPayPreview(db: PrismaClient, associateId: string, now
   } else {
     source = 'ESTIMATE';
     const rate = comp ? Number(comp.amount) : 0;
-    // Weekly overtime from the period's start, 40 hours a week.
-    let regular = 0;
-    let overtime = 0;
-    const weeks = new Map<number, number>();
-    for (const d of days) {
-      const w = Math.floor((asDate(d.date).getTime() - periodStart.getTime()) / (7 * DAY));
-      weeks.set(w, (weeks.get(w) ?? 0) + d.hours);
-    }
-    for (const h of weeks.values()) {
-      regular += Math.min(40, h);
-      overtime += Math.max(0, h - 40);
-    }
+    // The approved hours split exactly as the run will split them (the
+    // labor-rules engine, lib/laborRules/hours): the weekly 40 at 1.5×,
+    // plus a live jurisdiction's daily overtime and double time.
+    const pay = await loadPayContext(db);
+    const split = splitHours(
+      pay.rules,
+      entries
+        .filter((e) => e.status === 'APPROVED')
+        .map((raw) => {
+          const e = pay.forPay(raw);
+          return { id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location };
+        }),
+    );
     earnings = [];
-    if (regular > 0) earnings.push({ line: 'earning:REGULAR:0', kind: 'REGULAR', hours: round2(regular), rate, amount: round2(regular * rate) });
-    if (overtime > 0) earnings.push({ line: 'earning:OVERTIME:0', kind: 'OVERTIME', hours: round2(overtime), rate: round2(rate * 1.5), amount: round2(overtime * rate * 1.5) });
+    if (split.regularHours > 0) earnings.push({ line: 'earning:REGULAR:0', kind: 'REGULAR', hours: split.regularHours, rate, amount: round2(split.regularHours * rate) });
+    if (split.overtimeHours > 0) earnings.push({ line: 'earning:OVERTIME:0', kind: 'OVERTIME', hours: split.overtimeHours, rate: round2(rate * split.overtimeMultiplier), amount: round2(split.overtimeHours * rate * split.overtimeMultiplier) });
+    if (split.doubleTimeHours > 0) earnings.push({ line: 'earning:DOUBLE_TIME:0', kind: 'DOUBLE_TIME', hours: split.doubleTimeHours, rate: round2(rate * split.doubleMultiplier), amount: round2(split.doubleTimeHours * rate * split.doubleMultiplier) });
     const fullGross = round2(earnings.reduce((s, e) => s + e.amount, 0));
     const a = await db.associate.findUnique({
       where: { id: associateId },

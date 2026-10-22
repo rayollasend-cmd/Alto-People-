@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { toast } from '@/components/ui/Toaster';
-import { fmtRelativeDayTz, fmtTime } from '@/lib/format';
+import { fmtRelativeDayTz, fmtShiftTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
 /**
@@ -119,7 +119,7 @@ export function AdminUnconfirmedPanel({ className = 'mt-8', emptyFallback = null
               <div key={g.startsAt}>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                   <span className="text-sm text-white tabular-nums">
-                    {fmtRelativeDayTz(g.startsAt)} · {fmtTime(g.startsAt)}
+                    {fmtRelativeDayTz(g.startsAt, g.rows[0]?.timezone)} · {fmtShiftTz(g.startsAt, g.rows[0]?.timezone, { day: false })}
                   </span>
                   <span className="text-xs text-silver/70">
                     {positions.slice(0, 3).join(', ')}
@@ -187,7 +187,7 @@ export function AdminUnconfirmedPanel({ className = 'mt-8', emptyFallback = null
               <span className="text-silver">
                 {picked.position}
                 {multiClient && picked.clientName ? ` · ${picked.clientName}` : ''} ·{' '}
-                {fmtRelativeDayTz(picked.startsAt)} · {fmtTime(picked.startsAt)}
+                {fmtRelativeDayTz(picked.startsAt, picked.timezone)} · {fmtShiftTz(picked.startsAt, picked.timezone, { day: false })}
               </span>
               {picked.phone && (
                 <a href={`tel:${picked.phone}`} className="text-sky tabular-nums hover:underline">

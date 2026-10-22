@@ -3,7 +3,7 @@ import { tenantJob } from './tenantJobs.js';
 import type { Request } from 'express';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
-import { getBlobStore } from './blobStore.js';
+import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { renderLetterPdf } from './letterPdf.js';
 import { recordDocumentEvent } from './audit.js';
 
@@ -121,7 +121,7 @@ export async function fileOfferLetterPdf(opts: {
     issuedAt,
     issuedTo: `${opts.associate.firstName} ${opts.associate.lastName}`,
   });
-  const relativeKey = `letters/${opts.renderId}.pdf`;
+  const relativeKey = tenantBlobKey(`letters/${opts.renderId}.pdf`);
   await getBlobStore().put(relativeKey, pdf, 'application/pdf');
   const filed = await prisma.documentRecord.create({
     data: {

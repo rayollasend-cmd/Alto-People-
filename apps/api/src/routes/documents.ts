@@ -37,7 +37,7 @@ import {
   documentRejectedManagerTemplate,
   documentUploadedTemplate,
 } from '../lib/emailTemplates.js';
-import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
+import { blobExistsForListing, getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import {
   isRejectedDocPastRetention,
   purgeOneRejectedDoc,
@@ -244,7 +244,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
     const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
     const id = randomUUID();
     const ext = extname(cleanName).toLowerCase();
-    const relativeKey = `${id}-${sha}${ext}`;
+    const relativeKey = tenantBlobKey(`${id}-${sha}${ext}`);
     await getBlobStore().put(relativeKey, req.file.buffer, req.file.mimetype);
 
     const created = await prisma.documentRecord.create({
@@ -365,7 +365,7 @@ documentsRouter.post(
       const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
       const id = randomUUID();
       const ext = extname(cleanName).toLowerCase();
-      const relativeKey = `${id}-${sha}${ext}`;
+      const relativeKey = tenantBlobKey(`${id}-${sha}${ext}`);
       await getBlobStore().put(relativeKey, req.file.buffer, req.file.mimetype);
 
       const created = await prisma.documentRecord.create({

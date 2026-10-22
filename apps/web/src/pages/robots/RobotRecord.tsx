@@ -19,7 +19,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtShiftTz } from '@/lib/format';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import {
@@ -217,7 +217,7 @@ function LiveTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boolean })
                 <TableBody>
                   {robot.upcomingShifts.map((s) => (
                     <TableRow key={s.id}>
-                      <TableCell className="whitespace-nowrap">{fmtDateTime(s.startsAt)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{fmtShiftTz(s.startsAt, s.timezone)}</TableCell>
                       <TableCell>{s.position}</TableCell>
                       <TableCell>{s.locationName ?? '—'}</TableCell>
                       <TableCell>
@@ -621,7 +621,7 @@ function ChecklistsTab({ robot, canFloor, canManage }: { robot: RobotDetail; can
                       <option value="">Next 12 hours (any shift)</option>
                       {robot.upcomingShifts.map((s) => (
                         <option key={s.id} value={s.id}>
-                          {fmtDateTime(s.startsAt)} · {s.position}
+                          {fmtShiftTz(s.startsAt, s.timezone)} · {s.position}
                         </option>
                       ))}
                     </Select>

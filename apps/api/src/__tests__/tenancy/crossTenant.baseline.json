@@ -1,20 +1,9 @@
 {
   "generatedAt": "2026-10-13T13:16:31.633Z",
-  "routes": 1203,
-  "leaks": [
-    "DELETE /me/plan/:id",
-    "GET /comp/cycles/:id/proposals",
-    "GET /courses/:id/modules",
-    "GET /document-templates/:id/renders",
-    "GET /document-templates/:id/versions",
-    "GET /garnishments/:id/deductions",
-    "GET /internal-jobs/:id/applications",
-    "GET /learning-paths/:id/enrollments",
-    "GET /surveys/:id/questions",
-    "POST /broadcasts/:id/read"
-  ],
+  "routes": 2228,
+  "leaks": [],
   "timeouts": 0,
   "errors": 0,
-  "prunedAt": "2026-10-14T00:18:12.862Z",
-  "leakCount": 10
+  "prunedAt": "2026-10-22T07:57:46.000Z",
+  "leakCount": 0
 }

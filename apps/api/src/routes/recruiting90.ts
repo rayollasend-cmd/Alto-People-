@@ -24,6 +24,8 @@ import {
 import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
 import { panelOf, sendInterviewInvites, type InviteContext } from '../lib/interviewInvites.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { effectiveClientIdFilter, internalSites } from '../lib/scope.js';
+import { currentRateCards } from '../lib/rateCards.js';
 import { proposeReferralBonus } from '../lib/marketing.js';
 import { boardKey, buildJobFeed } from '../lib/jobFeed.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
@@ -1165,7 +1167,7 @@ recruiting90Router.post('/referrals/:id/convert', MANAGE, async (req, res) => {
     return;
   }
   const email = referral.candidateEmail.trim().toLowerCase();
-  let candidate = await prisma.candidate.findUnique({ where: { email } });
+  let candidate = await prisma.candidate.findUnique({ where: { tenantId_email: { tenantId: tenantIdForWrite(), email } } });
   if (!candidate) {
     const parts = referral.candidateName.trim().split(/\s+/);
     candidate = await prisma.candidate.create({
@@ -1244,6 +1246,43 @@ recruiting90Router.get('/job-postings', VIEW, async (_req, res) => {
       closedAt: p.closedAt?.toISOString() ?? null,
       createdAt: p.createdAt.toISOString(),
     })),
+  });
+});
+
+/**
+ * GET /job-postings/pay-from-rate-card?clientId=&position=
+ *
+ * What a posting for this client pays, from its rate cards in force today
+ * (lib/rateCards) — the pay a posting opened from a staffing gap starts
+ * with. Pay rates only: the bill rate is finance's, never a recruiter's.
+ * Reach: a client-bound account reads its own client only; a site- or
+ * region-limited one, a client with a site in its reach.
+ */
+recruiting90Router.get('/job-postings/pay-from-rate-card', VIEW, async (req, res) => {
+  const q = z.object({ clientId: z.string().uuid(), position: z.string().trim().max(120).optional() }).parse(req.query);
+  const user = req.user!;
+  const clamped = effectiveClientIdFilter(user, q.clientId);
+  if (clamped !== q.clientId) throw new HttpError(404, 'client_not_found', 'Client not found.');
+  const sites = internalSites(user);
+  const client = await prisma.client.findFirst({
+    where: { id: q.clientId, tenantId: tenantIdForWrite(), deletedAt: null, ...(sites ? { locations: { some: sites } } : {}) },
+    select: { id: true, name: true },
+  });
+  if (!client) throw new HttpError(404, 'client_not_found', 'Client not found.');
+  const cards = await currentRateCards(prisma, client.id);
+  const rates = cards.map((c) => ({ position: c.position, payRate: c.payRate, effectiveFrom: c.effectiveFrom }));
+  const wanted = q.position ? rates.find((r) => r.position.toLowerCase() === q.position!.toLowerCase()) : undefined;
+  const pays = rates.map((r) => r.payRate);
+  res.json({
+    clientId: client.id,
+    clientName: client.name,
+    rates,
+    // One role named: its rate. Otherwise the client's range across its roles.
+    suggested: wanted
+      ? { minPay: wanted.payRate, maxPay: wanted.payRate, payUnit: 'HOUR', position: wanted.position }
+      : pays.length
+        ? { minPay: Math.min(...pays), maxPay: Math.max(...pays), payUnit: 'HOUR', position: null }
+        : null,
   });
 });
 
@@ -1421,7 +1460,7 @@ recruiting90Router.post(
     // (often to a different posting) used to be dropped without a trace;
     // now the application lands on their timeline where a recruiter sees
     // it. Nothing on their record is overwritten.
-    const existing = await prisma.candidate.findUnique({ where: { email } });
+    const existing = await prisma.candidate.findUnique({ where: { tenantId_email: { tenantId: tenantIdForWrite(), email } } });
     // Someone removed from the pipeline (a duplicate, a mistake) who applies
     // again is back as a new applicant. They used to be told "we received
     // your application" while nothing was recorded at all.

@@ -88,6 +88,7 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { statusLabel } from '@/lib/status';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtPunchDateTime } from '@/pages/time/punchFormat';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
 import { Label } from '@/components/ui/Label';
@@ -2089,7 +2090,7 @@ function DiagnoseDrawer({
                   <span className="text-silver">Open shift:</span>{' '}
                   <span className="text-white">
                     {result.openTimeEntry
-                      ? `clocked in ${fmtDateTime(result.openTimeEntry.clockInAt)}`
+                      ? `clocked in ${fmtPunchDateTime(result.openTimeEntry.clockInAt, result.openTimeEntry.locationTimezone)}`
                       : 'None'}
                   </span>
                 </div>

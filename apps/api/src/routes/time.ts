@@ -65,10 +65,10 @@ import {
 } from '../lib/timeOffAccrual.js';
 import { accruePolicyLeaveForEntry } from '../lib/timeOffPolicy.js';
 import { renderTimeReportPdf } from '../lib/timeReport.js';
-import {
-  buildPayrollSheet,
-  type PayrollSheetInputRow,
-} from '../lib/payrollSheet.js';
+import { PAYROLL_SHEET_ENTRY_INCLUDE, buildPayrollSheetForPay } from '../lib/payrollSheet.js';
+import { laborSharesForEntries } from '../lib/entryLaborShares.js';
+import { loadPayContext } from '../lib/laborRules/payContext.js';
+import { splitByPerson } from '../lib/laborRules/hours.js';
 import {
   attachEarnings,
   type AssociatePayInfo,
@@ -243,10 +243,17 @@ async function clientNameMap(
 }
 
 async function toEntries(rows: RawEntry[]): Promise<TimeEntry[]> {
-  const names = await clientNameMap(rows);
-  return rows.map((row) =>
-    buildEntry(row, row.clientId ? (names.get(row.clientId) ?? null) : null),
-  );
+  // Each entry's share of the engine's split (lib/entryLaborShares): the
+  // overtime the time views show is the overtime the paycheck pays.
+  const [names, shares] = await Promise.all([
+    clientNameMap(rows),
+    laborSharesForEntries(prisma, rows.filter((r) => r.status !== 'REJECTED')),
+  ]);
+  return rows.map((row) => {
+    const entry = buildEntry(row, row.clientId ? (names.get(row.clientId) ?? null) : null);
+    const share = row.status === 'REJECTED' ? undefined : shares.get(row.id);
+    return share ? { ...entry, hours: share } : entry;
+  });
 }
 
 async function toEntry(row: RawEntry): Promise<TimeEntry> {
@@ -2519,9 +2526,6 @@ async function loadExportRows(
   return { from, to, rows, truncated: fetched.length === TIME_EXPORT_MAX_ROWS };
 }
 
-// Federal weekly overtime threshold (40h) — matches payrollAggregator's
-// regular/OT split so the summary reconciles with payroll.
-const WEEK_REGULAR_CAP_MIN = 40 * 60;
 const TIME_SUMMARY_MAX_ROWS = 20000;
 
 // Per-associate payroll-prep summary: regular vs overtime hours + pay rate,
@@ -2561,6 +2565,9 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
         include: {
           associate: { select: { firstName: true, lastName: true } },
           breaks: true,
+          // The work site: its zone decides the week, its jurisdiction (when
+          // LIVE) the daily rules — the split the paycheck pays.
+          location: { select: { id: true, state: true, city: true, timezone: true } },
         },
         take: TIME_SUMMARY_MAX_ROWS,
       }),
@@ -2575,22 +2582,24 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
       res.setHeader('X-Pending', String(pendingCount));
     }
 
-    // Accumulate net worked minutes per associate per ISO week (OT is a
-    // weekly concept, so we split each week then sum across weeks).
-    type Acc = { name: string; weeks: Map<string, number>; shifts: number };
+    // Each associate's hours split by the labor-rules engine — the split
+    // the paycheck pays (lib/laborRules/hours, through payContext: live
+    // rules and punch rounding). It used to cap each ISO week at 40 h here.
+    type Acc = { name: string; shifts: number };
     const byAssoc = new Map<string, Acc>();
     for (const r of rows) {
-      const acc =
-        byAssoc.get(r.associateId) ?? {
-          name: `${r.associate.firstName} ${r.associate.lastName}`,
-          weeks: new Map<string, number>(),
-          shifts: 0,
-        };
-      const wk = String(startOfWeekUTC(r.clockInAt).getTime());
-      acc.weeks.set(wk, (acc.weeks.get(wk) ?? 0) + netWorkedMinutes(r, r.breaks));
+      const acc = byAssoc.get(r.associateId) ?? { name: `${r.associate.firstName} ${r.associate.lastName}`, shifts: 0 };
       acc.shifts += 1;
       byAssoc.set(r.associateId, acc);
     }
+    const pay = await loadPayContext(prisma);
+    const { byPerson: splitOf } = splitByPerson(
+      pay.rules,
+      rows.map((raw) => {
+        const r = pay.forPay(raw);
+        return { id: r.id, associateId: r.associateId, clockInAt: r.clockInAt, clockOutAt: r.clockOutAt, breaks: r.breaks, site: r.location };
+      }),
+    );
 
     // Current pay rate per associate (open CompensationRecord).
     const associateIds = Array.from(byAssoc.keys());
@@ -2630,7 +2639,7 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
     res.write(`Time summary,${csvEscape(facility)}\n`);
     res.write(`Range,${dayStr(from)} to ${dayStr(new Date(to.getTime() - 1))}\n`);
     res.write(`Status,APPROVED only\n`);
-    res.write(`Overtime rule,Over 40 hours per week (federal)\n`);
+    res.write(`Overtime rule,"Split by the labor rules pay uses: over 40 hours per workweek (federal), plus the daily and double-time rules of any jurisdiction your organization pays live"\n`);
     res.write(
       `Rate note,"Current rate" is today's compensation record — not necessarily the rate when the hours were worked\n`,
     );
@@ -2640,7 +2649,8 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
       );
     }
     res.write('\n');
-    res.write('Associate,Pay type,Current rate,Regular hours,Overtime hours,Total hours,Shifts\n');
+    // Double time is the last column: a reader that maps by position keeps its mapping.
+    res.write('Associate,Pay type,Current rate,Regular hours,Overtime hours,Total hours,Shifts,Double-time hours\n');
 
     const fmtH = (min: number) => (min / 60).toFixed(2);
     const sorted = Array.from(byAssoc.entries()).sort((a, b) =>
@@ -2648,16 +2658,17 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
     );
     let totReg = 0;
     let totOt = 0;
+    let totDt = 0;
     let totShifts = 0;
     for (const [associateId, acc] of sorted) {
-      let regMin = 0;
-      let otMin = 0;
-      for (const wkMin of acc.weeks.values()) {
-        regMin += Math.min(wkMin, WEEK_REGULAR_CAP_MIN);
-        otMin += Math.max(0, wkMin - WEEK_REGULAR_CAP_MIN);
-      }
+      const split = splitOf.get(associateId);
+      // The paycheck's hours (rounded to the hundredth like the paystub), as minutes.
+      const regMin = (split?.regularHours ?? 0) * 60;
+      const otMin = (split?.overtimeHours ?? 0) * 60;
+      const dtMin = (split?.doubleTimeHours ?? 0) * 60;
       totReg += regMin;
       totOt += otMin;
+      totDt += dtMin;
       totShifts += acc.shifts;
       const rate = rateMap.get(associateId);
       res.write(
@@ -2667,15 +2678,16 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
           rate ? rate.amount.toFixed(2) : '',
           fmtH(regMin),
           fmtH(otMin),
-          fmtH(regMin + otMin),
+          fmtH(regMin + otMin + dtMin),
           String(acc.shifts),
+          fmtH(dtMin),
         ]
           .map(csvEscape)
           .join(',') + '\n',
       );
     }
     res.write(
-      ['TOTAL', '', '', fmtH(totReg), fmtH(totOt), fmtH(totReg + totOt), String(totShifts)]
+      ['TOTAL', '', '', fmtH(totReg), fmtH(totOt), fmtH(totReg + totOt + totDt), String(totShifts), fmtH(totDt)]
         .map(csvEscape)
         .join(',') + '\n',
     );
@@ -2866,11 +2878,9 @@ async function loadPayrollSheet(
     prisma.timeEntry.findMany({
       where,
       orderBy: { clockInAt: 'asc' },
-      include: {
-        // state drives the OT thresholds (see PayrollSheetInputRow.state).
-        associate: { select: { firstName: true, lastName: true, state: true } },
-        breaks: true,
-      },
+      // The work site: its zone decides the day and week, its jurisdiction
+      // (when LIVE) the daily rules — the same split the paycheck pays.
+      include: PAYROLL_SHEET_ENTRY_INCLUDE,
       take: TIME_SUMMARY_MAX_ROWS,
     }),
     prisma.timeEntry.count({ where: { ...where, status: 'COMPLETED' } }),
@@ -2892,15 +2902,8 @@ async function loadPayrollSheet(
       : Promise.resolve(0),
   ]);
 
-  const inputRows: PayrollSheetInputRow[] = rows.map((r) => ({
-    associateId: r.associateId,
-    associateName: `${r.associate.firstName} ${r.associate.lastName}`,
-    clockInAt: r.clockInAt,
-    clockOutAt: r.clockOutAt,
-    breaks: r.breaks,
-    state: r.associate.state,
-  }));
-  const hoursSheet = buildPayrollSheet(inputRows);
+  // Through the paycheck's own inputs (live rules, punch rounding, meal waivers).
+  const hoursSheet = await buildPayrollSheetForPay(prisma, rows);
 
   // ---- Scheduled vs actual --------------------------------------------------
   // Sum of assigned-shift minutes per associate in the same window, so the

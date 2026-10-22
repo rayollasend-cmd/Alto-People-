@@ -45,6 +45,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { AsOf } from '@/components/ui/AsOf';
 import { Select } from '@/components/ui/Select';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE, HANDOVER_KIND_ICON, HANDOVER_KIND_LABEL, PERIOD_LABEL } from '../ops/opsVisuals';
 import { ListTemplate } from '@/components/templates';
@@ -254,16 +255,22 @@ function OnTheFloorNow({ data, onOpen }: { data: StoreOpsDay; onOpen: (id: strin
   return (
     <Card>
       <CardContent>
-        <h2 className="flex items-center gap-2 text-sm font-medium text-white">
-          <span className="relative flex h-2 w-2" aria-hidden="true">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-          </span>
-          On the floor now
-          <span className="text-xs font-normal text-silver/60">
-            {live.length} shift{live.length === 1 ? '' : 's'} running
-          </span>
-        </h2>
+        <SectionTitle
+          size="sm"
+          className="mb-0"
+          title={
+            <span className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+              </span>
+              On the floor now
+              <span className="text-xs font-normal text-silver/60">
+                {live.length} shift{live.length === 1 ? '' : 's'} running
+              </span>
+            </span>
+          }
+        />
         <ul className="mt-3 grid gap-2 sm:grid-cols-2">
           {live.map((l) => {
             const pct = l.total > 0 ? Math.round((l.done / l.total) * 100) : null;
@@ -340,17 +347,19 @@ function FromTheFloor({
   return (
     <Card>
       <CardContent>
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-            <Camera className="h-4 w-4 text-gold" aria-hidden="true" />
-            From the floor
-          </h2>
-          <span className="text-xs text-silver/60 tabular-nums">
-            {photos.length === 0
-              ? 'no photos yet'
-              : `${photos.length} photo${photos.length === 1 ? '' : 's'}`}
-          </span>
-        </div>
+        <SectionTitle
+          size="sm"
+          className="mb-0"
+          icon={Camera}
+          title="From the floor"
+          trailing={
+            <span className="text-xs text-silver/60 tabular-nums">
+              {photos.length === 0
+                ? 'no photos yet'
+                : `${photos.length} photo${photos.length === 1 ? '' : 's'}`}
+            </span>
+          }
+        />
         {photos.length === 0 ? (
           // It stays on the page when empty: a card that disappears is a
           // card nobody learns exists, and "no photos" is itself a finding.

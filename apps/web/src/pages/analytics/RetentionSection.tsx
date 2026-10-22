@@ -24,6 +24,7 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -228,8 +229,8 @@ export function RetentionSection() {
                   <tbody className="divide-y divide-navy-secondary/50">
                     {data.byLocation.length === 0 && (
                       <tr>
-                        <td colSpan={4} className="py-3 text-silver">
-                          No assignment history yet.
+                        <td colSpan={4} className="py-3">
+                          <EmptyState size="sm" title="No assignment history yet." />
                         </td>
                       </tr>
                     )}

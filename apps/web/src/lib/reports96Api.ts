@@ -12,7 +12,11 @@ export type ReportEntity =
   | 'SEPARATION'
   | 'LEAVE_CASE'
   | 'HR_CASE'
-  | 'OFFER';
+  | 'OFFER'
+  // Computed (api lib/reportComputed).
+  | 'PAY_CHANGE'
+  | 'TIME_TO_FILL'
+  | 'OVERTIME';
 
 // `period` pairs with a ReportPeriodToken value ('last-week', …); the
 // server resolves the token to a concrete date window at run time.

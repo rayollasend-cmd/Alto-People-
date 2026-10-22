@@ -1,3 +1,4 @@
+import type { Capability } from '@alto-people/shared';
 import type { ReportEntity, ReportSpec } from '@/lib/reports96Api';
 
 /**
@@ -5,8 +6,9 @@ import type { ReportEntity, ReportSpec } from '@/lib/reports96Api';
  * every month, already built. Each opens the builder pre-filled and unsaved
  * (the 'draft' seed), so a template is a head start, never a saved report
  * nobody asked for. Every column here is one the server's whitelist
- * (apps/api/src/lib/reportRun.ts ENTITY_COLUMNS) serves; where the engine
- * has no column for the exact question, the hint says what it shows instead.
+ * (apps/api/src/lib/reportRun.ts ENTITY_COLUMNS) serves. The computed ones
+ * (store, pay changes, time to fill, overtime by store) come from
+ * apps/api/src/lib/reportComputed.ts.
  */
 export interface ReportTemplate {
   key: string;
@@ -16,6 +18,8 @@ export interface ReportTemplate {
   spec: ReportSpec;
   /** Only where the tenant staffs clients (the client-portal module). */
   needsClients?: boolean;
+  /** Only for people who may run it (the entity's own capability on the API). */
+  requires?: Capability;
 }
 
 /** `{client}` / `{store}` in a template's copy read in the tenant's own words. */
@@ -40,12 +44,13 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
   },
   {
     key: 'terminations-by-reason',
-    name: 'Terminations by reason',
-    hint: 'Separations last month, counted by reason.',
+    name: 'Terminations by reason, last quarter',
+    hint: 'Separations whose last day fell in the last calendar quarter, counted by reason.',
     entity: 'SEPARATION',
+    requires: 'view:hr-admin',
     spec: {
       columns: ['reason'],
-      filters: [{ column: 'lastDayWorked', op: 'period', value: 'last-month' }],
+      filters: [{ column: 'lastDayWorked', op: 'period', value: 'last-quarter' }],
       sort: [],
       limit: 1000,
       groupBy: ['reason'],
@@ -80,43 +85,45 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
     },
   },
   {
-    key: 'headcount-by-state',
-    name: 'Headcount by state',
-    hint: 'People per state. The engine has no {store} column yet; the People list filters by {store}.',
+    key: 'headcount-by-store',
+    name: 'Headcount by {store}',
+    hint: 'People working now, counted by the {store} they are placed at.',
     entity: 'ASSOCIATE',
     spec: {
-      columns: ['state'],
-      filters: [],
+      columns: ['store'],
+      filters: [{ column: 'active', op: 'eq', value: true }],
       sort: [],
       limit: 1000,
-      groupBy: ['state'],
+      groupBy: ['store'],
       aggregates: count,
     },
   },
   {
-    key: 'gross-by-run',
-    name: 'Gross pay by payroll run',
-    hint: 'Total gross per run. Individual pay changes are on each person’s Pay tab.',
-    entity: 'PAYROLL_ITEM',
+    key: 'pay-changes',
+    name: 'Pay changes',
+    hint: 'Every pay change in the last 90 days: the rate before, the new rate, the change and why.',
+    entity: 'PAY_CHANGE',
+    requires: 'view:comp',
     spec: {
-      columns: ['runId'],
-      filters: [],
-      sort: [],
+      columns: ['name', 'store', 'effectiveFrom', 'previousAmount', 'amount', 'change', 'changePct', 'reason'],
+      filters: [{ column: 'effectiveFrom', op: 'period', value: 'last-90-days' }],
+      sort: [{ column: 'effectiveFrom', direction: 'desc' }],
       limit: 1000,
-      groupBy: ['runId'],
-      aggregates: [{ fn: 'sum', column: 'grossAmount', alias: 'gross' }, ...count],
     },
   },
   {
     key: 'time-to-fill',
-    name: 'Hires this month',
-    hint: 'Candidates hired, with the day they applied — the start of time to fill.',
-    entity: 'CANDIDATE',
+    name: 'Time to fill',
+    hint: 'Days from a posting opening to each hire against it, this year: the average and the longest, per posting.',
+    entity: 'TIME_TO_FILL',
+    requires: 'view:recruiting',
     spec: {
-      columns: ['firstName', 'lastName', 'stage', 'createdAt'],
-      filters: [{ column: 'stage', op: 'eq', value: 'HIRED' }],
-      sort: [{ column: 'createdAt', direction: 'asc' }],
+      columns: ['posting'],
+      filters: [{ column: 'hiredAt', op: 'period', value: 'year-to-date' }],
+      sort: [],
       limit: 1000,
+      groupBy: ['posting'],
+      aggregates: [{ fn: 'avg', column: 'daysToFill', alias: 'avgDays' }, { fn: 'max', column: 'daysToFill', alias: 'longestDays' }, { fn: 'count', column: null, alias: 'hires' }],
     },
   },
   {
@@ -124,6 +131,7 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
     name: 'Offer acceptance',
     hint: 'Offers this year by outcome: accepted, declined, still out.',
     entity: 'OFFER',
+    requires: 'view:recruiting',
     spec: {
       columns: ['status'],
       filters: [{ column: 'createdAt', op: 'period', value: 'year-to-date' }],
@@ -134,17 +142,21 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
     },
   },
   {
-    key: 'time-entries-last-week',
-    name: 'Punches last week by status',
-    hint: 'Time entries last week by where they stand. Hours and overtime by {store} are on Labor costs.',
-    entity: 'TIME_ENTRY',
+    key: 'overtime-by-store',
+    name: 'Overtime by {store}',
+    hint: 'Overtime and double-time hours last week per {store}, split the way the paycheck splits them.',
+    entity: 'OVERTIME',
     spec: {
-      columns: ['status'],
-      filters: [{ column: 'clockIn', op: 'period', value: 'last-week' }],
+      columns: ['store'],
+      filters: [{ column: 'weekStart', op: 'period', value: 'last-week' }],
       sort: [],
       limit: 1000,
-      groupBy: ['status'],
-      aggregates: count,
+      groupBy: ['store'],
+      aggregates: [
+        { fn: 'sum', column: 'overtimeHours', alias: 'overtimeHours' },
+        { fn: 'sum', column: 'doubleTimeHours', alias: 'doubleTimeHours' },
+        { fn: 'sum', column: 'workedHours', alias: 'workedHours' },
+      ],
     },
   },
   {
@@ -152,6 +164,7 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
     name: 'Open leave',
     hint: 'Leave cases not yet closed, with their dates.',
     entity: 'LEAVE_CASE',
+    requires: 'manage:leave',
     spec: {
       columns: ['associateId', 'type', 'status', 'startDate', 'endDate'],
       filters: [{ column: 'status', op: 'in', value: ['REQUESTED', 'PENDING_CERTIFICATION', 'APPROVED'] }],

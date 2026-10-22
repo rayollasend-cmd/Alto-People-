@@ -523,7 +523,7 @@ authRouter.post(
       // because a passkey already proves possession + on-device user
       // verification — strictly stronger than password + TOTP.
       const policy = await prisma.orgSetting.findUnique({
-        where: { id: 'singleton' },
+        where: { tenantId: user.tenantId },
         select: { mfaRequirement: true },
       });
       if (policy && mfaPolicyAppliesTo(policy.mfaRequirement, user.role)) {

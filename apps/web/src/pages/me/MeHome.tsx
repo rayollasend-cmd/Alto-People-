@@ -37,6 +37,7 @@ import {
 } from '@/lib/selfApi';
 import { useConfirm } from '@/lib/confirm';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
+import { MySkillsCard } from './MySkillsCard';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import {
   Badge,
@@ -272,6 +273,8 @@ export function MeHome() {
             onRetry={refresh}
             onSaved={refresh}
           />
+          {/* My skills: added here, verified by HR (HR walk, wave 2). */}
+          {profile && <MySkillsCard />}
         </TabsContent>
 
         <TabsContent value="emergency">

@@ -4,7 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit, recordDocumentEvent } from './audit.js';
 import { recordChange } from './associateHistory.js';
-import { getBlobStore } from './blobStore.js';
+import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { renderLetterPdf } from './letterPdf.js';
 import { getBrandingSync } from './branding.js';
 import { notifyAssociate, notifyManager } from './notify.js';
@@ -162,7 +162,7 @@ export async function applyPromotion(db: PrismaClient, promotionId: string, deci
     issuedAt: new Date(),
     issuedTo: who,
   });
-  const key = `letters/promotion-${p.id}.pdf`;
+  const key = tenantBlobKey(`letters/promotion-${p.id}.pdf`);
   await getBlobStore().put(key, pdf, 'application/pdf');
   const filed = await db.documentRecord.create({
     data: {

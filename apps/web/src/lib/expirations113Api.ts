@@ -37,6 +37,8 @@ export interface RiskShift {
   storeId: string | null;
   storeName: string | null;
   position: string;
+  /** The store's IANA zone: the shift is read on its clock (fmtShiftTz). */
+  timezone?: string | null;
 }
 
 export interface RiskItem extends ExpirationItem {

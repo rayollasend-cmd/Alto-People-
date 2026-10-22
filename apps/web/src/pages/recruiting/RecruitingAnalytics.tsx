@@ -27,6 +27,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  EmptyState,
   ErrorBanner,
   Field,
   Input,
@@ -645,7 +646,7 @@ export function RecruitingAnalytics() {
             }
           >
             {data.retention.overall.hires === 0 ? (
-              <p className="text-sm text-silver/70">No one hired through recruiting in that window has had 90 days yet.</p>
+              <EmptyState size="sm" title="No one hired through recruiting in that window has had 90 days yet." />
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 {(

@@ -16,7 +16,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit, recordDocumentEvent } from '../lib/audit.js';
-import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
+import { blobExistsForListing, getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 
@@ -168,8 +168,9 @@ externalPaymentsRouter.get(
 /**
  * GET /external-payments/period-prefill?from=YYYY-MM-DD&to=YYYY-MM-DD
  * One row per associate with APPROVED time in the period, hours split
- * reg/OT by the SAME math as the bureau handoff sheet, plus a suggested
- * gross (hourly rate × hours, 1.5× OT) and whether a payment row already
+ * regular / overtime / double time by the SAME split as the bureau handoff
+ * sheet and the paycheck (lib/laborRules/hours), plus a suggested gross at
+ * the engine's multipliers and whether a payment row already
  * exists for this exact period. NO PII — this powers the on-screen batch
  * recorder, not the bureau file.
  */
@@ -198,10 +199,7 @@ externalPaymentsRouter.get(
       const recorded = new Map(existing.map((p) => [p.associateId, p]));
       res.json({
         rows: sheet.rows.map((r) => {
-          const hourly = r.payType === 'HOURLY' && r.payRate != null;
-          const gross = hourly
-            ? Math.round((r.regularHours * r.payRate! + r.overtimeHours * r.payRate! * 1.5) * 100) / 100
-            : null;
+          const gross = r.hoursGross;
           const prior = recorded.get(r.associateId);
           return {
             associateId: r.associateId,
@@ -209,6 +207,7 @@ externalPaymentsRouter.get(
             clientName: r.clientName,
             regularHours: r.regularHours,
             overtimeHours: r.overtimeHours,
+            doubleTimeHours: r.doubleTimeHours,
             suggestedGross: gross,
             alreadyRecorded: !!prior,
             recordedGross: prior?.grossAmount != null ? Number(prior.grossAmount) : null,
@@ -492,7 +491,7 @@ externalPaymentsRouter.post(
       const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
       const id = randomUUID();
       const ext = extname(cleanName).toLowerCase();
-      const relativeKey = `${id}-${sha}${ext}`;
+      const relativeKey = tenantBlobKey(`${id}-${sha}${ext}`);
       await getBlobStore().put(relativeKey, req.file.buffer, req.file.mimetype);
 
       const clientId = await recentClientId(payment.associateId);

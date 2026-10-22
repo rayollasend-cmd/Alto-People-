@@ -10,19 +10,19 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyUser, notifyAssociate, trackNotificationWork } from '../lib/notify.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
-import { tenantIdForWrite } from '../lib/tenant.js';
+import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 import { actsAsAny } from '../lib/roleScope.js';
 import { geocode } from '../lib/geocode.js';
 import { computeAssociateEarnings } from '../lib/associateEarnings.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { haversineM } from '../lib/transportLive.js';
-import { bookableStores } from '../lib/transport.js';
+import { TRANSPORT_PHOTO_NAME, bookableStores, transportPhotoUrl } from '../lib/transport.js';
 import { storeShiftWindows } from '../lib/transportSeats.js';
 import { generateSeries, seriesTargetAt } from '../lib/rideSeries.js';
 import { ackSos, driverOk, publicTrack, raiseSos, shareToken, verifyShareToken } from '../lib/transportSafety.js';
@@ -309,15 +309,20 @@ transportOpsRouter.post('/photos', requireAuth, upload.single('photo'), async (r
   if (magic) throw new HttpError(400, 'invalid_file_contents', magic);
   const ext = PHOTO_MIMES[file.mimetype] ?? (extname(sanitizeUploadFilename(file.originalname)).toLowerCase() || '.bin');
   const name = `${randomUUID()}${ext}`;
-  await getBlobStore().put(`transport/${name}`, file.buffer, file.mimetype);
+  // The row keeps the bare name; the object lives under the tenant (lib/blobStore tenantBlobKey).
+  await getBlobStore().put(tenantBlobKey(`transport/${name}`), file.buffer, file.mimetype);
   res.status(201).json({ key: name, url: `/transport/photos/${name}` });
 });
 
 transportOpsRouter.get('/photos/:name', requireAuth, async (req, res) => {
   const role = req.user!.role;
   if (!hasCapability(role, 'view:transport') && !hasCapability(role, 'drive:transport')) throw new HttpError(403, 'forbidden', 'Not allowed.');
-  const name = z.string().regex(/^[0-9a-f-]{36}\.(png|jpg|webp|bin)$/).parse(req.params.name);
-  const buf = await getBlobStore().get(`transport/${name}`);
+  const name = z.string().regex(TRANSPORT_PHOTO_NAME).parse(req.params.name);
+  // The caller's own tenant first; a photo from before the tenant prefix is
+  // Alto HR's (the only tenant then), so only Alto HR falls back to it.
+  const buf =
+    (await getBlobStore().get(tenantBlobKey(`transport/${name}`))) ??
+    (tenantIdForWrite() === ALTO_TENANT_ID ? await getBlobStore().get(`transport/${name}`) : null);
   if (!buf) throw new HttpError(404, 'not_found', 'No such photo.');
   const type = name.endsWith('.png') ? 'image/png' : name.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
   res.setHeader('Content-Type', type);
@@ -928,7 +933,7 @@ transportOpsRouter.get('/vans/:id/record', VIEW, async (req, res) => {
   ]);
   res.json({
     record: vanRecordView(van),
-    serviceLog: log.map((e) => ({ id: e.id, kind: e.kind, occurredAt: ymd(e.occurredAt), odometerMiles: e.odometerMiles, costCents: e.costCents, vendor: e.vendor, notes: e.notes })),
+    serviceLog: log.map((e) => ({ id: e.id, kind: e.kind, occurredAt: ymd(e.occurredAt), odometerMiles: e.odometerMiles, costCents: e.costCents, vendor: e.vendor, notes: e.notes, photoUrl: transportPhotoUrl(e.photoS3Key) })),
     checks: checks.map((c) => ({ ...checkView(c), driver: personName(c.driver) })),
     incidents: incidents.map(incidentView),
   });

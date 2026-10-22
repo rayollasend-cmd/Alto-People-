@@ -1,6 +1,6 @@
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { tenantIdForWrite } from './tenant.js';
+import { tenantIdForWrite, withIdentityScope } from './tenant.js';
 
 /**
  * Brief 2-1 — closing the cross-tenant leaks before enforce mode.
@@ -51,9 +51,13 @@ export async function belongsToAnotherTenant(model: SameTenantModel, id: string)
   const tenantId = tenantIdForWrite();
   const row = await FINDERS[model](id);
   if (row) return row.tenantId !== null && row.tenantId !== tenantId;
-  const raw = await prisma.$queryRawUnsafe<Array<{ tenantId: string | null }>>(
-    `SELECT "tenantId"::text AS "tenantId" FROM "${TABLES[model]}" WHERE "id" = $1::uuid LIMIT 1`,
-    id,
+  // The identity scope: under the database wall (TENANCY_RLS=on) a raw read is
+  // narrowed too, and this one exists to see past the caller's tenant.
+  const raw = await withIdentityScope(() =>
+    prisma.$queryRawUnsafe<Array<{ tenantId: string | null }>>(
+      `SELECT "tenantId"::text AS "tenantId" FROM "${TABLES[model]}" WHERE "id" = $1::uuid LIMIT 1`,
+      id,
+    ),
   );
   const other = raw[0];
   return !!other && other.tenantId !== null && other.tenantId !== tenantId;
@@ -70,25 +74,25 @@ export async function assertSameTenant(model: SameTenantModel, id: string): Prom
  * questions). The negative check above lets an id that exists nowhere
  * fall through to an empty 2xx, which the cross-tenant suite rightly
  * counts: the route answered for a parent the caller does not have. Here
- * the parent must exist in the caller's tenant (or carry no tenant, as a
- * legacy row may), otherwise 404 — so an existing row of the caller's
+ * the parent must exist in the caller's tenant (migration C made the
+ * tenant required, so no row is without one), otherwise 404 — so an existing row of the caller's
  * answers exactly as before, and only a missing or foreign parent changes
  * from an empty list to "not found".
  */
 const IN_TENANT = {
-  meritCycle: (id: string, t: string) => prisma.meritCycle.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
-  garnishment: (id: string, t: string) => prisma.garnishment.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
-  course: (id: string, t: string) => prisma.course.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
-  documentTemplate: (id: string, t: string) => prisma.documentTemplate.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
-  jobPosting: (id: string, t: string) => prisma.jobPosting.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
-  learningPath: (id: string, t: string) => prisma.learningPath.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
-  survey: (id: string, t: string) => prisma.survey.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
-  broadcast: (id: string, t: string) => prisma.broadcast.findFirst({ where: { id, OR: [{ tenantId: t }, { tenantId: null }] }, select: { id: true } }),
+  meritCycle: (id: string, t: string) => prisma.meritCycle.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
+  garnishment: (id: string, t: string) => prisma.garnishment.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
+  course: (id: string, t: string) => prisma.course.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
+  documentTemplate: (id: string, t: string) => prisma.documentTemplate.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
+  jobPosting: (id: string, t: string) => prisma.jobPosting.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
+  learningPath: (id: string, t: string) => prisma.learningPath.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
+  survey: (id: string, t: string) => prisma.survey.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
+  broadcast: (id: string, t: string) => prisma.broadcast.findFirst({ where: { id, tenantId: t }, select: { id: true } }),
 } satisfies Record<string, (id: string, tenantId: string) => Promise<{ id: string } | null>>;
 
 export type InTenantModel = keyof typeof IN_TENANT;
 
-/** 404 unless the row exists in the caller's tenant (or carries no tenant). */
+/** 404 unless the row exists in the caller's tenant. */
 export async function assertInTenant(model: InTenantModel, id: string, message = 'Not found'): Promise<void> {
   const found = /^[0-9a-f-]{36}$/i.test(id) ? await IN_TENANT[model](id, tenantIdForWrite()) : null;
   if (!found) throw new HttpError(404, 'not_found', message);

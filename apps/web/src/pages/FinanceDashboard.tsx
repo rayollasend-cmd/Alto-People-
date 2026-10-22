@@ -25,6 +25,7 @@ import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
 import type { FinanceOverview } from './finance/financeTypes';
 import { BillingWeekCard, CashForecastCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks } from './finance/FinanceCockpit';
 import { useAuth, useTenant } from '@/lib/auth';
+import { useInbox } from '@/lib/inboxApi';
 import { useI18n } from '@/lib/i18n';
 import { fmtHours, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -62,6 +63,8 @@ export function FinanceDashboard() {
     refetchInterval: 120_000,
   });
   const data = query.data;
+  // The Inbox's sources: "Needs you" counts the same queues it lists (paydays with no run).
+  const inbox = useInbox();
   // Which chase bar's Nudge is in flight ('all' | clientId | 'none').
   const [nudging, setNudging] = useState<string | null>(null);
   // Whole-section collapse, persisted per browser — the count stays
@@ -138,7 +141,7 @@ export function FinanceDashboard() {
   const atRisk = (data.billing?.money.atRisk ?? 0) + (data.billing?.rejectedOpen.amount ?? 0);
   const aging = data.receivables.aging;
   const pastDue = aging ? aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90 : 0;
-  const tasksToday = financeTasks(data, t, Date.now()).length;
+  const tasksToday = financeTasks(data, t, Date.now(), { statements: receivablesOn, inbox: inbox.data?.sources }).length;
   // The doors the day needs (plus the payroll case desk below): statements
   // only when the tenant bills clients.
   const doors = (

@@ -49,6 +49,10 @@ const ReportInputSchema = z.object({
     'LEAVE_CASE',
     'HR_CASE',
     'OFFER',
+    // Computed (lib/reportComputed): pay changes, time to fill, overtime by store.
+    'PAY_CHANGE',
+    'TIME_TO_FILL',
+    'OVERTIME',
   ]),
   spec: SpecSchema,
   isPublic: z.boolean().optional(),

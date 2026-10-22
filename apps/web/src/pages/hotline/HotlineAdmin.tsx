@@ -644,9 +644,7 @@ function ReportDrawer({
               <div className="text-sm font-medium mb-2">Conversation</div>
               <div className="space-y-2">
                 {report.updates.length === 0 ? (
-                  <div className="text-xs text-silver italic">
-                    No messages yet.
-                  </div>
+                  <EmptyState size="sm" title="No messages yet." />
                 ) : (
                   report.updates.map((u) => (
                     <div

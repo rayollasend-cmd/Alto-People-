@@ -11,5 +11,8 @@
   "^[A-Z][A-Za-z]+@",
   "^(http|https)://",
   "^People$",
-  "^Promise$"
+  "^Promise$",
+  "^Math\\.",
+  "^SOON\\.includes\\(",
+  "^N#+$"
 ]

@@ -788,7 +788,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
             {van.look && <span className="text-silver"> · {van.look}</span>}
           </span>
           {van.plate && (
-            <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-[#0B1832]">
+            <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-on-accent">
               {van.plate}
             </span>
           )}

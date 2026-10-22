@@ -192,7 +192,9 @@ vi.mock('@/lib/callOutsApi', async (orig) => ({
   listCallOuts: vi.fn(async () => ({ range: 'week', total: 0, covered: 0, looking: 0, uncovered: 0, late: 0, truncated: false, items: [] })),
 }));
 
-vi.mock('@/lib/payrollTax91Api', () => ({
+vi.mock('@/lib/payrollTax91Api', async (orig) => ({
+  // The real module for anything not stubbed (URL builders the tax forms tab reads).
+  ...(await orig<typeof import('@/lib/payrollTax91Api')>()),
   listGarnishments: vi.fn(async () => ({ garnishments: [] })),
   listTaxForms: vi.fn(async () => ({ forms: [] })),
   listGarnishmentDeductions: vi.fn(async () => ({ deductions: [] })),
@@ -236,7 +238,7 @@ import { HolidaysHome } from '@/pages/holidays/HolidaysHome';
 import { VtoHome } from '@/pages/vto/VtoHome';
 import { ExpirationsHome } from '@/pages/expirations/ExpirationsHome';
 import { MarketplaceHome } from '@/pages/marketplace/MarketplaceHome';
-import { PayrollTaxHome } from '@/pages/payrollTax/PayrollTaxHome';
+import { TaxFormsTab } from '@/pages/payrollTax/PayrollTaxHome';
 
 // ---- Harness (mirrors axeSmoke.test.tsx — do NOT widen this list) -----
 
@@ -381,9 +383,11 @@ describe('axe: time & pay pages (settled empty states)', () => {
     await expectNoViolations(container);
   });
 
-  it('<PayrollTaxHome> has no axe violations', async () => {
-    const { container } = renderPage(<PayrollTaxHome />);
-    await screen.findByText('No garnishments');
+  // The old /payroll/tax page's tax forms now sit on the Payroll taxes desk's
+  // Returns tab (its garnishments on the garnishment desk).
+  it('<TaxFormsTab> has no axe violations', async () => {
+    const { container } = renderPage(<TaxFormsTab canManage />);
+    await screen.findByText('No tax forms');
     await expectNoViolations(container);
   });
 });

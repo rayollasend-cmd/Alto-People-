@@ -22,6 +22,10 @@ import {
   withdrawContradictedNoShows,
 } from './attendance.js';
 import { endOfWeekUTC, startOfWeekUTC } from './timeAnomalies.js';
+import { paidMinutesForRange } from '@alto-people/shared';
+import { loadLiveRules } from './laborRules/live.js';
+import { payFor, plannedEntry, splitHours, sumHours, type HoursEntry } from './laborRules/hours.js';
+import { tenantIdForWrite } from './tenant.js';
 import { associateWeekLink } from './appLinks.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -384,8 +388,10 @@ export async function runShiftReminderSweep(
   }
 
   // ----- OT radar ---------------------------------------------------------
-  // Projected overtime: worked-so-far + remaining ASSIGNED shift minutes
-  // this week > 40h. One alert per (associate, week) via OtAlertStamp —
+  // Projected overtime: worked-so-far + remaining ASSIGNED shifts this week,
+  // split by the labor-rules engine as the paycheck will split them (past
+  // 40, or a live jurisdiction's daily and double-time rules), land hours in
+  // overtime. One alert per (associate, week) via OtAlertStamp —
   // claim-before-notify, same discipline as reminders and no-shows. Warns
   // only; never blocks or reschedules anything.
   let otAlerts = 0;
@@ -411,7 +417,9 @@ export async function runShiftReminderSweep(
   };
 }
 
-const OT_THRESHOLD_MIN = 40 * 60;
+/** "1.5×", or "1.5× and 2×" when double time is in it — the multipliers the engine priced. */
+const multLabel = (s: { overtimeMultiplier: number; doubleMultiplier: number }, dt: number) =>
+  dt > 0 ? `${s.overtimeMultiplier}× and ${s.doubleMultiplier}×` : `${s.overtimeMultiplier}×`;
 
 async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
   const weekStart = startOfWeekUTC(now);
@@ -427,26 +435,26 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
       clientId: true,
       startsAt: true,
       endsAt: true,
+      locationRel: { select: { id: true, state: true, city: true, timezone: true } },
     },
     take: 5000,
   });
-  // Remaining scheduled minutes per associate (rest of a running shift +
-  // shifts not yet started). No remainder → the week is already decided.
-  const remaining = new Map<string, { min: number; clientId: string | null }>();
+  // What's still scheduled per associate (rest of a running shift + shifts
+  // not yet started), in PAID minutes — the meal the schedule assumes is
+  // never projected as worked. No remainder → the week is already decided.
+  const remaining = new Map<string, { planned: HoursEntry[]; clientId: string | null }>();
   for (const s of weekShifts) {
-    const from = Math.max(s.startsAt.getTime(), now.getTime());
-    const min = Math.max(0, (s.endsAt.getTime() - from) / 60_000);
+    const from = new Date(Math.max(s.startsAt.getTime(), now.getTime()));
+    const min = paidMinutesForRange(from, s.endsAt);
     if (min <= 0) continue;
-    const cur = remaining.get(s.assignedAssociateId!);
-    remaining.set(s.assignedAssociateId!, {
-      min: (cur?.min ?? 0) + min,
-      clientId: cur?.clientId ?? s.clientId,
-    });
+    const cur = remaining.get(s.assignedAssociateId!) ?? { planned: [], clientId: s.clientId };
+    cur.planned.push(plannedEntry({ startsAt: from, endsAt: s.endsAt, paidMinutes: min, site: s.locationRel }));
+    remaining.set(s.assignedAssociateId!, cur);
   }
   const candidates = [...remaining.keys()];
   if (candidates.length === 0) return 0;
 
-  const [stamps, entries] = await Promise.all([
+  const [stamps, entries, rules] = await Promise.all([
     prisma.otAlertStamp.findMany({
       where: { associateId: { in: candidates }, weekStart },
       select: { associateId: true },
@@ -461,29 +469,31 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
         associateId: true,
         clockInAt: true,
         clockOutAt: true,
-        breaks: { select: { startedAt: true, endedAt: true } },
+        breaks: { select: { type: true, startedAt: true, endedAt: true } },
+        location: { select: { id: true, state: true, city: true, timezone: true } },
       },
       take: 20_000,
     }),
+    loadLiveRules(prisma, tenantIdForWrite()),
   ]);
   const stamped = new Set(stamps.map((s) => s.associateId));
-  const worked = new Map<string, number>();
+  const worked = new Map<string, HoursEntry[]>();
   for (const e of entries) {
-    const end = (e.clockOutAt ?? now).getTime();
-    let ms = end - e.clockInAt.getTime();
-    for (const b of e.breaks) {
-      const bEnd = b.endedAt ? b.endedAt.getTime() : end;
-      ms -= Math.max(0, bEnd - b.startedAt.getTime());
-    }
-    worked.set(e.associateId, (worked.get(e.associateId) ?? 0) + Math.max(0, ms / 60_000));
+    const list = worked.get(e.associateId) ?? [];
+    // A punch still open counts to now.
+    list.push({ ...e, clockOutAt: e.clockOutAt ?? now, site: e.location });
+    worked.set(e.associateId, list);
   }
 
   let alerts = 0;
   for (const associateId of candidates) {
     if (stamped.has(associateId)) continue;
     const rem = remaining.get(associateId)!;
-    const projected = (worked.get(associateId) ?? 0) + rem.min;
-    if (projected <= OT_THRESHOLD_MIN) continue;
+    // The week as planned, split as the paycheck will split it.
+    const split = splitHours(rules, [...(worked.get(associateId) ?? []), ...rem.planned]);
+    const total = sumHours(split.entries);
+    const otHours = total.overtimeHours + total.doubleTimeHours;
+    if (otHours <= 1e-9) continue;
     // Claim the (associate, week) before notifying.
     try {
       await prisma.otAlertStamp.create({ data: { associateId, weekStart } });
@@ -495,10 +505,9 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
       select: { firstName: true, lastName: true },
     });
     if (!associate) continue;
-    const otHours = (projected - OT_THRESHOLD_MIN) / 60;
-    const otBillRate =
-      env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE * 1.5 : null;
-    const cost = otBillRate ? ` (≈ $${(otHours * otBillRate).toFixed(0)} billed at 1.5×)` : '';
+    const billRate = env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE : null;
+    const billed = billRate ? payFor({ regularHours: 0, overtimeHours: total.overtimeHours, doubleTimeHours: total.doubleTimeHours }, billRate, split) : 0;
+    const cost = billRate ? ` (≈ $${billed.toFixed(0)} billed at ${multLabel(split, total.doubleTimeHours)})` : '';
     const notice = {
       subject: `Overtime ahead — ${associate.firstName} ${associate.lastName}`,
       body: `${associate.firstName} ${associate.lastName} is on track for ~${otHours.toFixed(1)}h of overtime this week if their remaining shifts run as scheduled${cost}. Trim or reassign a shift now to avoid it.`,

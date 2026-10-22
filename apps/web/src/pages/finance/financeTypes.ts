@@ -73,7 +73,7 @@ export interface CashWeek {
 
 export interface CashLine {
   date: string;
-  kind: 'PAYROLL' | 'TAX_DEPOSIT' | 'GARNISHMENT' | 'RECEIVABLE' | 'BILL';
+  kind: 'PAYROLL' | 'TAX_DEPOSIT' | 'GARNISHMENT' | 'RECEIVABLE' | 'BILL' | 'RETIREMENT' | 'BENEFITS';
   label: string;
   /** Signed: money in positive, money out negative. */
   amount: number;

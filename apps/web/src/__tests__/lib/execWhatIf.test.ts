@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { whatIfBaseline, whatIfLose, whatIfWin } from '@/lib/execWhatIf';
+import { rateWhatIfAnnualMargin, whatIfBaseline, whatIfLose, whatIfWin } from '@/lib/execWhatIf';
 
 /** "What if we lose this client / win this one" — on four weeks of the store league. */
 
@@ -50,5 +50,21 @@ describe('winning one', () => {
     expect(o.headcount).toBe(10);
     expect(o.topClientName).toBe('Walmart');
     expect(o.topSharePct).toBeCloseTo(53.6, 1);
+  });
+});
+
+describe('rateWhatIfAnnualMargin', () => {
+  const rates = { burdenPct: 10, overheadPerHour: 1 };
+  it('prices overtime as the server priced it: premiumHours, not a flat half-time', () => {
+    // 40 h with 10 of them overtime and double time: the engine said they add 7 straight-time hours (e.g. 6 OT × 0.5 + 4 DT × 1).
+    const m = rateWhatIfAnnualMargin([{ workedHours: 40, otHours: 10, premiumHours: 7 }], 30, 20, rates);
+    expect(m).toBeCloseTo(((40 + 7) * 30 - ((40 + 7) * 20 * 1.1 + 40 * 1)) * 52, 6);
+  });
+  it('falls back to half an hour per overtime hour from an older API', () => {
+    const m = rateWhatIfAnnualMargin([{ workedHours: 40, otHours: 10 }], 30, 20, rates);
+    expect(m).toBeCloseTo(((40 + 5) * 30 - ((40 + 5) * 20 * 1.1 + 40 * 1)) * 52, 6);
+  });
+  it('is zero with no weeks', () => {
+    expect(rateWhatIfAnnualMargin([], 30, 20, rates)).toBe(0);
   });
 });

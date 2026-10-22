@@ -8,10 +8,12 @@
 //     the associate's OWN phone/bell — deliberately not the shared kiosk
 //     screen, where a dollar figure would leak their pay rate to the
 //     next person in line.
-// OVERTIME-AWARE: past 40h this week (all clients combined) every number
-// here pays 1.5× — the same convention as payroll's splitWeeklyOvertime
-// and the live floor board. A widget that shows an associate on 45 hours
-// LESS than their paycheck isn't motivation, it's a bug.
+// OVERTIME-AWARE: every hour here is split by the labor-rules engine
+// (lib/laborRules/hours.splitHours) — the split the paycheck pays: the
+// weekly 40 at 1.5× across all clients, plus a live jurisdiction's daily
+// overtime and double time, with the paycheck's punch rounding. A widget
+// that shows an associate LESS than their paycheck isn't motivation, it's a
+// bug; one that splits differently from the check is the same bug.
 // All figures are ESTIMATES: gross, before taxes, at the associate's
 // hourly comp record (else the org default rate). Payroll remains the
 // source of truth.
@@ -21,23 +23,23 @@ import { paidMinutesForRange } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { notifyAssociate } from './notify.js';
 import { listEligibleOpenShiftSlots } from '../routes/qualifications.js';
-import { endOfWeekUTC, netWorkedMinutes, startOfWeekUTC } from './timeAnomalies.js';
+import { endOfWeekUTC, startOfWeekUTC } from './timeAnomalies.js';
 import { estimateTakeHome, type TakeHomeEstimate } from './takeHome.js';
+import { payFor, penaltyAmount, plannedEntry, splitHours, type EntryHours, type HoursEntry, type HoursSplit, type LaborSite } from './laborRules/hours.js';
+import { loadPayContext } from './laborRules/payContext.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-const OT_THRESHOLD_MIN = 40 * 60;
-const OT_MULTIPLIER = 1.5;
+/** The weekly overtime line every rule set shares (FLSA); live daily rules may start overtime sooner. */
+const WEEKLY_THRESHOLD_HOURS = 40;
 const DAY_MS = 24 * 3600_000;
+/** A forgotten clock-out can't paint a fantasy number. */
+const LIVE_CAP_MS = 16 * 3600_000;
 
-/** Pay for `minutes` of work starting at cumulative week-minute `cumStart`,
- *  splitting straight-time / 1.5× at the 40-hour line. Chronological blocks
- *  fed through this sum to exactly the FLSA weekly total. */
-function payForBlock(cumStartMin: number, minutes: number, rate: number): number {
-  const regular = Math.max(0, Math.min(minutes, OT_THRESHOLD_MIN - cumStartMin));
-  const overtime = minutes - regular;
-  return (regular / 60) * rate + (overtime / 60) * rate * OT_MULTIPLIER;
-}
+const SITE_SELECT = { select: { id: true, state: true, city: true, timezone: true } } as const;
+
+/** An entry's (or a planned shift's) money: its share of each bucket at the rate, at the split's multipliers. */
+const moneyOf = (share: EntryHours, rate: number, split: HoursSplit) => payFor(share, rate, split);
 
 async function hourlyRateFor(
   prisma: PrismaClient,
@@ -80,6 +82,7 @@ export interface AssociateEarnings {
    *  shift card ticks it live from here at currentRatePerHour. */
   currentShiftEarned: number | null;
   overtime: {
+    /** The weekly overtime line (40); a live jurisdiction's daily rule can start overtime sooner. */
     thresholdHours: number;
     multiplier: number;
     /** Already past 40h — every remaining minute pays 1.5×. */
@@ -88,6 +91,8 @@ export interface AssociateEarnings {
     /** worked + remaining schedule crosses 40h by this many hours. */
     projectedOtHours: number;
   };
+  /** This week's worked hours as the paycheck splits them (lib/laborRules/hours). */
+  hours: { regular: number; overtime: number; doubleTime: number; premium: number };
   /** Last completed week's total (same rate, OT-aware) — the pace to beat. */
   lastWeekEarned: number;
   /** Sat→Fri, always 7 entries — the shape of the week as money. */
@@ -116,7 +121,7 @@ export async function computeAssociateEarnings(
   // The rate query used to run on its own before the batch below, which
   // put a whole round trip in front of everything else. It depends on
   // nothing here, so it rides along with the rest.
-  const [{ rate, source }, entries, shifts, lastWeekEntries, openEligible] =
+  const [{ rate, source }, entries, shifts, lastWeekEntries, openEligible, pay] =
     await Promise.all([
       hourlyRateFor(prisma, associateId),
       prisma.timeEntry.findMany({
@@ -128,10 +133,13 @@ export async function computeAssociateEarnings(
         // Chronological — the OT split walks the week in order.
         orderBy: { clockInAt: 'asc' },
         select: {
+          id: true,
+          locationId: true,
           clockInAt: true,
           clockOutAt: true,
           status: true,
           breaks: { select: { type: true, startedAt: true, endedAt: true } },
+          location: SITE_SELECT,
         },
         take: 100,
       }),
@@ -143,7 +151,7 @@ export async function computeAssociateEarnings(
           startsAt: { lt: weekEnd },
         },
         orderBy: { startsAt: 'asc' },
-        select: { startsAt: true, endsAt: true },
+        select: { startsAt: true, endsAt: true, locationRel: SITE_SELECT },
         take: 30,
       }),
       prisma.timeEntry.findMany({
@@ -156,13 +164,17 @@ export async function computeAssociateEarnings(
           },
         },
         select: {
+          id: true,
+          locationId: true,
           clockInAt: true,
           clockOutAt: true,
           breaks: { select: { type: true, startedAt: true, endedAt: true } },
+          location: SITE_SELECT,
         },
         take: 100,
       }),
       listEligibleOpenShiftSlots(associateId, { before: weekEnd }),
+      loadPayContext(prisma),
     ]);
 
   const days: EarningsDay[] = Array.from({ length: 7 }, (_, i) => ({
@@ -175,81 +187,90 @@ export async function computeAssociateEarnings(
   const dayIndex = (d: Date) =>
     Math.max(0, Math.min(6, Math.floor((d.getTime() - weekStart.getTime()) / DAY_MS)));
 
-  // Worked money, walked chronologically so the 40h line lands exactly
-  // where it did on the floor.
-  let cumMin = 0;
-  let earnedSoFar = 0;
+  // Worked time, as pay counts it: closed punches (rounded where a policy
+  // says so) and the running one up to now.
   let onClock = false;
-  let currentShiftEarned: number | null = null;
-  for (const e of entries) {
-    let mins = 0;
-    if (e.clockOutAt) {
-      mins = netWorkedMinutes(
-        { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt },
-        e.breaks,
-      );
-    } else if (e.status === 'ACTIVE') {
-      // Live: money accrues while they stand on the floor (capped at 16h
-      // so a forgotten clock-out can't paint a fantasy number).
+  let activeIndex = -1;
+  const worked: HoursEntry[] = [];
+  for (const raw of entries) {
+    const e = pay.forPay(raw);
+    if (!e.clockOutAt && e.status !== 'ACTIVE') continue;
+    if (!e.clockOutAt) {
       onClock = true;
-      mins = Math.min(
-        16 * 60,
-        Math.max(0, Math.round((now.getTime() - e.clockInAt.getTime()) / 60_000)),
-      );
+      activeIndex = worked.length;
     }
-    if (mins <= 0) continue;
-    const amount = payForBlock(cumMin, mins, rate);
-    if (!e.clockOutAt && e.status === 'ACTIVE') currentShiftEarned = round2(amount);
-    const d = days[dayIndex(e.clockInAt)];
-    d.workedMinutes += mins;
+    const out = e.clockOutAt ?? new Date(Math.max(e.clockInAt.getTime(), Math.min(now.getTime(), e.clockInAt.getTime() + LIVE_CAP_MS)));
+    worked.push({ id: e.id, clockInAt: e.clockInAt, clockOutAt: out, breaks: e.breaks, site: e.location });
+  }
+  const workedSplit = splitHours(pay.rules, worked);
+  let earnedSoFar = 0;
+  let currentShiftEarned: number | null = null;
+  workedSplit.entries.forEach((share, i) => {
+    if (share.workedHours <= 0) return;
+    const amount = moneyOf(share, rate, workedSplit);
+    if (i === activeIndex) currentShiftEarned = round2(amount);
+    const d = days[dayIndex(worked[i]!.clockInAt)];
+    d.workedMinutes += Math.round(share.workedHours * 60);
     d.workedAmount = round2(d.workedAmount + amount);
     earnedSoFar += amount;
-    cumMin += mins;
+  });
+  const workedHours = workedSplit.entries.reduce((a, e) => a + e.workedHours, 0);
+  // Premiums the check will carry for these hours (a live jurisdiction's
+  // meal, rest, spread-of-hours…), at this rate — on the day they belong to.
+  let premiumHours = 0;
+  for (const p of workedSplit.penalties) {
+    const amount = penaltyAmount(p, rate);
+    if (amount < 0.005) continue;
+    premiumHours += p.hours;
+    earnedSoFar += amount;
+    const d = days.find((x) => x.date === p.date) ?? days[dayIndex(now)]!;
+    d.workedAmount = round2(d.workedAmount + amount);
   }
-  const workedMin = cumMin;
 
   // The rest of the schedule: future shifts fully; an in-progress shift
   // only from now to its end (the walked part is already counted above).
-  // Continues the same cumulative clock, so hours landing past 40 project
-  // at 1.5×.
-  let remainingMin = 0;
+  // Split together with the worked week, so hours landing in overtime
+  // project at the overtime rate. Paid minutes (unpaid-break rule) —
+  // never promise money for the meal hour: a 9h overnight projects 8.
+  const lastSite: LaborSite | null = worked.length ? (worked[worked.length - 1]!.site ?? null) : null;
+  const planned = shifts
+    .map((s) => {
+      const from = s.startsAt > now ? s.startsAt : now;
+      return { s, from, entry: plannedEntry({ startsAt: from, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(from, s.endsAt), site: s.locationRel }) };
+    })
+    .filter((p) => p.s.endsAt > p.from);
+  const projSplit = splitHours(pay.rules, [...worked, ...planned.map((p) => p.entry)]);
+  let remainingHours = 0;
   let remainingAmount = 0;
-  for (const s of shifts) {
-    const from = s.startsAt > now ? s.startsAt : now;
-    // Paid minutes (unpaid-break rule) — never promise money for the
-    // meal hour: a 9h overnight projects 8 paid hours.
-    const mins = paidMinutesForRange(from, s.endsAt);
-    if (mins <= 0) continue;
-    const amount = payForBlock(cumMin, mins, rate);
-    const d = days[dayIndex(from)];
-    d.scheduledMinutes += mins;
+  planned.forEach((p, i) => {
+    const share = projSplit.entries[worked.length + i]!;
+    if (share.workedHours <= 0) return;
+    const amount = moneyOf(share, rate, projSplit);
+    const d = days[dayIndex(p.from)];
+    d.scheduledMinutes += Math.round(share.workedHours * 60);
     d.scheduledAmount = round2(d.scheduledAmount + amount);
-    remainingMin += mins;
+    remainingHours += share.workedHours;
     remainingAmount += amount;
-    cumMin += mins;
-  }
+  });
 
-  // Last week, same math from a zero clock — the pace to beat.
-  let lastWeekMin = 0;
-  for (const e of lastWeekEntries) {
-    if (!e.clockOutAt) continue;
-    lastWeekMin += netWorkedMinutes(
-      { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt },
-      e.breaks,
-    );
-  }
-  const lastWeekEarned = round2(payForBlock(0, lastWeekMin, rate));
+  // Last week, the same split — the pace to beat.
+  const lastSplit = splitHours(
+    pay.rules,
+    lastWeekEntries.map((raw) => {
+      const e = pay.forPay(raw);
+      return { id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location };
+    }),
+  );
+  const lastWeekEarned = round2(payFor(lastSplit, rate, lastSplit));
 
   // Eligible open shifts, priced ON TOP of the projection: if picking one
-  // up would land in overtime, it honestly shows the 1.5× value.
-  let openMin = 0;
-  let openAmount = 0;
-  for (const s of openEligible) {
-    const mins = paidMinutesForRange(s.startsAt, s.endsAt);
-    if (mins <= 0) continue;
-    openAmount += payForBlock(cumMin + openMin, mins, rate);
-    openMin += mins;
-  }
+  // up would land in overtime, it honestly shows the overtime value.
+  const open = openEligible
+    .map((s) => plannedEntry({ startsAt: s.startsAt, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(s.startsAt, s.endsAt), site: lastSite }))
+    .filter((e) => e.clockOutAt! > e.clockInAt);
+  const base = [...worked, ...planned.map((p) => p.entry)];
+  const openSplit = splitHours(pay.rules, [...base, ...open]);
+  const openAmount = open.reduce((a, _e, i) => a + moneyOf(openSplit.entries[base.length + i]!, rate, openSplit), 0);
 
   const next = shifts.find(
     (s) => s.endsAt > now && s.startsAt.getTime() < now.getTime() + 24 * 3600_000,
@@ -262,22 +283,26 @@ export async function computeAssociateEarnings(
             onClock ? now.getTime() : next.startsAt.getTime(),
           ),
         );
+        // The next shift is first on the remaining clock, so its OT split
+        // starts right where the worked week left off.
+        const entry = plannedEntry({ startsAt: from, endsAt: next.endsAt, paidMinutes: paidMinutesForRange(from, next.endsAt), site: next.locationRel });
+        const split = splitHours(pay.rules, [...worked, entry]);
         return {
           startsAt: next.startsAt.toISOString(),
           endsAt: next.endsAt.toISOString(),
-          // The next shift is first on the remaining clock, so its OT
-          // split starts right where the worked week left off.
-          estAmount: round2(
-            payForBlock(workedMin, paidMinutesForRange(from, next.endsAt), rate),
-          ),
+          estAmount: round2(moneyOf(split.entries[worked.length]!, rate, split)),
           inProgress: next.startsAt <= now,
         };
       })()
     : null;
 
-  const otHoursSoFar = Math.max(0, workedMin - OT_THRESHOLD_MIN) / 60;
-  const projectedOtHours =
-    Math.max(0, workedMin + remainingMin - OT_THRESHOLD_MIN) / 60;
+  // What the next minute pays: a minute more at the running punch's site
+  // (or the last one's), split with the week.
+  const probeSite = (activeIndex >= 0 ? worked[activeIndex]!.site : null) ?? lastSite;
+  const probe = plannedEntry({ startsAt: now, endsAt: new Date(now.getTime() + 60_000), site: probeSite });
+  const probeSplit = splitHours(pay.rules, [...worked.filter((w) => w.clockInAt <= now), probe]);
+  const nextShare = probeSplit.entries[probeSplit.entries.length - 1]!;
+  const nextMultiplier = nextShare.doubleTimeHours > 0 ? probeSplit.doubleMultiplier : nextShare.overtimeHours > 0 ? probeSplit.overtimeMultiplier : 1;
 
   return {
     weekStart: weekStart.toISOString(),
@@ -285,20 +310,24 @@ export async function computeAssociateEarnings(
     hourlyRate: rate,
     rateSource: source,
     earnedSoFar: round2(earnedSoFar),
-    workedHours: round2(workedMin / 60),
+    workedHours: round2(workedHours),
     projectedWeek: round2(earnedSoFar + remainingAmount),
-    remainingHours: round2(remainingMin / 60),
+    remainingHours: round2(remainingHours),
     onClock,
-    currentRatePerHour: round2(
-      workedMin >= OT_THRESHOLD_MIN ? rate * OT_MULTIPLIER : rate,
-    ),
+    currentRatePerHour: round2(rate * nextMultiplier),
     currentShiftEarned: onClock ? (currentShiftEarned ?? 0) : null,
     overtime: {
-      thresholdHours: OT_THRESHOLD_MIN / 60,
-      multiplier: OT_MULTIPLIER,
-      unlocked: workedMin >= OT_THRESHOLD_MIN,
-      otHoursSoFar: round2(otHoursSoFar),
-      projectedOtHours: round2(projectedOtHours),
+      thresholdHours: WEEKLY_THRESHOLD_HOURS,
+      multiplier: workedSplit.overtimeMultiplier,
+      unlocked: nextMultiplier > 1,
+      otHoursSoFar: round2(workedSplit.overtimeHours + workedSplit.doubleTimeHours),
+      projectedOtHours: round2(projSplit.overtimeHours + projSplit.doubleTimeHours),
+    },
+    hours: {
+      regular: workedSplit.regularHours,
+      overtime: workedSplit.overtimeHours,
+      doubleTime: workedSplit.doubleTimeHours,
+      premium: round2(premiumHours),
     },
     lastWeekEarned,
     days,
@@ -325,22 +354,20 @@ export async function notifyClockOutEarnings(
   const entry = await prisma.timeEntry.findUnique({
     where: { id: timeEntryId },
     select: {
+      id: true,
       associateId: true,
+      locationId: true,
       clockInAt: true,
       clockOutAt: true,
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
+      location: SITE_SELECT,
     },
   });
   if (!entry?.clockOutAt) return;
-  const mins = netWorkedMinutes(
-    { clockInAt: entry.clockInAt, clockOutAt: entry.clockOutAt },
-    entry.breaks,
-  );
-  if (mins <= 0) return;
-  const { rate } = await hourlyRateFor(prisma, entry.associateId);
+  const [{ rate }, pay] = await Promise.all([hourlyRateFor(prisma, entry.associateId), loadPayContext(prisma)]);
 
-  // Where in the week did this entry land? Sum the week's earlier entries
-  // so the straight/1.5× split matches payroll's chronological walk.
+  // Where in the week did this entry land? The week's earlier entries, split
+  // with it by the engine, so the straight / overtime share matches the check.
   const weekStart = startOfWeekUTC(entry.clockOutAt);
   const priors = await prisma.timeEntry.findMany({
     where: {
@@ -350,37 +377,40 @@ export async function notifyClockOutEarnings(
       id: { not: timeEntryId },
     },
     select: {
+      id: true,
+      locationId: true,
       clockInAt: true,
       clockOutAt: true,
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
+      location: SITE_SELECT,
     },
     take: 100,
   });
-  let cumBefore = 0;
-  for (const p of priors) {
-    if (!p.clockOutAt) continue;
-    cumBefore += netWorkedMinutes(
-      { clockInAt: p.clockInAt, clockOutAt: p.clockOutAt },
-      p.breaks,
-    );
-  }
+  const asEntry = (raw: typeof priors[number]): HoursEntry => {
+    const e = pay.forPay(raw);
+    return { id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location };
+  };
+  const list = [...priors.map(asEntry), asEntry(entry)];
+  const split = splitHours(pay.rules, list);
+  const mine = split.entries[list.length - 1]!;
+  if (mine.workedHours <= 0) return;
 
-  const amount = round2(payForBlock(cumBefore, mins, rate));
-  const otMinutes = Math.max(0, cumBefore + mins - OT_THRESHOLD_MIN) - Math.max(0, cumBefore - OT_THRESHOLD_MIN);
-  const hours = (mins / 60).toFixed(2);
+  const amount = round2(moneyOf(mine, rate, split));
+  const otHours = mine.overtimeHours + mine.doubleTimeHours;
+  const hours = mine.workedHours.toFixed(2);
   // Awaited: the kiosk call site fire-and-forgets THIS helper, so
   // awaiting the insert here costs the punch nothing — and callers that
   // do await (tests) see the row.
   // BEYOND — the week so far as take-home, through the tax engine.
-  const weekEarned = round2(payForBlock(0, cumBefore + mins, rate));
+  const weekEarned = round2(payFor(split, rate, split));
   const takeHome = await estimateTakeHome(prisma, entry.associateId, weekEarned, entry.clockOutAt).catch(() => null);
   await notifyAssociate(entry.associateId, {
     subject: `You just added ~$${amount.toFixed(2)} to your week`,
     body:
       `${hours}h worked today at ~$${rate.toFixed(2)}/hr.` +
       (takeHome && takeHome.net > 0 ? ` About $${takeHome.net.toFixed(2)} take-home so far this week.` : '') +
-      (otMinutes > 0
-        ? ` Includes ${(otMinutes / 60).toFixed(2)}h of overtime at 1.5×.`
+      (otHours > 0
+        ? ` Includes ${otHours.toFixed(2)}h of overtime${mine.doubleTimeHours > 0 ? ' and double time' : ` at ${split.overtimeMultiplier}×`}.`
         : '') +
       ' Estimated — the added amount is before taxes, and your paycheck is the official number. Great shift!',
     category: 'earnings',

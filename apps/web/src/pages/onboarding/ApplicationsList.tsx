@@ -70,6 +70,8 @@ import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
 import { BulkApproveDialog } from './BulkApproveDialog';
 import { SavedViewsMenu } from '@/components/SavedViewsMenu';
+import { FilterSheet, filtersSummary } from '@/components/FilterSheet';
+import { useMediaQuery } from '@/lib/useViewport';
 import { BulkInviteDialog } from './BulkInviteDialog';
 import { CsvImportDialog } from './CsvImportDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
@@ -104,6 +106,7 @@ function whereLine(a: { clientName: string | null; position: string | null }): s
 type StatusFilter =
   | 'ACTIVE'
   | 'TO_REVIEW'
+  | 'IDLE_DRAFTS'
   | 'ARCHIVED'
   | 'ALL'
   | ApplicationStatus;
@@ -113,6 +116,8 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   // Submitted + in review: everything waiting on HR (the Inbox's count).
   { value: 'TO_REVIEW', label: 'To review' },
   { value: 'DRAFT', label: 'Draft' },
+  // Drafts nobody has moved in 7 days — the Inbox's "drafts gone quiet" opens it.
+  { value: 'IDLE_DRAFTS', label: 'Idle drafts' },
   { value: 'SUBMITTED', label: 'Submitted' },
   { value: 'IN_REVIEW', label: 'In review' },
   { value: 'ARCHIVED', label: 'Archived' },
@@ -181,6 +186,7 @@ function invitedLabel(iso: string, now: number): string {
 const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
   'ACTIVE',
   'TO_REVIEW',
+  'IDLE_DRAFTS',
   'ARCHIVED',
   'ALL',
   'DRAFT',
@@ -407,6 +413,9 @@ export function ApplicationsList() {
   // and show ApplicationDetailBody in the drawer. Direct URL still routes to
   // the standalone page.
   const [drawerTarget, setDrawerTarget] = useState<ApplicationSummary | null>(null);
+  // Below sm the filters fold behind one chip (components/FilterSheet).
+  const wide = useMediaQuery('(min-width: 640px)');
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   // Phase 72 — table / cards view toggle, persisted per-user.
   const [view, setView] = useViewMode<ApplicationsView>('applications', 'table', VIEW_OPTIONS);
@@ -953,6 +962,17 @@ export function ApplicationsList() {
               </button>
             )}
           </div>
+          {/* Role walk HR 15: on a phone the filters sat a whole screen
+              above the first row. Below sm they live behind one
+              "Filters (n)" chip that opens a bottom sheet; search stays. */}
+          <FilterSheet
+            mobile={!wide}
+            open={filterSheetOpen}
+            onOpenChange={setFilterSheetOpen}
+            summary={filtersSummary((clientId ? 1 : 0) + (status !== 'ACTIVE' ? 1 : 0) + (invitedWindow !== 'ALL' ? 1 : 0))}
+            description="Narrow the applications, then close to see them."
+            testId="onboarding-filter-chip"
+          >
           {clientsOn && clients && clients.length > 1 && (
             <Select
               size="sm"
@@ -976,6 +996,8 @@ export function ApplicationsList() {
                   ? stats.total
                   : f.value === 'TO_REVIEW'
                     ? (stats.byStatus.SUBMITTED ?? 0) + (stats.byStatus.IN_REVIEW ?? 0)
+                  : f.value === 'IDLE_DRAFTS'
+                    ? (stats.idleDrafts ?? 0)
                   : f.value === 'ACTIVE'
                     ? (stats.byStatus.DRAFT ?? 0) +
                       (stats.byStatus.SUBMITTED ?? 0) +
@@ -1027,6 +1049,7 @@ export function ApplicationsList() {
             onApply={applySavedView}
             allLabel="Default view"
           />
+          </FilterSheet>
           {canManage && readyRows.length > 0 && (
             <Button
               size="sm"

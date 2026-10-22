@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { afterAll, describe, expect, it } from 'vitest';
 import { ALTO_TENANT_ID, currentTenantId, runWithTenant, tenantContext, tenantIdForWrite, withPlatformScope } from '../../lib/tenant.js';
+import { NULLABLE_TENANT_MODELS } from '../../lib/tenantGuard.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { createUser, prisma } from '../../../test/db.js';
 
@@ -30,6 +31,8 @@ describe('the schema', () => {
 
     const missing: string[] = [];
     const unexpectedDefault: string[] = [];
+    const notRequired: string[] = [];
+    const notNullable: string[] = [];
     for (const m of Prisma.dmmf.datamodel.models) {
       if (EXEMPT.has(m.name)) {
         if (m.fields.some((f) => f.name === 'tenantId')) missing.push(`${m.name} should not carry tenantId`);
@@ -40,13 +43,18 @@ describe('the schema', () => {
         missing.push(m.name);
         continue;
       }
-      expect(f.isRequired, `${m.name}.tenantId must be nullable in step one`).toBe(false);
+      // Migration C: required, except where a null tenant means something.
+      if (NULLABLE_TENANT_MODELS.has(m.name)) {
+        if (f.isRequired) notNullable.push(m.name);
+      } else if (!f.isRequired) notRequired.push(m.name);
       const hasDefault = f.hasDefaultValue;
       if (NO_DEFAULT.has(m.name) && hasDefault) unexpectedDefault.push(m.name);
       if (!NO_DEFAULT.has(m.name) && !hasDefault) unexpectedDefault.push(`${m.name} (no default)`);
     }
     expect(missing).toEqual([]);
     expect(unexpectedDefault).toEqual([]);
+    expect(notRequired, 'tenantId must be required (String, not String?) — add the model to NULLABLE_TENANT_MODELS only when a null tenant means something').toEqual([]);
+    expect(notNullable).toEqual([]);
     expect(Prisma.dmmf.datamodel.models.length).toBeGreaterThan(260);
   });
 

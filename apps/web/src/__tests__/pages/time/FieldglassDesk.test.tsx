@@ -180,6 +180,20 @@ describe('the Fieldglass desk on Timesheets', () => {
     );
   });
 
+  it('the paycheck’s overtime rides beside the SOW buckets — “Pay OT”, never in place of Others', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+      if (path === '/time/admin/timesheets') return week([{ ...row('a1', 'Lee, Ann', 45, fg()), payHours: { regular: 40, overtime: 5, doubleTime: 0 } }, row('a2', 'Ray, Bo', 6, fg())]) as never;
+      if (path === '/clients' || path.startsWith('/clients?')) return { clients: [] } as never;
+      throw new Error(`unexpected ${path}`);
+    });
+    renderAs('FINANCE_ACCOUNTANT', <TimesheetsView />);
+    const table = await screen.findByRole('table');
+    expect(within(table).getByRole('columnheader', { name: /Pay OT/ })).toBeInTheDocument();
+    expect(within(table).getByText('5.00')).toBeInTheDocument();
+    // The SOW bucket still carries all 45 hours.
+    expect(within(table).getAllByText('45.00').length).toBeGreaterThan(0);
+  });
+
   it('enter mode: one worker at a time, every value one tap to copy, “Entered — next”', async () => {
     let entered = false;
     vi.mocked(apiFetch).mockImplementation(async (path: string) => {

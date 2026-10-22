@@ -218,7 +218,7 @@ export async function runDocumentChase(db: Db = defaultPrisma, now: Date = new D
   const open = await db.documentChase.findMany({ where: { tenantId, resolvedAt: null } });
   for (const c of open) {
     if (byKey.has(c.itemKey)) continue;
-    const state = await db.complianceActionState.findUnique({ where: { actionKey: c.itemKey }, select: { status: true } });
+    const state = await db.complianceActionState.findUnique({ where: { tenantId_actionKey: { tenantId, actionKey: c.itemKey } }, select: { status: true } });
     const person = await db.associate.findUnique({ where: { id: c.associateId }, select: { deletedAt: true, erasedAt: true, separatedAt: true, deactivatedAt: true } });
     const resolution = state && state.status !== 'OPEN' ? 'WAIVED' : !person || person.deletedAt || person.erasedAt || person.separatedAt || person.deactivatedAt ? 'LEFT' : 'RENEWED';
     await db.documentChase.update({ where: { id: c.id }, data: { resolvedAt: now, resolution } });

@@ -2,38 +2,38 @@
 //
 // Turns a flat list of APPROVED time entries into a per-associate sheet:
 // the dates each person worked + the duration on each date, plus their
-// regular/overtime totals for the window. Overtime is the federal weekly
-// rule (>40h per ISO week), bucketed exactly like payrollAggregator and the
-// time-summary CSV export so the three reconcile.
+// regular / overtime / double-time totals for the window. The split is the
+// labor-rules engine's (lib/laborRules/hours.splitHours) — the very split
+// the paycheck pays — so the sheet and the check can't disagree: before,
+// this file ran its own daily rule off the HOME state's table and read a
+// California 9-hour day as overtime while pay paid it straight (pay only
+// applies daily overtime where a jurisdiction is LIVE).
 //
-// Pure — takes pre-fetched rows so it's trivially unit-testable and never
-// touches the DB.
+// Pure — takes pre-fetched rows (and the tenant's live rules) so it's
+// trivially unit-testable and never touches the DB.
 
-import { netWorkedMinutes, startOfWeekUTC } from './timeAnomalies.js';
-import { getLaborPolicy } from './stateLaborPolicy.js';
+import { NO_LIVE_RULES, splitHours, type LaborSite, type PayRules } from './laborRules/hours.js';
 import type { BreakFacts } from './timeAnomalies.js';
 
 export interface PayrollSheetInputRow {
+  id?: string;
   associateId: string;
   associateName: string;
   clockInAt: Date;
   clockOutAt: Date | null;
   breaks: BreakFacts[];
   /**
-   * Work state (USPS code), driving the overtime thresholds. Null falls
-   * back to the federal default (40h/week, no daily rule).
-   *
-   * This used to be absent and the sheet hardcoded 40h/week, which meant
-   * the API contradicted itself: `timeAnomalies` reads
-   * `dailyOTHoursThreshold` from `stateLaborPolicy` and FLAGS a 9-hour
-   * California day as overtime, while this module PAID it at straight
-   * time. One of those two had to be wrong on every CA timesheet.
+   * Where the hours were worked: its zone decides the day and the week, and
+   * its jurisdiction (when LIVE) the daily rules. Null: the company zone and
+   * the federal weekly split.
    */
-  state?: string | null;
+  site?: LaborSite | null;
+  /** The meal the worker attested they waived (lib/timeCorrections), as pay reads it. */
+  mealWaived?: boolean;
 }
 
 export interface PayrollSheetDay {
-  /** YYYY-MM-DD (UTC date of clock-in). */
+  /** YYYY-MM-DD, the work site's calendar date of the clock-in. */
   date: string;
   /** Net worked minutes that day (breaks excluded). */
   minutes: number;
@@ -46,7 +46,21 @@ export interface PayrollSheetAssociate {
   days: PayrollSheetDay[];
   regularMinutes: number;
   overtimeMinutes: number;
+  /** Hours past a live jurisdiction's double-time line (CA past 12 a day); 0 elsewhere. */
+  doubleTimeMinutes: number;
+  /** The multipliers pay applies to the overtime and double-time hours (1.5×, 2×). */
+  overtimeMultiplier: number;
+  doubleMultiplier: number;
   totalMinutes: number;
+  /**
+   * Premiums the engine names for these hours (meal, rest, spread of hours…),
+   * signed rules only. What one pays depends on the person's rate
+   * (penaltyAmount: spread of hours is offset by pay above the minimum), so
+   * the paycheck — which knows the rate — prints a line only where it's owed.
+   */
+  premiums: Array<{ label: string; kind: string; date: string; hours: number; cents?: number; rateCents?: number; offsetHours?: number }>;
+  /** Why the hours split as they did: the engine's reason lines. */
+  reasons: string[];
   /** Sum of assigned-shift minutes in the window — scheduled vs actual.
    *  Stamped by the route (needs a Shift query); absent in unit builds. */
   scheduledMinutes?: number;
@@ -56,96 +70,69 @@ export interface PayrollSheet {
   associates: PayrollSheetAssociate[];
   totalRegularMinutes: number;
   totalOvertimeMinutes: number;
+  totalDoubleTimeMinutes: number;
   totalMinutes: number;
   /** See PayrollSheetAssociate.scheduledMinutes. */
   totalScheduledMinutes?: number;
 }
 
-function utcDateKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+/** Hours (already rounded like the paycheck) → minutes, without float dust. */
+const toMin = (h: number) => Math.round(h * 60 * 100) / 100;
 
 /**
- * Build the payroll sheet from APPROVED entries. Reg/OT is computed per ISO
- * week (Mon-anchored UTC, matching startOfWeekUTC) then summed across weeks,
- * so a 45h week reads as 40 regular / 5 OT even when split across entries.
+ * Build the payroll sheet from APPROVED entries: each associate's hours split
+ * by the engine exactly as their paycheck splits them (regular, overtime,
+ * double time, each rounded to the hundredth of an hour like the paystub).
  */
-export function buildPayrollSheet(rows: PayrollSheetInputRow[]): PayrollSheet {
-  interface Acc {
-    name: string;
-    days: Map<string, number>;
-    weeks: Map<string, number>;
-    state: string | null;
-  }
-  const byAssoc = new Map<string, Acc>();
-
+export function buildPayrollSheet(rows: PayrollSheetInputRow[], rules: PayRules = NO_LIVE_RULES): PayrollSheet {
+  const byAssoc = new Map<string, { name: string; rows: PayrollSheetInputRow[] }>();
   for (const r of rows) {
-    const acc =
-      byAssoc.get(r.associateId) ??
-      ({
-        name: r.associateName,
-        days: new Map(),
-        weeks: new Map(),
-        state: r.state ?? null,
-      } as Acc);
-    const net = netWorkedMinutes(r, r.breaks);
-    const dayKey = utcDateKey(r.clockInAt);
-    acc.days.set(dayKey, (acc.days.get(dayKey) ?? 0) + net);
-    const weekKey = String(startOfWeekUTC(r.clockInAt).getTime());
-    acc.weeks.set(weekKey, (acc.weeks.get(weekKey) ?? 0) + net);
+    const acc = byAssoc.get(r.associateId) ?? { name: r.associateName, rows: [] };
+    acc.rows.push(r);
     byAssoc.set(r.associateId, acc);
   }
 
   const associates: PayrollSheetAssociate[] = [];
   let totalRegularMinutes = 0;
   let totalOvertimeMinutes = 0;
+  let totalDoubleTimeMinutes = 0;
 
   for (const [associateId, acc] of byAssoc) {
-    // Thresholds come from the state policy table — the same source
-    // timeAnomalies uses to decide what to FLAG — so the two modules can
-    // no longer disagree about what overtime is.
-    const policy = getLaborPolicy(acc.state);
-    const weekCapMin = policy.weeklyOTHoursThreshold * 60;
-    const dayCapMin =
-      policy.dailyOTHoursThreshold !== null
-        ? policy.dailyOTHoursThreshold * 60
-        : null;
-
-    // Daily OT first (California and friends): minutes past the daily
-    // threshold are overtime regardless of the weekly total.
-    let dailyOtMinutes = 0;
-    if (dayCapMin !== null) {
-      for (const dayMin of acc.days.values()) {
-        dailyOtMinutes += Math.max(0, dayMin - dayCapMin);
-      }
+    const split = splitHours(
+      rules,
+      acc.rows.map((r) => ({ id: r.id, clockInAt: r.clockInAt, clockOutAt: r.clockOutAt, breaks: r.breaks, site: r.site ?? null, mealWaived: r.mealWaived })),
+    );
+    const days = new Map<string, number>();
+    for (const e of split.entries) {
+      if (e.workedHours <= 0) continue;
+      days.set(e.date, (days.get(e.date) ?? 0) + e.workedHours);
     }
-
-    let regularMinutes = 0;
-    let overtimeMinutes = 0;
-    for (const weekMin of acc.weeks.values()) {
-      regularMinutes += Math.min(weekMin, weekCapMin);
-      overtimeMinutes += Math.max(0, weekMin - weekCapMin);
-    }
-    // Never pay the same minute twice: hours already counted as daily OT
-    // are removed from the regular bucket rather than added on top. The
-    // weekly calculation above already treats them as worked time, so
-    // only the regular/overtime SPLIT moves.
-    const dailyOtNotAlreadyWeekly = Math.min(dailyOtMinutes, regularMinutes);
-    regularMinutes -= dailyOtNotAlreadyWeekly;
-    overtimeMinutes += dailyOtNotAlreadyWeekly;
-    const days: PayrollSheetDay[] = Array.from(acc.days.entries())
-      .map(([date, minutes]) => ({ date, minutes }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-    const totalMinutes = regularMinutes + overtimeMinutes;
+    const regularMinutes = toMin(split.regularHours);
+    const overtimeMinutes = toMin(split.overtimeHours);
+    const doubleTimeMinutes = toMin(split.doubleTimeHours);
     totalRegularMinutes += regularMinutes;
     totalOvertimeMinutes += overtimeMinutes;
+    totalDoubleTimeMinutes += doubleTimeMinutes;
     associates.push({
       associateId,
       name: acc.name,
-      days,
+      days: [...days.entries()].map(([date, h]) => ({ date, minutes: toMin(h) })).sort((a, b) => a.date.localeCompare(b.date)),
       regularMinutes,
       overtimeMinutes,
-      totalMinutes,
+      doubleTimeMinutes,
+      overtimeMultiplier: split.overtimeMultiplier,
+      doubleMultiplier: split.doubleMultiplier,
+      totalMinutes: toMin(split.regularHours + split.overtimeHours + split.doubleTimeHours),
+      premiums: split.penalties.map((p) => ({
+        label: p.label,
+        kind: p.kind,
+        date: p.date,
+        hours: p.hours,
+        ...(p.cents != null ? { cents: p.cents } : {}),
+        ...(p.rateCents != null ? { rateCents: p.rateCents } : {}),
+        ...(p.offsetHours != null ? { offsetHours: p.offsetHours } : {}),
+      })),
+      reasons: split.reasons,
     });
   }
 
@@ -153,13 +140,64 @@ export function buildPayrollSheet(rows: PayrollSheetInputRow[]): PayrollSheet {
 
   return {
     associates,
-    totalRegularMinutes,
-    totalOvertimeMinutes,
-    totalMinutes: totalRegularMinutes + totalOvertimeMinutes,
+    totalRegularMinutes: Math.round(totalRegularMinutes * 100) / 100,
+    totalOvertimeMinutes: Math.round(totalOvertimeMinutes * 100) / 100,
+    totalDoubleTimeMinutes: Math.round(totalDoubleTimeMinutes * 100) / 100,
+    totalMinutes: Math.round((totalRegularMinutes + totalOvertimeMinutes + totalDoubleTimeMinutes) * 100) / 100,
   };
 }
 
 /** Minutes → decimal hours string, e.g. 150 → "2.50". */
 export function minutesToHours(min: number): string {
   return (min / 60).toFixed(2);
+}
+
+/** The include a sheet's entries need: the person's name, the breaks and the work site. */
+export const PAYROLL_SHEET_ENTRY_INCLUDE = {
+  associate: { select: { firstName: true, lastName: true } },
+  breaks: true,
+  location: { select: { id: true, state: true, city: true, timezone: true } },
+} as const;
+
+/**
+ * The sheet from database entries, through the paycheck's own inputs
+ * (lib/laborRules/payContext): the tenant's live rules, punch rounding and
+ * the meal waivers pay reads. The payroll sheet and the external bureau
+ * sheet both build here, so they reconcile with each other and the check.
+ */
+export async function buildPayrollSheetForPay(
+  db: import('@prisma/client').PrismaClient,
+  entries: ReadonlyArray<{
+    id: string;
+    associateId: string;
+    locationId: string | null;
+    clockInAt: Date;
+    clockOutAt: Date | null;
+    breaks: BreakFacts[];
+    associate: { firstName: string; lastName: string };
+    location: LaborSite | null;
+  }>,
+): Promise<PayrollSheet> {
+  const { loadPayContext } = await import('./laborRules/payContext.js');
+  const [pay, waivers] = await Promise.all([
+    loadPayContext(db),
+    entries.length ? db.breakAttestation.findMany({ where: { timeEntryId: { in: entries.map((e) => e.id) }, meal: 'WAIVED' }, select: { timeEntryId: true } }) : Promise.resolve([] as Array<{ timeEntryId: string }>),
+  ]);
+  const waived = new Set(waivers.map((w) => w.timeEntryId));
+  return buildPayrollSheet(
+    entries.map((raw) => {
+      const e = pay.forPay(raw);
+      return {
+        id: e.id,
+        associateId: e.associateId,
+        associateName: `${e.associate.firstName} ${e.associate.lastName}`,
+        clockInAt: e.clockInAt,
+        clockOutAt: e.clockOutAt,
+        breaks: e.breaks,
+        site: e.location,
+        mealWaived: waived.has(e.id),
+      };
+    }),
+    pay.rules,
+  );
 }

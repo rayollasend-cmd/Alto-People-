@@ -630,7 +630,8 @@ export interface FirstDay {
   stores: { id: string; name: string }[];
   manager: { id: string; name: string } | null;
   employeeNumber: { issued: boolean; clientId: string | null; validAtClient: boolean };
-  firstShift: { id: string; startsAt: string; locationName: string | null } | null;
+  /** `timezone`: the store's clock (one shift, one time). */
+  firstShift: { id: string; startsAt: string; locationName: string | null; timezone?: string | null } | null;
   i9: { section1CompletedAt: string | null; section2CompletedAt: string | null; section2DueBy: string | null };
 }
 

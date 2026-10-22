@@ -480,6 +480,26 @@ const SERVICE_LABEL: Record<VanServiceKind, string> = {
   OTHER: 'Other',
 };
 
+/**
+ * A receipt photo as a thumbnail that opens full size in a new tab — the
+ * driver's fuel receipt on the fleet card and in the van's service log.
+ * `url` is the API path (/transport/photos/…); the browser reads it under /api.
+ */
+export function ReceiptThumb({ url, label = 'Fuel receipt', size = 'md' }: { url: string; label?: string; size?: 'sm' | 'md' }) {
+  return (
+    <a
+      href={`/api${url}`}
+      target="_blank"
+      rel="noreferrer"
+      className="block shrink-0 overflow-hidden rounded border border-navy-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+      aria-label={`${label} — open full size`}
+      title={`${label} — open full size`}
+    >
+      <img src={`/api${url}`} alt={label} loading="lazy" className={cn('object-cover', size === 'sm' ? 'h-8 w-8' : 'h-10 w-10')} />
+    </a>
+  );
+}
+
 export function VanRecordDrawer({ vanId, manage, onClose }: { vanId: string; manage: boolean; onClose: () => void }) {
   const q = useQuery({ queryKey: ['transport', 'van-record', vanId], queryFn: () => getVanRecord(vanId) });
   const queryClient = useQueryClient();
@@ -681,7 +701,9 @@ export function VanRecordDrawer({ vanId, manage, onClose }: { vanId: string; man
                       <span className="min-w-0 flex-1 truncate text-ink">
                         {SERVICE_LABEL[e.kind]}
                         {e.vendor ? <span className="text-silver"> · {e.vendor}</span> : null}
+                        {e.notes ? <span className="text-silver"> · {e.notes}</span> : null}
                       </span>
+                      {e.photoUrl && <ReceiptThumb url={e.photoUrl} label={e.kind === 'FUEL' ? 'Fuel receipt' : 'Receipt'} size="sm" />}
                       <span className="shrink-0 text-xs text-silver">{e.occurredAt ? fmtDate(e.occurredAt) : ''}</span>
                       <span className="w-20 shrink-0 text-right tabular-nums text-ink">{cents(e.costCents)}</span>
                       {manage && (

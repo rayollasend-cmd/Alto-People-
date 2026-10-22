@@ -6,6 +6,8 @@ import { benchFor } from './scope.js';
 import { clientRestrictionFor } from './programRules.js';
 import { assignWithinRules, autoFillScore, blockedForWindow, findRestGapViolation } from './shiftAssign.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from './timeAnomalies.js';
+import { loadLiveRules } from './laborRules/live.js';
+import { plannedEntry, splitHours, sumHours, type HoursEntry } from './laborRules/hours.js';
 import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone, zonedDayOfWeek, zonedMinutes } from './timezone.js';
 import { claimApproval, inProcessAgent, logAgentAction } from './agents.js';
 import {
@@ -122,7 +124,16 @@ export interface ConsideredPerson {
 /** The pick with the facts behind it, and everyone else who was weighed. */
 export interface BenchRanking {
   pick: FillCandidate | null;
-  picked: { matchesAvailability: boolean; wouldExceed40: boolean; weeklyScheduledMinutes: number; weeklyActualMinutes: number; fewestHours: boolean } | null;
+  picked: {
+    matchesAvailability: boolean;
+    /** Taking the shift adds overtime to their week (the labor-rules engine's split: past 40, or a live daily rule). */
+    wouldExceed40: boolean;
+    weeklyScheduledMinutes: number;
+    weeklyActualMinutes: number;
+    fewestHours: boolean;
+    /** The overtime and double time it adds, in minutes (absent on older proposals). */
+    overtimeMinutes?: number;
+  } | null;
   considered: ConsideredPerson[];
   benchSize: number;
   shiftMinutes: number;
@@ -172,13 +183,21 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
       availability: { select: { dayOfWeek: true, startMinute: true, endMinute: true } },
       assignedShifts: {
         where: { status: { notIn: ['CANCELLED', 'COMPLETED'] }, startsAt: { gte: weekStart, lt: weekEnd } },
-        select: { startsAt: true, endsAt: true },
+        select: { startsAt: true, endsAt: true, locationRel: { select: { id: true, state: true, city: true, timezone: true } } },
       },
-      timeEntries: { where: { clockInAt: { gte: weekStart, lt: weekEnd } }, include: { breaks: true } },
+      timeEntries: { where: { clockInAt: { gte: weekStart, lt: weekEnd } }, include: { breaks: true, location: { select: { id: true, state: true, city: true, timezone: true } } } },
     },
     take: 200,
   });
   if (!people.length) return none;
+  // The labor-rules engine (lib/laborRules/hours) decides whether the shift
+  // lands them in overtime, as the paycheck would split the week: hours
+  // worked (an open punch to now) plus what's still scheduled, plus this.
+  const [rules, site] = await Promise.all([
+    loadLiveRules(db, opts.tenantId),
+    shift.locationId ? db.site.findFirst({ where: { id: shift.locationId, tenantId: opts.tenantId }, select: { id: true, state: true, city: true, timezone: true } }) : Promise.resolve(null),
+  ]);
+  const shiftEntry = plannedEntry({ startsAt: shift.startsAt, endsAt: shift.endsAt, paidMinutes: shiftMinutes, site });
   const ids = people.map((p) => p.id);
   const name = (p: { firstName: string; lastName: string }) => `${p.firstName} ${p.lastName}`.trim();
   // The hard rule of assignWithinRules, applied up front: no overlapping shift.
@@ -194,7 +213,7 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
   const startMin = zonedMinutes(shift.startsAt, tz);
   const endMin = zonedMinutes(shift.endsAt, tz);
   const considered: ConsideredPerson[] = [];
-  const ranked: Array<{ p: (typeof people)[number]; score: number; weeklyScheduled: number; weeklyActual: number; matchesAvailability: boolean; wouldExceed40: boolean }> = [];
+  const ranked: Array<{ p: (typeof people)[number]; score: number; weeklyScheduled: number; weeklyActual: number; matchesAvailability: boolean; wouldExceed40: boolean; overtimeMinutes: number }> = [];
   for (const p of people) {
     if (excluded.has(p.id)) {
       considered.push({ associateId: p.id, name: name(p), whyNot: opts.excludeWhy?.[p.id] ?? 'turned down for this shift before' });
@@ -212,9 +231,19 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
     const weeklyScheduled = p.assignedShifts.reduce((sum, sh) => sum + paidMinutesForRange(sh.startsAt, sh.endsAt), 0);
     const weeklyActual = p.timeEntries.reduce((sum, e) => sum + netWorkedMinutes(e, e.breaks), 0);
     const matchesAvailability = p.availability.some((w) => w.dayOfWeek === dow && w.startMinute <= startMin && w.endMinute >= endMin);
-    const wouldExceed40 = weeklyActual + shiftMinutes > 40 * 60;
+    const worked: HoursEntry[] = p.timeEntries.filter((e) => e.status !== 'REJECTED').map((e) => ({ ...e, clockOutAt: e.clockOutAt ?? (e.status === 'ACTIVE' ? now : null), site: e.location }));
+    const ahead: HoursEntry[] = p.assignedShifts
+      .filter((sh) => sh.endsAt > now)
+      .map((sh) => {
+        const from = sh.startsAt > now ? sh.startsAt : now;
+        return plannedEntry({ startsAt: from, endsAt: sh.endsAt, paidMinutes: paidMinutesForRange(from, sh.endsAt), site: sh.locationRel });
+      });
+    const before = sumHours(splitHours(rules, [...worked, ...ahead]).entries);
+    const after = sumHours(splitHours(rules, [...worked, ...ahead, shiftEntry]).entries);
+    const overtimeMinutes = Math.round(Math.max(0, after.overtimeHours + after.doubleTimeHours - before.overtimeHours - before.doubleTimeHours) * 60);
+    const wouldExceed40 = overtimeMinutes > 0;
     const score = autoFillScore({ matchesAvailability, noConflict: true, wouldExceed40, onApprovedTimeOff: false });
-    ranked.push({ p, score, weeklyScheduled, weeklyActual, matchesAvailability, wouldExceed40 });
+    ranked.push({ p, score, weeklyScheduled, weeklyActual, matchesAvailability, wouldExceed40, overtimeMinutes });
   }
   ranked.sort(
     (a, b) =>
@@ -234,7 +263,7 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
         !r.matchesAvailability && pickedRow.matchesAvailability
           ? 'no availability on file for this window'
           : r.wouldExceed40 && !pickedRow.wouldExceed40
-            ? 'would pass 40 hours this week'
+            ? 'would land in overtime this week'
             : r.weeklyScheduled > pickedRow.weeklyScheduled
               ? `more hours scheduled this week (${fmtH(r.weeklyScheduled)} vs ${fmtH(pickedRow.weeklyScheduled)})`
               : 'equal on every measure; alphabetical tie-break';
@@ -260,6 +289,7 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
       weeklyScheduledMinutes: r.weeklyScheduled,
       weeklyActualMinutes: r.weeklyActual,
       fewestHours: ranked.every((o) => o.weeklyScheduled >= r.weeklyScheduled),
+      overtimeMinutes: r.overtimeMinutes,
     };
   }
   return { pick, picked, considered, benchSize: people.length, shiftMinutes };
@@ -288,7 +318,8 @@ export function assignEvidence(
   const pick = ranking.pick!;
   const facts = ranking.picked!;
   const after = facts.weeklyScheduledMinutes + ranking.shiftMinutes;
-  const over = facts.weeklyActualMinutes + ranking.shiftMinutes - 40 * 60;
+  // The engine's answer (rankBench); a proposal ranked before it existed falls back to the old 40-hour arithmetic.
+  const over = facts.overtimeMinutes ?? facts.weeklyActualMinutes + ranking.shiftMinutes - 40 * 60;
   const why = [
     `${pick.name} is placed at ${siteName(shift)}, is free for ${shiftWhen(shift)}`,
     facts.matchesAvailability ? ', has availability on file for that window' : ' (no availability on file for that window)',
@@ -301,7 +332,7 @@ export function assignEvidence(
   const impact: ProposalEvidence['impact'] = [
     { label: 'Shift', value: `${fmtH(ranking.shiftMinutes)} ${shift.position}, ${shiftWhen(shift)}` },
     { label: `${pick.name.split(' ')[0]}'s week`, value: `${fmtH(facts.weeklyScheduledMinutes)} → ${fmtH(after)} scheduled` },
-    { label: 'Overtime', value: facts.wouldExceed40 ? `Likely: about ${fmtH(Math.max(over, 0))} past 40` : 'None expected' },
+    { label: 'Overtime', value: facts.wouldExceed40 ? `Likely: about ${fmtH(Math.max(over, 0))} of overtime` : 'None expected' },
     { label: 'Bench', value: `${ranking.benchSize} placed here; ${ranking.considered.length} other${ranking.considered.length === 1 ? '' : 's'} weighed` },
   ];
   if (ctx.holder) impact.push({ label: 'Replaces', value: `${ctx.holder.name} (${ctx.holder.why})` });

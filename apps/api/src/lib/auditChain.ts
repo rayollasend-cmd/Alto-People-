@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { getBlobStore } from './blobStore.js';
+import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { encryptBytes } from './crypto.js';
 import { enqueueAudit } from './audit.js';
 import { env } from '../config/env.js';
@@ -171,7 +171,7 @@ export async function archiveAuditRows(db: Db, tenantId: string, now: Date = new
   const sealed = encryptBytes(gzipSync(Buffer.from(jsonl, 'utf8')));
   const sha256 = createHash('sha256').update(sealed).digest('hex');
   const end = rows.length === batch ? rows[rows.length - 1]!.createdAt : before;
-  const objectKey = `audit-archive/${tenantId}/${rows[0]!.createdAt.toISOString().slice(0, 10)}_${end.toISOString().slice(0, 10)}_${sha256.slice(0, 12)}.jsonl.gz.enc`;
+  const objectKey = tenantBlobKey(`audit-archive/${rows[0]!.createdAt.toISOString().slice(0, 10)}_${end.toISOString().slice(0, 10)}_${sha256.slice(0, 12)}.jsonl.gz.enc`, tenantId);
   await getBlobStore().put(objectKey, sealed, 'application/octet-stream');
   const seqs = rows.map((r) => r.seq).filter((s): s is bigint => s !== null);
   const lastChained = [...rows].reverse().find((r) => r.hash !== null);

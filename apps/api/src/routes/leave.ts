@@ -8,7 +8,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { assertAssociateInScope, scopeActiveAssociates, scopeWhere } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -450,7 +450,7 @@ async function storeDocument(req: Request, c: { id: string }, kind: 'MEDICAL_CER
   if (magic) throw new HttpError(400, 'invalid_file_contents', magic);
   const clean = sanitizeUploadFilename(req.file.originalname);
   const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
-  const key = `leave/${randomUUID()}-${sha}${extname(clean).toLowerCase()}`;
+  const key = tenantBlobKey(`leave/${randomUUID()}-${sha}${extname(clean).toLowerCase()}`);
   await getBlobStore().put(key, req.file.buffer, req.file.mimetype);
   const doc = await prisma.leaveDocument.create({
     data: { tenantId: tenantIdForWrite(), leaveCaseId: c.id, kind, storageKey: key, filename: clean, mimeType: req.file.mimetype, size: req.file.size, uploadedById: req.user!.id },

@@ -8,7 +8,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
 import { careersViewIpLimiter } from '../middleware/rateLimit.js';
 import { enqueueAudit } from '../lib/audit.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { computeMarketingOverview, proposeReferralBonus } from '../lib/marketing.js';
 import { sourceKey } from '../lib/recruitingAnalytics.js';
 import { scopePayrollRuns } from '../lib/scope.js';
@@ -174,7 +174,7 @@ marketingRouter.post('/marketing/brand/photos', requireAuth, MANAGE, photoUpload
   if (!brand) brand = await prisma.employerBrand.create({ data: { id: BRAND_ID }, select: { id: true } });
   const count = await prisma.employerBrandPhoto.count({ where: { brandId: brand.id } });
   if (count >= 8) throw new HttpError(409, 'too_many', 'Eight photos is the most the page shows. Remove one first.');
-  const key = `employer-brand/${Date.now()}-${sanitizeUploadFilename(file.originalname)}`;
+  const key = tenantBlobKey(`employer-brand/${Date.now()}-${sanitizeUploadFilename(file.originalname)}`);
   await getBlobStore().put(key, file.buffer, file.mimetype);
   const photo = await prisma.employerBrandPhoto.create({
     data: { brandId: brand.id, s3Key: key, contentType: file.mimetype, alt, sortOrder: count },

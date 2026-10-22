@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
-import { adoptTenant, tenantContext } from './tenant.js';
+import { adoptTenant, tenantContext, type TenantContext } from './tenant.js';
 
 /**
  * The application wall, step two of Brief 2-1: OBSERVE mode.
@@ -16,10 +16,11 @@ import { adoptTenant, tenantContext } from './tenant.js';
  *   TENANCY_MODE=off      the hook does nothing
  *   TENANCY_MODE=observe  record and continue (the default)
  *   TENANCY_MODE=enforce  a missing context or another tenant's id throws
- *                         (step four's behaviour, available for the tests)
+ *                         (the default since step four)
  *
- *   Reads are not filtered here yet: that is the enforcing step, together
- *   with row-level security, after the constraint rewrite.
+ *   In enforce mode every read, update and delete also carries the tenant
+ *   (guardTenantQuery, below). The database wall behind it is row-level
+ *   security (lib/tenantRls, TENANCY_RLS=on with the non-owner role).
  */
 
 export type TenancyMode = 'off' | 'observe' | 'enforce';
@@ -34,6 +35,15 @@ export function tenancyMode(): TenancyMode {
 export const TENANT_EXEMPT_MODELS: ReadonlySet<string> = new Set(['Tenant', 'PayrollConfig', 'LocalTaxRule', 'GeoCache']);
 /** Platform-wide telemetry (decision 7): a nullable tenant column, never required. */
 export const PLATFORM_WIDE_MODELS: ReadonlySet<string> = new Set(['ApiBoot', 'RouteUsageDaily', 'WebVitalDaily', 'ProductEventDaily', 'ReliabilityWeek', 'ComplianceEvidence', 'ComplianceEvidenceSignoff']);
+
+/**
+ * Migration C made tenantId required everywhere else. These keep a nullable
+ * column because a null tenant means something: the platform telemetry
+ * above; AuditLog, AuditChainCheck and AuditArchive (null = the platform's own
+ * audit chain); ReleaseNote (null = a note every tenant reads); LaborRuleSet
+ * (null = a shipped jurisdiction pack every tenant reads).
+ */
+export const NULLABLE_TENANT_MODELS: ReadonlySet<string> = new Set([...PLATFORM_WIDE_MODELS, 'AuditLog', 'AuditChainCheck', 'AuditArchive', 'ReleaseNote', 'LaborRuleSet']);
 
 /** Every model the wall applies to, from the schema itself. */
 export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set(
@@ -136,6 +146,15 @@ const FILTERED = new Set(['findFirst', 'findFirstOrThrow', 'findMany', 'findUniq
 
 type Args = Record<string, unknown>;
 
+/**
+ * An anonymous request that has not resolved its tenant yet, doing the
+ * single-record lookup it resolves it with: neither wall narrows that one
+ * read (the database wall mirrors this in lib/tenantRls).
+ */
+export function resolvesUnbound(ctx: TenantContext, operation: string): boolean {
+  return ctx.source === 'default' && !ctx.platform && !ctx.adopted && RESOLVING.has(operation);
+}
+
 function stampCreate(data: unknown, tenantId: string, platform: boolean, model: string, operation: string, enforce: boolean): void {
   if (!data || typeof data !== 'object') return;
   const rows = Array.isArray(data) ? data : [data];
@@ -149,6 +168,48 @@ function stampCreate(data: unknown, tenantId: string, platform: boolean, model: 
       if (enforce) throw new Error(`[tenancy] ${model}.${operation} writes tenant ${String(given)} from tenant ${tenantId}`);
     }
   }
+}
+
+/** Each model's relation fields (field → related model), from the schema. */
+const RELATIONS: ReadonlyMap<string, ReadonlyArray<[string, string]>> = new Map(
+  Prisma.dmmf.datamodel.models.map((m) => [m.name, m.fields.filter((f) => f.kind === 'object').map((f) => [f.name, f.type] as [string, string])]),
+);
+
+const eachObject = (v: unknown, fn: (x: Args) => void): void => {
+  for (const x of (Array.isArray(v) ? v : v ? [v] : []) as unknown[]) if (x && typeof x === 'object') fn(x as Args);
+};
+
+/**
+ * Nested writes (Brief 2-1 §9.3: "nested writes get the same treatment"). A
+ * row made by a nested create — `client.create({ data: { locations: { create } } })`,
+ * createMany, connectOrCreate, upsert — carries its parent's tenant, else the
+ * context's. Without this it took the database default (Alto HR) whatever
+ * tenant created it; under row-level security the database refuses it.
+ */
+function stampNested(model: string, data: unknown, tenantId: string, depth = 0): void {
+  if (depth > 8) return;
+  const rels = RELATIONS.get(model);
+  if (!rels?.length) return;
+  eachObject(data, (row) => {
+    const inherited = typeof row.tenantId === 'string' ? row.tenantId : tenantId;
+    for (const [field, related] of rels) {
+      const op = row[field];
+      if (!op || typeof op !== 'object' || Array.isArray(op)) continue;
+      const o = op as Args;
+      const created = (x: Args): void => {
+        if (TENANT_SCOPED_MODELS.has(related) && x.tenantId === undefined) x.tenantId = inherited;
+        stampNested(related, x, inherited, depth + 1);
+      };
+      eachObject(o.create, created);
+      if (o.createMany && typeof o.createMany === 'object') eachObject((o.createMany as Args).data, created);
+      eachObject(o.connectOrCreate, (x) => eachObject(x.create, created));
+      eachObject(o.upsert, (x) => {
+        eachObject(x.create, created);
+        eachObject(x.update, (u) => stampNested(related, 'where' in u && 'data' in u ? u.data : u, inherited, depth + 1));
+      });
+      eachObject(o.update, (u) => stampNested(related, 'where' in u && 'data' in u ? u.data : u, inherited, depth + 1));
+    }
+  });
 }
 
 function filterNamesOtherTenant(where: unknown, tenantId: string): boolean {
@@ -182,8 +243,13 @@ export function guardTenantQuery(model: string | undefined, operation: string, a
   const a = (args ?? {}) as Args;
   if (WRITES_WITH_DATA.has(operation)) {
     stampCreate(a.data, ctx.tenantId, ctx.platform, model, operation, enforce);
+    stampNested(model, a.data, ctx.tenantId);
   } else if (operation === 'upsert') {
     stampCreate(a.create, ctx.tenantId, ctx.platform, model, operation, enforce);
+    stampNested(model, a.create, ctx.tenantId);
+    stampNested(model, a.update, ctx.tenantId);
+  } else if (operation === 'update') {
+    stampNested(model, a.data, ctx.tenantId);
   }
   // An anonymous request (a public link, a webhook, a sign-in) hasn't got a
   // tenant until it resolves one: its first single-record lookup — by a

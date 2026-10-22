@@ -51,6 +51,24 @@ describe('<AssignCandidateFacts>', () => {
     expect(facts).toHaveTextContent('Missing: Food handler');
   });
 
+  it("takes the server's overtime answer over the 40-hour line (a California 10-hour day under 40)", () => {
+    render(
+      <AssignCandidateFacts
+        c={{ ...base, weeklyMinutesScheduled: 20 * 60, projectedWeeklyMinutes: 30 * 60, wouldBeOvertime: true, otMinutes: 120, otPremiumCents: 1800 }}
+      />,
+    );
+    const facts = screen.getByTestId('candidate-facts');
+    expect(facts).toHaveTextContent('20h → 30h this wk');
+    expect(facts).toHaveTextContent('+$18.00 OT');
+  });
+
+  it('shows no overtime past 40 when the server says the shift adds none', () => {
+    render(<AssignCandidateFacts c={{ ...base, projectedWeeklyMinutes: 42 * 60, wouldBeOvertime: false, otMinutes: 0, otPremiumCents: 0 }} />);
+    const facts = screen.getByTestId('candidate-facts');
+    expect(facts).toHaveTextContent('32h → 42h this wk');
+    expect(facts).not.toHaveTextContent('OT');
+  });
+
   it('renders only the hours line when the server sent no facts', () => {
     render(<AssignCandidateFacts c={base} />);
     const facts = screen.getByTestId('candidate-facts');

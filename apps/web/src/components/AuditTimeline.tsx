@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { AuditLogEntry } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 interface AuditTimelineProps {
   entries: AuditLogEntry[];
@@ -118,9 +119,7 @@ export function AuditTimeline({ entries, previewLimit = 5 }: AuditTimelineProps)
 
   if (entries.length === 0) {
     return (
-      <div className="text-sm text-silver/70 italic">
-        No activity recorded yet.
-      </div>
+      <EmptyState size="sm" title="No activity recorded yet." />
     );
   }
 

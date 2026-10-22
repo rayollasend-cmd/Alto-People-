@@ -212,7 +212,7 @@ async function readinessFor(ids: string[], pendingMoves: Map<string, { toName: s
     else if (dateOnly(today).getTime() - a.compRecords[0]!.effectiveFrom.getTime() < 14 * DAY)
       issues.push({ code: 'RATE_CHANGED', level: 'ATTENTION', label: `Pay rate changed ${fmtDay(ymd(a.compRecords[0]!.effectiveFrom))}`, fixPath: pay, fixLabel: 'Check the rate' });
     if (!a.state) issues.push({ code: 'NO_ADDRESS', level: 'BLOCKED', label: 'No home state — state tax can’t be worked out', fixPath: profile, fixLabel: 'Add their address' });
-    else if (!isStateTaxSupported(a.state)) issues.push({ code: 'STATE_UNSUPPORTED', level: 'BLOCKED', label: `${a.state.toUpperCase()} withholding isn’t set up yet`, fixPath: '/payroll/tax', fixLabel: 'Set up the state' });
+    else if (!isStateTaxSupported(a.state)) issues.push({ code: 'STATE_UNSUPPORTED', level: 'BLOCKED', label: `${a.state.toUpperCase()} withholding isn’t set up yet`, fixPath: '/payroll/state-tax', fixLabel: 'Set up the state' });
     else if (!a.addressLine1) issues.push({ code: 'NO_ADDRESS', level: 'ATTENTION', label: 'No street address for their W-2', fixPath: profile, fixLabel: 'Add their address' });
     if (w2 && !a.ssnLast4) issues.push({ code: 'NO_SSN', level: 'ATTENTION', label: 'No Social Security number on file', fixPath: profile, fixLabel: 'Add their SSN' });
     if (a._count.payrollItems === 0) issues.push({ code: 'FIRST_CHECK', level: 'ATTENTION', label: 'First paycheck — check their setup once', fixPath: pay, fixLabel: 'Review' });

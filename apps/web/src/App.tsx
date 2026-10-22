@@ -23,6 +23,7 @@ import { trackChunk } from '@/lib/chunkLoading';
 import { directoryQuery } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
+import { LegacyPayrollRedirect } from '@/pages/payroll/legacyPayrollRoutes';
 
 // ---------------------------------------------------------------------------
 // Code splitting
@@ -165,7 +166,6 @@ const W4SsnRecollection = lazyNamed(
   () => import('@/pages/payroll/W4SsnRecollection'),
   'W4SsnRecollection',
 );
-const PayrollTaxHome = lazyNamed(() => import('@/pages/payrollTax/PayrollTaxHome'), 'PayrollTaxHome');
 const PayrollTaxesDesk = lazyNamed(() => import('@/pages/payrollTaxes/PayrollTaxesDesk'), 'PayrollTaxesDesk');
 const CertifiedPayrollDesk = lazyNamed(() => import('@/pages/certifiedPayroll/CertifiedPayrollDesk'), 'CertifiedPayrollDesk');
 const GarnishmentDesk = lazyNamed(() => import('@/pages/deductions/GarnishmentDesk'), 'GarnishmentDesk');
@@ -691,7 +691,8 @@ const LAYOUT_ROUTES = [
   { path: 'templates', element: <RequireCapability cap="view:hr-admin"><TemplatesHome /></RequireCapability> },
   { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
   { path: 'recruiting/analytics', element: <RequireCapability cap="view:recruiting"><RecruitingAnalytics /></RequireCapability> },
-  { path: 'payroll/tax', element: <RequireCapability cap="process:payroll"><PayrollTaxHome /></RequireCapability> },
+  // Retired: tax forms live on the Returns tab, garnishments on their desk (pages/payroll/legacyPayrollRoutes).
+  { path: 'payroll/tax', element: <LegacyPayrollRedirect /> },
   { path: 'payroll/taxes', element: <RequireCapability cap="process:payroll"><PayrollTaxesDesk /></RequireCapability> },
   { path: 'payroll/certified', element: <RequireCapability cap="process:payroll"><CertifiedPayrollDesk /></RequireCapability> },
   { path: 'payroll/garnishments', element: <RequireCapability cap="process:payroll"><GarnishmentDesk /></RequireCapability> },
@@ -705,7 +706,8 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/schedules/new', element: <RequireCapability cap="process:payroll"><NewPaySchedulePage /></RequireCapability> },
   { path: 'payroll/schedules/:id', element: <RequireCapability cap="process:payroll"><PayScheduleDetailPage /></RequireCapability> },
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
-  { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
+  // ?tab=deposits and ?tab=remittances moved to the taxes and garnishment desks; the other tabs stay.
+  { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><LegacyPayrollRedirect><PayrollCompliance /></LegacyPayrollRedirect></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
   { path: 'payroll/go-live', element: <RequireCapability cap="process:payroll"><PayrollGoLivePage /></RequireCapability> },
   { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },

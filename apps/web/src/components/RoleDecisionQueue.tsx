@@ -6,6 +6,7 @@ import { noteDecision } from '@/lib/productEvents';
 import { useAuth, useTerm } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
 import { fmtMoney, ymdLocal } from '@/lib/format';
+import { useI18n } from '@/lib/i18n';
 import { DecisionRoom } from '@/components/DecisionRoom';
 import { PLAN_CHANGED_EVENT } from '@/components/MyPlanCard';
 import { Avatar } from '@/components/ui/Avatar';
@@ -35,9 +36,6 @@ import { Textarea } from '@/components/ui/Input';
  * The engine, rooms, and actions are unchanged — this is the console
  * skin. Empty queue = "Nothing needs you.". Fails silent (supplement).
  */
-
-/** The queue's all-clear: a status line, not an empty state. */
-const ALL_CLEAR = 'Nothing needs you.';
 
 interface RoleDecision {
   key: string;
@@ -83,7 +81,7 @@ function ageTone(ageDays: number | null): string {
 }
 
 export function RoleDecisionQueue({
-  title = 'Needs your decision',
+  title: titleProp,
   hideWhenEmpty = false,
   scopeLabel,
 }: {
@@ -101,6 +99,9 @@ export function RoleDecisionQueue({
 }) {
   const { user } = useAuth();
   const term = useTerm();
+  const { t } = useI18n();
+  // The default heading, in the reader's language; `null` still means "the page titles it".
+  const title = titleProp === undefined ? t('rdq.title') : titleProp;
   const [rows, setRows] = useState<RoleDecision[] | null>(null);
   const [error, setError] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -143,21 +144,23 @@ export function RoleDecisionQueue({
       await apiFetch('/me/decisions/act', { method: 'POST', body: { key, action, ...extra } });
       toast.success(
         action === 'claim'
-          ? "It's yours — your teammates can see you've got it."
+          ? t('rdq.claimed')
           : action === 'release'
-            ? 'Released back to the team.'
+            ? t('rdq.released')
             : action === 'assign'
-              ? 'Assigned — they were notified and it now sits with them.'
+              ? t('rdq.assigned')
               : action === 'postpone'
-                ? `Postponed ${extra?.days ?? 1} day${(extra?.days ?? 1) === 1 ? '' : 's'} — it will come back on its own.`
+                ? (extra?.days ?? 1) === 1
+                  ? t('rdq.postponedOne')
+                  : t('rdq.postponedMany', { n: extra?.days ?? 1 })
                 : action === 'tag'
-                  ? 'Tagged — they got the item with your note.'
-                  : 'Escalated — the admins were notified.',
+                  ? t('rdq.tagged')
+                  : t('rdq.escalated'),
       );
       setPicker(null);
       load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not update the item.');
+      toast.error(err instanceof ApiError ? err.message : t('rdq.updateFailed'));
     } finally {
       setBusyKey(null);
     }
@@ -172,9 +175,9 @@ export function RoleDecisionQueue({
     let reason: string | undefined;
     if (decline && item.key.startsWith('agents:')) {
       const typed = await promptDialog({
-        title: 'Reject this proposal?',
-        reasonLabel: 'Why? Kept with the decision.',
-        confirmLabel: 'Reject',
+        title: t('rdq.rejectTitle'),
+        reasonLabel: t('rdq.rejectWhy'),
+        confirmLabel: t('rdq.reject'),
         required: false,
       });
       if (typed === null) return;
@@ -190,7 +193,7 @@ export function RoleDecisionQueue({
       toast.success(r.summary);
       load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not run the quick action.');
+      toast.error(err instanceof ApiError ? err.message : t('rdq.quickFailed'));
     } finally {
       setBusyKey(null);
     }
@@ -198,9 +201,9 @@ export function RoleDecisionQueue({
 
   const escalate = async (item: RoleDecision) => {
     const typed = await promptDialog({
-      title: 'Escalate to admins',
-      reasonLabel: 'Note for the admins (optional)',
-      confirmLabel: 'Escalate',
+      title: t('rdq.escalateTitle'),
+      reasonLabel: t('rdq.escalateNote'),
+      confirmLabel: t('rdq.escalate'),
       required: false,
     });
     if (typed === null) return;
@@ -219,9 +222,9 @@ export function RoleDecisionQueue({
       });
       // Instant sync — the plan card on this dashboard re-reads NOW.
       window.dispatchEvent(new CustomEvent(PLAN_CHANGED_EVENT));
-      toast.success('Added to your plan for today.');
+      toast.success(t('rdq.addedToPlan'));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not add to your plan.');
+      toast.error(err instanceof ApiError ? err.message : t('rdq.planFailed'));
     } finally {
       setBusyKey(null);
     }
@@ -236,11 +239,11 @@ export function RoleDecisionQueue({
   /** ONE primary action per item — quick fix beats claim beats room. */
   const primaryFor = (d: RoleDecision): { label: string; run: () => void } => {
     if (d.claimedBy && !d.claimedByMe) {
-      return { label: 'Open room', run: () => setRoomKey(d.key) };
+      return { label: t('rdq.openRoom'), run: () => setRoomKey(d.key) };
     }
     if (d.quickAction) return { label: d.quickAction, run: () => void quick(d) };
-    if (d.claimedByMe) return { label: 'Open room', run: () => setRoomKey(d.key) };
-    return { label: "I've got this", run: () => void act(d.key, 'claim') };
+    if (d.claimedByMe) return { label: t('rdq.openRoom'), run: () => setRoomKey(d.key) };
+    return { label: t('rdq.gotThis'), run: () => void act(d.key, 'claim') };
   };
 
   // Supplement card: vanish quietly on failure. Client-portal viewers
@@ -252,7 +255,7 @@ export function RoleDecisionQueue({
     return (
       <div className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-silver">
         <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />
-        {ALL_CLEAR}
+        {t('rdq.allClear')}
       </div>
     );
   }
@@ -281,13 +284,13 @@ export function RoleDecisionQueue({
           {/* The triage line — the whole queue in one sentence. */}
           {rows && rows.length > 0 && (
             <span className="ml-auto text-2xs tabular-nums text-silver">
-              {nCritical > 0 && <span className="font-medium text-alert">{nCritical} critical</span>}
+              {nCritical > 0 && <span className="font-medium text-alert">{t('rdq.nCritical', { n: nCritical })}</span>}
               {nCritical > 0 && (nHigh > 0 || nNormal > 0) && ' · '}
-              {nHigh > 0 && <span className="text-warning">{nHigh} high</span>}
+              {nHigh > 0 && <span className="text-warning">{t('rdq.nHigh', { n: nHigh })}</span>}
               {nHigh > 0 && nNormal > 0 && ' · '}
-              {nNormal > 0 && <span>{nNormal} routine</span>}
+              {nNormal > 0 && <span>{t('rdq.nRoutine', { n: nNormal })}</span>}
               {totalStakes > 0 && (
-                <span className="text-silver/70"> — {fmtMoney(totalStakes)} at stake</span>
+                <span className="text-silver/70"> — {t('rdq.atStake', { amount: fmtMoney(totalStakes) })}</span>
               )}
             </span>
           )}
@@ -323,17 +326,17 @@ export function RoleDecisionQueue({
                 <span
                   className={focus.severity === 'critical' ? 'font-medium text-alert' : 'text-white'}
                 >
-                  {fmtMoney(focus.stakes)} at stake
+                  {t('rdq.atStake', { amount: fmtMoney(focus.stakes) })}
                 </span>
               )}
               {focus.ageDays !== null && focus.ageDays > 0 && (
-                <span className={ageTone(focus.ageDays)}>waiting {focus.ageDays}d</span>
+                <span className={ageTone(focus.ageDays)}>{t('rdq.waitingDays', { n: focus.ageDays })}</span>
               )}
-              {focus.escalated && <span className="text-warning">escalated</span>}
+              {focus.escalated && <span className="text-warning">{t('rdq.escalatedTag')}</span>}
               {focus.claimedBy && (
                 <span className="flex items-center gap-1.5 text-silver">
                   <Avatar src={focus.claimedBy.photoUrl} name={focus.claimedBy.name} size="xs" />
-                  {focus.claimedByMe ? 'with you' : `with ${focus.claimedBy.name}`}
+                  {focus.claimedByMe ? t('rdq.withYou') : t('rdq.withName', { name: focus.claimedBy.name })}
                 </span>
               )}
             </div>
@@ -359,12 +362,12 @@ export function RoleDecisionQueue({
                 </Button>
               )}
               <Button size="sm" variant="ghost" onClick={() => setRoomKey(focus.key)}>
-                Open room
+                {t('rdq.openRoom')}
               </Button>
               {/* Straight to the thing itself — the room is for deciding,
                   this is for doing. */}
               <Button asChild size="sm" variant="ghost">
-                <Link to={focus.linkUrl}>Open →</Link>
+                <Link to={focus.linkUrl}>{t('rdq.open')}</Link>
               </Button>
               {rows && rows.length > 1 && (
                 <Button
@@ -373,7 +376,7 @@ export function RoleDecisionQueue({
                   className="ml-auto text-silver/70"
                   onClick={() => setFocusIdx((i) => (i + 1) % rows.length)}
                 >
-                  Next ↓
+                  {t('rdq.next')}
                 </Button>
               )}
             </div>
@@ -421,7 +424,7 @@ export function RoleDecisionQueue({
                   <span className="flex shrink-0 items-center gap-2 text-2xs tabular-nums">
                     {d.stakes !== null && <span className="text-silver">{fmtMoney(d.stakes)}</span>}
                     {d.ageDays !== null && d.ageDays > 0 && (
-                      <span className={ageTone(d.ageDays)}>{d.ageDays}d</span>
+                      <span className={ageTone(d.ageDays)}>{t('rdq.ageDays', { n: d.ageDays })}</span>
                     )}
                     {d.claimedBy && (
                       <Avatar
@@ -434,7 +437,7 @@ export function RoleDecisionQueue({
                   {/* Direct jump to the item's own page; the title click
                       keeps opening the room. */}
                   <Button asChild size="xs" variant="ghost" className="shrink-0">
-                    <Link to={d.linkUrl}>Open →</Link>
+                    <Link to={d.linkUrl}>{t('rdq.open')}</Link>
                   </Button>
                   {d.declineAction && !(d.claimedBy && !d.claimedByMe) && (
                     <Button size="xs" variant="outline" className="shrink-0" disabled={busyKey !== null} onClick={() => void quick(d, true)}>
@@ -463,7 +466,7 @@ export function RoleDecisionQueue({
             className="mt-2 w-full text-center text-2xs text-silver/70 hover:text-gold"
             onClick={() => setShowAll((s) => !s)}
           >
-            {showAll ? 'Show less' : `Show all (${rows?.length ?? 0})`}
+            {showAll ? t('rdq.showLess') : t('rdq.showAll', { n: rows?.length ?? 0 })}
           </button>
         )}
 
@@ -481,7 +484,7 @@ export function RoleDecisionQueue({
                     disabled={busyKey !== null}
                     onClick={() => void act(roomItem.key, 'release')}
                   >
-                    Release
+                    {t('rdq.release')}
                   </Button>
                 ) : !roomItem.claimedBy ? (
                   <Button
@@ -491,7 +494,7 @@ export function RoleDecisionQueue({
                     disabled={busyKey !== null}
                     onClick={() => void act(roomItem.key, 'claim')}
                   >
-                    I&apos;ve got this
+                    {t('rdq.gotThis')}
                   </Button>
                 ) : null}
                 {(!roomItem.claimedBy || roomItem.claimedByMe) && (
@@ -501,7 +504,7 @@ export function RoleDecisionQueue({
                     disabled={busyKey !== null}
                     onClick={() => openPicker('assign', roomItem)}
                   >
-                    Assign
+                    {t('rdq.assign')}
                   </Button>
                 )}
                 <Button
@@ -510,7 +513,7 @@ export function RoleDecisionQueue({
                   disabled={busyKey !== null}
                   onClick={() => openPicker('tag', roomItem)}
                 >
-                  Tag
+                  {t('rdq.tag')}
                 </Button>
                 <Button
                   size="xs"
@@ -519,7 +522,7 @@ export function RoleDecisionQueue({
                   disabled={busyKey !== null}
                   onClick={() => postpone(roomItem)}
                 >
-                  Postpone
+                  {t('rdq.postpone')}
                 </Button>
                 <Button
                   size="xs"
@@ -528,7 +531,7 @@ export function RoleDecisionQueue({
                   disabled={busyKey !== null}
                   onClick={() => void addToPlan(roomItem)}
                 >
-                  + My day
+                  {t('rdq.myDay')}
                 </Button>
                 {!roomItem.escalated && (
                   <Button
@@ -538,7 +541,7 @@ export function RoleDecisionQueue({
                     disabled={busyKey !== null}
                     onClick={() => void escalate(roomItem)}
                   >
-                    Escalate
+                    {t('rdq.escalate')}
                   </Button>
                 )}
               </div>
@@ -549,19 +552,18 @@ export function RoleDecisionQueue({
         <Dialog open={postponeItem !== null} onOpenChange={(o) => !o && setPostponeItem(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Postpone</DialogTitle>
+              <DialogTitle>{t('rdq.postpone')}</DialogTitle>
               <DialogDescription>
-                {postponeItem?.label} — it disappears from every teammate&apos;s queue and
-                walks back in on its own.
+                {t('rdq.postponeDesc', { label: postponeItem?.label ?? '' })}
               </DialogDescription>
             </DialogHeader>
             <div className="flex flex-wrap gap-2">
               {(
                 [
-                  ['Tomorrow', 1],
-                  ['3 days', 3],
-                  ['Next week', 7],
-                  ['Two weeks', 14],
+                  [t('rdq.tomorrow'), 1],
+                  [t('rdq.threeDays'), 3],
+                  [t('rdq.nextWeek'), 7],
+                  [t('rdq.twoWeeks'), 14],
                 ] as const
               ).map(([label, days]) => (
                 <Button
@@ -586,25 +588,24 @@ export function RoleDecisionQueue({
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                {picker?.mode === 'assign' ? 'Assign to a colleague' : 'Tag a colleague'}
+                {picker?.mode === 'assign' ? t('rdq.assignTitle') : t('rdq.tagTitle')}
               </DialogTitle>
               <DialogDescription>
-                {picker?.item.label}
                 {picker?.mode === 'assign'
-                  ? ' — it will move to their queue and they will be notified.'
-                  : ' — they get a notification with your note; nothing changes hands.'}
+                  ? t('rdq.assignDesc', { label: picker?.item.label ?? '' })
+                  : t('rdq.tagDesc', { label: picker?.item.label ?? '' })}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-3">
               <div className="grid gap-1">
-                <Label htmlFor="collab-target">Colleague</Label>
+                <Label htmlFor="collab-target">{t('rdq.colleague')}</Label>
                 <Select
                   id="collab-target"
                   value={pickTarget}
                   onChange={(e) => setPickTarget(e.target.value)}
                 >
                   <option value="">
-                    {colleagues === null ? 'Loading…' : 'Pick a colleague…'}
+                    {colleagues === null ? t('rdq.loading') : t('rdq.pickColleague')}
                   </option>
                   {(colleagues ?? []).map((c) => (
                     <option key={c.id} value={c.id}>
@@ -614,7 +615,7 @@ export function RoleDecisionQueue({
                 </Select>
               </div>
               <div className="grid gap-1">
-                <Label htmlFor="collab-note">Note (optional)</Label>
+                <Label htmlFor="collab-note">{t('rdq.noteOptional')}</Label>
                 <Textarea
                   id="collab-note"
                   rows={2}
@@ -625,14 +626,14 @@ export function RoleDecisionQueue({
                   }
                   placeholder={
                     picker?.mode === 'assign'
-                      ? 'e.g. "Can you take this one? I\'m on the floor until 3."'
-                      : `e.g. "Heads up — this touches your ${term('site').toLowerCase()}."`
+                      ? t('rdq.assignPlaceholder')
+                      : t('rdq.tagPlaceholder', { place: term('site').toLowerCase() })
                   }
                 />
               </div>
               <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => setPicker(null)}>
-                  Cancel
+                  {t('rdq.cancel')}
                 </Button>
                 <Button
                   type="button"
@@ -646,7 +647,7 @@ export function RoleDecisionQueue({
                     })
                   }
                 >
-                  {picker?.mode === 'assign' ? 'Assign' : 'Tag'}
+                  {picker?.mode === 'assign' ? t('rdq.assign') : t('rdq.tag')}
                 </Button>
               </DialogFooter>
             </div>

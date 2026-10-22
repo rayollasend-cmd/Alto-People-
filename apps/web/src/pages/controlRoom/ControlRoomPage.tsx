@@ -19,7 +19,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth, useTenant } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePrompt } from '@/lib/confirm';
-import { fmtRelativeDate, fmtTime } from '@/lib/format';
+import { fmtRelativeDate, fmtShiftSpanTz, fmtShiftTz, fmtTime } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { resumeAllAgents } from '@/lib/agentsApi';
 import { getControlRoom, listControlRoomSites } from '@/lib/controlRoomApi';
@@ -213,8 +213,9 @@ export function ControlRoomPage() {
                       </Badge>
                     </div>
                     <div className="text-xs text-ink-muted">
-                      {p.position} · {fmtTime(p.shiftStart)}–{fmtTime(p.shiftEnd)}
-                      {p.clockInAt ? ` · in at ${fmtTime(p.clockInAt)}` : ''}
+                      {/* The site's clock (one shift, one time). */}
+                      {p.position} · {fmtShiftSpanTz(p.shiftStart, p.shiftEnd, data.site.timezone)}
+                      {p.clockInAt ? ` · in at ${fmtShiftTz(p.clockInAt, data.site.timezone, { day: false })}` : ''}
                     </div>
                   </div>
                 </li>

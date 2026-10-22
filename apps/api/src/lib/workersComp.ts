@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient, WcClaim } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { renderFormPdf, fmtDay } from './claimsPdf.js';
 import { leaveSettings } from './leaveOfAbsence.js';
+import { shiftTimezone } from './shiftZone.js';
 import { tenantIdForWrite } from './tenant.js';
 
 /**
@@ -174,7 +175,7 @@ export async function modifiedDutyMatches(
     },
     orderBy: { startsAt: 'asc' },
     take: 200,
-    select: { id: true, position: true, startsAt: true, endsAt: true, locationRel: { select: { name: true } }, client: { select: { name: true } } },
+    select: { id: true, position: true, startsAt: true, endsAt: true, locationRel: { select: { name: true, timezone: true } }, client: { select: { name: true } } },
   });
   const positions = (rules.positions ?? []).map((p) => p.trim().toLowerCase()).filter(Boolean);
   return shifts
@@ -193,6 +194,8 @@ export async function modifiedDutyMatches(
       hours: Math.round(((s.endsAt.getTime() - s.startsAt.getTime()) / 3_600_000) * 10) / 10,
       store: s.locationRel?.name ?? null,
       client: s.client?.name ?? null,
+      // The store's clock: the offer reads the shift as the store does.
+      timezone: shiftTimezone(s.locationRel),
     }));
 }
 

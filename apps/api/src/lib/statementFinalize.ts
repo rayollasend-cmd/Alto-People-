@@ -53,7 +53,10 @@ export async function finalizeStatement(db: PrismaClient, statementId: string, a
   // Record-then-commit: a numbered billing artifact must never exist
   // without a durable record of who issued it.
   const updated = await db.$transaction(async (tx) => {
-    const max = await tx.clientStatement.aggregate({ _max: { number: true } });
+    // Statement numbers run per tenant (Brief 2-1 migration C); the lock keeps
+    // two finalizations in the same tenant from taking the same number.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`statement_number:${row.tenantId}`}, 0))`;
+    const max = await tx.clientStatement.aggregate({ where: { tenantId: row.tenantId }, _max: { number: true } });
     const finalizedAt = new Date();
     // Invoicing: due on the client's terms; the standing PO unless the
     // statement already carries its own (lib/statementDunning).

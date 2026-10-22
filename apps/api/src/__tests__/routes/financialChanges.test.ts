@@ -100,8 +100,8 @@ describe('POST /self/me/payout-method — the ledger', () => {
   it('retires the old account, records a masked change, and tells Finance and the associate without the account number', async () => {
     const fin = await finance();
     await prisma.orgSetting.upsert({
-      where: { id: 'singleton' },
-      create: { id: 'singleton', financeMailbox: 'finance@example.com' },
+      where: { tenantId: '00000000-0000-4000-8000-000000000001' },
+      create: { financeMailbox: 'finance@example.com' },
       update: { financeMailbox: 'finance@example.com' },
     });
     const { associate, user, method } = await seedAssociate();
@@ -285,8 +285,8 @@ describe('verify-before-pay', () => {
   it('holds the item under the HOLD policy, and always for a high-risk change', async () => {
     const fin = await finance();
     await prisma.orgSetting.upsert({
-      where: { id: 'singleton' },
-      create: { id: 'singleton', unverifiedPayoutPolicy: 'HOLD' },
+      where: { tenantId: '00000000-0000-4000-8000-000000000001' },
+      create: { unverifiedPayoutPolicy: 'HOLD' },
       update: { unverifiedPayoutPolicy: 'HOLD' },
     });
     const client = await createClient();

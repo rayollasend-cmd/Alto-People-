@@ -27,7 +27,7 @@ beforeEach(async () => {
   await truncateAll();
   // The pre-trip check has its own suite (transportDriverPack); these are
   // about the van on the road, so the fleet runs with it switched off.
-  await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
+  await prisma.transportSettings.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { preTripRequired: false }, update: { preTripRequired: false } });
 });
 afterEach(() => {
   setGeocoderForTests(null);

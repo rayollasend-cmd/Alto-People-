@@ -19,6 +19,8 @@ export interface AssociateSkillEntry {
   notes: string | null;
   verifiedAt: string | null;
   verifiedByEmail: string | null;
+  /** The person added it themselves; pending until verified. */
+  selfClaimedAt?: string | null;
 }
 
 export interface SkillSearchResult {
@@ -84,3 +86,38 @@ export const searchSkills = (q: string, minLevel?: SkillLevel, where: { clientId
   if (where.locationId) qs.set('locationId', where.locationId);
   return apiFetch<SkillSearchResult>(`/skills/search?${qs.toString()}`);
 };
+
+/* ----- Self-claims (wave 2): my own skills, pending until verified ------- */
+
+export interface MySkill {
+  id: string;
+  skillId: string;
+  skillName: string;
+  category: string | null;
+  level: SkillLevel;
+  yearsExperience: number | null;
+  verified: boolean;
+  selfClaimed: boolean;
+}
+
+export const listMySkills = () =>
+  apiFetch<{ skills: MySkill[]; catalog: Array<{ id: string; name: string; category: string | null }> }>('/me/skills');
+
+export const claimMySkill = (input: { skillId: string; level: SkillLevel; yearsExperience?: number | null }) =>
+  apiFetch<{ id: string; pending: boolean }>('/me/skills', { method: 'POST', body: input });
+
+export const withdrawMySkill = (id: string) => apiFetch<void>(`/me/skills/${id}`, { method: 'DELETE' });
+
+/** Self-claims waiting on a verifier (manage:org), oldest first. */
+export interface PendingSkillClaim {
+  id: string;
+  associateId: string;
+  name: string;
+  skillName: string;
+  category: string | null;
+  level: SkillLevel;
+  yearsExperience: number | null;
+  notes: string | null;
+  claimedAt: string;
+}
+export const listPendingSkillClaims = () => apiFetch<{ claims: PendingSkillClaim[] }>('/associate-skills/pending');

@@ -19,6 +19,8 @@ import { notifyUser } from '../lib/notify.js';
 import { portalEngagementOverview } from '../lib/portalEngagement.js';
 import { computeAgentRoi } from '../lib/agentRoi.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
+import { loadLiveRules } from '../lib/laborRules/live.js';
+import { payFor, splitByPerson } from '../lib/laborRules/hours.js';
 import { env } from '../config/env.js';
 import { executiveMoney } from '../lib/executiveMoney.js';
 
@@ -248,8 +250,8 @@ executiveRouter.post('/decisions/action', EXEC, async (req: Request, res: Respon
             note: input.note ?? null,
           };
   await prisma.execDecisionState.upsert({
-    where: { key },
-    create: { key, ...data },
+    where: { tenantId_key: { tenantId: tenantIdForWrite(), key } },
+    create: { tenantId: tenantIdForWrite(), key, ...data },
     update: data,
   });
   enqueueAudit(
@@ -412,48 +414,43 @@ executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
   // Brief 2-1: the quarter's punches, headcount and shifts are this tenant's own.
   const T = { tenantId: tenantIdForWrite() };
 
-  // Quarter-to-date economics from approved/completed punches, per-
-  // associate-org-week OT, at standard rates — same math as the summary.
+  // Quarter-to-date economics from approved/completed punches, at standard
+  // rates — same math as the summary: each person's hours split by the
+  // labor-rules engine exactly as their paycheck splits them (the federal
+  // weekly 40, or a live jurisdiction's daily and double-time rules), the
+  // quarter's first week read whole so its overtime lands where pay puts it.
+  // The bill side is an estimate at the standard bill rate with overtime
+  // and double time at the pay multipliers; what a client's contract bills
+  // (1.5× or straight) is the statement's business (lib/clientStatement).
   const entries = await prisma.timeEntry.findMany({
     where: {
       ...T,
       status: { in: ['APPROVED', 'COMPLETED'] },
-      clockInAt: { gte: quarter.start, lt: now },
+      clockInAt: { gte: startOfWeekUTC(quarter.start), lt: now },
     },
     select: {
       associateId: true,
       clockInAt: true,
       clockOutAt: true,
       breaks: { select: { startedAt: true, endedAt: true } },
+      location: { select: { id: true, state: true, city: true, timezone: true } },
     },
     take: 100_000,
   });
-  const byAssocWeek = new Map<string, number>();
-  for (const e of entries) {
-    if (!e.clockOutAt) continue;
-    let ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
-    for (const b of e.breaks) {
-      const bEnd = b.endedAt ? b.endedAt.getTime() : e.clockOutAt.getTime();
-      ms -= Math.max(0, bEnd - b.startedAt.getTime());
-    }
-    const mins = Math.max(0, Math.round(ms / 60_000));
-    const key = `${e.associateId}:${startOfWeekUTC(e.clockInAt).getTime()}`;
-    byAssocWeek.set(key, (byAssocWeek.get(key) ?? 0) + mins);
+  const work = entries.map((e) => ({ ...e, site: e.location }));
+  const split = splitByPerson(await loadLiveRules(prisma, tenantIdForWrite()), work);
+  let hours = 0;
+  let revenueQtd = 0;
+  let payQtd = 0;
+  for (const e of work) {
+    if (e.clockInAt < quarter.start) continue;
+    const share = split.byEntry.get(e)!;
+    const m = split.byPerson.get(e.associateId)!;
+    hours += share.workedHours;
+    revenueQtd += payFor(share, env.DEFAULT_ASSOCIATE_BILL_RATE, m);
+    payQtd += payFor(share, env.DEFAULT_ASSOCIATE_PAY_RATE, m);
   }
-  let workedMin = 0;
-  let otMin = 0;
-  for (const mins of byAssocWeek.values()) {
-    workedMin += mins;
-    otMin += Math.max(0, mins - 40 * 60);
-  }
-  const hours = workedMin / 60;
-  const otHours = otMin / 60;
-  const revenueQtd =
-    hours * env.DEFAULT_ASSOCIATE_BILL_RATE + otHours * env.DEFAULT_ASSOCIATE_BILL_RATE * 0.5;
-  const costQtd =
-    (hours * env.DEFAULT_ASSOCIATE_PAY_RATE + otHours * env.DEFAULT_ASSOCIATE_PAY_RATE * 0.5) *
-      (1 + env.LABOR_BURDEN_PERCENT / 100) +
-    hours * env.LABOR_OVERHEAD_PER_HOUR;
+  const costQtd = payQtd * (1 + env.LABOR_BURDEN_PERCENT / 100) + hours * env.LABOR_OVERHEAD_PER_HOUR;
 
   const [headcount, separationsQtd, published, assigned] = await Promise.all([
     // Brief 1A-2: the one definition of active.

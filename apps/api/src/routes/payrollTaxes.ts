@@ -7,7 +7,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { filingMode, withProvider } from '../lib/embeddedPayroll/index.js';
 import { isDepositFrequency, quarterLabel } from '../lib/payrollTaxCalendar.js';
 import {
@@ -850,7 +850,7 @@ payrollTaxesRouter.post(
       const magic = verifyFileMagic(req.file.buffer, req.file.mimetype);
       if (magic) throw new HttpError(400, 'file_mismatch', magic);
       const name = sanitizeUploadFilename(req.file.originalname);
-      const key = `agency-notices/${tenantId ?? 'default'}/${Date.now()}-${name}`;
+      const key = tenantBlobKey(`agency-notices/${Date.now()}-${name}`, tenantId);
       await getBlobStore().put(key, req.file.buffer, req.file.mimetype);
       file = { key, name, type: req.file.mimetype };
     }

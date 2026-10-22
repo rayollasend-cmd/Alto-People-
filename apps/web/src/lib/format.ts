@@ -386,10 +386,11 @@ export function fmtTimeTz(
   });
 }
 
-/** Store-local date, e.g. "May 13". For calendar day labels. */
+/** Store-local date, e.g. "May 13" ("May 13, 2026" with `year`). For calendar day labels. */
 export function fmtDateTz(
   value: string | Date | null | undefined,
   timeZone?: string | null,
+  opts: { year?: boolean } = {},
 ): string {
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
@@ -397,6 +398,7 @@ export function fmtDateTz(
   return d.toLocaleDateString(displayLocale(), {
     month: 'short',
     day: 'numeric',
+    ...(opts.year ? { year: 'numeric' } : {}),
     ...(timeZone ? { timeZone } : {}),
   });
 }
@@ -822,9 +824,28 @@ export function fmtShiftTz(
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  const zone = timeZone || null;
+  // A shift or punch is always an instant: with no store zone (a legacy row,
+  // a site-less punch) it reads on the display zone, like fmtTime — never
+  // the bare browser zone the calendar-anchor *Tz fallbacks use.
+  const zone = timeZone || displayTimeZone();
   const time = fmtTimeTz(d, zone);
-  const suffix = zone && zone !== displayTimeZone() ? ` ${tzAbbrev(zone, d)}` : '';
+  const suffix = zone !== displayTimeZone() ? ` ${tzAbbrev(zone, d)}` : '';
   if (opts.day === false) return `${time}${suffix}`;
   return `${fmtDayHeaderTz(d, zone)} · ${time}${suffix}`;
+}
+
+/**
+ * A shift's hours on its store's clock, compact: "9:00 AM–1:00 PM", with
+ * the zone once at the end when the viewer isn't sitting in it
+ * ("9:00 AM–1:00 PM CDT"). Same rule as fmtShiftTz; for rows where the day
+ * is already said (today's team, a punch's own day).
+ */
+export function fmtShiftSpanTz(
+  startsAt: string | Date | null | undefined,
+  endsAt: string | Date | null | undefined,
+  timeZone?: string | null,
+): string {
+  const zone = timeZone || displayTimeZone();
+  if (!endsAt) return fmtShiftTz(startsAt, zone, { day: false });
+  return `${fmtTimeTz(startsAt, zone)}–${fmtShiftTz(endsAt, zone, { day: false })}`;
 }

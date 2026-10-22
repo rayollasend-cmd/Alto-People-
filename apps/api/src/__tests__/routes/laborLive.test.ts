@@ -265,11 +265,13 @@ describe('overtime offered fairly', () => {
     const weekStart = startOfWeekForSite(new Date(Date.now() + 10 * 86_400_000), site.timezone);
     const monday = new Date(weekStart.getTime() + 3 * 86_400_000);
     monday.setUTCHours(14, 0, 0, 0);
-    // Bea and Dee already have 36 h in that week; Cal has none.
+    // Bea and Dee already have 36 paid hours in that week (four 10-hour shifts,
+    // each less the schedule's unpaid hour — the engine projects paid time);
+    // Cal has none.
     for (const p of [bea!, dee!]) {
       for (let d = 0; d < 4; d++) {
         const s = new Date(monday.getTime() + (d - 3) * 86_400_000);
-        await prisma.shift.create({ data: { clientId: client.id, locationId: site.id, position: 'Cashier', startsAt: s, endsAt: new Date(s.getTime() + 9 * 3_600_000), status: 'ASSIGNED', assignedAssociateId: p.id } });
+        await prisma.shift.create({ data: { clientId: client.id, locationId: site.id, position: 'Cashier', startsAt: s, endsAt: new Date(s.getTime() + 10 * 3_600_000), status: 'ASSIGNED', assignedAssociateId: p.id } });
       }
     }
     // Dee has worked overtime lately; Bea hasn't.
@@ -283,6 +285,9 @@ describe('overtime offered fairly', () => {
     const rank = await a.get(`/overtime-offers/shifts/${open.id}`);
     expect(rank.status).toBe(200);
     expect(rank.body.candidates.map((c: { name: string }) => c.name)).toEqual(['Cal Calm', 'Bea Busy', 'Dee Done']);
+    // 36 paid + the open shift's 7 = 43: three hours of overtime, as the paycheck would split it.
+    expect(rank.body.candidates.find((c: { name: string }) => c.name === 'Bea Busy').wouldAddOvertimeHours).toBe(3);
+    expect(rank.body.candidates.find((c: { name: string }) => c.name === 'Dee Done').recentOvertimeHours).toBe(5);
 
     const jumped = await a.post(`/overtime-offers/shifts/${open.id}`).send({ associateId: dee!.id });
     expect(jumped.status).toBe(409);

@@ -717,9 +717,7 @@ export function OpsBoard() {
             </CardHeader>
             <CardContent>
               {insights.tempSeries.length === 0 ? (
-                <p className="py-6 text-center text-xs text-silver/60">
-                  No temperature readings yet.
-                </p>
+                <EmptyState size="sm" title="No temperature readings yet." />
               ) : (
                 <>
                   <div className="h-40">

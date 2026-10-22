@@ -7,6 +7,7 @@ import { AgentCards } from '@/components/agents/AgentCards';
 import { ProposalList } from '@/components/agents/ProposalDecision';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Avatar } from '@/components/ui/Avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { userPhotoUrl } from '@/lib/photoUrl';
@@ -1306,7 +1307,7 @@ const METRIC_LABELS: Record<string, string> = {
 export function CapabilitiesSection({ agent, canManage }: { agent: AgentDetail; canManage: boolean }) {
   const caps = useQuery({ queryKey: ['agents', 'capabilities', agent.id], queryFn: () => listAgentCapabilities(agent.id), select: (d) => d.capabilities });
   if (caps.error) return <QueryError what="capabilities" query={caps} />;
-  if (!caps.data) return <p className="text-sm text-silver">Loading…</p>;
+  if (!caps.data) return <SkeletonRows count={2} rowHeight="h-9" />;
   if (caps.data.length === 0) {
     return <p className="text-sm text-silver">This agent holds no catalog capability. Built-in family agents hold theirs; an outside agent acts through its scopes.</p>;
   }

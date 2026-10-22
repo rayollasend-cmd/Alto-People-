@@ -654,6 +654,19 @@ describe('<AdminTimeView> individual timesheet (focus mode)', () => {
     ).toBeInTheDocument();
   });
 
+  it('the focus banner’s OT is the server’s split (daily rules included), not the week minus 40', async () => {
+    // 16.33 h in the week — under 40 — but the server split 30 min of e3 as overtime (a live daily rule).
+    const split = (reg: number, ot: number) => ({ regularMinutes: reg, overtimeMinutes: ot, doubleTimeMinutes: 0, overtimeMultiplier: 1.5, doubleMultiplier: 2 });
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({
+      entries: [{ ...ENTRIES[0], hours: split(240, 0) }, { ...ENTRIES[1], hours: split(260, 0) }, { ...ENTRIES[2], hours: split(450, 30) }],
+    } as never);
+    const user = renderQueueTab();
+    await focusOnAssociate(user);
+    expect(await screen.findByText('0.5h OT')).toBeInTheDocument();
+    // …and the week section carries the same figure.
+    expect(screen.getByText('0.50h OT')).toBeInTheDocument();
+  });
+
   it('leaving focus returns to the flat queue table', async () => {
     vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: ENTRIES } as never);
     const user = renderQueueTab();

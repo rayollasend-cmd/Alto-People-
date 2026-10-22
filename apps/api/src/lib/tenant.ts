@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { NextFunction, Request, Response } from 'express';
+import { tagTenantScope } from './tenantTelemetry.js';
 
 /**
  * Tenant context (Brief 2-1, step one).
@@ -118,6 +119,8 @@ export function adoptTenant(tenantId: string | null | undefined, source: TenantS
   ctx.tenantId = tenantId;
   ctx.adopted = true;
   if (source !== 'default') ctx.source = source;
+  // §9.6: the request's Sentry scope follows the tenant it just learned.
+  tagTenantScope(tenantId, ctx.source);
   return true;
 }
 
@@ -141,5 +144,7 @@ export async function resolveTenantFrom(find: () => Promise<string | null | unde
 export function tenantMiddleware(req: Request, _res: Response, next: NextFunction): void {
   const fromUser = (req.user as { tenantId?: string | null } | undefined)?.tenantId ?? null;
   const ctx: TenantContext = fromUser ? { tenantId: fromUser, source: 'session', platform: false } : { tenantId: ALTO_TENANT_ID, source: 'default', platform: false };
+  // §9.6: every request's Sentry scope carries its tenant (adoptTenant moves it for an anonymous one).
+  tagTenantScope(ctx.tenantId, ctx.source);
   storage.run(ctx, () => next());
 }

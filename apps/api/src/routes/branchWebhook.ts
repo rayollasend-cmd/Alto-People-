@@ -12,6 +12,7 @@ import { accrueDepositsForRun } from '../lib/taxDeposits.js';
 import { postLiabilitiesForRun } from '../lib/payrollTaxLedger.js';
 import { accrueRemittancesForRun } from '../lib/garnishmentRemittance.js';
 import { rerouteReturnedItem } from '../lib/payoutReroute.js';
+import { resolveTenantFrom } from '../lib/tenant.js';
 
 export const branchWebhookRouter = Router();
 
@@ -49,9 +50,16 @@ export const branchWebhookRouter = Router();
  *   - Missing BRANCH_WEBHOOK_SECRET → 503 (we will not accept unsigned
  *     webhooks under any circumstance).
  *   - Bad signature → 401, no body parse, no DB write.
- *   - Unknown payment id → 200 with ignored: 'unknown_payment_id'
- *     (logged to BranchWebhookEvent with status=IGNORED). Branch retries
- *     on non-2xx; we don't want to thrash on cross-environment leaks.
+ *   - Unknown payment id → 200 with ignored: 'unknown_payment_id', a
+ *     warning in the log and NO row (Brief 2-1 §9.4: a payload that
+ *     resolves to no tenant is logged and dropped — writing it would
+ *     file it under a tenant it doesn't belong to). Branch retries on
+ *     non-2xx; we don't want to thrash on cross-environment leaks.
+ *
+ * Tenant (Brief 2-1 §9.4): the webhook arrives with no session. The
+ * payroll item the payment names resolves the tenant before anything is
+ * written, and the rest of the handler — the event row, the item, the
+ * run, the notifications — runs as that tenant.
  *   - Duplicate event id → 200 with ignored: 'duplicate'.
  */
 branchWebhookRouter.post(
@@ -91,6 +99,17 @@ branchWebhookRouter.post(
       !branchStatus
     ) {
       res.status(400).json({ error: 'invalid_payload' });
+      return;
+    }
+
+    // §9.4: the payment's payroll item names the tenant; every write below
+    // runs as that tenant. A payment no tenant knows is dropped here.
+    const tenantId = await resolveTenantFrom(async () =>
+      (await prisma.payrollItem.findFirst({ where: { disbursementRef: paymentId }, select: { tenantId: true } }))?.tenantId,
+    );
+    if (!tenantId) {
+      console.warn(`[branch-webhook] event ${branchEventId}: payment ${paymentId} matches no payroll item; dropped`);
+      res.status(200).json({ ok: true, ignored: 'unknown_payment_id' });
       return;
     }
 

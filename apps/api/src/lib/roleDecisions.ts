@@ -18,6 +18,9 @@ import { COVERAGE_CREDENTIALS, latestCoverage } from './credentialCoverage.js';
 import { tenantIdForWrite } from './tenant.js';
 import { addDaysInZone, localDateKey } from './timezone.js';
 import { addBusinessDays } from './everifyReadiness.js';
+import { overdueContractDuties } from './contractDuties.js';
+import { idleDraftsWhere } from './applicationFilters.js';
+import type { SessionUser } from '../types/express.js';
 
 const DAY_MS = 24 * 3600_000;
 /** Company-local "YYYY-MM-DD" (the company's own zone, the same one its
@@ -86,6 +89,9 @@ interface QueueUser {
   associateId: string | null;
   /** A site-bound account (a direct employer's property manager): its desk is that site. */
   locationId?: string | null;
+  /** A site- or region-limited account's reach (lib/scope.internalSites). */
+  scopeSiteIds?: string[];
+  scopeRegionIds?: string[];
 }
 
 export async function computeRoleDecisions(
@@ -577,6 +583,7 @@ export async function computeRoleDecisions(
   // One item a record, so the home lands on the case itself; more than
   // PER_RECORD_CAP of a kind fold into one summary that opens the list.
   await pushLegalDeadlines(prisma, can, out, now);
+  await pushContractDuties(prisma, user, out, now);
 
   /* ----- Money (payroll / finance) ---------------------------------------- */
   if (can('settle:reimbursement')) {
@@ -786,6 +793,42 @@ export async function computeRoleDecisions(
   return filtered;
 }
 
+/**
+ * Contract duties past due (role walk HR 2): the MSA / SOW / MTSA duties
+ * confirmed on the compliance scorecard, one read for every duty
+ * (lib/contractDuties) — the same list the Inbox counts. One item a duty,
+ * folded into one past PER_RECORD_CAP; each opens the scorecard.
+ */
+async function pushContractDuties(prisma: PrismaClient, user: QueueUser, out: RoleDecision[], now: Date): Promise<void> {
+  const duties = await overdueContractDuties(prisma, { ...user, clientId: user.clientId ?? null } as unknown as SessionUser, now);
+  if (duties.count === 0) return;
+  if (duties.count > PER_RECORD_CAP) {
+    out.push({
+      key: 'compliance:contract-duties',
+      domain: 'compliance',
+      severity: 'critical',
+      label: `${duties.count} contract duties overdue, the oldest since ${duties.oldestDue}`,
+      detail: 'Do each one in the client’s portal, then confirm it on the scorecard.',
+      stakes: null,
+      ageDays: duties.items[0]?.daysOverdue ?? null,
+      linkUrl: '/compliance?tab=scorecard',
+    });
+    return;
+  }
+  for (const d of duties.items) {
+    out.push({
+      key: `compliance:contract-duty:${d.key}:${d.periodStart}`,
+      domain: 'compliance',
+      severity: d.daysOverdue > 7 ? 'critical' : 'high',
+      label: `Overdue ${d.daysOverdue} day${d.daysOverdue === 1 ? '' : 's'}: ${d.label}`,
+      detail: `Due ${d.dueDate} under the client contract. Do it, then confirm it on the scorecard.`,
+      stakes: null,
+      ageDays: d.daysOverdue,
+      linkUrl: '/compliance?tab=scorecard',
+    });
+  }
+}
+
 /** More than this many dated records of one kind fold into a single summary item. */
 const PER_RECORD_CAP = 5;
 
@@ -939,7 +982,7 @@ async function pushLegalDeadlines(
 
   if (can('manage:onboarding')) {
     const idle = await prisma.application.count({
-      where: { tenantId, deletedAt: null, status: 'DRAFT', updatedAt: { lt: new Date(now.getTime() - 7 * DAY_MS) } },
+      where: { tenantId, deletedAt: null, ...idleDraftsWhere(now) },
     });
     if (idle > 0) {
       out.push({
@@ -950,7 +993,7 @@ async function pushLegalDeadlines(
         detail: 'Invited and not moving — a nudge now keeps the start date.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/onboarding?status=DRAFT',
+        linkUrl: '/onboarding?status=IDLE_DRAFTS',
       });
     }
   }

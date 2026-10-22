@@ -3,6 +3,7 @@ import type { TimeEntry } from '@alto-people/shared';
 import { fmtDateTz, fmtWeekdayTz, zonedDayKey } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { formatHM } from './punchFormat';
+import { Badge } from '@/components/ui/Badge';
 
 /**
  * Shared week/day timesheet shell — the presentation both the admin's
@@ -31,6 +32,9 @@ interface TimesheetWeek {
   startMs: number;
   days: TimesheetDayGroup[];
   netMin: number;
+  /** The server's split (entry.hours — the labor rules pay uses), summed: never `netMin − 40h` here. */
+  otMin: number;
+  dtMin: number;
 }
 
 /** "Mon, Jul 28" from a YYYY-MM-DD day key (parsed as local wall date). */
@@ -83,12 +87,24 @@ export function TimesheetWeeks({
         day.breakMin += Math.max(0, e.minutesElapsed - net);
       }
     }
+    // Overtime and double time are the server's (each entry's share of the
+    // labor-rules split, over the person's whole week at every client) —
+    // the paycheck's numbers, daily rules included.
+    const otByWeek = new Map<number, { ot: number; dt: number }>();
+    for (const e of sorted) {
+      if (e.status === 'REJECTED' || !e.hours) continue;
+      const startMs = weekStartOfDayKey(zonedDayKey(e.clockInAt, e.locationTimezone ?? undefined));
+      const cur = otByWeek.get(startMs) ?? { ot: 0, dt: 0 };
+      cur.ot += e.hours.overtimeMinutes;
+      cur.dt += e.hours.doubleTimeMinutes;
+      otByWeek.set(startMs, cur);
+    }
     const weekMap = new Map<number, TimesheetWeek>();
     for (const day of dayMap.values()) {
       const startMs = weekStartOfDayKey(day.key);
       let week = weekMap.get(startMs);
       if (!week) {
-        week = { startMs, days: [], netMin: 0 };
+        week = { startMs, days: [], netMin: 0, otMin: otByWeek.get(startMs)?.ot ?? 0, dtMin: otByWeek.get(startMs)?.dt ?? 0 };
         weekMap.set(startMs, week);
       }
       week.days.push(day);
@@ -100,7 +116,8 @@ export function TimesheetWeeks({
   return (
     <div className="space-y-5">
       {weeks.map((week) => {
-        const otMin = Math.max(0, week.netMin - 40 * 60);
+        const otMin = Math.round(week.otMin);
+        const dtMin = Math.round(week.dtMin);
         return (
           <section key={week.startMs}>
             <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 border-b border-navy-secondary pb-1.5">
@@ -112,6 +129,11 @@ export function TimesheetWeeks({
                   <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-warning">
                     {formatHM(otMin)} OT
                   </span>
+                )}
+                {dtMin > 0 && (
+                  <Badge variant="destructive" withDot={false}>
+                    {formatHM(dtMin)} double time
+                  </Badge>
                 )}
                 <span className="text-silver">
                   week total{' '}

@@ -294,7 +294,7 @@ function buildDetailSheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
     const sub = ws.getRow(r);
     sub.values = [
       `${a.name} — subtotal`,
-      `Regular ${hours(a.regularMinutes).toFixed(2)}  ·  OT ${hours(a.overtimeMinutes).toFixed(2)}`,
+      `Regular ${hours(a.regularMinutes).toFixed(2)}  ·  OT ${hours(a.overtimeMinutes).toFixed(2)}${a.doubleTimeMinutes ? `  ·  Double time ${hours(a.doubleTimeMinutes).toFixed(2)}` : ''}`,
       '',
       hours(a.totalMinutes),
     ];

@@ -6,6 +6,7 @@ import { LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, setWorkerU
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { cn } from '@/lib/cn';
+import { tokenColor, tokenVar } from '@/lib/tokenColor';
 
 /**
  * The vans' map. MapLibre (open source) on OpenFreeMap tiles — no API key.
@@ -116,7 +117,7 @@ function ensureRadarCss() {
   const st = document.createElement('style');
   st.textContent =
     '@keyframes alto-radar{0%{transform:scale(.7);opacity:.75}100%{transform:scale(2.6);opacity:0}}' +
-    '.alto-radar{position:absolute;inset:0;border-radius:9999px;border:2px solid #D4A017;animation:alto-radar 2.4s cubic-bezier(0,0,.2,1) infinite;pointer-events:none}' +
+    `.alto-radar{position:absolute;inset:0;border-radius:9999px;border:2px solid ${tokenVar('gold-fill')};animation:alto-radar 2.4s cubic-bezier(0,0,.2,1) infinite;pointer-events:none}` +
     '@media (prefers-reduced-motion: reduce){.alto-radar{display:none}}';
   document.head.appendChild(st);
 }
@@ -128,15 +129,21 @@ function paint(root: HTMLElement, m: MapMarker) {
     root.setAttribute('aria-label', m.label);
   }
   const el = root.firstElementChild as HTMLElement;
-  const ring = m.highlight ? 'box-shadow:0 0 0 4px rgba(212,160,23,.35);' : '';
+  // Theme-stable tokens: a marker sits on map tiles, not on the page, so
+  // its fills keep the same ink in both themes (gold fill + on-accent ink,
+  // a dark store tile + on-solid white).
+  const gold = tokenVar('gold-fill');
+  const ink = tokenVar('on-accent');
+  const white = tokenVar('on-solid');
+  const ring = m.highlight ? `box-shadow:0 0 0 4px ${tokenVar('gold-fill', 0.35)};` : '';
   if (m.kind === 'van') {
     // Built once, then only updated — so the heading arrow turns smoothly
     // and the pulse doesn't restart on every refresh.
     if (el.dataset.kind !== 'van') {
       el.dataset.kind = 'van';
-      el.innerHTML = `<span data-pulse style="position:absolute;inset:-6px;border-radius:9999px;background:rgba(212,160,23,.35)" class="animate-ping motion-reduce:hidden"></span><span style="position:relative;display:grid;place-items:center">${BUS_SVG}</span><span data-arrow style="position:absolute;top:-9px;left:50%;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid #D4A017;transform-origin:50% 26px;transition:transform .9s ease"></span>`;
+      el.innerHTML = `<span data-pulse style="position:absolute;inset:-6px;border-radius:9999px;background:${tokenVar('gold-fill', 0.35)}" class="animate-ping motion-reduce:hidden"></span><span style="position:relative;display:grid;place-items:center">${BUS_SVG}</span><span data-arrow style="position:absolute;top:-9px;left:50%;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid ${gold};transform-origin:50% 26px;transition:transform .9s ease"></span>`;
     }
-    el.style.cssText = `position:relative;width:34px;height:34px;border-radius:9999px;display:grid;place-items:center;background:#D4A017;color:#0B1832;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);${ring}opacity:${m.stale ? 0.55 : 1};transition:opacity .3s`;
+    el.style.cssText = `position:relative;width:34px;height:34px;border-radius:9999px;display:grid;place-items:center;background:${gold};color:${ink};border:2px solid ${white};box-shadow:0 2px 8px rgba(0,0,0,.35);${ring}opacity:${m.stale ? 0.55 : 1};transition:opacity .3s`;
     const pulse = el.querySelector<HTMLElement>('[data-pulse]');
     if (pulse) pulse.style.display = m.stale ? 'none' : '';
     const arrow = el.querySelector<HTMLElement>('[data-arrow]');
@@ -147,7 +154,7 @@ function paint(root: HTMLElement, m: MapMarker) {
     }
   } else if (m.kind === 'store' || m.kind === 'home') {
     const store = m.kind === 'store';
-    const look = `position:relative;width:28px;height:28px;border-radius:${store ? '8px' : '9999px'};display:grid;place-items:center;background:${store ? '#0B1832' : '#2F6FDE'};color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);${ring}`;
+    const look = `position:relative;width:28px;height:28px;border-radius:${store ? '8px' : '9999px'};display:grid;place-items:center;background:${store ? ink : tokenVar('chart-2')};color:${white};border:2px solid ${white};box-shadow:0 2px 6px rgba(0,0,0,.3);${ring}`;
     const key = `${m.kind}:${m.pulse ? 1 : 0}`;
     el.style.cssText = look;
     // Rebuilt only when it changes, so the rings don't restart each refresh.
@@ -157,7 +164,7 @@ function paint(root: HTMLElement, m: MapMarker) {
       el.innerHTML = `${m.pulse ? RINGS : ''}<span style="position:relative;display:grid;place-items:center">${store ? STORE_SVG : HOME_SVG}</span>`;
     }
   } else {
-    el.style.cssText = `min-width:22px;height:22px;padding:0 5px;border-radius:9999px;display:grid;place-items:center;background:#fff;color:#0B1832;border:2px solid #0B1832;font:600 11px/1 system-ui,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.25);${ring}`;
+    el.style.cssText = `min-width:22px;height:22px;padding:0 5px;border-radius:9999px;display:grid;place-items:center;background:${white};color:${ink};border:2px solid ${ink};font:600 11px/1 system-ui,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.25);${ring}`;
     el.textContent = m.order !== undefined ? String(m.order) : '•';
   }
 }
@@ -288,15 +295,18 @@ export default function LiveMap({
     m.on('load', () => {
       box.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
       m.addSource('trail', { type: 'geojson', data: lineSource([]) });
-      m.addLayer({ id: 'trail', type: 'line', source: 'trail', paint: { 'line-color': '#D4A017', 'line-width': 4, 'line-opacity': 0.7 } });
+      // MapLibre parses paint colours itself: the tokens, resolved now.
+      const gold = tokenColor('gold-fill');
+      m.addLayer({ id: 'trail', type: 'line', source: 'trail', paint: { 'line-color': gold, 'line-width': 4, 'line-opacity': 0.7 } });
       m.addSource('route', { type: 'geojson', data: lineSource([]) });
       m.addLayer({
         id: 'route',
         type: 'line',
         source: 'route',
         layout: { 'line-cap': 'round' },
-        // Navy disappears on the dark tiles — the planned route reads silver there.
-        paint: { 'line-color': dark ? '#C9D3E6' : '#0B1832', 'line-width': 3, 'line-dasharray': [1.5, 1.5], 'line-opacity': dark ? 0.75 : 0.6 },
+        // The muted-ink token: silver on the dark tiles (navy disappears
+        // there), slate on the light ones.
+        paint: { 'line-color': tokenColor('silver'), 'line-width': 3, 'line-dasharray': [1.5, 1.5], 'line-opacity': dark ? 0.75 : 0.6 },
       });
       m.addSource('path', { type: 'geojson', data: lineSource([]) });
       m.addLayer({
@@ -304,21 +314,23 @@ export default function LiveMap({
         type: 'line',
         source: 'path',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': dark ? '#0B1832' : '#FFFFFF', 'line-width': 9, 'line-opacity': 0.9 },
+        // The page surface: navy under the dark tiles, white under the light.
+        paint: { 'line-color': tokenColor('navy'), 'line-width': 9, 'line-opacity': 0.9 },
       });
       m.addLayer({
         id: 'path',
         type: 'line',
         source: 'path',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#D4A017', 'line-width': 5 },
+        paint: { 'line-color': gold, 'line-width': 5 },
       });
       m.addLayer({
         id: 'path-flow',
         type: 'line',
         source: 'path',
         layout: { 'line-join': 'round' },
-        paint: { 'line-color': '#FFF4CC', 'line-width': 2.5, 'line-dasharray': FLOW[0] },
+        // A pale dash over the gold that reads as motion in either theme.
+        paint: { 'line-color': tokenColor('on-solid', 0.8), 'line-width': 2.5, 'line-dasharray': FLOW[0] },
       });
       setReady(true);
     });

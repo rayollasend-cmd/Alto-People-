@@ -30,8 +30,12 @@ export interface OpenShiftListItem {
   location: string | null;
   locationId?: string | null;
   locationName?: string | null;
+  /** The store's IANA zone: the shift is shown on its clock (fmtShiftTz). */
+  timezone?: string | null;
   /** A site they have not worked at — the feed says so before they tap. */
   newForYou?: boolean;
+  /** They said "Not for me" — the feed folds it away (Undo brings it back). */
+  declinedByMe?: boolean;
   payRate: string | null;
   requirements: { id: string; code: string; name: string }[];
   myPendingClaim: string | null;
@@ -46,6 +50,8 @@ export interface PendingClaim {
   clientName: string;
   startsAt: string;
   endsAt: string;
+  /** The store's IANA zone. */
+  timezone?: string | null;
   createdAt: string;
 }
 

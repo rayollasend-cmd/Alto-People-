@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { capabilityDef } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
 import { notifyUser } from './notify.js';
+import { send, statusForSendError } from './notifications.js';
 import { enqueueAudit, recordCriticalAudit } from './audit.js';
 import { ALTO_TENANT_ID } from './tenant.js';
 
@@ -251,12 +252,53 @@ export function noticeText(kind: 'notice_given' | 'explanation_sent', row: { sum
 }
 
 /**
+ * Where a subject with no login can be reached: the email on their
+ * associate record (an applicant's application is filed under it), or on
+ * the candidate / application a `subjectRef` names ("candidate:<id>",
+ * "application:<id>").
+ */
+export async function noticeAddressFor(
+  db: Db,
+  tenantId: string,
+  row: { subjectAssociateId: string | null; subjectRef: string | null },
+): Promise<string | null> {
+  const clean = (e: string | null | undefined) => (e && e.includes('@') ? e.trim() : null);
+  if (row.subjectAssociateId) {
+    const a = await db.associate.findFirst({ where: { id: row.subjectAssociateId }, select: { email: true } });
+    return clean(a?.email);
+  }
+  const m = /^(candidate|application):([0-9a-f-]{36})$/i.exec(row.subjectRef?.trim() ?? '');
+  if (!m) return null;
+  if (m[1]!.toLowerCase() === 'candidate') {
+    const c = await db.candidate.findFirst({ where: { id: m[2]!, tenantId }, select: { email: true } });
+    return clean(c?.email);
+  }
+  const app = await db.application.findFirst({ where: { id: m[2]!, tenantId }, select: { associate: { select: { email: true } } } });
+  return clean(app?.associate.email);
+}
+
+export interface NoticeDelivery {
+  channel: string;
+  /** SENT, or why not: NOT_CONFIGURED / SUPPRESSED / FAILED; BY_HAND when a person gave it. */
+  status: 'SENT' | 'NOT_CONFIGURED' | 'SUPPRESSED' | 'FAILED' | 'BY_HAND';
+  to: string | null;
+  notificationId: string | null;
+}
+
+/**
  * A lifecycle date on a record, set once. "Notice given" and "explanation
- * sent" are not just stamped: the notice goes to the person through the
- * notifications dispatch (bell, email) when they have a login, and the
- * record says which channel carried it. A subject with no login (an
- * applicant) is stamped with the channel the person used by hand and
- * `delivered: false` says the product did not send it.
+ * sent" are not just stamped:
+ *
+ *   - a subject with a login gets it through the notifications dispatch
+ *     (bell, email) and the record says IN_APP;
+ *   - a subject with no login (an applicant) is emailed at the address on
+ *     their application or candidate record. The send is its own
+ *     Notification row with the provider's real outcome; the date is
+ *     stamped only when the email went out. Not configured, suppressed or
+ *     failed: nothing is stamped and the caller is told why, so a notice
+ *     is never recorded as given when it was not;
+ *   - `channel` given = a person gave it by hand (paper, a text, their own
+ *     email): stamped with that channel, `delivered: false`.
  */
 export async function markDecisionEvent(db: Db, tenantId: string, id: string, event: (typeof DECISION_EVENTS)[number], actorUserId: string, opts: { channel?: string; at?: Date } = {}) {
   const row = await db.automatedDecisionRecord.findFirst({ where: { id, tenantId } });
@@ -266,19 +308,56 @@ export async function markDecisionEvent(db: Db, tenantId: string, id: string, ev
   const at = opts.at ?? new Date();
   let delivered = false;
   let channel = opts.channel ?? null;
+  let delivery: NoticeDelivery | null = null;
   if (event === 'notice_given' || event === 'explanation_sent') {
     const user = row.subjectAssociateId ? await db.user.findFirst({ where: { associateId: row.subjectAssociateId, status: 'ACTIVE', deletedAt: null }, select: { id: true } }) : null;
+    const text = noticeText(event, row);
     if (user) {
-      const text = noticeText(event, row);
       await notifyUser(user.id, { ...text, category: 'mandatory_notice', linkUrl: '/me' });
       delivered = true;
       channel = channel ?? 'IN_APP';
+      delivery = { channel: 'IN_APP', status: 'SENT', to: null, notificationId: null };
+    } else if (opts.channel) {
+      delivery = { channel: opts.channel, status: 'BY_HAND', to: null, notificationId: null };
+    } else {
+      // No login and nobody gave it by hand: email it to the address on file.
+      const to = await noticeAddressFor(db, tenantId, row);
+      if (!to) {
+        throw new HttpError(409, 'no_address', 'This person has no login and no email on their application. Give the notice by hand, then record how (paper, a text).');
+      }
+      const note = await db.notification.create({
+        data: { channel: 'EMAIL', status: 'QUEUED', recipientUserId: null, recipientEmail: to, subject: text.subject, body: text.body, category: 'mandatory_notice' },
+        select: { id: true },
+      });
+      let status: NoticeDelivery['status'] = 'SENT';
+      let reason: string | null = null;
+      try {
+        const r = await send({ channel: 'EMAIL', recipient: { userId: null, phone: null, email: to }, subject: text.subject, body: text.body, category: 'mandatory_notice', audit: false });
+        // The development stub prints the email instead of sending it: not delivered.
+        if (!r.externalRef || r.externalRef.startsWith('STUB-')) {
+          status = 'NOT_CONFIGURED';
+          reason = 'Email isn’t set up for this organization (RESEND_API_KEY / RESEND_FROM).';
+        } else {
+          await db.notification.update({ where: { id: note.id }, data: { status: 'SENT', sentAt: new Date(), externalRef: r.externalRef } });
+        }
+      } catch (err) {
+        status = statusForSendError(err);
+        reason = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+      }
+      if (status !== 'SENT') {
+        await db.notification.update({ where: { id: note.id }, data: { status, failureReason: reason } });
+        enqueueAudit({ actorUserId, clientId: null, tenantId, workerId: row.workerId, action: `agent.decision_${event}_not_sent`, entityType: 'AutomatedDecisionRecord', entityId: id, metadata: { to, status, reason, notificationId: note.id } }, 'decisionRecord');
+        throw new HttpError(409, 'notice_not_sent', `The email to ${to} didn’t go out (${status === 'NOT_CONFIGURED' ? 'email isn’t set up' : status === 'SUPPRESSED' ? 'the address is on the do-not-email list' : 'the provider refused it'}). Nothing was recorded. Give the notice by hand, then record how.`, { delivery: { channel: 'EMAIL', status, to, notificationId: note.id } });
+      }
+      delivered = true;
+      channel = 'EMAIL';
+      delivery = { channel: 'EMAIL', status: 'SENT', to, notificationId: note.id };
     }
   }
   const updated = await db.automatedDecisionRecord.update({
     where: { id },
     data: { [column]: at, ...(event === 'notice_given' ? { noticeChannel: channel ?? 'EMAIL', noticeTextVersion: NOTICE_TEXT_VERSION } : {}) },
   });
-  enqueueAudit({ actorUserId, clientId: null, tenantId, workerId: row.workerId, action: `agent.decision_${event}`, entityType: 'AutomatedDecisionRecord', entityId: id, metadata: { at: at.toISOString(), delivered, channel } }, 'decisionRecord');
-  return { ...updated, delivered };
+  enqueueAudit({ actorUserId, clientId: null, tenantId, workerId: row.workerId, action: `agent.decision_${event}`, entityType: 'AutomatedDecisionRecord', entityId: id, metadata: { at: at.toISOString(), delivered, channel, delivery: delivery as unknown as Prisma.InputJsonValue } }, 'decisionRecord');
+  return { ...updated, delivered, delivery };
 }

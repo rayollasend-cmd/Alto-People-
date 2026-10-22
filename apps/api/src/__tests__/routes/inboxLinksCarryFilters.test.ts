@@ -84,7 +84,7 @@ describe('Inbox links carry the filter their count uses', () => {
     expect(rows.filter((r) => r.stage === 'DECIDE' || r.stage === 'FINAL_DUE')).toHaveLength(s.count);
   });
 
-  it('onboarding drafts gone quiet: a week idle, linked to the drafts', async () => {
+  it('onboarding drafts gone quiet: a week idle, linked to the idle-drafts filter', async () => {
     const client = await createClient();
     const a = await createAssociate();
     const app = await createApplicationWithChecklist({ associateId: a.id, clientId: client.id });
@@ -93,6 +93,6 @@ describe('Inbox links carry the filter their count uses', () => {
     await createApplicationWithChecklist({ associateId: b.id, clientId: client.id }); // fresh: not counted
     const s = find(await inbox(), 'onboarding-stuck')!;
     expect(s.count).toBe(1);
-    expect(query(s.path).get('status')).toBe('DRAFT');
+    expect(query(s.path).get('status')).toBe('IDLE_DRAFTS');
   });
 });

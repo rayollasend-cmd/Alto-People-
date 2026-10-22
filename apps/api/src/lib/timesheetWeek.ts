@@ -8,6 +8,12 @@
  * NO overtime split; the other buckets stay 0.00. Hours are NET of unpaid
  * breaks and APPROVED-only, matching what the buyer invoices.
  *
+ * The buckets follow the BUYER's contract, the way a client statement bills
+ * overtime by its contract. What the PAYCHECK does with the same hours is
+ * the labor-rules engine's split (lib/laborRules/hours), carried on each row
+ * as `payHours` — so a reviewer sees the overtime pay will owe without the
+ * Fieldglass submission changing shape.
+ *
  * Two seams:
  *   - `saturdayWeek(instant, tz)` — pure week math (which Sat–Fri week an
  *     instant falls in, as store-local calendar dates).
@@ -31,6 +37,7 @@ import { localDateKey, formatTimeInZone, DEFAULT_TIMEZONE } from './timezone.js'
 import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
 import { attachFieldglass } from './fieldglassDesk.js';
+import { laborSharesForEntries } from './entryLaborShares.js';
 
 /**
  * The single Fieldglass bucket every worked hour lands in for the current
@@ -192,7 +199,7 @@ export type TimesheetSnapshot = Record<string, { worker: string; hours: number }
 export async function buildTimesheetWeek(
   db: Pick<
     PrismaClient,
-    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user' | 'fieldglassRegistration' | 'fieldglassTimesheet'
+    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user' | 'fieldglassRegistration' | 'fieldglassTimesheet' | 'laborRuleActivation' | 'laborRuleSet' | 'punchRoundingPolicy'
   >,
   input: {
     weekStart: Date;
@@ -226,6 +233,7 @@ export async function buildTimesheetWeek(
       ...(input.clientId ? { clientId: input.clientId } : {}),
     },
     select: {
+      id: true,
       associateId: true,
       clientId: true,
       clockInAt: true,
@@ -290,7 +298,25 @@ export async function buildTimesheetWeek(
     clientId: input.clientId,
     showMoney: input.showMoney ?? false,
   });
-  const rows = fg.rows;
+  // The paycheck's split of each row's approved hours (APPROVED only — what
+  // payroll pays), over the worker's whole week at every client.
+  const approvedInWeek = rawEntries.filter((e) => e.status === 'APPROVED' && e.clockOutAt && dateKeySet.has(localDateKey(e.clockInAt, e.location?.timezone ?? timeZone)));
+  const shares = await laborSharesForEntries(db as unknown as PrismaClient, approvedInWeek, { statuses: ['APPROVED'] });
+  const payByRow = new Map<string, { regular: number; overtime: number; doubleTime: number }>();
+  for (const e of approvedInWeek) {
+    const sh = shares.get(e.id);
+    if (!sh) continue;
+    const k = `${e.associateId}|${e.clientId ?? ''}`;
+    const acc = payByRow.get(k) ?? { regular: 0, overtime: 0, doubleTime: 0 };
+    acc.regular += sh.regularMinutes / 60;
+    acc.overtime += sh.overtimeMinutes / 60;
+    acc.doubleTime += sh.doubleTimeMinutes / 60;
+    payByRow.set(k, acc);
+  }
+  const rows = fg.rows.map((r) => {
+    const p = payByRow.get(`${r.associateId}|${r.clientId ?? ''}`);
+    return p ? { ...r, payHours: { regular: round2(p.regular), overtime: round2(p.overtime), doubleTime: round2(p.doubleTime) } } : r;
+  });
   const baseIssues = computeTimesheetIssues(entries, rows, dateKeySet);
   // A missing clock-out still leads (that day has no hours at all); an
   // unregistered worker is next — their hours can't be billed.
@@ -422,7 +448,7 @@ export function computeDrift(
 export async function fileTimesheetWeek(
   db: Pick<
     PrismaClient,
-    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user' | 'fieldglassRegistration' | 'fieldglassTimesheet'
+    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user' | 'fieldglassRegistration' | 'fieldglassTimesheet' | 'laborRuleActivation' | 'laborRuleSet' | 'punchRoundingPolicy'
   >,
   input: {
     weekStart: Date;

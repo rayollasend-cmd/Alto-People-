@@ -18,7 +18,7 @@ import { HttpError } from '../../middleware/error.js';
 import { requireCapability } from '../../middleware/auth.js';
 import { decideApprovalRequest, pendingResponse } from '../../lib/approvalRequests.js';
 import { bankingProfile, usesOurAch } from '../../lib/banking/ach.js';
-import { getBlobStore } from '../../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../../lib/blobStore.js';
 import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from '../../lib/uploads.js';
 import { tenantIdForWrite } from '../../lib/tenant.js';
 import { enqueueAudit } from '../../lib/audit.js';
@@ -203,7 +203,7 @@ booksPayablesRouter.post('/bills/:id/attachment', MANAGE, upload.single('file'),
   const magic = verifyFileMagic(file.buffer, file.mimetype);
   if (magic) throw new HttpError(400, 'invalid_file', magic);
   const name = sanitizeUploadFilename(file.originalname);
-  const key = `books/bills/${tenantIdForWrite()}/${bill.id}-${Date.now()}-${name}`;
+  const key = tenantBlobKey(`books/bills/${bill.id}-${Date.now()}-${name}`);
   await getBlobStore().put(key, file.buffer, file.mimetype);
   await prisma.bill.update({ where: { id: bill.id }, data: { attachmentKey: key, attachmentName: name } });
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'books.bill_attachment', entityType: 'Bill', entityId: bill.id, metadata: { name, bytes: file.size } }, 'books.payables');

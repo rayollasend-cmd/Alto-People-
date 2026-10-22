@@ -15,6 +15,7 @@ import {
   type PendingClaim,
   type Qualification,
 } from '@/lib/qualApi';
+import { declineOpenShift, undoDeclineOpenShift } from '@/lib/openShiftInvitesApi';
 import { useAuth } from '@/lib/auth';
 import { errorText } from '@/lib/errorText';
 import { useConfirm } from '@/lib/confirm';
@@ -44,12 +45,11 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Label } from '@/components/ui/Label';
 import {
-  fmtDateTime,
   fmtMoneyEst,
   fmtPayRate,
   fmtRelativeDayTz,
   fmtShiftRangeTz,
-  fmtTime,
+  fmtShiftTz,
   mapsUrl,
   parseYmd,
   zonedDayKey,
@@ -91,8 +91,8 @@ export function MarketplaceHome() {
           <TabsList>
             <TabsTrigger value="mgr">{t('mk.mgr.tab')}</TabsTrigger>
             {canPickUp && <TabsTrigger value="open">{t('mk.tab.available')}</TabsTrigger>}
-            <TabsTrigger value="claims">Pending claims</TabsTrigger>
-            <TabsTrigger value="catalog">Qualifications</TabsTrigger>
+            <TabsTrigger value="claims">{t('mk.tab.claims')}</TabsTrigger>
+            <TabsTrigger value="catalog">{t('mk.tab.catalog')}</TabsTrigger>
           </TabsList>
         )}
 
@@ -164,6 +164,8 @@ function AvailableTab() {
     const from = fromDate ? parseYmd(fromDate) : null;
     const to = toDate ? parseYmd(toDate) : null;
     return rows.filter((s) => {
+      // "Not for me" folds the card away (Undo in the toast brings it back).
+      if (s.declinedByMe) return false;
       const startMs = new Date(s.startsAt).getTime();
       if (from && startMs < from.getTime()) return false;
       // Inclusive end date: anything before local midnight the day AFTER.
@@ -211,6 +213,33 @@ function AvailableTab() {
     }
   };
 
+  const markDeclined = (shiftId: string, declined: boolean) =>
+    setRows((prev) => (prev ? prev.map((s) => (s.id === shiftId ? { ...s, declinedByMe: declined } : s)) : prev));
+
+  // "Not for me": the manager's Open shifts tab counts it, and nobody asks
+  // again about this shift. Undo is one tap in the toast.
+  const onDecline = async (shiftId: string) => {
+    markDeclined(shiftId, true);
+    try {
+      await declineOpenShift(shiftId);
+      toast(t('mk.passedToast'), {
+        action: {
+          label: t('mk.undo'),
+          onClick: () => {
+            markDeclined(shiftId, false);
+            undoDeclineOpenShift(shiftId).catch(() => {
+              markDeclined(shiftId, true);
+              toast.error(t('mk.passFailed'));
+            });
+          },
+        },
+      });
+    } catch (err) {
+      markDeclined(shiftId, false);
+      toast.error(err instanceof ApiError ? err.message : t('mk.passFailed'));
+    }
+  };
+
   if (loadError) {
     return (
       <ErrorBanner>
@@ -228,7 +257,7 @@ function AvailableTab() {
     return <Card><CardContent><SkeletonRows count={3} /></CardContent></Card>;
   }
 
-  if (rows.length === 0) {
+  if (rows.every((s) => s.declinedByMe)) {
     return (
       <EmptyState
         icon={Briefcase}
@@ -248,10 +277,11 @@ function AvailableTab() {
   // By day, the way My schedule reads: "Today", "Tomorrow", "Sun, Sep 21".
   const days: Array<{ key: string; label: string; shifts: OpenShiftListItem[] }> = [];
   for (const s of filtered) {
-    const key = zonedDayKey(s.startsAt, null);
+    // Each shift's day on its own store's clock (one shift, one time).
+    const key = zonedDayKey(s.startsAt, s.timezone ?? null);
     const last = days[days.length - 1];
     if (last && last.key === key) last.shifts.push(s);
-    else days.push({ key, label: fmtRelativeDayTz(s.startsAt, null), shifts: [s] });
+    else days.push({ key, label: fmtRelativeDayTz(s.startsAt, s.timezone ?? null), shifts: [s] });
   }
 
   return (
@@ -350,7 +380,7 @@ function AvailableTab() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <div className="text-lg font-semibold tabular-nums text-white">
-                          {fmtShiftRangeTz(s.startsAt, s.endsAt, null)}
+                          {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone ?? null)}
                         </div>
                         <div className="mt-0.5 text-sm text-white">{s.position}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-silver">
@@ -396,17 +426,22 @@ function AvailableTab() {
                           </div>
                         )}
                       </div>
-                      <div className="shrink-0">
+                      <div className="flex shrink-0 flex-col items-end gap-1">
                         {s.myPendingClaim ? (
                           <Badge variant="pending">{t('mk.claimPending')}</Badge>
                         ) : (
-                          <Button
-                            onClick={() => onClaim(s.id)}
-                            disabled={claimingId !== null}
-                            loading={claimingId === s.id}
-                          >
-                            {claimingId === s.id ? t('mk.claiming') : t('mk.claim')}
-                          </Button>
+                          <>
+                            <Button
+                              onClick={() => onClaim(s.id)}
+                              disabled={claimingId !== null}
+                              loading={claimingId === s.id}
+                            >
+                              {claimingId === s.id ? t('mk.claiming') : t('mk.claim')}
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => void onDecline(s.id)} disabled={claimingId === s.id}>
+                              {t('mk.notForMe')}
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -424,6 +459,7 @@ function AvailableTab() {
 // ============ Claims (manager) ============
 
 function ClaimsTab() {
+  const { t } = useI18n();
   const [rows, setRows] = useState<PendingClaim[] | null>(null);
   const [rejectTarget, setRejectTarget] = useState<PendingClaim | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -434,7 +470,7 @@ function ClaimsTab() {
     queryKey: ['ClaimsTab', 'rows'],
     queryFn: () => listPendingClaims(),
   });
-  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load pending claims.' : null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('mk.claims.loadFailed') : null;
   useEffect(() => {
     const r = refreshQuery.data;
     if (r === undefined) return;
@@ -455,7 +491,7 @@ function ClaimsTab() {
         });
       })
       .catch(() => {
-        toast.error('Could not refresh pending claims.');
+        toast.error(t('mk.claims.refreshFailed'));
       });
   };
 
@@ -481,11 +517,11 @@ function ClaimsTab() {
     setBusyId(c.id);
     try {
       await updateClaim(c.shiftId, c.id, 'APPROVED', null);
-      toast.success('Claim approved.');
+      toast.success(t('mk.claims.approved'));
       dropRows([c.id]);
       refetch();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('mk.failed'));
     } finally {
       setBusyId(null);
     }
@@ -505,8 +541,8 @@ function ClaimsTab() {
       .map((c) => c.id);
     const failed = results.length - okIds.length;
     if (okIds.length > 0)
-      toast.success(`Approved ${okIds.length} claim${okIds.length === 1 ? '' : 's'}.`);
-    if (failed > 0) toast.error(`${failed} approval${failed === 1 ? '' : 's'} failed.`);
+      toast.success(okIds.length === 1 ? t('mk.claims.approvedOne') : t('mk.claims.approvedMany', { n: okIds.length }));
+    if (failed > 0) toast.error(failed === 1 ? t('mk.claims.failedOne') : t('mk.claims.failedMany', { n: failed }));
     // Failed rows stay selected so the manager can retry just those.
     dropRows(okIds);
     refetch();
@@ -521,7 +557,7 @@ function ClaimsTab() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>{loadError}</span>
                 <Button size="sm" variant="outline" onClick={refresh}>
-                  Retry
+                  {t('mk.retry')}
                 </Button>
               </div>
             </ErrorBanner>
@@ -530,34 +566,34 @@ function ClaimsTab() {
           <div className="p-6"><SkeletonRows count={3} /></div>
         ) : sorted.length === 0 ? (
           <EmptyState
-            title="No pending claims"
-            description="Claims show up here when people pick up open shifts."
+            title={t('mk.claims.emptyTitle')}
+            description={t('mk.claims.emptyDesc')}
           />
         ) : (
           <>
             {selected.size > 0 && (
               <div className="flex items-center justify-between gap-2 p-3 border-b border-navy-secondary">
                 <div className="text-sm text-silver">
-                  {selected.size} selected
+                  {t('mk.claims.selected', { n: selected.size })}
                 </div>
                 <Button size="sm" onClick={bulkApprove} disabled={bulkBusy}>
-                  {bulkBusy ? 'Approving…' : `Approve ${selected.size}`}
+                  {bulkBusy ? t('mk.claims.approving') : t('mk.claims.approveN', { n: selected.size })}
                 </Button>
               </div>
             )}
             <DataGrid<NonNullable<typeof sorted>[number]>
               id="marketplace-claims"
-              caption="Shift claims to decide"
+              caption={t('mk.claims.caption')}
               rows={sorted}
               rowKey={(c) => c.id}
-              search={{ placeholder: 'Associate, client, position…' }}
+              search={{ placeholder: t('mk.claims.search') }}
               urlState={false}
               exportCsv={{ filename: 'shift-claims' }}
               selectable={{ selection: { selected, onChange: setSelected } }}
               columns={[
                 {
                   key: 'associate',
-                  header: 'Associate',
+                  header: t('mk.claims.colWorker'),
                   accessor: (c) => c.associateName,
                   sortable: true,
                   primary: true,
@@ -568,26 +604,26 @@ function ClaimsTab() {
                     </div>
                   ),
                 },
-                { key: 'position', header: 'Position', accessor: (c) => c.position, sortable: true, cardMeta: true },
-                { key: 'client', header: 'Client', accessor: (c) => c.clientName, sortable: true, cardMeta: true },
+                { key: 'position', header: t('mk.claims.colPosition'), accessor: (c) => c.position, sortable: true, cardMeta: true },
+                { key: 'client', header: t('mk.claims.colClient'), accessor: (c) => c.clientName, sortable: true, cardMeta: true },
                 {
                   key: 'shift',
-                  header: 'Shift',
+                  header: t('mk.claims.colShift'),
                   accessor: (c) => c.startsAt,
-                  csv: (c) => `${fmtDateTime(c.startsAt)} – ${fmtTime(c.endsAt)}`,
+                  csv: (c) => `${fmtShiftTz(c.startsAt, c.timezone)} – ${fmtShiftTz(c.endsAt, c.timezone, { day: false })}`,
                   sortable: true,
                   searchable: false,
                   cardMeta: true,
                   className: 'tabular-nums',
                   cell: (c) => (
                     <>
-                      {fmtDateTime(c.startsAt)} – {fmtTime(c.endsAt)}
+                      {fmtShiftTz(c.startsAt, c.timezone)} – {fmtShiftTz(c.endsAt, c.timezone, { day: false })}
                     </>
                   ),
                 },
                 {
                   key: 'decide',
-                  header: 'Decide',
+                  header: t('mk.claims.colDecide'),
                   accessor: () => null,
                   searchable: false,
                   csv: () => '',
@@ -597,10 +633,10 @@ function ClaimsTab() {
                   cell: (c) => (
                     <div className="inline-flex gap-1">
                       <Button size="sm" variant="secondary" onClick={() => approve(c)} disabled={busyId === c.id || bulkBusy}>
-                        Approve
+                        {t('mk.claims.approve')}
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => setRejectTarget(c)} disabled={busyId === c.id || bulkBusy}>
-                        Reject
+                        {t('mk.claims.reject')}
                       </Button>
                     </div>
                   ),
@@ -613,17 +649,17 @@ function ClaimsTab() {
       <ConfirmDialog
         open={rejectTarget !== null}
         onOpenChange={(o) => !o && setRejectTarget(null)}
-        title="Reject claim"
+        title={t('mk.claims.rejectTitle')}
         description={
           rejectTarget
-            ? `Reject ${rejectTarget.associateName}'s claim on ${rejectTarget.position}?`
+            ? t('mk.claims.rejectDesc', { name: rejectTarget.associateName, position: rejectTarget.position })
             : undefined
         }
-        confirmLabel="Reject"
+        confirmLabel={t('mk.claims.reject')}
         destructive
         requireReason="optional"
-        reasonLabel="Reason (visible to associate)"
-        reasonPlaceholder="Optional"
+        reasonLabel={t('mk.claims.rejectReason')}
+        reasonPlaceholder={t('mk.claims.optional')}
         busy={busyId === rejectTarget?.id}
         onConfirm={async (reason) => {
           if (!rejectTarget) return;
@@ -635,12 +671,12 @@ function ClaimsTab() {
               'REJECTED',
               reason || null,
             );
-            toast.success('Claim rejected.');
+            toast.success(t('mk.claims.rejected'));
             dropRows([rejectTarget.id]);
             setRejectTarget(null);
             refetch();
           } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+            toast.error(err instanceof ApiError ? err.message : t('mk.failed'));
           } finally {
             setBusyId(null);
           }
@@ -662,6 +698,7 @@ function deriveCode(name: string): string {
 }
 
 function CatalogTab() {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const { user } = useAuth();
   /**
@@ -689,14 +726,14 @@ function CatalogTab() {
     queryFn: () => listQualifications(),
   });
   const rows: Qualification[] | null = refreshQuery.data?.qualifications ?? null;
-  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load qualifications.' : null;
+  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('mk.cat.loadFailed') : null;
   const refresh = () => void refreshQuery.refetch();
 
   const [saving, setSaving] = useState(false);
   const onSave = async () => {
     if (saving) return;
     if (!code.trim() || !name.trim()) {
-      toast.error('Code and name required.');
+      toast.error(t('mk.cat.codeNameRequired'));
       return;
     }
     setSaving(true);
@@ -707,7 +744,7 @@ function CatalogTab() {
         description: description.trim() || null,
         isCert,
       });
-      toast.success('Qualification added.');
+      toast.success(t('mk.cat.added'));
       setShowNew(false);
       setCode('');
       setCodeTouched(false);
@@ -716,27 +753,27 @@ function CatalogTab() {
       setDescription('');
       refresh();
     } catch (err) {
-      toast.error(errorText(err, "Couldn't add the qualification."));
+      toast.error(errorText(err, t('mk.cat.addFailed')));
     } finally {
       setSaving(false);
     }
   };
 
   const onDelete = async (id: string) => {
-    if (!(await confirm({ title: 'Delete this qualification?', destructive: true }))) return;
+    if (!(await confirm({ title: t('mk.cat.deleteConfirm'), destructive: true }))) return;
     try {
       await deleteQualification(id);
-      toast.success('Qualification deleted.');
+      toast.success(t('mk.cat.deleted'));
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('mk.failed'));
     }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Button onClick={() => setShowNew(true)}>New qualification</Button>
+        <Button onClick={() => setShowNew(true)}>{t('mk.cat.new')}</Button>
       </div>
       <Card>
         <CardContent className="p-0">
@@ -746,7 +783,7 @@ function CatalogTab() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{loadError}</span>
                   <Button size="sm" variant="outline" onClick={refresh}>
-                    Retry
+                    {t('mk.retry')}
                   </Button>
                 </div>
               </ErrorBanner>
@@ -756,29 +793,29 @@ function CatalogTab() {
           ) : rows.length === 0 ? (
             <EmptyState
               icon={Award}
-              title="No qualifications"
-              description="Define the badges, certs, and skills the marketplace can match shifts against."
+              title={t('mk.cat.emptyTitle')}
+              description={t('mk.cat.emptyDesc')}
               action={
-                <Button onClick={() => setShowNew(true)}>New qualification</Button>
+                <Button onClick={() => setShowNew(true)}>{t('mk.cat.new')}</Button>
               }
             />
           ) : (
             <DataGrid<NonNullable<typeof rows>[number]>
               id="qualifications"
-              caption="Qualifications"
+              caption={t('mk.tab.catalog')}
               rows={rows}
               rowKey={(q) => q.id}
-              search={{ placeholder: 'Code, name…' }}
+              search={{ placeholder: t('mk.cat.search') }}
               urlState={false}
               exportCsv={{ filename: 'qualifications' }}
               columns={[
-                { key: 'code', header: 'Code', accessor: (q) => q.code, sortable: true, primary: true, className: 'font-mono text-xs' },
-                { key: 'name', header: 'Name', accessor: (q) => q.name, sortable: true, cardMeta: true, className: 'text-white' },
-                { key: 'cert', header: 'Cert', accessor: (q) => (q.isCert ? 'Cert' : ''), sortable: true, searchable: false, cell: (q) => (q.isCert ? <Badge variant="accent">Cert</Badge> : '—') },
-                { key: 'scope', header: 'Scope', accessor: (q) => (q.clientId ? 'Client-scoped' : 'Global'), sortable: true, cardMeta: true },
+                { key: 'code', header: t('mk.cat.colCode'), accessor: (q) => q.code, sortable: true, primary: true, className: 'font-mono text-xs' },
+                { key: 'name', header: t('mk.cat.colName'), accessor: (q) => q.name, sortable: true, cardMeta: true, className: 'text-white' },
+                { key: 'cert', header: t('mk.cat.colCert'), accessor: (q) => (q.isCert ? t('mk.cat.colCert') : ''), sortable: true, searchable: false, cell: (q) => (q.isCert ? <Badge variant="accent">{t('mk.cat.colCert')}</Badge> : '—') },
+                { key: 'scope', header: t('mk.cat.colScope'), accessor: (q) => (q.clientId ? t('mk.cat.scopeClient') : t('mk.cat.scopeGlobal')), sortable: true, cardMeta: true },
                 {
                   key: 'action',
-                  header: 'Action',
+                  header: t('mk.cat.colAction'),
                   accessor: () => null,
                   searchable: false,
                   csv: () => '',
@@ -788,7 +825,7 @@ function CatalogTab() {
                   cell: (q) =>
                     canDelete(q) ? (
                       <Button size="sm" variant="ghost" onClick={() => onDelete(q.id)}>
-                        Delete
+                        {t('mk.cat.delete')}
                       </Button>
                     ) : (
                       <span className="text-xs2 text-silver/70">—</span>
@@ -807,11 +844,11 @@ function CatalogTab() {
         }
       >
         <DrawerHeader>
-          <DrawerTitle>New qualification</DrawerTitle>
+          <DrawerTitle>{t('mk.cat.new')}</DrawerTitle>
         </DrawerHeader>
         <DrawerBody className="space-y-4">
           <div>
-            <Label>Name</Label>
+            <Label>{t('mk.cat.colName')}</Label>
             <Input
               className="mt-1"
               value={name}
@@ -819,11 +856,11 @@ function CatalogTab() {
                 setName(e.target.value);
                 if (!codeTouched) setCode(deriveCode(e.target.value));
               }}
-              placeholder="Forklift certification"
+              placeholder={t('mk.cat.namePlaceholder')}
             />
           </div>
           <div>
-            <Label>Code</Label>
+            <Label>{t('mk.cat.colCode')}</Label>
             <Input
               className="mt-1 font-mono"
               value={code}
@@ -832,14 +869,14 @@ function CatalogTab() {
                 // An emptied code re-arms auto-derive from the name.
                 setCodeTouched(e.target.value !== '');
               }}
-              placeholder="FORKLIFT"
+              placeholder={t('mk.cat.codePlaceholder')}
             />
             <div className="mt-1 text-xs text-silver">
-              Auto-derived from the name; edit to override.
+              {t('mk.cat.codeHint')}
             </div>
           </div>
           <div>
-            <Label>Description (optional)</Label>
+            <Label>{t('mk.cat.descOptional')}</Label>
             <Input
               className="mt-1"
               value={description}
@@ -852,15 +889,15 @@ function CatalogTab() {
               checked={isCert}
               onChange={(e) => setIsCert(e.target.checked)}
             />
-            This is an expiring certification (drives compliance alerts)
+            {t('mk.cat.isCert')}
           </label>
         </DrawerBody>
         <DrawerFooter>
           <Button variant="ghost" onClick={() => setShowNew(false)} disabled={saving}>
-            Cancel
+            {t('mk.cat.cancel')}
           </Button>
           <Button onClick={onSave} loading={saving} disabled={saving}>
-            Save
+            {t('mk.cat.save')}
           </Button>
         </DrawerFooter>
       </Drawer>

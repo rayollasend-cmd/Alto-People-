@@ -366,6 +366,25 @@ async function linkRetro(db: PrismaClient, run: { id: string }, actorUserId: str
 
 /* ----- Premiums → bill, by contract ---------------------------------------- */
 
+/** The labor-rules engine's double-time line (payrollAggregator): its hours bill as overtime on the statement. */
+export const isEngineDoubleTime = (e: { kind: string; notes: string | null; hours: unknown }) => e.kind === 'DOUBLE_TIME' && e.notes === 'Double time' && e.hours != null;
+
+/** The rate an item's overtime was paid at: its OVERTIME line's rate, else 1.5× its hourly rate. */
+export function overtimeRateOf(item: { hourlyRate: unknown; earnings: ReadonlyArray<{ kind: string; rate: unknown }> }): number {
+  const ot = item.earnings.find((e) => e.kind === 'OVERTIME' && e.rate != null);
+  return ot ? Number(ot.rate) : Number(item.hourlyRate) * 1.5;
+}
+
+/**
+ * The part of an earning line that is premium — what a contract's premium
+ * rule bills. The whole line, except the engine's double-time line: its
+ * hours are on the statement already, billed like overtime
+ * (lib/clientStatement), so only what it paid beyond the overtime rate is.
+ */
+export function premiumCost(line: { kind: string; notes: string | null; hours: unknown; amount: unknown }, otRate: number): number {
+  return isEngineDoubleTime(line) ? Math.max(0, Number(line.amount) - Number(line.hours) * otRate) : Number(line.amount);
+}
+
 /** Which contract rule an earning line falls under, or null when it is not a premium. */
 export function premiumKeyOf(e: { kind: string; notes: string | null; rate: number | null }): PremiumKey | null {
   if (e.kind === 'DOUBLE_TIME') return 'DOUBLE_TIME';
@@ -395,12 +414,19 @@ async function linkPremiums(db: PrismaClient, run: { id: string; periodStart: Da
   const toExclusive = new Date(run.periodEnd.getTime() + DAY_MS);
   const items = await db.payrollItem.findMany({
     where: { payrollRunId: run.id },
-    select: { id: true, associateId: true, associate: { select: { firstName: true, lastName: true } }, earnings: { select: { id: true, kind: true, amount: true, hours: true, rate: true, notes: true } } },
+    select: { id: true, associateId: true, hourlyRate: true, associate: { select: { firstName: true, lastName: true } }, earnings: { select: { id: true, kind: true, amount: true, hours: true, rate: true, notes: true } } },
   });
   for (const item of items) {
+    // The statement bills double-time HOURS like overtime (lib/clientStatement:
+    // the engine's split, the contract's overtime billing). What the contract's
+    // DOUBLE_TIME rule bills is the premium beyond that — the labor-rules
+    // engine's "Double time" line less those hours at the overtime rate — so
+    // no hour is billed twice. A client premium rule's daily-OT line is already
+    // premium only and bills whole.
+    const otRate = overtimeRateOf(item);
     const premiumLines = item.earnings
-      .map((e) => ({ ...e, key: premiumKeyOf({ kind: e.kind, notes: e.notes, rate: e.rate == null ? null : Number(e.rate) }) }))
-      .filter((e): e is typeof e & { key: PremiumKey } => e.key !== null && Number(e.amount) > 0);
+      .map((e) => ({ ...e, cost: premiumCost(e, otRate), key: premiumKeyOf({ kind: e.kind, notes: e.notes, rate: e.rate == null ? null : Number(e.rate) }) }))
+      .filter((e): e is typeof e & { key: PremiumKey } => e.key !== null && e.cost > 0.004);
     if (!premiumLines.length) continue;
     const shares = await sharesFor(db, item.associateId, from, toExclusive);
     const totalMin = shares.reduce((s, x) => s + x.minutes, 0);
@@ -413,7 +439,7 @@ async function linkPremiums(db: PrismaClient, run: { id: string; periodStart: Da
       const fraction = share.minutes / totalMin;
       for (const line of premiumLines) {
         const rule = terms.premiumRules[line.key];
-        const cost = Number(line.amount) * fraction;
+        const cost = line.cost * fraction;
         const bill = billFor(rule, cost, markup);
         if (!bill) {
           if (rule.mode === 'BILL_MARKUP') result.skipped.push({ source: `premium:${line.id}:${share.clientId}`, reason: 'Billable at markup, but no bill rate or default markup is on file.' });

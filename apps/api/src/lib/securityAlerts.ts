@@ -3,7 +3,7 @@ import { hasCapability, rolesWithCapability } from '@alto-people/shared';
 import { enqueueAudit } from './audit.js';
 import { notifyUser } from './notify.js';
 import { send } from './notifications.js';
-import { ALTO_TENANT_ID } from './tenant.js';
+import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
 import { platformJob } from './tenantJobs.js';
 
 /**
@@ -139,7 +139,7 @@ export async function runSecurityAlerts(db: Db, now: Date = new Date()): Promise
 export async function raiseSecurityAlert(db: Db, c: Candidate & { linkUrl?: string }, now: Date = new Date()): Promise<boolean> {
   const recent = await db.securityAlert.findFirst({ where: { rule: c.rule, key: c.key, createdAt: { gte: new Date(now.getTime() - DEDUPE_MS) } }, select: { id: true } });
   if (recent) return false;
-  const setting = await db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } });
+  const setting = await db.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { securityContactEmail: true } });
   const admins = await db.user.findMany({ where: { tenantId: ALTO_TENANT_ID, status: 'ACTIVE', deletedAt: null, role: { in: rolesWithCapability('manage:org') } }, select: { id: true }, take: 10 });
   const deliveredTo: string[] = [];
   if (setting?.securityContactEmail) {

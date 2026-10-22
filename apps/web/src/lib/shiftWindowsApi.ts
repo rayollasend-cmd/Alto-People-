@@ -125,6 +125,8 @@ export interface LeadFloorTeam {
     photoUrl?: string | null;
     /** ISO clock-in time while on the clock, else null. */
     onClockSince: string | null;
+    /** The punch's site zone: the time is read on its clock. */
+    onClockTimezone?: string | null;
     windows: FloorTeamWindow[];
     coveringToday: boolean;
   }>;
@@ -142,6 +144,7 @@ export interface FloorSupervisorTeam {
     /** Associate headshot, else the account's own photo. */
     photoUrl?: string | null;
     onClockSince: string | null;
+    onClockTimezone?: string | null;
     windows: FloorTeamWindow[];
   } | null;
   covers: Array<{

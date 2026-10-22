@@ -100,6 +100,8 @@ const BroadcastInputSchema = z.object({
   departmentId: z.string().uuid().nullable().optional(),
   costCenterId: z.string().uuid().nullable().optional(),
   scheduledFor: z.string().datetime().nullable().optional(),
+  /** "Message selected" on People: exactly these people (within the sender's reach); targeting is then unused. */
+  recipientAssociateIds: z.array(z.string().uuid()).max(2000).optional(),
 });
 
 // Admin list (drafts, targeting, receipt counts). Associates read their
@@ -131,6 +133,7 @@ directoryAndCommsRouter.get(
         clientId: b.clientId,
         departmentId: b.departmentId,
         costCenterId: b.costCenterId,
+        recipientAssociateIds: b.recipientAssociateIds,
         scheduledFor: b.scheduledFor?.toISOString() ?? null,
         sentAt: b.sentAt?.toISOString() ?? null,
         receiptCount: b._count.receipts,
@@ -154,6 +157,7 @@ directoryAndCommsRouter.post(
         clientId: input.clientId ?? null,
         departmentId: input.departmentId ?? null,
         costCenterId: input.costCenterId ?? null,
+        recipientAssociateIds: [...new Set(input.recipientAssociateIds ?? [])],
         scheduledFor: input.scheduledFor ? new Date(input.scheduledFor) : null,
         status: input.scheduledFor ? 'SCHEDULED' : 'DRAFT',
         createdById: req.user!.id,
@@ -183,6 +187,7 @@ directoryAndCommsRouter.put(
         clientId: input.clientId === undefined ? undefined : input.clientId,
         departmentId: input.departmentId === undefined ? undefined : input.departmentId,
         costCenterId: input.costCenterId === undefined ? undefined : input.costCenterId,
+        recipientAssociateIds: input.recipientAssociateIds === undefined ? undefined : [...new Set(input.recipientAssociateIds)],
         scheduledFor:
           input.scheduledFor === undefined
             ? undefined
@@ -199,6 +204,7 @@ const AudienceSchema = z.object({
   clientId: z.string().uuid().nullable().optional(),
   departmentId: z.string().uuid().nullable().optional(),
   costCenterId: z.string().uuid().nullable().optional(),
+  recipientAssociateIds: z.array(z.string().uuid()).max(2000).optional(),
 });
 
 /**
@@ -208,8 +214,17 @@ const AudienceSchema = z.object({
  */
 function audienceWhere(
   user: SessionUser,
-  t: { clientId?: string | null; departmentId?: string | null; costCenterId?: string | null },
+  t: { clientId?: string | null; departmentId?: string | null; costCenterId?: string | null; recipientAssociateIds?: string[] | null },
 ): Prisma.AssociateWhereInput {
+  // An explicit list ("Message selected"): those people, still only the
+  // active ones in the sender's reach — a list can't widen it.
+  if (t.recipientAssociateIds && t.recipientAssociateIds.length > 0) {
+    return scopeWhere<Prisma.AssociateWhereInput>(
+      { tenantId: tenantIdForWrite(), deletedAt: null, deactivatedAt: null },
+      scopeAssociates(user),
+      { id: { in: t.recipientAssociateIds } },
+    );
+  }
   return scopeWhere<Prisma.AssociateWhereInput>(
     { tenantId: tenantIdForWrite(), deletedAt: null, deactivatedAt: null },
     scopeAssociates(user),
@@ -256,6 +271,7 @@ directoryAndCommsRouter.post('/broadcasts/:id/duplicate', MANAGE_COMMS, async (r
       clientId: b.clientId,
       departmentId: b.departmentId,
       costCenterId: b.costCenterId,
+      recipientAssociateIds: b.recipientAssociateIds,
       status: 'DRAFT',
       createdById: req.user!.id,
     },

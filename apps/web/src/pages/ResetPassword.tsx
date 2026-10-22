@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
+import { AuthCardTitle, AuthHero } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
@@ -106,20 +107,13 @@ export function ResetPassword() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in">
-          <h1 className="font-display text-4xl md:text-5xl text-gold mb-2 leading-none">
-            Set new password
-          </h1>
-          <p className="text-silver text-xs md:text-sm tracking-[0.3em] uppercase">
-            Alto People
-          </p>
+          <AuthHero title="Set new password" eyebrow="Alto People" />
         </div>
 
         {done ? (
           <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
             <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-            <h2 className="text-xl md:text-2xl text-white mb-2">
-              Password updated
-            </h2>
+            <AuthCardTitle size="md">Password updated</AuthCardTitle>
             <p className="text-silver text-sm mb-6">
               Sending you to sign in…
             </p>
@@ -131,9 +125,7 @@ export function ResetPassword() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
             noValidate
           >
-            <h2 className="text-2xl md:text-3xl text-white mb-1">
-              New password
-            </h2>
+            <AuthCardTitle>New password</AuthCardTitle>
             <p className="text-silver text-sm mb-6">
               Pick something you don't use on other sites. Minimum 12
               characters.

@@ -3,14 +3,10 @@ import { HttpError } from '../../middleware/error.js';
 import { enqueueAudit } from '../audit.js';
 import { secondPersonExists } from '../approvalPolicy.js';
 import { createApprovalRequest, registerApplyHandler } from '../approvalRequests.js';
-import { companyWorkweek, startOfWeekForSite } from '../timeAnomalies.js';
 import { tenantIdForWrite } from '../tenant.js';
-import { splitWeeklyOvertime } from '../payroll.js';
-import { evaluateTime, type PenaltyOutcome, type WorkEntry } from './evaluate.js';
+import { TODAYS_RULES, payFor, penaltyAmount, splitHours, weeklySplit, type PayRules } from './hours.js';
 import { SHIPPED_PACKS, jurisdictionsFor } from './packs.js';
-import { resolveRules } from './resolve.js';
 import { loadRulePool, rulesForSite, type StoredRuleSet } from './store.js';
-import { FEDERAL_PACK } from './packs.js';
 import type { ResolvedRules, RuleSetDef } from './params.js';
 
 /**
@@ -83,14 +79,7 @@ function signedPool(pool: readonly StoredRuleSet[], ids: readonly string[]): Rul
   return pool.filter((s) => want.has(s.id)).map((s) => ({ ...s, status: 'ACTIVE' as const }));
 }
 
-/**
- * Today's pay, as resolved rules: the federal weekly 40 at 1.5x, every break
- * docked (no short-break rule) — what entries at a not-live site are paid by
- * when they share a week with live ones.
- */
-export const TODAYS_RULES: ResolvedRules = resolveRules([
-  { ...FEDERAL_PACK, status: 'ACTIVE', params: { overtime: FEDERAL_PACK.params.overtime, breaks: { paidUpToMinutes: null } } },
-]);
+export { TODAYS_RULES };
 
 export interface SiteRef {
   id: string;
@@ -135,60 +124,9 @@ export async function loadLiveRules(db: ReadDb, tenantId: string): Promise<LiveR
 
 /* ----- Evaluating a person's period under live rules ------------------------ */
 
-export interface LiveEntry {
-  id?: string;
-  clockInAt: Date;
-  clockOutAt: Date;
-  breaks: Array<{ type?: 'MEAL' | 'REST' | null; startedAt: Date; endedAt: Date | null }>;
-  site: (SiteRef & { timezone: string }) | null;
-  mealWaived?: boolean;
-}
-
-export interface LivePay {
-  regularHours: number;
-  overtimeHours: number;
-  doubleTimeHours: number;
-  overtimeMultiplier: number;
-  doubleMultiplier: number;
-  penalties: Array<PenaltyOutcome & { label: string }>;
-  reasons: string[];
-}
-
-const PENALTY_NAME: Record<PenaltyOutcome['kind'], string> = {
-  MEAL: 'Meal premium',
-  REST: 'Rest premium',
-  REST_BETWEEN_SHIFTS: 'Rest-between-shifts premium',
-};
-
-/** "Meal premium (US-CA 2026-01-01 v1)" — the line a paystub prints, citing the rule set. */
-function penaltyLabel(p: PenaltyOutcome): string {
-  const cite = /,\s*([^,]+)$/.exec(p.reason)?.[1]?.trim();
-  return cite ? `${PENALTY_NAME[p.kind]} (${cite})` : PENALTY_NAME[p.kind];
-}
-
-/** One person's entries: live ones under their pinned rules, the rest as paid today. */
-export function evaluateLivePay(live: LiveRules, entries: readonly LiveEntry[]): LivePay {
-  const fallbackTz = companyWorkweek().timezone;
-  const siteOf = new Map<WorkEntry, LiveEntry['site']>();
-  const work: WorkEntry[] = entries.map((e) => {
-    const w: WorkEntry = { id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, timezone: e.site?.timezone ?? fallbackTz, mealWaived: e.mealWaived };
-    siteOf.set(w, e.site);
-    return w;
-  });
-  const out = evaluateTime(work, {
-    rulesFor: (w, date) => live.rulesFor(siteOf.get(w) ?? null, date) ?? TODAYS_RULES,
-    weekStart: (d, tz) => startOfWeekForSite(d, tz),
-  });
-  return {
-    regularHours: out.regularHours,
-    overtimeHours: out.overtimeHours,
-    doubleTimeHours: out.doubleTimeHours,
-    overtimeMultiplier: out.overtimeMultiplier,
-    doubleMultiplier: out.doubleMultiplier,
-    penalties: out.penalties.filter((p) => p.payable && (p.hours > 0 || (p.cents ?? 0) > 0)).map((p) => ({ ...p, label: penaltyLabel(p) })),
-    reasons: out.weeks.flatMap((w) => w.reasons),
-  };
-}
+// One person's entries are split by lib/laborRules/hours.splitHours (live
+// ones under their pinned rules, the rest as paid today) — the paycheck and
+// every other view call it directly.
 
 /* ----- The "what changes" report --------------------------------------------- */
 
@@ -212,7 +150,7 @@ export interface ChangeReport {
   /** Live pay minus what was paid, premiums included. */
   amountDifference: number;
   premiumAmount: number;
-  byRule: Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS', number>;
+  byRule: Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS' | 'SPREAD_OF_HOURS' | 'SPLIT_SHIFT', number>;
   rows: ChangeReportPerson[];
   signables: Array<{ id: string; label: string; source: string; status: string }>;
 }
@@ -240,7 +178,8 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
     take: Math.min(Math.max(input.runs ?? 4, 1), 12),
     select: { id: true, periodStart: true, periodEnd: true },
   });
-  const byRule = { OVERTIME: 0, MEAL: 0, REST: 0, REST_BETWEEN_SHIFTS: 0 };
+  const byRule = { OVERTIME: 0, MEAL: 0, REST: 0, REST_BETWEEN_SHIFTS: 0, SPREAD_OF_HOURS: 0, SPLIT_SHIFT: 0 };
+  const asIfLive: PayRules = { any: true, activationFor: () => true, rulesFor: (site, date) => (site ? rulesForSite(pinned, site, date) : null) };
   const people = new Map<string, ChangeReportPerson>();
   for (const run of runs) {
     const items = await db.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { associateId: true, hourlyRate: true, associate: { select: { firstName: true, lastName: true } } } });
@@ -254,16 +193,16 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
       const mine = entries.filter((e) => e.associateId === item.associateId);
       if (!mine.length) continue;
       const rate = Number(item.hourlyRate);
-      const paid = splitWeeklyOvertime(mine.map((e) => ({ status: 'APPROVED', clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, location: (() => { const tz = siteById.get(e.locationId!)?.timezone; return tz ? { timezone: tz } : null; })() })));
-      const work: WorkEntry[] = mine.map((e) => ({ id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt!, breaks: e.breaks, timezone: siteById.get(e.locationId!)?.timezone ?? companyWorkweek().timezone }));
-      const siteFor = new Map(work.map((w, i) => [w, siteById.get(mine[i]!.locationId!)!]));
-      const out = evaluateTime(work, { rulesFor: (w, date) => rulesForSite(pinned, siteFor.get(w)!, date), weekStart: (d, tz) => startOfWeekForSite(d, tz) });
-      const paidAmount = paid.regularHours * rate + paid.overtimeHours * rate * 1.5;
-      const hoursAmount = out.regularHours * rate + out.overtimeHours * rate * out.overtimeMultiplier + out.doubleTimeHours * rate * out.doubleMultiplier;
-      const prem = out.penalties.filter((p) => p.hours > 0 || (p.cents ?? 0) > 0);
+      const work = mine.map((e) => ({ id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: siteById.get(e.locationId!) ?? null }));
+      // What was paid (today's weekly split) against these rules as if signed: every entry here is at the jurisdiction's sites.
+      const paid = weeklySplit(work);
+      const out = splitHours(asIfLive, work, { unsignedPenalties: true });
+      const paidAmount = payFor({ ...paid, doubleTimeHours: 0 }, rate);
+      const hoursAmount = payFor(out, rate, out);
+      const prem = out.penalties;
       let premiumAmount = 0;
       for (const p of prem) {
-        const amt = p.hours * rate + (p.cents ?? 0) / 100;
+        const amt = penaltyAmount(p, rate);
         premiumAmount += amt;
         byRule[p.kind] += amt;
       }
@@ -286,7 +225,7 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
       row.difference = round2(row.live - row.paid);
       row.premiumHours = round2(row.premiumHours + prem.reduce((a, p) => a + p.hours, 0));
       row.premiumAmount = round2(row.premiumAmount + premiumAmount);
-      row.reasons = [...row.reasons, ...out.weeks.flatMap((w) => w.reasons), ...prem.map((p) => p.reason)].slice(0, 8);
+      row.reasons = [...row.reasons, ...out.reasons, ...prem.map((p) => p.reason)].slice(0, 8);
       people.set(item.associateId, row);
     }
   }
@@ -298,7 +237,7 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
     people: rows.length,
     amountDifference: round2(rows.reduce((a, r) => a + r.difference, 0)),
     premiumAmount: round2(rows.reduce((a, r) => a + r.premiumAmount, 0)),
-    byRule: { OVERTIME: round2(byRule.OVERTIME), MEAL: round2(byRule.MEAL), REST: round2(byRule.REST), REST_BETWEEN_SHIFTS: round2(byRule.REST_BETWEEN_SHIFTS) },
+    byRule: { OVERTIME: round2(byRule.OVERTIME), MEAL: round2(byRule.MEAL), REST: round2(byRule.REST), REST_BETWEEN_SHIFTS: round2(byRule.REST_BETWEEN_SHIFTS), SPREAD_OF_HOURS: round2(byRule.SPREAD_OF_HOURS), SPLIT_SHIFT: round2(byRule.SPLIT_SHIFT) },
     rows,
     signables: signables.map((s) => ({ id: s.id, label: setLabelForPeople(s), source: s.source, status: s.status })),
   };

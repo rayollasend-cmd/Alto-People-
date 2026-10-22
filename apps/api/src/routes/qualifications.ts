@@ -20,6 +20,8 @@ import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { formatShiftLine } from '../lib/notifyShift.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
+import { declinedShiftIds } from '../lib/openShiftInvites.js';
+import { shiftTimezone } from '../lib/shiftZone.js';
 
 /**
  * Phase 85 — Qualifications + open-shift marketplace.
@@ -434,7 +436,7 @@ export async function listEligibleOpenShifts(associateId: string, opts: { before
     include: {
       qualReqs: { include: { qualification: true } },
       client: { select: { id: true, name: true } },
-      locationRel: { select: { id: true, name: true } },
+      locationRel: { select: { id: true, name: true, timezone: true } },
       claims: { where: { status: 'PENDING', associateId } },
     },
   });
@@ -472,6 +474,7 @@ qualificationsRouter.get(
       throw new HttpError(403, 'no_associate_link', 'Open-shift list is for associates only.');
     }
     const [eligible, known] = await Promise.all([listEligibleOpenShifts(req.user.associateId), knownSiteIds(req.user.associateId)]);
+    const declined = await declinedShiftIds(prisma, req.user.associateId, eligible.map((s) => s.id));
 
     res.json({
       shifts: eligible.map((s) => ({
@@ -484,8 +487,12 @@ qualificationsRouter.get(
         location: s.location,
         locationId: s.locationRel?.id ?? null,
         locationName: s.locationRel?.name ?? null,
+        // The store's clock (one shift, one time).
+        timezone: shiftTimezone(s.locationRel),
         // A site they have not worked at — the feed says so before they tap.
         newForYou: !!s.locationRel && !known.has(s.locationRel.id),
+        // They said "Not for me" (lib/openShiftInvites): the feed folds it away.
+        declinedByMe: declined.has(s.id),
         payRate: s.payRate?.toFixed(2) ?? null,
         requirements: s.qualReqs.map((r) => ({
           id: r.qualificationId,
@@ -730,6 +737,7 @@ qualificationsRouter.get(
             startsAt: true,
             endsAt: true,
             client: { select: { name: true } },
+            locationRel: { select: { timezone: true } },
           },
         },
       },
@@ -746,6 +754,7 @@ qualificationsRouter.get(
         clientName: c.shift.client?.name ?? '',
         startsAt: c.shift.startsAt.toISOString(),
         endsAt: c.shift.endsAt.toISOString(),
+        timezone: shiftTimezone(c.shift.locationRel),
         createdAt: c.createdAt.toISOString(),
       })),
     });

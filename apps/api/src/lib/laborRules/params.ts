@@ -73,6 +73,27 @@ export const RestBetweenShiftsSchema = z
   })
   .partial();
 
+export const SpreadOfHoursSchema = z
+  .object({
+    /**
+     * A workday whose spread — first clock-in to last clock-out, meals and
+     * gaps included — is longer than this owes the premium (NY 12 NYCRR
+     * 142-2.4 and 142-2.18: 10). null: no spread rule.
+     */
+    thresholdHours: hours.nullable(),
+    /**
+     * A day of work periods that aren't consecutive (an off-the-clock gap or
+     * break longer than this) is a split shift and owes the premium (NY
+     * 142-2.17, CA Wage Orders §4(C): more than an hour). null: no rule.
+     */
+    splitGapMinutes: z.number().int().min(0).max(24 * 60).nullable(),
+    /** Hours of pay owed, at the minimum wage, at most once a day (NY 1, CA 1). 0: none. */
+    premiumHours: z.number().min(0).max(4),
+    /** The premium shrinks by what the day paid above the minimum wage (CA; NY outside hospitality). */
+    offsetAboveMinimum: z.boolean(),
+  })
+  .partial();
+
 const MinorBandSchema = z.object({
   /** Inclusive age range. */
   minAge: z.number().int().min(0).max(17),
@@ -158,6 +179,7 @@ export const RuleParamsSchema = z
     meal: MealSchema,
     rest: RestSchema,
     restBetweenShifts: RestBetweenShiftsSchema,
+    spreadOfHours: SpreadOfHoursSchema,
     minors: MinorsSchema,
     predictive: PredictiveSchema,
     breaks: BreaksSchema,

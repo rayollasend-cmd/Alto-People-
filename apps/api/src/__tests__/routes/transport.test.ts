@@ -30,7 +30,7 @@ beforeEach(async () => {
   setGeocoderForTests(async () => ({ lat: 30.39, lng: -86.49 }));
   // The pre-trip check has its own suite (transportDriverPack); these are
   // about the ride, so the fleet runs with it switched off.
-  await prisma.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', preTripRequired: false }, update: { preTripRequired: false } });
+  await prisma.transportSettings.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { preTripRequired: false }, update: { preTripRequired: false } });
 });
 afterAll(async () => {
   setGeocoderForTests(null);
@@ -246,8 +246,8 @@ describe('the Ride tab — booking a seat', () => {
     expect((await sign(kimAgent)).status).toBe(201);
     // Short notice off: the planning cutoff is the only rule.
     await prisma.transportSettings.upsert({
-      where: { id: 'default' },
-      create: { id: 'default', shortNoticeMinutes: 0 },
+      where: { tenantId: '00000000-0000-4000-8000-000000000001' },
+      create: { shortNoticeMinutes: 0 },
       update: { shortNoticeMinutes: 0 },
     });
     const tooLate = await book(kimAgent, { ...body, targetAt: inHours(6).toISOString() });
@@ -762,8 +762,8 @@ describe('short notice, saved places that need a pin, and your own store', () =>
     const { kimAgent, store, stop } = await seed();
     await sign(kimAgent);
     await prisma.transportSettings.upsert({
-      where: { id: 'default' },
-      create: { id: 'default', dispatchPhone: '(850) 555-0199' },
+      where: { tenantId: '00000000-0000-4000-8000-000000000001' },
+      create: { dispatchPhone: '(850) 555-0199' },
       update: { dispatchPhone: '(850) 555-0199' },
     });
     const body = { direction: 'FROM_WORK', locationId: store.id, stopId: stop.id };
@@ -774,7 +774,7 @@ describe('short notice, saved places that need a pin, and your own store', () =>
     expect(res.body.error.details).toMatchObject({ dispatchPhone: '(850) 555-0199' });
     expect(Date.parse(res.body.error.details.earliestAt)).toBeGreaterThan(Date.now() + 80 * 60_000);
     // Short notice switched off: back to the planning cutoff alone.
-    await prisma.transportSettings.update({ where: { id: 'default' }, data: { shortNoticeMinutes: 0 } });
+    await prisma.transportSettings.update({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, data: { shortNoticeMinutes: 0 } });
     expect((await book(kimAgent, { ...body, targetAt: inHours(3).toISOString() })).body.error.code).toBe('too_late');
     expect((await book(kimAgent, { ...body, targetAt: inHours(20).toISOString() })).status).toBe(201);
   });

@@ -2,7 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { PRODUCT_NAME, SUB_PROCESSORS, TRUST_COMMITMENTS, type Soc2Progress, type TrustControlPublic, type TrustStatus, type TrustSummary, type TrustSummaryPublic } from '@alto-people/shared';
 import { complianceEvidence } from './evidence.js';
 import { MIN_RETENTION_YEARS, retentionYearsFor } from './auditChain.js';
-import { ALTO_TENANT_ID } from './tenant.js';
+import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
 
 /**
  * The Trust Center's numbers (UX upgrade step 4). Everything here is an
@@ -47,7 +47,7 @@ export function soc2StageFrom(controls: ReadonlyArray<{ state: string; latest: {
 export async function soc2Progress(db: Db, now: Date = new Date()): Promise<Soc2Progress> {
   const [ev, setting, firsts] = await Promise.all([
     complianceEvidence(db, now),
-    db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { soc2ReportIssuedOn: true } }),
+    db.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { soc2ReportIssuedOn: true } }),
     db.complianceEvidence.groupBy({ by: ['control'], _min: { collectedAt: true } }),
   ]);
   const controls = ev.controls;
@@ -100,7 +100,7 @@ export async function trustSummaryPublic(db: Db, now: Date = new Date()): Promis
     platformControls(db, now),
     platformChain(db),
     platformAgents(db),
-    db.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } }),
+    db.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { securityContactEmail: true } }),
     soc2Progress(db, now),
   ]);
   const value: TrustSummaryPublic = {

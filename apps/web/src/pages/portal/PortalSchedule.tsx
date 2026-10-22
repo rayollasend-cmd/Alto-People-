@@ -12,6 +12,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { CoverageHeatmap, DetailsTable, WeekFillChart, type HeatDay } from './portalCharts';
 import { coverageByHour } from './coverage';
@@ -234,12 +235,16 @@ export function PortalSchedule() {
           {/* ---- When the floor is covered ------------------------------ */}
           <Card>
             <CardContent>
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-sm font-medium text-white">{t('portal.heatTitle')}</h2>
-                <span className="text-xs text-silver tabular-nums">
-                  {t('portal.schedSummary', { filled: data.filled, open: data.open })}
-                </span>
-              </div>
+              <SectionTitle
+                size="sm"
+                className="mb-0"
+                title={t('portal.heatTitle')}
+                trailing={
+                  <span className="text-xs text-silver tabular-nums">
+                    {t('portal.schedSummary', { filled: data.filled, open: data.open })}
+                  </span>
+                }
+              />
               <div className="mt-3">
                 <CoverageHeatmap
                   days={heatDays}
@@ -279,7 +284,7 @@ export function PortalSchedule() {
           {/* ---- How many, per day --------------------------------------- */}
           <Card className="print:hidden">
             <CardContent>
-              <h2 className="text-sm font-medium text-white">{t('portal.week')}</h2>
+              <SectionTitle size="sm" className="mb-0" title={t('portal.week')} />
               <div className="mt-2">
                 <WeekFillChart
                   days={weekDays}

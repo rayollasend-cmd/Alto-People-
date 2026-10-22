@@ -200,7 +200,7 @@ export function PublishReviewSheet(p: PublishReviewProps) {
                 onClick={r.shiftIds && r.shiftIds.length > 0 ? () => p.onOpenShift(r.shiftIds![r.shiftIds!.length - 1]!) : undefined}
                 testId="publish-rest"
               >
-                {r.name}: {r.gapHours}h rest before {fmtShiftTz(r.startsAt, null)}
+                {r.name}: {r.gapHours}h rest before {fmtShiftTz(r.startsAt, r.timezone)}
               </Row>
             ))}
             {warns.map((f) => (

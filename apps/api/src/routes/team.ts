@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
+import { shiftTimezone } from '../lib/shiftZone.js';
 import { coveringManagerIds, teamScope } from '../lib/delegations.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -282,7 +283,7 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
     prisma.documentRecord.findMany({ where: { associateId: { in: ids }, deletedAt: null, status: { in: ['UPLOADED', 'VERIFIED', 'EXPIRED'] }, expiresAt: { not: null, lt: in30 } }, select: { id: true, associateId: true, kind: true, expiresAt: true, status: true }, orderBy: { expiresAt: 'asc' }, take: 100 }),
     prisma.associateQualification.findMany({ where: { associateId: { in: ids }, deletedAt: null, expiresAt: { not: null, lt: in30 } }, select: { id: true, associateId: true, expiresAt: true, qualification: { select: { name: true } } }, orderBy: { expiresAt: 'asc' }, take: 100 }),
     prisma.pip.findMany({ where: { associateId: { in: ids }, status: 'ACTIVE', endDate: { lt: in14 } }, select: { id: true, associateId: true, endDate: true }, orderBy: { endDate: 'asc' }, take: 50 }),
-    prisma.shift.findMany({ where: { assignedAssociateId: { in: ids }, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: dayStart, lt: dayEnd } }, select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true, position: true, location: true }, orderBy: { startsAt: 'asc' }, take: 200 }),
+    prisma.shift.findMany({ where: { assignedAssociateId: { in: ids }, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: dayStart, lt: dayEnd } }, select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true, position: true, location: true, locationRel: { select: { timezone: true } } }, orderBy: { startsAt: 'asc' }, take: 200 }),
     prisma.timeEntry.findMany({ where: { associateId: { in: ids }, status: 'ACTIVE' }, select: { associateId: true, clockInAt: true }, take: 200 }),
     prisma.timeOffRequest.findMany({ where: { associateId: { in: ids }, status: 'APPROVED', startDate: { lte: now }, endDate: { gte: dayStart } }, select: { associateId: true, category: true, endDate: true }, take: 200 }),
   ]);
@@ -334,7 +335,7 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
       pips: pips.map((p) => ({ id: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, endDate: p.endDate.toISOString().slice(0, 10) })),
     },
     today: {
-      shifts: shifts.map((sh) => ({ id: sh.id, associateId: sh.assignedAssociateId!, associateName: nameOf.get(sh.assignedAssociateId!)!, startsAt: sh.startsAt.toISOString(), endsAt: sh.endsAt.toISOString(), position: sh.position, location: sh.location })),
+      shifts: shifts.map((sh) => ({ id: sh.id, associateId: sh.assignedAssociateId!, associateName: nameOf.get(sh.assignedAssociateId!)!, startsAt: sh.startsAt.toISOString(), endsAt: sh.endsAt.toISOString(), position: sh.position, location: sh.location, timezone: shiftTimezone(sh.locationRel) })),
       onClock: onClock.map((e) => ({ associateId: e.associateId, associateName: nameOf.get(e.associateId)!, since: e.clockInAt.toISOString() })),
       out: out.map((o) => ({ associateId: o.associateId, associateName: nameOf.get(o.associateId)!, category: o.category, until: o.endDate.toISOString().slice(0, 10) })),
       celebrations,
@@ -557,6 +558,7 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
     take: 200,
     include: {
       associate: { select: { firstName: true, lastName: true } },
+      location: { select: { timezone: true } },
     },
   });
   const clientIds = Array.from(
@@ -587,6 +589,8 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
       // This route emitted a STRING for the same column, so any shared
       // formatter silently switched between arithmetic and lexicographic.
       payRate: r.payRate ? Number(r.payRate) : null,
+      // The site's clock, as /time entries carry it (TimeEntrySchema.locationTimezone).
+      locationTimezone: r.location?.timezone ?? null,
     })),
   });
 });

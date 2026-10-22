@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -14,7 +14,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS } from '@alto-people/shared';
+import { REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS, type Capability } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errorText';
 import { fmtDate, fmtDateTime } from '@/lib/format';
@@ -63,7 +63,7 @@ import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 import { REPORT_TEMPLATES, templateText, type ReportTemplate } from './reportTemplates';
-import { useTenant, useTerm } from '@/lib/auth';
+import { AuthContext, useTenant, useTerm } from '@/lib/auth';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 
 const ENTITIES: ReportEntity[] = [
@@ -78,6 +78,9 @@ const ENTITIES: ReportEntity[] = [
   'LEAVE_CASE',
   'HR_CASE',
   'OFFER',
+  'PAY_CHANGE',
+  'TIME_TO_FILL',
+  'OVERTIME',
 ];
 
 /** Human labels for the entity enum — never show ASSOCIATE/TIME_ENTRY raw. */
@@ -93,6 +96,9 @@ const ENTITY_LABELS: Record<ReportEntity, string> = {
   LEAVE_CASE: 'Leave case',
   HR_CASE: 'HR case',
   OFFER: 'Offer',
+  PAY_CHANGE: 'Pay change',
+  TIME_TO_FILL: 'Hire (time to fill)',
+  OVERTIME: 'Overtime by week',
 };
 
 /**
@@ -112,7 +118,9 @@ const isDateColumn = (c: string) =>
   c === 'periodEnd' ||
   c === 'clockIn' ||
   c === 'clockOut' ||
-  c === 'lastDayWorked';
+  c === 'lastDayWorked' ||
+  c === 'effectiveFrom' ||
+  c === 'weekStart';
 
 const isAssociateColumn = (c: string) => c === 'associateId';
 
@@ -122,6 +130,9 @@ const NUMERIC_COLUMNS: Partial<Record<ReportEntity, readonly string[]>> = {
   PAYROLL_RUN: ['totalGross', 'totalNet'],
   EXPENSE: ['amount'],
   OFFER: ['hourlyRate', 'salary'],
+  PAY_CHANGE: ['previousAmount', 'amount', 'change', 'changePct'],
+  TIME_TO_FILL: ['daysToFill'],
+  OVERTIME: ['workedHours', 'regularHours', 'overtimeHours', 'doubleTimeHours'],
 };
 
 const AGGREGATE_FNS: { value: AggregateFn; label: string }[] = [
@@ -519,8 +530,12 @@ const NO_COLUMNS: string[] = [];
 function TemplateGallery({ onPick }: { onPick: (t: ReportTemplate) => void }) {
   const term = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
+  // Outside a signed-in shell (a preview, a test) every template shows; the API still checks.
+  const auth = useContext(AuthContext);
+  const can = (c: Capability) => (auth ? auth.can(c) : true);
   const words = { client: term('label.client').toLowerCase(), store: term('label.store').toLowerCase() };
-  const templates = REPORT_TEMPLATES.filter((t) => hasClients || !t.needsClients).map((t) => ({
+  // A template the person can't run (pay changes without view:comp) isn't offered.
+  const templates = REPORT_TEMPLATES.filter((t) => (hasClients || !t.needsClients) && (!t.requires || can(t.requires))).map((t) => ({
     ...t,
     name: templateText(t.name, words),
     hint: templateText(t.hint, words),

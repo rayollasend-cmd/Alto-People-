@@ -1,8 +1,9 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { splitWeeklyOvertime } from '../payroll.js';
 import { platformJob } from '../tenantJobs.js';
-import { companyWorkweek, startOfWeekForSite } from '../timeAnomalies.js';
-import { evaluateTime, type WorkEntry } from './evaluate.js';
+import { companyWorkweek } from '../timeAnomalies.js';
+import { localParts } from './evaluate.js';
+import { NO_LIVE_RULES, payFor, splitHours, type HoursEntry, type PayRules } from './hours.js';
+import { loadLiveRules } from './live.js';
 import { loadRulePool, rulesForSite } from './store.js';
 import type { RuleSetDef } from './params.js';
 
@@ -10,8 +11,9 @@ import type { RuleSetDef } from './params.js';
  * Brief 2-2 step 3 — the engine in shadow (report §6.4).
  *
  *   For a finalized payroll run, every paid associate's approved entries in
- *   the period go through today's split (splitWeeklyOvertime, what the run
- *   paid) and through the engine under the rules of each entry's SITE. A
+ *   the period go through the paycheck's split (hours.splitHours under the
+ *   tenant's live rules — what the run paid) and through the engine under
+ *   the rules of each entry's SITE as encoded, signed or not. A
  *   difference in hours or money is recorded with the engine's reasons;
  *   premiums (meal, rest, rest between shifts) are counted and shown, never
  *   paid. Pay is untouched: this module only reads entries and writes its
@@ -43,36 +45,36 @@ export interface ShadowResult {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** One associate's comparison. Pure, given the rule pool. */
-export function shadowAssociate(pool: readonly RuleSetDef[], associateId: string, entries: readonly ShadowEntry[], hourlyRate: number): ShadowResult {
-  const closed = entries.filter((e): e is ShadowEntry & { clockOutAt: Date } => !!e.clockOutAt);
-  const paid = splitWeeklyOvertime(closed.map((e) => ({ status: 'APPROVED', clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, location: e.site ? { timezone: e.site.timezone } : null })));
-  const fallbackTz = companyWorkweek().timezone;
-  const siteOf = new Map<WorkEntry, ShadowEntry['site']>();
-  const work: WorkEntry[] = closed.map((e) => {
-    const w: WorkEntry = { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, timezone: e.site?.timezone ?? fallbackTz };
-    siteOf.set(w, e.site);
-    return w;
-  });
-  const out = evaluateTime(work, {
-    // An entry with no site resolves under federal law only, and its reasons say which set that was.
-    rulesFor: (w, date) => rulesForSite(pool, siteOf.get(w) ?? { id: 'none', state: null, city: null }, date),
-    weekStart: (d, tz) => startOfWeekForSite(d, tz),
-  });
-  const paidAmount = paid.regularHours * hourlyRate + paid.overtimeHours * hourlyRate * 1.5;
-  const engineAmount = out.regularHours * hourlyRate + out.overtimeHours * hourlyRate * out.overtimeMultiplier + out.doubleTimeHours * hourlyRate * out.doubleMultiplier;
+/**
+ * One associate's comparison. Pure, given the rule pool. What was PAID is
+ * the paycheck's own split (lib/laborRules/hours.splitHours under the
+ * tenant's live rules — the federal weekly split wherever nothing is live);
+ * the ENGINE side is every entry under its site's rules as encoded, signed
+ * or not, with its premiums counted and shown, never paid.
+ */
+export function shadowAssociate(pool: readonly RuleSetDef[], associateId: string, entries: readonly ShadowEntry[], hourlyRate: number, live: PayRules = NO_LIVE_RULES): ShadowResult {
+  const closed: HoursEntry[] = entries
+    .filter((e): e is ShadowEntry & { clockOutAt: Date } => !!e.clockOutAt)
+    .map((e) => ({ clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.site }));
+  const paid = splitHours(live, closed);
+  // Every entry under the law as encoded: a site-less entry resolves under federal law only, and its reasons say which set that was.
+  const asEncoded: PayRules = { any: true, activationFor: () => true, rulesFor: (site, date) => rulesForSite(pool, site ?? { id: 'none', state: null, city: null }, date) };
+  const out = splitHours(asEncoded, closed, { unsignedPenalties: true });
+  const paidAmount = payFor(paid, hourlyRate, paid);
+  const engineAmount = payFor(out, hourlyRate, out);
   const amountDifference = round2(engineAmount - paidAmount);
   const penaltyHours = round2(out.penalties.reduce((a, p) => a + p.hours, 0));
-  const differs = out.regularHours !== paid.regularHours || out.overtimeHours !== paid.overtimeHours || out.doubleTimeHours !== 0 || amountDifference !== 0 || penaltyHours !== 0;
+  const differs = out.regularHours !== paid.regularHours || out.overtimeHours !== paid.overtimeHours || out.doubleTimeHours !== paid.doubleTimeHours || amountDifference !== 0 || penaltyHours !== 0;
+  const fingerprints = [...new Set(closed.map((e) => rulesForSite(pool, e.site ?? { id: 'none', state: null, city: null }, localParts(e.clockInAt, e.site?.timezone ?? companyWorkweek().timezone).date).fingerprint))];
   return {
     associateId,
     hourlyRate,
-    paid,
+    paid: { regularHours: paid.regularHours, overtimeHours: paid.overtimeHours },
     engine: { regularHours: out.regularHours, overtimeHours: out.overtimeHours, doubleTimeHours: out.doubleTimeHours, overtimeMultiplier: out.overtimeMultiplier, doubleMultiplier: out.doubleMultiplier },
     amountDifference,
     penaltyHours,
-    reasons: [...out.weeks.flatMap((w) => w.reasons), ...out.penalties.map((p) => `${p.reason} (shown, not paid)`)],
-    fingerprints: out.fingerprints,
+    reasons: [...out.reasons, ...out.penalties.map((p) => `${p.reason} (shown, not paid)`)],
+    fingerprints,
     differs,
   };
 }
@@ -82,7 +84,7 @@ export async function shadowPayrollRun(db: Db, runId: string): Promise<{ run: { 
   const run = await db.payrollRun.findUniqueOrThrow({ where: { id: runId }, select: { id: true, tenantId: true, clientId: true, periodStart: true, periodEnd: true } });
   const tenantId = run.tenantId ?? '00000000-0000-4000-8000-000000000001';
   const items = await db.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { associateId: true, hourlyRate: true } });
-  const pool = await loadRulePool(db, tenantId);
+  const [pool, live] = await Promise.all([loadRulePool(db, tenantId), loadLiveRules(db, tenantId)]);
   const periodEndExclusive = new Date(run.periodEnd.getTime() + 86_400_000);
   const entries = items.length
     ? await db.timeEntry.findMany({
@@ -96,7 +98,7 @@ export async function shadowPayrollRun(db: Db, runId: string): Promise<{ run: { 
     list.push({ associateId: e.associateId, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location });
     byAssociate.set(e.associateId, list);
   }
-  const results = items.map((i) => shadowAssociate(pool, i.associateId, byAssociate.get(i.associateId) ?? [], Number(i.hourlyRate)));
+  const results = items.map((i) => shadowAssociate(pool, i.associateId, byAssociate.get(i.associateId) ?? [], Number(i.hourlyRate), live));
   return { run: { id: run.id, tenantId, periodStart: run.periodStart, periodEnd: run.periodEnd }, results };
 }
 

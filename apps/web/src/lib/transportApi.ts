@@ -575,7 +575,7 @@ export const textRiderHere = (rideId: string) =>
 
 /** Fuel at the pump, by the driver, on their van (transport walk 9). */
 export const logFuel = (vanId: string, body: { gallons?: number | null; costCents: number; odometerMiles?: number | null; photoKey?: string | null }) =>
-  apiFetch<{ entry: { id: string; kind: 'FUEL'; occurredAt: string; odometerMiles: number | null; costCents: number; notes: string | null } }>(`/transport/driver/vans/${vanId}/fuel`, { method: 'POST', body });
+  apiFetch<{ entry: { id: string; kind: 'FUEL'; occurredAt: string; odometerMiles: number | null; costCents: number; notes: string | null; photoUrl: string | null } }>(`/transport/driver/vans/${vanId}/fuel`, { method: 'POST', body });
 
 /* ----- The command center ------------------------------------------------- */
 
@@ -757,6 +757,8 @@ export interface FleetVan extends Van {
   now: { onTheRoad: boolean; driver: string; lastSeenAt: string | null; position: GeoPoint | null } | null;
   /** The next service by miles — the last oil change plus the interval against the odometer (transport walk 9). */
   serviceDue?: { atMiles: number; milesLeft: number; overdue: boolean; due: boolean } | null;
+  /** The last fill-up the driver logged, with the receipt photo when one was taken (served under /api). */
+  lastFuel?: { occurredAt: string; costCents: number; notes: string | null; photoUrl: string | null } | null;
 }
 
 export const getFleet = (from: string, to: string) =>
@@ -1341,6 +1343,8 @@ export interface VanServiceEntry {
   costCents: number;
   vendor: string | null;
   notes: string | null;
+  /** The receipt photo (a driver's fuel receipt), served under /api. */
+  photoUrl?: string | null;
 }
 
 export const getVanRecord = (vanId: string) =>

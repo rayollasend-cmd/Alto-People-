@@ -84,7 +84,7 @@ export async function ensurePersonWorkers(db: PrismaClient = defaultPrisma): Pro
   }
   if (missing.length > 0) {
     // Shifts assigned to people who only just became workers.
-    await db.$executeRaw`UPDATE "Shift" s SET "workerId" = w."id" FROM "Worker" w WHERE w."associateId" = s."assignedAssociateId" AND s."workerId" IS NULL`;
+    await db.$executeRaw`UPDATE "Shift" s SET "workerId" = w."id" FROM "Worker" w WHERE w."associateId" = s."assignedAssociateId" AND s."workerId" IS NULL AND s."tenantId" = ${tenantIdForWrite()}::uuid`;
   }
   // A person's status follows their associate record: a separation or a
   // deactivation anywhere in the app shows on the worker within the sweep.
@@ -97,6 +97,7 @@ export async function ensurePersonWorkers(db: PrismaClient = defaultPrisma): Pro
         "updatedAt" = now()
     FROM "Associate" a
     WHERE a."id" = w."associateId" AND w."type" = 'PERSON'::"WorkerType"
+      AND w."tenantId" = ${tenantIdForWrite()}::uuid
       AND w."status" <> CASE WHEN a."separatedAt" IS NOT NULL THEN 'OFFBOARDED'::"WorkerStatus"
                              WHEN a."deactivatedAt" IS NOT NULL THEN 'SUSPENDED'::"WorkerStatus"
                              ELSE 'ACTIVE'::"WorkerStatus" END`;

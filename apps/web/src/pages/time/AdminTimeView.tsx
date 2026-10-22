@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BreakFlagsDesk, TimeCorrectionsDesk } from './TimeCorrectionsDesk';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
-import { workweekStart } from '@/lib/workweek';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
@@ -84,7 +83,6 @@ import {
   fmtDateTime,
   fmtDateTz,
   fmtPayRate,
-  fmtTime,
   parseYmd,
   tzAbbrev,
   ymdLocal,
@@ -217,7 +215,7 @@ function LateChip({ entry }: { entry: TimeEntry }) {
   return (
     <span
       className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
-      title={`Scheduled ${fmtTime(entry.shiftStartsAt)}${entry.shiftPosition ? ` · ${entry.shiftPosition}` : ''}`}
+      title={`Scheduled ${fmtPunchTime(entry.shiftStartsAt, entry.locationTimezone)}${entry.shiftPosition ? ` · ${entry.shiftPosition}` : ''}`}
     >
       {/* Lateness stays in minutes below the hour (an offset, not paid
           time); an hour-plus lateness reads as decimal hours like every
@@ -253,15 +251,12 @@ function FocusBanner({
   const rejectedCount = list.filter((e) => e.status === 'REJECTED').length;
   const fmtH = (m: number) => `${(m / 60).toFixed(1)}h`;
 
-  // Weekly overtime across the loaded range: net minutes beyond 40h in any
-  // Sat→Fri workweek — payroll's week, and the associate timesheet's.
-  const byWeek = new Map<number, number>();
-  for (const e of list) {
-    if (e.status === 'REJECTED') continue;
-    const wk = workweekStart(e.clockInAt).getTime();
-    byWeek.set(wk, (byWeek.get(wk) ?? 0) + (e.netMinutes ?? e.minutesElapsed));
-  }
-  const otMin = [...byWeek.values()].reduce((s, m) => s + Math.max(0, m - 40 * 60), 0);
+  // Overtime across the loaded range: each entry's share of the server's
+  // labor-rules split (entry.hours) — the overtime the paycheck pays, over
+  // the person's whole week at every client, daily rules included.
+  const otMin = list
+    .filter((e) => e.status !== 'REJECTED')
+    .reduce((s, e) => s + (e.hours ? e.hours.overtimeMinutes + e.hours.doubleTimeMinutes : 0), 0);
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-md border border-gold/40 bg-gold/5 px-3 py-2">
@@ -3482,7 +3477,7 @@ function TimeEntryDetailPanel({
           {entry.shiftStartsAt && (
             <DetailRow label="Scheduled shift">
               <span className="tabular-nums">
-                {fmtDateTime(entry.shiftStartsAt)}
+                {fmtPunchDateTime(entry.shiftStartsAt, entry.locationTimezone)}
               </span>
               {entry.shiftPosition && (
                 <span className="text-silver/80"> · {entry.shiftPosition}</span>
@@ -4155,8 +4150,9 @@ function TimeEntryFormDrawer({
             className="gap-1.5 rounded-full border-gold/40 bg-gold/10 text-gold hover:border-gold/60 hover:bg-gold/20 hover:text-gold"
           >
             <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
-            Use scheduled shift {fmtTime(schedShift.startsAt)} –{' '}
-            {fmtTime(schedShift.endsAt)}
+            {/* On the same clock the form below is typed in (the site's). */}
+            Use scheduled shift {fmtPunchTime(schedShift.startsAt, tz)} –{' '}
+            {fmtPunchTime(schedShift.endsAt, tz)}
           </Button>
         )}
         <div className="grid grid-cols-2 gap-3">

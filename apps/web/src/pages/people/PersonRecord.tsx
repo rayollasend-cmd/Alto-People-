@@ -28,7 +28,12 @@ import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useAssistantRecord } from '@/lib/assistantContext';
 import { getDirectoryEntry } from '@/lib/directoryApi';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
-import { fmtDate, fmtHours, fmtMinutes, fmtTime, parseYmd, ymdLocal, ymdToIsoStart } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtHours, fmtMinutes, parseYmd, ymdLocal, ymdToIsoStart } from '@/lib/format';
+import { fmtPunchTime } from '@/pages/time/punchFormat';
+
+/** "Jun 13, 2026": a punch's day on its site's clock (the display zone with no site). */
+const punchDay = (e: { clockInAt: string; locationTimezone?: string | null }) =>
+  e.locationTimezone ? fmtDateTz(e.clockInAt, e.locationTimezone, { year: true }) : fmtDate(e.clockInAt);
 import { getAssociateKioskPin } from '@/lib/kiosk99Api';
 import { listAdminTimeEntries } from '@/lib/timeApi';
 import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
@@ -459,14 +464,15 @@ function TimeTab({ associateId, query }: { associateId: string; query: ReturnTyp
               key: 'date',
               header: 'Date',
               accessor: (e) => e.clockInAt,
-              csv: (e) => fmtDate(e.clockInAt),
+              csv: (e) => punchDay(e),
               sortable: true,
               primary: true,
               className: 'tabular-nums whitespace-nowrap',
-              cell: (e) => fmtDate(e.clockInAt),
+              cell: (e) => punchDay(e),
             },
-            { key: 'in', header: 'In', accessor: (e) => fmtTime(e.clockInAt), searchable: false, className: 'tabular-nums text-ink-muted' },
-            { key: 'out', header: 'Out', accessor: (e) => (e.clockOutAt ? fmtTime(e.clockOutAt) : '—'), searchable: false, className: 'tabular-nums text-ink-muted' },
+            // Punches on the site's clock (one punch, one time).
+            { key: 'in', header: 'In', accessor: (e) => fmtPunchTime(e.clockInAt, e.locationTimezone), searchable: false, className: 'tabular-nums text-ink-muted' },
+            { key: 'out', header: 'Out', accessor: (e) => (e.clockOutAt ? fmtPunchTime(e.clockOutAt, e.locationTimezone) : '—'), searchable: false, className: 'tabular-nums text-ink-muted' },
             {
               key: 'hours',
               header: 'Hours',

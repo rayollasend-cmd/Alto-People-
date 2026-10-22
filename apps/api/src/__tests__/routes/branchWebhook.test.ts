@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createHmac, randomUUID } from 'node:crypto';
 import { createApp } from '../../app.js';
@@ -128,8 +128,9 @@ describe('POST /branch/webhook — payload validation', () => {
     expect(res.status).toBe(400);
   });
 
-  it('logs IGNORED + returns 200 for unknown payment id', async () => {
+  it('drops an unknown payment id with 200 and writes nothing (Brief 2-1 §9.4: no tenant, no row)', async () => {
     await seedRunWithPendingItem();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const res = await postWebhook({
       id: 'evt_unknown',
       event: 'payment.completed',
@@ -137,9 +138,32 @@ describe('POST /branch/webhook — payload validation', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.ignored).toBe('unknown_payment_id');
-    const ev = await prisma.branchWebhookEvent.findUnique({ where: { branchEventId: 'evt_unknown' } });
-    expect(ev?.status).toBe('IGNORED');
-    expect(ev?.notes).toContain('unknown_payment_id');
+    expect(await prisma.branchWebhookEvent.count()).toBe(0);
+    expect(await prisma.payrollDisbursementAttempt.count()).toBe(0);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('evt_unknown'))).toBe(true);
+    warn.mockRestore();
+  });
+});
+
+describe('POST /branch/webhook — tenant (Brief 2-1 §9.4)', () => {
+  it('a payment of a second tenant settles that tenant\'s item, and the event and attempt are filed under it', async () => {
+    const T2 = '22222222-2222-4222-8222-222222222222';
+    await prisma.tenant.create({ data: { id: T2, slug: 'tenant-two', name: 'Tenant Two' } });
+    const { client, associate, run, item } = await seedRunWithPendingItem();
+    await prisma.client.update({ where: { id: client.id }, data: { tenantId: T2 } });
+    await prisma.associate.update({ where: { id: associate.id }, data: { tenantId: T2 } });
+    await prisma.payrollRun.update({ where: { id: run.id }, data: { tenantId: T2 } });
+    await prisma.payrollItem.update({ where: { id: item.id }, data: { tenantId: T2 } });
+
+    const res = await postWebhook({ id: 'evt_t2', event: 'payment.completed', payment: { id: item.disbursementRef!, status: 'COMPLETED' } });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect((await prisma.payrollItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('DISBURSED');
+    expect((await prisma.payrollRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe('DISBURSED');
+    const ev = await prisma.branchWebhookEvent.findUniqueOrThrow({ where: { branchEventId: 'evt_t2' } });
+    expect(ev).toMatchObject({ tenantId: T2, status: 'PROCESSED', payrollItemId: item.id });
+    const attempts = await prisma.payrollDisbursementAttempt.findMany({ where: { payrollItemId: item.id } });
+    expect(attempts.map((a) => a.tenantId)).toEqual([T2]);
   });
 });
 

@@ -386,6 +386,11 @@ export function TimesheetsView() {
   // ST / OT / DT / NB stay zero under a flat "Others" SOW — shown only when
   // a week actually uses them (the export always carries every column).
   const showBuckets = allRows.some((r) => r.st > 0 || r.ot > 0 || r.dt > 0 || r.nb > 0);
+  // What the PAYCHECK splits as overtime on these hours (the labor-rules
+  // engine, over the worker's whole week): shown beside the SOW buckets,
+  // never instead of them — the Fieldglass submission follows the buyer's contract.
+  const payOt = (r: { payHours?: { overtime: number; doubleTime: number } }) => (r.payHours ? r.payHours.overtime + r.payHours.doubleTime : 0);
+  const showPayOt = allRows.some((r) => payOt(r) > 0);
   type TsRow = NonNullable<typeof data>['rows'][number];
   // Client-side name/site filter — the week's rows are already all loaded.
   // Token match ("aaliyah nelson" finds "Nelson, Aaliyah") since Fieldglass
@@ -1002,6 +1007,9 @@ export function TimesheetsView() {
               { key: 'others', header: 'Others', accessor: (r) => r.others, csv: (r) => hoursCell(r.others), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-white', cell: (r) => hoursCell(r.others) },
               ...(showBuckets
                 ? [{ key: 'nb', header: 'NB', accessor: (r: TsRow) => r.nb, csv: (r: TsRow) => hoursCell(r.nb), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-silver', cell: (r: TsRow) => hoursCell(r.nb) }]
+                : []),
+              ...(showPayOt
+                ? [{ key: 'payOt', header: 'Pay OT', accessor: (r: TsRow) => payOt(r), csv: (r: TsRow) => hoursCell(payOt(r)), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-warning', cell: (r: TsRow) => <span title="Overtime and double time the paycheck pays on these hours, by the labor rules. Billed per the SOW.">{hoursCell(payOt(r))}</span> }]
                 : []),
               { key: 'total', header: 'Total', accessor: (r) => r.total, csv: (r) => hoursCell(r.total), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-semibold text-white', cell: (r) => hoursCell(r.total) },
             ]}

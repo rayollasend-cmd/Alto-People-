@@ -3,6 +3,8 @@ import { hashPassword } from '../src/lib/passwords.js';
 import { ALTO_POLICIES, HANDBOOK_POLICY } from '../src/lib/altoHrContent.js';
 
 const prisma = new PrismaClient();
+/** Alto HR, tenant 1 (lib/tenant.ts). Associate and Candidate emails are unique per tenant (migration C). */
+const ALTO_TENANT_ID = '00000000-0000-4000-8000-000000000001';
 
 const ADMIN_DEV_PASSWORD = 'alto-admin-dev';
 const ASSOCIATE_DEV_PASSWORD = 'maria-dev-2026!';
@@ -275,7 +277,7 @@ async function main() {
 
   // ---- Associate ---------------------------------------------------------
   const associate = await prisma.associate.upsert({
-    where: { email: 'maria.lopez@example.com' },
+    where: { tenantId_email: { tenantId: ALTO_TENANT_ID, email: 'maria.lopez@example.com' } },
     update: {},
     create: {
       firstName: 'Maria',
@@ -394,7 +396,7 @@ async function main() {
   const demoSupervisorEmail = 'dana.reyes@altohr.com';
   if (!(await prisma.user.findUnique({ where: { email: demoSupervisorEmail } }))) {
     const dana =
-      (await prisma.associate.findUnique({ where: { email: demoSupervisorEmail } })) ??
+      (await prisma.associate.findUnique({ where: { tenantId_email: { tenantId: ALTO_TENANT_ID, email: demoSupervisorEmail } } })) ??
       (await prisma.associate.create({
         data: { firstName: 'Dana', lastName: 'Reyes', email: demoSupervisorEmail, phone: '850-555-0101' },
       }));
@@ -464,7 +466,7 @@ async function main() {
   //      and the housing complexes riders get picked up at ---------------
   for (const t of TRANSPORT_USERS) {
     const person =
-      (await prisma.associate.findUnique({ where: { email: t.email } })) ??
+      (await prisma.associate.findUnique({ where: { tenantId_email: { tenantId: ALTO_TENANT_ID, email: t.email } } })) ??
       (await prisma.associate.create({ data: { firstName: t.firstName, lastName: t.lastName, email: t.email } }));
     await prisma.user.upsert({
       where: { email: t.email },
@@ -571,9 +573,9 @@ async function main() {
   ];
   for (const p of HOTEL_TEAM) {
     const person = await prisma.associate.upsert({
-      where: { email: p.email },
+      where: { tenantId_email: { tenantId: HOTEL_TENANT_ID, email: p.email } },
       create: { ...p, tenantId: HOTEL_TENANT_ID, city: 'Panama City', state: 'FL', zip: '32401' },
-      update: { tenantId: HOTEL_TENANT_ID },
+      update: {},
     });
     if (!(await prisma.associateAssignment.findFirst({ where: { associateId: person.id, locationId: hotelSite.id } }))) {
       await prisma.associateAssignment.create({ data: { tenantId: HOTEL_TENANT_ID, associateId: person.id, locationId: hotelSite.id, startedAt: new Date('2026-01-05') } });

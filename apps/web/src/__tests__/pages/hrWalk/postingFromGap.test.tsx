@@ -27,6 +27,13 @@ vi.mock('@/lib/recruiting90Api', async (orig) => ({
   listReferrals: vi.fn().mockResolvedValue({ referrals: [] }),
   createJobPosting: vi.fn().mockResolvedValue({ id: 'po-new' }),
   openJobPosting: vi.fn().mockResolvedValue({ ok: true }),
+  // Wave 2: pay starts from the client's rate card.
+  payFromRateCard: vi.fn().mockResolvedValue({
+    clientId: 'c1',
+    clientName: 'Coastal Resort Holdings',
+    rates: [{ position: 'Housekeeper', payRate: 15, effectiveFrom: '2026-01-01' }],
+    suggested: { minPay: 15, maxPay: 15, payUnit: 'HOUR', position: null },
+  }),
 }));
 
 import { getStaffingPlan, gapsWithoutPosting, type StaffingPlanResponse } from '@/pages/recruiting/staffingGaps';
@@ -136,14 +143,16 @@ describe('the postings tab, opened from a gap', () => {
     expect(inputs.map((i) => i.value)).toEqual(expect.arrayContaining(['Associate — Front Beach 218', 'associate-front-beach-218', 'Front Beach 218']));
     expect((within(dialog).getAllByRole('spinbutton') as HTMLInputElement[]).map((i) => i.value)).toContain('23');
     await waitFor(() => expect((within(dialog).getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe('c1'));
-    expect(within(dialog).getByText(/Pay is left for you/)).toBeInTheDocument();
+    // Pay from the client's rate card (wave 2), not a blank.
+    expect(await within(dialog).findByText(/with pay from the client’s rate card/)).toBeInTheDocument();
+    await waitFor(() => expect((within(dialog).getAllByRole('spinbutton') as HTMLInputElement[]).map((i) => i.value)).toContain('15.00'));
 
     // A description is the one field the gap can't write.
     await userEvent.type(dialog.querySelector('textarea')!, 'Seasonal housekeeping.');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Save & open' }));
     await waitFor(() => expect(openJobPosting).toHaveBeenCalledWith('po-new'));
     expect(createJobPosting).toHaveBeenCalledWith(
-      expect.objectContaining({ clientId: 'c1', title: 'Associate — Front Beach 218', location: 'Front Beach 218', openings: 23, schedule: 'SEASONAL' }),
+      expect.objectContaining({ clientId: 'c1', title: 'Associate — Front Beach 218', location: 'Front Beach 218', openings: 23, schedule: 'SEASONAL', minSalary: 15, maxSalary: 15, payUnit: 'HOUR' }),
     );
   });
 });

@@ -133,7 +133,9 @@ import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { formatShiftLine, notifyShift, shiftWa } from '../lib/notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors, notifyManager } from '../lib/notify.js';
 import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
-import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
+import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC, startOfWeekForSite } from '../lib/timeAnomalies.js';
+import { loadLiveRules } from '../lib/laborRules/live.js';
+import { payFor, plannedEntry, splitByPerson, splitHours, sumHours, type EntryHours, type HoursEntry, type HoursSplit, type LaborSite, type PayRules } from '../lib/laborRules/hours.js';
 import {
   DEFAULT_TIMEZONE,
   addDaysInZone,
@@ -464,17 +466,125 @@ const SHIFT_INCLUDE = {
   locationRel: { select: { id: true, name: true, timezone: true, state: true, city: true } },
 } as const;
 
+/* ----- The labor-rules engine, as scheduling reads it ---------------------- *
+ *
+ * Every overtime figure on these screens — the swap and pickup chips, the
+ * Assign dialog's premium, the floor board, the OT radar, the store trends
+ * and the labor-cost report — splits hours through lib/laborRules/hours,
+ * the split the paycheck pays: each person's whole week, every site and
+ * client, the federal weekly 40 or a live jurisdiction's daily and
+ * double-time rules. Nothing here counts "past 40" on its own any more.
+ */
+
+/** What the engine reads off a time entry. */
+const ENGINE_ENTRY_SELECT = {
+  id: true,
+  associateId: true,
+  clockInAt: true,
+  clockOutAt: true,
+  breaks: { select: { type: true, startedAt: true, endedAt: true } },
+  location: { select: { id: true, state: true, city: true, timezone: true } },
+} as const;
+
+type EngineEntryRow = {
+  id: string;
+  associateId: string;
+  clockInAt: Date;
+  clockOutAt: Date | null;
+  breaks: Array<{ type?: 'MEAL' | 'REST' | null; startedAt: Date; endedAt: Date | null }>;
+  location: LaborSite | null;
+};
+
+const DAY_MS_ENGINE = 86_400_000;
+
 /**
- * For each (associate, shift-window) pair: would TAKING that shift push
- * the associate past 40h scheduled in that shift's week? One batched
- * query for the whole list. Advisory — chips the admin swap/pickup review
- * rows; the auto-scheduler has its own hard 40h gate.
+ * Shown entries split as the paycheck splits them: each person's other
+ * entries earlier in the same weeks are read too — every site and client,
+ * tenant-clamped, only to place the overtime line (no other client's row
+ * comes back). Open punches count to `now` when it's given, else nothing.
+ */
+async function splitAsPaid<T extends EngineEntryRow>(
+  shown: readonly T[],
+  opts: { statuses: Array<'ACTIVE' | 'COMPLETED' | 'APPROVED'>; now?: Date; rules?: PayRules },
+): Promise<{ byEntry: Map<T, EntryHours>; byPerson: Map<string, HoursSplit>; rules: PayRules; workOf: (associateId: string) => HoursEntry[] }> {
+  const rules = opts.rules ?? (await loadLiveRules(prisma, tenantIdForWrite()));
+  if (shown.length === 0) return { byEntry: new Map(), byPerson: new Map(), rules, workOf: () => [] };
+  const ids = [...new Set(shown.map((e) => e.associateId))];
+  // A day of slack either side: a site west of the company zone starts its week later.
+  const from = new Date(Math.min(...shown.map((e) => startOfWeekUTC(e.clockInAt).getTime())) - DAY_MS_ENGINE);
+  const to = new Date(Math.max(...shown.map((e) => e.clockInAt.getTime())) + 1);
+  // In chunks (a big report names thousands of people); the shown rows are
+  // dropped in memory — a NOT IN of tens of thousands of ids would overrun
+  // the database's bind-parameter limit.
+  const shownIds = new Set(shown.map((e) => e.id));
+  const others: EngineEntryRow[] = [];
+  for (let i = 0; i < ids.length; i += 1_000) {
+    const page = await prisma.timeEntry.findMany({
+      where: {
+        tenantId: tenantIdForWrite(),
+        associateId: { in: ids.slice(i, i + 1_000) },
+        status: { in: opts.statuses },
+        clockInAt: { gte: from, lt: to },
+      },
+      select: ENGINE_ENTRY_SELECT,
+      take: 100_000,
+    });
+    for (const e of page) if (!shownIds.has(e.id)) others.push(e);
+  }
+  const asWork = <E extends EngineEntryRow>(e: E) => ({ ...e, clockOutAt: e.clockOutAt ?? opts.now ?? null, site: e.location });
+  const shownWork = shown.map(asWork);
+  const all = [...shownWork, ...others.map(asWork)];
+  const split = splitByPerson(rules, all);
+  const byEntry = new Map<T, EntryHours>();
+  shown.forEach((e, i) => byEntry.set(e, split.byEntry.get(shownWork[i]!)!));
+  /** Everything read for a person (shown and context), as the engine took it — a projection adds planned shifts to it. */
+  const workOf = (associateId: string): HoursEntry[] => all.filter((e) => e.associateId === associateId);
+  return { byEntry, byPerson: split.byPerson, rules, workOf };
+}
+
+/** Overtime plus double time a set of planned shifts adds to a person's worked hours (the engine's split, before and after). */
+function plannedOvertime(rules: PayRules, worked: readonly HoursEntry[], planned: readonly HoursEntry[]): { overtimeHours: number; doubleTimeHours: number; after: HoursSplit } {
+  const b = sumHours(splitHours(rules, worked).entries);
+  const after = splitHours(rules, [...worked, ...planned]);
+  const a = sumHours(after.entries);
+  return { overtimeHours: Math.max(0, a.overtimeHours - b.overtimeHours), doubleTimeHours: Math.max(0, a.doubleTimeHours - b.doubleTimeHours), after };
+}
+
+/**
+ * What adding `extra` to a person's other hours adds in overtime and double
+ * time, and what that costs over straight time at `rate`. Under the weekly
+ * rule the added hours are whatever runs past 40; under a live daily rule a
+ * long shift can land overtime on itself.
+ */
+function addedOvertime(rules: PayRules, others: readonly HoursEntry[], extra: HoursEntry, rate: number | null): { overtimeHours: number; doubleTimeHours: number; premium: number | null } {
+  const before = splitHours(rules, others);
+  const after = splitHours(rules, [...others, extra]);
+  const b = sumHours(before.entries);
+  const a = sumHours(after.entries);
+  const added = after.entries[after.entries.length - 1]!.workedHours;
+  return {
+    overtimeHours: Math.max(0, a.overtimeHours - b.overtimeHours),
+    doubleTimeHours: Math.max(0, a.doubleTimeHours - b.doubleTimeHours),
+    // The pay the week gains, less the straight time of the hours added.
+    premium: rate == null ? null : Math.max(0, payFor(a, rate, after) - payFor(b, rate, before) - added * rate),
+  };
+}
+
+/**
+ * For each (associate, shift-window) pair: would TAKING that shift add
+ * overtime to the associate's scheduled week (the engine's split: past 40,
+ * or a live daily rule)? One batched query for the whole list. Advisory —
+ * chips the admin swap/pickup review rows; the auto-scheduler has its own
+ * hard 40h gate. `weeklyMinutes` stays the paid minutes scheduled that
+ * week, the shift included.
  */
 async function wouldExceed40hFlags(
   items: {
     associateId: string;
     startsAt: Date;
     endsAt: Date;
+    /** The shift's site, for its zone and (when live) its daily rules. */
+    locationId?: string | null;
     /** Shifts the associate would GIVE UP in the same action (trade legs). */
     excludeShiftIds?: string[];
   }[],
@@ -487,30 +597,40 @@ async function wouldExceed40hFlags(
   const maxEnd = new Date(
     Math.max(...items.map((i) => endOfWeekUTC(i.startsAt).getTime())),
   );
-  const rows = await prisma.shift.findMany({
-    where: {
-      assignedAssociateId: { in: ids },
-      status: { notIn: ['CANCELLED'] },
-      startsAt: { gte: minStart, lt: maxEnd },
-    },
-    select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true },
-    take: 5000,
-  });
-  const byKey = new Map<string, { id: string; minutes: number }[]>();
+  const [rows, rules] = await Promise.all([
+    prisma.shift.findMany({
+      where: {
+        assignedAssociateId: { in: ids },
+        status: { notIn: ['CANCELLED'] },
+        startsAt: { gte: minStart, lt: maxEnd },
+      },
+      select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true, locationRel: { select: { id: true, state: true, city: true, timezone: true } } },
+      take: 5000,
+    }),
+    loadLiveRules(prisma, tenantIdForWrite()),
+  ]);
+  const itemSiteIds = [...new Set(items.map((i) => i.locationId).filter((x): x is string => !!x))];
+  const sites = itemSiteIds.length
+    ? await prisma.site.findMany({ where: { id: { in: itemSiteIds } }, select: { id: true, state: true, city: true, timezone: true } })
+    : [];
+  const siteById = new Map(sites.map((x) => [x.id, x]));
+  const byKey = new Map<string, Array<{ id: string; minutes: number; entry: HoursEntry }>>();
   for (const r of rows) {
     const k = `${r.assignedAssociateId}:${startOfWeekUTC(r.startsAt).getTime()}`;
     const list = byKey.get(k) ?? [];
-    list.push({ id: r.id, minutes: scheduledMinutes(r) });
+    const minutes = scheduledMinutes(r);
+    list.push({ id: r.id, minutes, entry: plannedEntry({ startsAt: r.startsAt, endsAt: r.endsAt, paidMinutes: minutes, site: r.locationRel }) });
     byKey.set(k, list);
   }
   return items.map((i) => {
     const k = `${i.associateId}:${startOfWeekUTC(i.startsAt).getTime()}`;
     const excl = new Set(i.excludeShiftIds ?? []);
-    const existing = (byKey.get(k) ?? [])
-      .filter((r) => !excl.has(r.id))
-      .reduce((s, r) => s + r.minutes, 0);
-    const weeklyMinutes = existing + scheduledMinutes(i);
-    return { exceed: weeklyMinutes > 40 * 60, weeklyMinutes };
+    const existing = (byKey.get(k) ?? []).filter((r) => !excl.has(r.id));
+    const minutes = scheduledMinutes(i);
+    const weeklyMinutes = existing.reduce((s, r) => s + r.minutes, 0) + minutes;
+    const extra = plannedEntry({ startsAt: i.startsAt, endsAt: i.endsAt, paidMinutes: minutes, site: i.locationId ? (siteById.get(i.locationId) ?? null) : null });
+    const added = addedOvertime(rules, existing.map((r) => r.entry), extra, null);
+    return { exceed: added.overtimeHours + added.doubleTimeHours > 1e-9, weeklyMinutes };
   });
 }
 
@@ -720,6 +840,8 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
     // the money was not. The Drafts tile still counts them, from `grouped`
     // below, because finding them is the point.
     const conds: Prisma.Sql[] = [
+      // A raw query is not seen by the tenant guard: it names the tenant itself.
+      Prisma.sql`s."tenantId" = ${tenantIdForWrite()}::uuid`,
       Prisma.sql`s."startsAt" >= ${from}`,
       Prisma.sql`s."startsAt" < ${to}`,
       Prisma.sql`s."status" <> 'CANCELLED'::${SHIFT_STATUS_ENUM}`,
@@ -941,9 +1063,11 @@ schedulingRouter.get('/last-shift', MANAGE, async (req, res, next) => {
  * Day-by-day labor cost, one row per (site-local day, client, store):
  * the SCHEDULED side prices each non-cancelled shift at its explicit
  * payRate else the (client, position) rate default — identical resolution
- * to the KPI strip above — and the WORKED side prices each COMPLETED or
- * APPROVED time entry (net of breaks) at the payRate snapshotted at
- * clock-in. Rows with no resolvable rate are counted per bucket so a $0
+ * to the KPI strip above, straight time (a plan, before anyone works it) —
+ * and the WORKED side prices each COMPLETED or APPROVED time entry (net of
+ * breaks) at the payRate snapshotted at clock-in, its hours split by the
+ * labor-rules engine as the paycheck splits them (each person's whole week,
+ * every client): overtime and double time cost what pay will cost. Rows with no resolvable rate are counted per bucket so a $0
  * cell reads as "rates missing", never as "free labor".
  *
  * MANAGE + the usual tenant clamp: supervisors get their own client only
@@ -1000,19 +1124,19 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
           clockInAt: { gte: from, lt: to },
         },
         select: {
+          ...ENGINE_ENTRY_SELECT,
           clientId: true,
           locationId: true,
-          clockInAt: true,
-          clockOutAt: true,
           payRate: true,
           status: true,
-          breaks: { select: { startedAt: true, endedAt: true } },
         },
       }),
     ]);
     const truncated = shiftRows.length > SHIFT_CAP || entryRows.length > PUNCH_CAP;
     const shifts = shiftRows.slice(0, SHIFT_CAP);
     const entries = entryRows.slice(0, PUNCH_CAP);
+    // Each worked entry's share of its person's week, as pay splits it.
+    const workedSplit = await splitAsPaid(entries, { statuses: ['COMPLETED', 'APPROVED'] });
 
     // Rate defaults for the scheduled fallback — pay (cost) AND bill
     // (revenue) sides — plus the positions' lead flags for the
@@ -1357,7 +1481,10 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
           : env.DEFAULT_ASSOCIATE_PAY_RATE > 0
             ? env.DEFAULT_ASSOCIATE_PAY_RATE
             : undefined;
-      const entryCost = entryRate != null ? (minutes / 60) * entryRate : 0;
+      // At the engine's split: the share past the line costs its multiplier.
+      const share = workedSplit.byEntry.get(e);
+      const entryCost =
+        entryRate == null ? 0 : share ? payFor(share, entryRate, workedSplit.byPerson.get(e.associateId)!) : (minutes / 60) * entryRate;
       b.workedPunches += 1;
       b.workedMinutes += minutes;
       if (entryRate != null) b.workedCost += entryCost;
@@ -1648,8 +1775,10 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
  * org weeks. Each hour is priced the way a statement prices it: the pay
  * rate on the punch (or its shift), else the client's rate card for the
  * shift's role, else the org standard — and billed at the card's bill
- * rate, else the standard. OT is allocated within each associate-week
- * proportionally to where the hours were worked, at that hour's rates.
+ * rate, else the standard. Overtime is split by the labor-rules engine as
+ * the paycheck splits it (each person's whole week, every client): the
+ * hours that ran past the line are priced at their own rates × the
+ * engine's multipliers, at the store where they were worked.
  * `standardShare` says how much of a store's time had no card or pay
  * rate behind it, so a screen can say "partly at standard rates". Powers the labor
  * page's sparklines and the "speed of light" benchmark (each store vs
@@ -1677,28 +1806,18 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
       },
       orderBy: { clockInAt: 'desc' },
       select: {
-        associateId: true,
+        ...ENGINE_ENTRY_SELECT,
         clientId: true,
         locationId: true,
-        clockInAt: true,
-        clockOutAt: true,
         payRate: true,
         shift: { select: { position: true, payRate: true } },
-        breaks: { select: { startedAt: true, endedAt: true } },
       },
       take: TREND_CAP + 1,
     });
     const trendsTruncated = fetchedEntries.length > TREND_CAP;
     const entries = trendsTruncated ? fetchedEntries.slice(0, TREND_CAP) : fetchedEntries;
-    const netMin = (e: (typeof entries)[number]): number => {
-      if (!e.clockOutAt) return 0;
-      let ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
-      for (const b of e.breaks) {
-        const bEnd = b.endedAt ? b.endedAt.getTime() : e.clockOutAt.getTime();
-        ms -= Math.max(0, bEnd - b.startedAt.getTime());
-      }
-      return Math.max(0, Math.round(ms / 60_000));
-    };
+    // Each entry's share of its person's week, as pay splits it.
+    const { byEntry, byPerson } = await splitAsPaid(entries, { statuses: ['APPROVED', 'COMPLETED'] });
     // Price each entry: its own pay rate, else its shift's, else the card for the shift's role.
     const cards = await loadRateCards(prisma, [...new Set(entries.map((e) => e.clientId).filter((c): c is string => !!c))]);
     const priceOf = (e: (typeof entries)[number]): { pay: number; bill: number; standard: boolean } => {
@@ -1708,12 +1827,8 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
       const bill = card?.billRate ?? env.DEFAULT_ASSOCIATE_BILL_RATE;
       return { pay, bill, standard: card?.billRate == null || (explicitPay == null && !card) };
     };
-    // associate-week → total minutes + per (store, weekIdx) minutes, pay- and bill-weighted.
-    type LocAgg = { mins: number; payMin: number; billMin: number; standardMin: number };
-    const byAssocWeek = new Map<
-      string,
-      { total: number; perLoc: Map<string, LocAgg> }
-    >();
+    // Per store-week: minutes, overtime minutes, and dollars at each hour's own rates × the split's multipliers.
+    const perStoreWeek = new Map<string, { minutes: number; otMinutes: number; pay: number; billed: number; standardMin: number }>();
     for (const e of entries) {
       if (!e.locationId || !e.clientId) continue;
       const wkStart = startOfWeekUTC(e.clockInAt).getTime();
@@ -1721,36 +1836,19 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
         (_b, i) => i > 0 && wkStart >= bounds[i].getTime() && wkStart < bounds[i - 1].getTime(),
       );
       if (wkIdx < 1) continue;
-      const key = `${e.associateId}|${wkStart}`;
-      const rec = byAssocWeek.get(key) ?? { total: 0, perLoc: new Map<string, LocAgg>() };
-      const mins = netMin(e);
+      const share = byEntry.get(e)!;
+      if (share.workedHours <= 0) continue;
+      const m = byPerson.get(e.associateId)!;
       const price = priceOf(e);
-      rec.total += mins;
+      const mins = share.workedHours * 60;
       const locKey = `${e.clientId}|${e.locationId}|${wkIdx}`;
-      const loc = rec.perLoc.get(locKey) ?? { mins: 0, payMin: 0, billMin: 0, standardMin: 0 };
-      loc.mins += mins;
-      loc.payMin += mins * price.pay;
-      loc.billMin += mins * price.bill;
-      if (price.standard) loc.standardMin += mins;
-      rec.perLoc.set(locKey, loc);
-      byAssocWeek.set(key, rec);
-    }
-    // Per store-week: minutes, OT minutes, and dollars (rate × minutes) straight and OT-premium.
-    const perStoreWeek = new Map<string, { minutes: number; otMinutes: number; payMin: number; billMin: number; otPayMin: number; otBillMin: number; standardMin: number }>();
-    for (const rec of byAssocWeek.values()) {
-      const ot = Math.max(0, rec.total - 2_400);
-      const otShare = rec.total > 0 ? ot / rec.total : 0;
-      for (const [locKey, loc] of rec.perLoc) {
-        const agg = perStoreWeek.get(locKey) ?? { minutes: 0, otMinutes: 0, payMin: 0, billMin: 0, otPayMin: 0, otBillMin: 0, standardMin: 0 };
-        agg.minutes += loc.mins;
-        agg.otMinutes += otShare * loc.mins;
-        agg.payMin += loc.payMin;
-        agg.billMin += loc.billMin;
-        agg.otPayMin += otShare * loc.payMin;
-        agg.otBillMin += otShare * loc.billMin;
-        agg.standardMin += loc.standardMin;
-        perStoreWeek.set(locKey, agg);
-      }
+      const agg = perStoreWeek.get(locKey) ?? { minutes: 0, otMinutes: 0, pay: 0, billed: 0, standardMin: 0 };
+      agg.minutes += mins;
+      agg.otMinutes += (share.overtimeHours + share.doubleTimeHours) * 60;
+      agg.pay += payFor(share, price.pay, m);
+      agg.billed += payFor(share, price.bill, m);
+      if (price.standard) agg.standardMin += mins;
+      perStoreWeek.set(locKey, agg);
     }
     const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
     const stores = new Map<
@@ -1785,9 +1883,9 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
           return s;
         })();
       const hours = agg.minutes / 60;
-      // Rate × minutes → dollars; OT adds half again at that hour's own rates.
-      const billed = (agg.billMin + agg.otBillMin * 0.5) / 60;
-      const cost = ((agg.payMin + agg.otPayMin * 0.5) / 60) * burden + hours * env.LABOR_OVERHEAD_PER_HOUR;
+      // Dollars at each hour's own rates, overtime and double time at the engine's multipliers.
+      const billed = agg.billed;
+      const cost = agg.pay * burden + hours * env.LABOR_OVERHEAD_PER_HOUR;
       store.minutes += agg.minutes;
       store.standardMinutes += agg.standardMin;
       // weeks array is oldest-first: index 4-wkIdx.
@@ -1889,11 +1987,9 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
       prisma.timeEntry.findMany({
         where: { AND: [{ status: 'ACTIVE', locationId: { in: ids } }, scopeTimeEntries(req.user!)] },
         select: {
-          associateId: true,
+          ...ENGINE_ENTRY_SELECT,
           locationId: true,
-          clockInAt: true,
           payRate: true,
-          breaks: { select: { startedAt: true, endedAt: true } },
         },
         take: 2000,
       }),
@@ -1910,57 +2006,23 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
       }),
     ]);
 
-    /* Live labor accrual. Elapsed minutes per clocked-in person (net of
-     * breaks, open break counted to now) × their snapshotted pay rate
-     * (else the org standard), with OT at 1.5×. The OT check is WEEKLY
-     * and CROSS-CLIENT on purpose — the classic trap: Destin Mon–Wed +
-     * PCB Thu–Sat puts Saturday in OT wherever it's worked, so week-to-
-     * date sums every site's hours, deliberately unclamped by tenant
-     * (it only feeds a multiplier; no other tenant's data is exposed).
-     * Billing uses the associate SOW rate (live punches carry no
-     * position, so lead billing upside is understated, never overstated);
-     * OT bills at 1.5× too ($31.82 on $21.21). */
-    const netElapsedMinutes = (e: {
-      clockInAt: Date;
-      clockOutAt?: Date | null;
-      breaks: Array<{ startedAt: Date; endedAt: Date | null }>;
-    }): number => {
-      const end = (e.clockOutAt ?? now).getTime();
-      let ms = end - e.clockInAt.getTime();
-      for (const b of e.breaks) {
-        const bEnd = b.endedAt ? b.endedAt.getTime() : end;
-        ms -= Math.max(0, bEnd - b.startedAt.getTime());
-      }
-      return Math.max(0, ms / 60_000);
-    };
+    /* Live labor accrual. Each clocked-in person's punch, counted to now
+     * (net of breaks, an open break counted to now), split by the
+     * labor-rules engine exactly as their paycheck will split it: their
+     * whole week, every site and client — the classic trap, Destin Mon–Wed
+     * + PCB Thu–Sat, puts Saturday in overtime wherever it's worked — under
+     * the federal weekly 40 or a live jurisdiction's daily and double-time
+     * rules. The other punches are read tenant-clamped only to place the
+     * line. Priced at the snapshotted pay rate (else the org standard);
+     * billing uses the associate SOW rate (live punches carry no position,
+     * so lead billing upside is understated, never overstated), overtime
+     * and double time at the engine's multipliers on both sides. */
+    const { byEntry: liveShare, byPerson: livePerson, rules: liveRules, workOf } = await splitAsPaid(activeEntries, { statuses: ['ACTIVE', 'COMPLETED', 'APPROVED'], now });
     const activeAssociateIds = [...new Set(activeEntries.map((e) => e.associateId))];
-    const weekEntries = activeAssociateIds.length
-      ? await prisma.timeEntry.findMany({
-          where: {
-            associateId: { in: activeAssociateIds },
-            status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
-            clockInAt: { gte: startOfWeekUTC(now) },
-          },
-          select: {
-            associateId: true,
-            clockInAt: true,
-            clockOutAt: true,
-            breaks: { select: { startedAt: true, endedAt: true } },
-          },
-          take: 20_000,
-        })
-      : [];
-    const weekMinutes = new Map<string, number>();
-    for (const e of weekEntries) {
-      weekMinutes.set(
-        e.associateId,
-        (weekMinutes.get(e.associateId) ?? 0) + netElapsedMinutes(e),
-      );
-    }
     // OT radar: what's still SCHEDULED for each clocked-in associate this
-    // week (rest of the current shift + later assigned shifts). Worked +
-    // remaining > 40h means "will hit OT if the week goes as planned" —
-    // surfaced as a chip so a supervisor can trim hours before Friday.
+    // week (rest of the current shift + later assigned shifts). If the week
+    // as planned lands hours in overtime that aren't there yet, it's a chip
+    // so a supervisor can trim hours before Friday.
     const upcoming = activeAssociateIds.length
       ? await prisma.shift.findMany({
           where: {
@@ -1969,20 +2031,17 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
             endsAt: { gt: now },
             startsAt: { lt: endOfWeekUTC(now) },
           },
-          select: { assignedAssociateId: true, startsAt: true, endsAt: true },
+          select: { assignedAssociateId: true, startsAt: true, endsAt: true, locationRel: { select: { id: true, state: true, city: true, timezone: true } } },
           take: 5000,
         })
       : [];
-    const remainingScheduledMin = new Map<string, number>();
+    const remainingPlanned = new Map<string, HoursEntry[]>();
     for (const s of upcoming) {
-      const from = Math.max(s.startsAt.getTime(), now.getTime());
-      const min = Math.max(0, (s.endsAt.getTime() - from) / 60_000);
-      remainingScheduledMin.set(
-        s.assignedAssociateId!,
-        (remainingScheduledMin.get(s.assignedAssociateId!) ?? 0) + min,
-      );
+      const from = new Date(Math.max(s.startsAt.getTime(), now.getTime()));
+      const list = remainingPlanned.get(s.assignedAssociateId!) ?? [];
+      list.push(plannedEntry({ startsAt: from, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(from, s.endsAt), site: s.locationRel }));
+      remainingPlanned.set(s.assignedAssociateId!, list);
     }
-    const OT_THRESHOLD_MIN = 40 * 60;
     const burdenMult = 1 + env.LABOR_BURDEN_PERCENT / 100;
     const overhead = env.LABOR_OVERHEAD_PER_HOUR;
 
@@ -2009,11 +2068,8 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
         otHeads: 0,
         projectedOtHeads: 0,
       };
-      const elapsed = netElapsedMinutes(e);
-      const wtd = weekMinutes.get(e.associateId) ?? elapsed;
-      // The tail of THIS punch that sits past the weekly threshold.
-      const otMin = Math.max(0, Math.min(elapsed, wtd - OT_THRESHOLD_MIN));
-      const regMin = elapsed - otMin;
+      const share = liveShare.get(e)!;
+      const m = livePerson.get(e.associateId)!;
       const rate =
         e.payRate != null
           ? Number(e.payRate)
@@ -2022,20 +2078,24 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
             : 0;
       const billRate =
         env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE : 0;
-      const inOtNow = wtd >= OT_THRESHOLD_MIN;
+      // The punch is the person's latest hours, so the engine fills its end
+      // last: any overtime or double time in its share is where they are now.
+      const nowMult = share.doubleTimeHours > 0 ? m.doubleMultiplier : share.overtimeHours > 0 ? m.overtimeMultiplier : 1;
+      const inOtNow = nowMult > 1;
       agg.count += 1;
-      agg.elapsedHours += elapsed / 60;
-      agg.wageSoFar += (regMin / 60) * rate + (otMin / 60) * rate * 1.5;
-      agg.billedSoFar += (regMin / 60) * billRate + (otMin / 60) * billRate * 1.5;
-      agg.wagePerHour += rate * (inOtNow ? 1.5 : 1);
-      agg.billedPerHour += billRate * (inOtNow ? 1.5 : 1);
+      agg.elapsedHours += share.workedHours;
+      agg.wageSoFar += payFor(share, rate, m);
+      agg.billedSoFar += payFor(share, billRate, m);
+      agg.wagePerHour += rate * nowMult;
+      agg.billedPerHour += billRate * nowMult;
       if (inOtNow) agg.otHeads += 1;
-      // Not over yet, but worked + remaining scheduled crosses 40h.
-      else if (
-        wtd + (remainingScheduledMin.get(e.associateId) ?? 0) >
-        OT_THRESHOLD_MIN
-      ) {
-        agg.projectedOtHeads += 1;
+      // Not over yet, but the week as scheduled lands hours in overtime.
+      else if (remainingPlanned.has(e.associateId)) {
+        // This week's worked hours (the site's week) plus what's still scheduled.
+        const weekStart = startOfWeekForSite(now, e.location?.timezone ?? DEFAULT_TIMEZONE);
+        const worked = workOf(e.associateId).filter((w) => w.clockInAt >= weekStart);
+        const ahead = plannedOvertime(liveRules, worked, remainingPlanned.get(e.associateId)!);
+        if (ahead.overtimeHours + ahead.doubleTimeHours > 1e-9) agg.projectedOtHeads += 1;
       }
       liveByLocation.set(e.locationId, agg);
     }
@@ -2127,9 +2187,11 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
 /**
  * GET /scheduling/ot-outlook?clientId?
  *
- * The OT radar's NAMES view: every associate projected past 40h this week
- * (worked-to-date + remaining ASSIGNED shifts, cross-client), whether or
- * not they are on the clock right now. The floor board's chips say "2 OT
+ * The OT radar's NAMES view: every associate whose week as planned lands
+ * hours in overtime (worked-to-date + remaining ASSIGNED shifts, cross-
+ * client, split by the labor-rules engine as the paycheck will split it:
+ * past 40, or a live jurisdiction's daily and double-time rules), whether
+ * or not they are on the clock right now. The floor board's chips say "2 OT
  * risk"; this says who, by how much, and what it costs — the list a
  * supervisor works from when trimming Friday's schedule. Bounded callers
  * see only associates with remaining shifts at their client.
@@ -2158,12 +2220,13 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (r
         startsAt: true,
         endsAt: true,
         client: { select: { name: true } },
+        locationRel: { select: { id: true, state: true, city: true, timezone: true } },
       },
       take: OT_CAP + 1,
     });
     const otTruncated = fetchedShifts.length > OT_CAP;
     const weekShifts = otTruncated ? fetchedShifts.slice(0, OT_CAP) : fetchedShifts;
-    const remaining = new Map<string, { min: number; clients: Set<string> }>();
+    const remaining = new Map<string, { min: number; clients: Set<string>; planned: HoursEntry[] }>();
     for (const s of weekShifts) {
       const from = new Date(Math.max(s.startsAt.getTime(), now.getTime()));
       // PAID minutes (unpaid-break rule) — this radar was still counting
@@ -2174,8 +2237,10 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (r
       const cur = remaining.get(s.assignedAssociateId!) ?? {
         min: 0,
         clients: new Set<string>(),
+        planned: [],
       };
       cur.min += min;
+      cur.planned.push(plannedEntry({ startsAt: from, endsAt: s.endsAt, paidMinutes: min, site: s.locationRel }));
       if (s.client) cur.clients.add(s.client.name);
       remaining.set(s.assignedAssociateId!, cur);
     }
@@ -2188,47 +2253,44 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (r
     }
     // Worked minutes are deliberately cross-client (the weekly OT trap):
     // hours at another site still push this week past 40.
-    const [entries, associates] = await Promise.all([
+    const [entries, associates, rules] = await Promise.all([
       prisma.timeEntry.findMany({
         where: {
+          tenantId: tenantIdForWrite(),
           associateId: { in: candidates },
           status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
           clockInAt: { gte: weekStart },
         },
-        select: {
-          associateId: true,
-          clockInAt: true,
-          clockOutAt: true,
-          breaks: { select: { startedAt: true, endedAt: true } },
-        },
+        select: ENGINE_ENTRY_SELECT,
         take: 20_000,
       }),
       prisma.associate.findMany({
         where: { id: { in: candidates } },
         select: { id: true, firstName: true, lastName: true },
       }),
+      loadLiveRules(prisma, tenantIdForWrite()),
     ]);
-    const worked = new Map<string, number>();
+    const workedBy = new Map<string, HoursEntry[]>();
     for (const e of entries) {
-      const end = (e.clockOutAt ?? now).getTime();
-      let ms = end - e.clockInAt.getTime();
-      for (const b of e.breaks) {
-        const bEnd = b.endedAt ? b.endedAt.getTime() : end;
-        ms -= Math.max(0, bEnd - b.startedAt.getTime());
-      }
-      worked.set(e.associateId, (worked.get(e.associateId) ?? 0) + Math.max(0, ms / 60_000));
+      const list = workedBy.get(e.associateId) ?? [];
+      // A punch still open counts to now.
+      list.push({ ...e, clockOutAt: e.clockOutAt ?? now, site: e.location });
+      workedBy.set(e.associateId, list);
     }
     const nameById = new Map(
       associates.map((a) => [a.id, `${a.firstName} ${a.lastName}`]),
     );
-    const OT_MIN = 40 * 60;
-    const otBillRate =
-      env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE * 1.5 : null;
+    const billRate = env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE : null;
     const round1 = (v: number) => Math.round(v * 10) / 10;
     const rows = candidates
       .map((id) => {
-        const w = worked.get(id) ?? 0;
         const rem = remaining.get(id)!;
+        const worked = workedBy.get(id) ?? [];
+        const w = splitHours(rules, worked).entries.reduce((n, x) => n + x.workedHours, 0) * 60;
+        // The week as planned, split as the paycheck will split it.
+        const projectedSplit = splitHours(rules, [...worked, ...rem.planned]);
+        const total = sumHours(projectedSplit.entries);
+        const otH = total.overtimeHours + total.doubleTimeHours;
         const projected = w + rem.min;
         return {
           associateId: id,
@@ -2237,10 +2299,11 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (r
           workedMinutes: Math.round(w),
           remainingScheduledMinutes: Math.round(rem.min),
           projectedMinutes: Math.round(projected),
-          projectedOtMinutes: Math.round(Math.max(0, projected - OT_MIN)),
+          projectedOtMinutes: Math.round(otH * 60),
+          // The overtime hours billed at the standard rate × the engine's multipliers.
           estOtBilled:
-            otBillRate !== null
-              ? round1((Math.max(0, projected - OT_MIN) / 60) * otBillRate)
+            billRate !== null
+              ? round1(payFor({ regularHours: 0, overtimeHours: total.overtimeHours, doubleTimeHours: total.doubleTimeHours }, billRate, projectedSplit))
               : null,
         };
       })
@@ -3180,6 +3243,7 @@ schedulingRouter.get('/unconfirmed', MANAGE, async (req, res, next) => {
         position: true,
         startsAt: true,
         client: { select: { name: true } },
+        locationRel: { select: { timezone: true } },
         assignedAssociate: {
           select: { id: true, firstName: true, lastName: true, phone: true },
         },
@@ -3191,6 +3255,8 @@ schedulingRouter.get('/unconfirmed', MANAGE, async (req, res, next) => {
         position: r.position,
         clientName: r.client?.name ?? null,
         startsAt: r.startsAt.toISOString(),
+        // The store's clock: the chase list reads the shift as the store does.
+        timezone: r.locationRel?.timezone ?? DEFAULT_TIMEZONE,
         associateId: r.assignedAssociate!.id,
         associateName: `${r.assignedAssociate!.firstName} ${r.assignedAssociate!.lastName}`,
         phone: r.assignedAssociate!.phone ?? null,
@@ -4374,6 +4440,7 @@ schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
         associateId: c.associateId,
         startsAt: c.shift.startsAt,
         endsAt: c.shift.endsAt,
+        locationId: c.shift.locationId,
       })),
     );
     res.json(
@@ -4793,13 +4860,14 @@ schedulingRouter.post('/auto-fill/batch', MANAGE, async (req, res, next) => {
 /**
  * Rank the people who could take `target`: its own client's roster (or the
  * company's, for a client-less shift), inside the caller's reach — never
- * another client's workers. Room before 40 hours counts the larger of what
- * they're scheduled for and what they've worked this week (scheduled hours
- * are the ones that will be paid), not counting this shift itself.
+ * another client's workers. Whether the shift lands them in overtime comes
+ * from the labor-rules engine: their week as the paycheck will split it —
+ * hours worked so far plus what's still scheduled, every client — with
+ * this shift added (past 40, or a live jurisdiction's daily rule).
  */
 /** What the Assign dialog's facts need off the shift (lib: rankAutoFillCandidates). */
 const CANDIDATE_TARGET_INCLUDE = {
-  locationRel: { select: { timezone: true, latitude: true, longitude: true } },
+  locationRel: { select: { id: true, state: true, city: true, timezone: true, latitude: true, longitude: true } },
   qualReqs: { select: { qualification: { select: { id: true, name: true } } } },
 } as const;
 
@@ -4823,7 +4891,7 @@ async function rankAutoFillCandidates(
     payRate?: Prisma.Decimal | null;
     startsAt: Date;
     endsAt: Date;
-    locationRel: { timezone: string | null; latitude?: Prisma.Decimal | null; longitude?: Prisma.Decimal | null } | null;
+    locationRel: { id?: string; state?: string | null; city?: string | null; timezone: string | null; latitude?: Prisma.Decimal | null; longitude?: Prisma.Decimal | null } | null;
     qualReqs?: { qualification: { id: string; name: string } }[];
   },
 ): Promise<AutoFillCandidate[]> {
@@ -4854,7 +4922,7 @@ async function rankAutoFillCandidates(
   const hourlyRateCents = rate === null ? null : Math.round(rate * 100);
   const required = (target.qualReqs ?? []).map((q) => q.qualification);
 
-  const [associates, ptoRows, exceptionRows] = await Promise.all([
+  const [associates, ptoRows, exceptionRows, rules] = await Promise.all([
     prisma.associate.findMany({
       where: { AND: [pool, { tenantId: tenantIdForWrite() }, scopeAssociates(user)] },
       include: {
@@ -4864,12 +4932,13 @@ async function rankAutoFillCandidates(
             status: { notIn: ['CANCELLED', 'COMPLETED'] },
             startsAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
           },
+          include: { locationRel: { select: { id: true, state: true, city: true, timezone: true } } },
         },
         timeEntries: {
           where: {
             clockInAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
           },
-          include: { breaks: true },
+          include: { breaks: true, location: { select: { id: true, state: true, city: true, timezone: true } } },
         },
         availability: true,
         // Home store: the open placement (newest first).
@@ -4898,6 +4967,7 @@ async function rankAutoFillCandidates(
       where: { date: { gte: targetDayStart, lte: targetDayEnd } },
       select: { associateId: true },
     }),
+    loadLiveRules(prisma, tenantIdForWrite()),
   ]);
 
   const ptoAssociateIds = new Set([
@@ -4942,6 +5012,9 @@ async function rankAutoFillCandidates(
   const startMin = zonedMinutes(target.startsAt, targetTz);
   const endMin = zonedMinutes(target.endsAt, targetTz);
   const targetMinutes = paidMinutesForRange(target.startsAt, target.endsAt);
+  const targetSite: LaborSite | null =
+    target.locationRel?.id ? { id: target.locationRel.id, state: target.locationRel.state ?? null, city: target.locationRel.city ?? null, timezone: target.locationRel.timezone } : null;
+  const targetEntry = plannedEntry({ startsAt: target.startsAt, endsAt: target.endsAt, paidMinutes: targetMinutes, site: targetSite });
 
   const candidates: AutoFillCandidate[] = associates.map((a) => {
     const dayWindows = a.availability.filter((w) => w.dayOfWeek === targetDOW).sort((x, y) => x.startMinute - y.startMinute);
@@ -4950,15 +5023,28 @@ async function rankAutoFillCandidates(
     const onApprovedTimeOff = ptoAssociateIds.has(a.id);
     const weeklyMinutesScheduled = a.assignedShifts.reduce((sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt), 0);
     const weeklyMinutesActual = a.timeEntries.reduce((sum, e) => sum + netWorkedMinutes(e, e.breaks), 0);
-    const wouldExceed40 = Math.max(weeklyMinutesScheduled, weeklyMinutesActual) + targetMinutes > 40 * 60;
+    // The week as the paycheck will split it (lib/laborRules/hours): what's
+    // been worked (a punch still open counts to now), plus what's still
+    // scheduled from here (an in-progress shift from now). What this shift
+    // adds in overtime and double time — past 40, or under a live daily
+    // rule — and its premium over straight time at the shift's rate.
+    const worked: HoursEntry[] = a.timeEntries.filter((e) => e.status !== 'REJECTED').map((e) => ({ ...e, clockOutAt: e.clockOutAt ?? (e.status === 'ACTIVE' ? now : null), site: e.location }));
+    const ahead: HoursEntry[] = a.assignedShifts
+      .filter((s) => s.endsAt > now)
+      .map((s) => {
+        const from = s.startsAt > now ? s.startsAt : now;
+        return plannedEntry({ startsAt: from, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(from, s.endsAt), site: s.locationRel });
+      });
+    const added = addedOvertime(rules, [...worked, ...ahead], targetEntry, rate);
+    const otMinutes = Math.round((added.overtimeHours + added.doubleTimeHours) * 60);
+    const wouldExceed40 = otMinutes > 0;
 
     // The ranking is shared with the Workforce agent (lib/shiftAssign autoFillScore).
     const score = autoFillScore({ matchesAvailability, noConflict, wouldExceed40, onApprovedTimeOff });
 
-    // Hours after this shift, and the half-time premium on whatever lands past 40.
+    // Hours after this shift (scheduled), and the premium it would cost.
     const projectedWeeklyMinutes = weeklyMinutesScheduled + targetMinutes;
-    const otMinutes = Math.min(targetMinutes, Math.max(0, projectedWeeklyMinutes - 40 * 60));
-    const otPremiumCents = hourlyRateCents === null ? 0 : Math.round((hourlyRateCents * 0.5 * otMinutes) / 60);
+    const otPremiumCents = added.premium === null ? 0 : Math.round(added.premium * 100);
     const shiftCostCents = hourlyRateCents === null ? null : Math.round((hourlyRateCents * targetMinutes) / 60);
     const availabilityLabel = onApprovedTimeOff
       ? 'Time off approved'
@@ -4982,6 +5068,8 @@ async function rankAutoFillCandidates(
       hourlyRateCents,
       shiftCostCents,
       otPremiumCents,
+      otMinutes,
+      wouldBeOvertime: wouldExceed40,
       reliability,
       availabilityLabel,
       siteShiftsWorked: siteShiftsOf.get(a.id) ?? 0,
@@ -5523,6 +5611,7 @@ schedulingRouter.get('/swap-requests/admin', MANAGE, async (req, res, next) => {
         associateId: r.counterpartyAssociateId,
         startsAt: r.shift.startsAt,
         endsAt: r.shift.endsAt,
+        locationId: r.shift.locationId,
         excludeShiftIds: r.counterpartShiftId ? [r.counterpartShiftId] : [],
       })),
     );
@@ -6938,8 +7027,9 @@ schedulingRouter.post('/drafts/dedupe', MANAGE, async (req, res, next) => {
 /**
  * GET /scheduling/publish-preflight?from&to&clientId
  * The 5-second health report the publish dialog shows BEFORE the button:
- * drafts about to go live, open shifts still unstaffed, people projected
- * past 40h, and <10h rest turnarounds — all within the visible window.
+ * drafts about to go live, open shifts still unstaffed, people whose
+ * scheduled weeks land in overtime (the labor-rules engine's split), and
+ * <10h rest turnarounds — all within the visible window.
  */
 schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
   try {
@@ -6968,6 +7058,7 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
       assignedAssociateId: true,
       assignedAssociate: { select: { firstName: true, lastName: true } },
       client: { select: { state: true } },
+      locationRel: { select: { id: true, state: true, city: true, timezone: true } },
     } as const;
     const windowMs = to.getTime() - from.getTime();
     const [rows, lastWeekRows] = await Promise.all([
@@ -7019,8 +7110,9 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
     // the window's assigned shifts.
     const byAssociate = new Map<
       string,
-      { name: string; minutes: number; costCents: number; shifts: { id: string; startsAt: Date; endsAt: Date; rate: number | null }[] }
+      { name: string; minutes: number; costCents: number; shifts: { id: string; startsAt: Date; endsAt: Date; rate: number | null; timezone: string; entry: HoursEntry }[] }
     >();
+    const preflightRules = await loadLiveRules(prisma, tenantIdForWrite());
     for (const s of rows) {
       if (!s.assignedAssociateId || !s.assignedAssociate) continue;
       const entry = byAssociate.get(s.assignedAssociateId) ?? {
@@ -7031,26 +7123,35 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
       };
       entry.minutes += paidMinutesForRange(s.startsAt, s.endsAt);
       entry.costCents += costCentsOf(s);
-      entry.shifts.push({ id: s.id, startsAt: s.startsAt, endsAt: s.endsAt, rate: rateOf(s) });
+      entry.shifts.push({
+        id: s.id,
+        startsAt: s.startsAt,
+        endsAt: s.endsAt,
+        rate: rateOf(s),
+        timezone: s.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        entry: plannedEntry({ startsAt: s.startsAt, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(s.startsAt, s.endsAt), site: s.locationRel }),
+      });
       byAssociate.set(s.assignedAssociateId, entry);
     }
     const otProjected: { name: string; hours: number; associateId: string; shiftIds: string[]; projectedCostCents: number }[] = [];
-    const restGaps: { name: string; gapHours: number; startsAt: string; associateId: string; shiftIds: string[] }[] = [];
+    const restGaps: { name: string; gapHours: number; startsAt: string; timezone: string; associateId: string; shiftIds: string[] }[] = [];
     const restMs = REST_GAP_MIN_HOURS * 60 * 60 * 1000;
     for (const [associateId, entry] of byAssociate) {
       const sorted = [...entry.shifts].sort(
         (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
       );
-      if (entry.minutes > 40 * 60) {
-        // The premium: half-time on the minutes past 40, at the rate of the
-        // shifts that land there (the week's last ones).
-        let past = entry.minutes - 40 * 60;
+      // The labor-rules engine splits their scheduled weeks as the paycheck
+      // will (past 40, or a live jurisdiction's daily and double-time rules);
+      // the premium is each overtime hour's extra over straight time, at
+      // the rate of the shift it lands on (the week's latest hours).
+      const split = splitHours(preflightRules, sorted.map((x) => x.entry));
+      const ot = sumHours(split.entries);
+      if (ot.overtimeHours + ot.doubleTimeHours > 1e-9) {
         let premiumCents = 0;
-        for (let i = sorted.length - 1; i >= 0 && past > 0; i--) {
-          const mins = Math.min(past, paidMinutesForRange(sorted[i].startsAt, sorted[i].endsAt));
-          premiumCents += Math.round(((sorted[i].rate ?? 0) * 100 * 0.5 * mins) / 60);
-          past -= mins;
-        }
+        split.entries.forEach((share, i) => {
+          const rate = sorted[i]!.rate ?? 0;
+          premiumCents += Math.round((payFor(share, rate, split) - share.workedHours * rate) * 100);
+        });
         otProjected.push({
           name: entry.name,
           hours: Math.round((entry.minutes / 60) * 10) / 10,
@@ -7066,6 +7167,8 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
             name: entry.name,
             gapHours: Math.round((gap / 3_600_000) * 10) / 10,
             startsAt: sorted[i].startsAt.toISOString(),
+            // The store's clock for that start (one shift, one time).
+            timezone: sorted[i].timezone,
             associateId,
             shiftIds: [sorted[i - 1].id, sorted[i].id],
           });
@@ -7460,7 +7563,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       where,
       orderBy: { startsAt: 'asc' },
       take: 2000,
-      include: { locationRel: { select: { timezone: true, name: true } }, client: { select: { name: true } } },
+      include: { locationRel: { select: { id: true, state: true, city: true, timezone: true, name: true } }, client: { select: { name: true } } },
     });
 
     if (openShifts.length === 0) {
@@ -7479,7 +7582,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
     const weekStartUTC = startOfWeekUTC(openShifts[0].startsAt);
     const weekEndUTC = endOfWeekUTC(openShifts[0].startsAt);
 
-    const [associates, ptoRows, exceptionRows] = await Promise.all([
+    const [associates, ptoRows, exceptionRows, autoRules] = await Promise.all([
       prisma.associate.findMany({
         where: ACTIVE_ASSOCIATE_FILTER,
         include: {
@@ -7488,11 +7591,11 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
               status: { notIn: ['CANCELLED', 'COMPLETED'] },
               startsAt: { gte: weekStartUTC, lt: weekEndUTC },
             },
-            select: { startsAt: true, endsAt: true },
+            select: { startsAt: true, endsAt: true, locationRel: { select: { id: true, state: true, city: true, timezone: true } } },
           },
           timeEntries: {
             where: { clockInAt: { gte: weekStartUTC, lt: weekEndUTC } },
-            include: { breaks: true },
+            include: { breaks: true, location: { select: { id: true, state: true, city: true, timezone: true } } },
           },
           availability: true,
         },
@@ -7518,7 +7621,9 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         where: { date: { gte: start, lte: end } },
         select: { associateId: true, date: true },
       }),
+      loadLiveRules(prisma, tenantIdForWrite()),
     ]);
+    const autoNow = new Date();
 
     type AssocState = {
       id: string;
@@ -7530,6 +7635,9 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       weeklyMinutes: number;
       // PTO ranges that block specific shift days
       pto: { start: Date; end: Date }[];
+      // mutable: the week as the labor-rules engine reads it — hours worked,
+      // plus scheduled hours still ahead (and each auto-added shift)
+      week: HoursEntry[];
     };
 
     const ptoByAssociate = new Map<string, { start: Date; end: Date }[]>();
@@ -7567,6 +7675,17 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         // checks against actuals to avoid pushing someone past 40h OT.
         weeklyMinutes: Math.max(scheduledMins, actualMins),
         pto: ptoByAssociate.get(a.id) ?? [],
+        week: [
+          ...a.timeEntries
+            .filter((e) => e.status !== 'REJECTED')
+            .map((e) => ({ ...e, clockOutAt: e.clockOutAt ?? (e.status === 'ACTIVE' ? autoNow : null), site: e.location })),
+          ...a.assignedShifts
+            .filter((sh) => sh.endsAt > autoNow)
+            .map((sh) => {
+              const from = sh.startsAt > autoNow ? sh.startsAt : autoNow;
+              return plannedEntry({ startsAt: from, endsAt: sh.endsAt, paidMinutes: paidMinutesForRange(from, sh.endsAt), site: sh.locationRel });
+            }),
+        ],
       };
     });
 
@@ -7583,6 +7702,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       const shiftMinutes = Math.floor(
         (shift.endsAt.getTime() - shift.startsAt.getTime()) / 60_000,
       );
+      const shiftEntry = plannedEntry({ startsAt: shift.startsAt, endsAt: shift.endsAt, paidMinutes: paidMinutesForRange(shift.startsAt, shift.endsAt), site: shift.locationRel });
 
       // Store-local day bounds — UTC flooring made the PTO/day-off veto
       // off by one for evening shifts west of UTC (July re-audit P2).
@@ -7612,8 +7732,10 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         if (hasConflict) continue;
 
         anyEligible = true;
-        const wouldExceed40 = s.weeklyMinutes + shiftMinutes > 40 * 60;
-        if (wouldExceed40) continue;
+        // The hard gate: never auto-assign into overtime, as the labor-rules
+        // engine splits the week (past 40, or a live jurisdiction's daily rule).
+        const added = addedOvertime(autoRules, s.week, shiftEntry, null);
+        if (added.overtimeHours + added.doubleTimeHours > 1e-9) continue;
         everyoneOverOT = false;
 
         const matchesAvailability = s.availability.some(
@@ -7642,7 +7764,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
           skipped.push({
             shiftId: shift.id,
             reason: 'all_candidates_overtime',
-            detail: 'Every available associate would cross 40h this week.',
+            detail: 'Every available associate would go into overtime this week.',
           });
         } else {
           skipped.push({
@@ -7719,6 +7841,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       // Mutate in-memory state so the next iteration sees this assignment.
       winner.busy.push({ startsAt: shift.startsAt, endsAt: shift.endsAt });
       winner.weeklyMinutes += shiftMinutes;
+      winner.week.push(shiftEntry);
       assignedTotal += 1;
       const prev = assignedCounts.get(winner.id);
       if (prev) prev.count += 1;

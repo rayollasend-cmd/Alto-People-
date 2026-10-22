@@ -317,7 +317,7 @@ describe('<PortalOps> — what is happening in the store', () => {
   it('names what is on the floor right now, not only how the day finished', async () => {
     renderPage(day());
     const now = await screen.findByRole('heading', { name: /On the floor now/i });
-    const card = now.closest('div')!.parentElement!;
+    const card = now.closest<HTMLElement>('[data-card]')!;
     expect(within(card).getByText(/Tori Banks/)).toBeInTheDocument();
     expect(within(card).getByText(/2 items past due/)).toBeInTheDocument();
     // The section is absent on a past day — "now" has no meaning there.

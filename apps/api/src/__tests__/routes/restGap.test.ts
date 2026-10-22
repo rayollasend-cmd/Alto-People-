@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -150,14 +151,18 @@ describe('rest-gap guard', () => {
     const agent = await loginAs(hr.email);
 
     // Overnight then a 6h-later shift, both assigned; plus enough hours to
-    // cross 40h in the window (5 × 9h = 45h).
+    // cross 40 in ONE workweek — overtime is per workweek (the labor-rules
+    // engine), so everything sits in next week: 5 × 9h shifts are 40 paid
+    // hours (each less the schedule's unpaid hour), the turnaround makes 44.
+    const weekStart = startOfWeekUTC(new Date(Date.now() + 7 * 24 * 3_600_000));
+    const at = (offsetMin: number) => new Date(weekStart.getTime() + offsetMin * 60_000);
     for (let day = 0; day < 5; day++) {
       await prisma.shift.create({
         data: {
           clientId: client.id,
           position: 'F&D Overnight',
-          startsAt: future(day * 24 * 60 + 60),
-          endsAt: future(day * 24 * 60 + 10 * 60),
+          startsAt: at(day * 24 * 60 + 60),
+          endsAt: at(day * 24 * 60 + 10 * 60),
           assignedAssociateId: owl.id,
           status: day === 0 ? 'ASSIGNED' : 'DRAFT',
         },
@@ -167,15 +172,15 @@ describe('rest-gap guard', () => {
       data: {
         clientId: client.id,
         position: 'Turnaround',
-        startsAt: future(10 * 60 + 6 * 60), // 6h after day-0 shift ends
-        endsAt: future(10 * 60 + 10 * 60),
+        startsAt: at(10 * 60 + 6 * 60), // 6h after day-0 shift ends
+        endsAt: at(10 * 60 + 10 * 60),
         assignedAssociateId: owl.id,
         status: 'DRAFT',
       },
     });
 
-    const from = new Date().toISOString();
-    const to = future(7 * 24 * 60).toISOString();
+    const from = weekStart.toISOString();
+    const to = at(7 * 24 * 60).toISOString();
     const res = await agent.get(
       `/scheduling/publish-preflight?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&clientId=${client.id}`,
     );

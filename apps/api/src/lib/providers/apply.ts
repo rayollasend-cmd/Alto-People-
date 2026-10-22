@@ -11,6 +11,7 @@ import { drugLedgerStatus, drugTestAdapter, type DrugStatus } from './drugTestin
 import { ProviderError } from './http.js';
 import { packageFor, screeningAdapter, type ScreeningReport } from './screening.js';
 import { mapEfileStatus, taxFilingAdapter, type FilableKind, type FilingResult } from './taxFiling.js';
+import { tenantIdForWrite } from '../tenant.js';
 
 /**
  * What a provider's answer does to Alto's records — one function per
@@ -329,7 +330,7 @@ export async function efileTaxForm(conn: ProviderConnection, formId: string, act
   if (!f) throw new ProviderError('Form not found.', 404, 'not_found');
   if (f.status !== 'DRAFT' && f.status !== 'AMENDED') throw new ProviderError('Only a draft form can be e-filed.', 409, 'invalid_state');
   if (f.efileStatus && f.efileStatus !== 'REJECTED') throw new ProviderError('This form is already with the filing partner.', 409, 'already_submitted');
-  const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+  const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
   const org = await prisma.orgSetting.findFirst({ where: { tenantId: conn.tenantId }, select: { orgName: true } });
   const ein = f.ein ?? profile?.ein ?? '';
   if (!ein) throw new ProviderError('Set the submitter profile (EIN) before e-filing.', 409, 'no_ein');

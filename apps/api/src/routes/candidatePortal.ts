@@ -13,7 +13,7 @@ import { mintUserCalendarToken } from '../lib/calendarFeed.js';
 import { publicBaseUrl, renderBrandedEmail } from '../lib/emailLayout.js';
 import { send } from '../lib/notifications.js';
 import { ADMIN_EMAIL_HIRING, notifyAllAdmins, notifyUser } from '../lib/notify.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { inviteWhen } from '../lib/interviewInvites.js';
 import { enqueueAudit } from '../lib/audit.js';
@@ -488,7 +488,7 @@ candidatePortalRouter.post(
     const magic = verifyFileMagic(file.buffer, file.mimetype);
     if (magic) throw new HttpError(400, 'invalid_file', magic);
     const fileName = sanitizeUploadFilename(file.originalname);
-    const key = `candidate-docs/${c.id}/${row.id}-${Date.now()}-${fileName}`;
+    const key = tenantBlobKey(`candidate-docs/${c.id}/${row.id}-${Date.now()}-${fileName}`);
     await getBlobStore().put(key, file.buffer, file.mimetype);
     const updated = await prisma.$transaction(async (tx) => {
       const u = await tx.candidateDocumentRequest.update({

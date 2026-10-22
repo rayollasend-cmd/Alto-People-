@@ -85,13 +85,13 @@ complianceEvidenceRouter.post('/admin/access-review/run', MANAGE, operatorOnly, 
  *   POST /admin/compliance-evidence/ingest  CI posts a control's result with EVIDENCE_INGEST_TOKEN (no session)
  */
 complianceEvidenceRouter.get('/admin/security-contact', VIEW, operatorOnly, async (_req, res) => {
-  const s = await prisma.orgSetting.findUnique({ where: { id: 'singleton' }, select: { securityContactEmail: true } });
+  const s = await prisma.orgSetting.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { securityContactEmail: true } });
   res.json({ email: s?.securityContactEmail ?? null });
 });
 
 complianceEvidenceRouter.put('/admin/security-contact', MANAGE, operatorOnly, async (req, res) => {
   const { email } = z.object({ email: z.string().trim().toLowerCase().email().max(254).nullable() }).strict().parse(req.body);
-  await prisma.orgSetting.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', securityContactEmail: email }, update: { securityContactEmail: email } });
+  await prisma.orgSetting.upsert({ where: { tenantId: tenantIdForWrite() }, create: { tenantId: tenantIdForWrite(), securityContactEmail: email }, update: { securityContactEmail: email } });
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'security.contact_set', entityType: 'OrgSetting', entityId: 'singleton', metadata: { set: !!email } }, 'compliance');
   res.json({ email });
 });

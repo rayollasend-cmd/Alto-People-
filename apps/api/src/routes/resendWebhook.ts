@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { verifyResendWebhookSignature } from '../lib/resendWebhook.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { resolveTenantFrom } from '../lib/tenant.js';
 
 export const resendWebhookRouter = Router();
 
@@ -40,9 +41,19 @@ export const resendWebhookRouter = Router();
  * Failure modes:
  *   - Missing RESEND_WEBHOOK_SECRET → 503 (never accept unsigned webhooks).
  *   - Bad signature / stale timestamp → 401, no body parse, no DB write.
- *   - Unknown message id → 200 ignored (logged with status=IGNORED) — the
- *     Resend account may serve other environments; don't thrash retries.
+ *   - Unknown message id → 200 ignored, a warning in the log and NO row
+ *     (Brief 2-1 §9.4: a payload that resolves to no tenant is dropped) —
+ *     the Resend account may serve other environments; don't thrash retries.
+ *
+ * Tenant (Brief 2-1 §9.4): the notification the message id names resolves
+ * the tenant before anything is written; the event row, the status flip
+ * and the suppression are all that tenant's.
  */
+
+/** The email notification a Resend message id belongs to (central sends stamp providerMessageId; older ones externalRef). */
+function messageWhere(messageId: string) {
+  return { channel: 'EMAIL' as const, OR: [{ providerMessageId: messageId }, { externalRef: messageId }] };
+}
 resendWebhookRouter.post(
   '/',
   raw({ type: 'application/json', limit: '256kb' }),
@@ -86,6 +97,21 @@ resendWebhookRouter.post(
 
     const HANDLED = new Set(['email.delivered', 'email.bounced', 'email.complained']);
 
+    // §9.4: the message's notification names the tenant; a message no
+    // tenant sent is logged and dropped before any write.
+    const messageId = payload.data?.email_id;
+    const tenantId =
+      typeof messageId === 'string' && messageId
+        ? await resolveTenantFrom(async () =>
+            (await prisma.notification.findFirst({ where: messageWhere(messageId), orderBy: { createdAt: 'desc' }, select: { tenantId: true } }))?.tenantId,
+          )
+        : null;
+    if (!tenantId) {
+      console.warn(`[resend-webhook] event ${svixId} (${eventType}): message ${messageId ?? '(missing)'} matches no notification; dropped`);
+      res.status(200).json({ ok: true, ignored: HANDLED.has(eventType) ? 'unknown_message_id' : 'unhandled_event_type' });
+      return;
+    }
+
     try {
       const result = await prisma.$transaction(
         async (tx) => {
@@ -123,17 +149,10 @@ resendWebhookRouter.post(
             return { kind: 'unhandled' as const };
           }
 
-          const messageId = payload.data?.email_id;
           const notification =
             typeof messageId === 'string' && messageId
               ? await tx.notification.findFirst({
-                  where: {
-                    channel: 'EMAIL',
-                    OR: [
-                      { providerMessageId: messageId },
-                      { externalRef: messageId },
-                    ],
-                  },
+                  where: messageWhere(messageId),
                   orderBy: { createdAt: 'desc' },
                 })
               : null;
@@ -180,14 +199,12 @@ resendWebhookRouter.post(
             // admin un-suppress than to keep hitting a dead address.
             const transient = bounce?.type?.toLowerCase() === 'transient';
             if (!transient && recipientEmail) {
-              await tx.emailSuppression.upsert({
-                where: { email: recipientEmail },
-                create: {
-                  email: recipientEmail,
-                  reason: 'BOUNCED',
-                  notes: bounceDesc ? bounceDesc.slice(0, 500) : null,
-                },
-                update: {},
+              // Insert-if-absent: the address is unique across the platform
+              // (one sending domain, Brief 2-1 decision 5), so a row another
+              // tenant's bounce already wrote must not collide here.
+              await tx.emailSuppression.createMany({
+                data: [{ email: recipientEmail, reason: 'BOUNCED', notes: bounceDesc ? bounceDesc.slice(0, 500) : null }],
+                skipDuplicates: true,
               });
               suppressedEmail = recipientEmail;
               suppressionReason = 'BOUNCED';
@@ -201,17 +218,13 @@ resendWebhookRouter.post(
               },
             });
             if (recipientEmail) {
-              await tx.emailSuppression.upsert({
-                where: { email: recipientEmail },
-                create: {
-                  email: recipientEmail,
-                  reason: 'COMPLAINED',
-                  notes: 'spam complaint via Resend webhook',
-                },
-                // A complaint outranks a bounce: always record the
-                // stronger do-not-contact signal.
-                update: { reason: 'COMPLAINED' },
+              await tx.emailSuppression.createMany({
+                data: [{ email: recipientEmail, reason: 'COMPLAINED', notes: 'spam complaint via Resend webhook' }],
+                skipDuplicates: true,
               });
+              // A complaint outranks a bounce: always record the stronger
+              // do-not-contact signal (on this tenant's row).
+              await tx.emailSuppression.updateMany({ where: { email: recipientEmail }, data: { reason: 'COMPLAINED' } });
               suppressedEmail = recipientEmail;
               suppressionReason = 'COMPLAINED';
             }

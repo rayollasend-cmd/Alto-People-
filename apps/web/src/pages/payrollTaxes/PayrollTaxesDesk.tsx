@@ -68,7 +68,7 @@ export function PayrollTaxesDesk() {
       breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Payroll taxes' }]}
       secondaryActions={
         <Button asChild variant="ghost" size="sm">
-          <Link to="/payroll/tax">Tax forms</Link>
+          <Link to="/payroll/garnishments">Garnishments</Link>
         </Button>
       }
       summary={overview.data && tab === 'overview' ? <FilingBanner filing={overview.data.filing} /> : null}

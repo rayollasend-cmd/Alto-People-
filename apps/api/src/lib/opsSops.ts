@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, OpsPeriod, OpsResponseType } from '@prisma/client';
 import { RETIRED_V1_NAMES, WALMART_METRIC_LABEL, WALMART_TEMPLATES } from './opsSopsWalmart.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * The seeded SOP library + position mapping for the Store Operations
@@ -298,7 +299,7 @@ export async function ensureOpsSeed(prisma: PrismaClient): Promise<void> {
   if (total === 0 || walmart === 0) {
     await prisma.$transaction(
       async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('alto.ops_sop_seed'))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`alto.ops_sop_seed:${tenantIdForWrite()}`}))`;
         if ((await tx.opsSopTemplate.count()) === 0) {
           for (const tpl of OPS_SEED_TEMPLATES) await createTemplate(tx, tpl);
           return;

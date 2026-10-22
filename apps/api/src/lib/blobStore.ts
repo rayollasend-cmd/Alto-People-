@@ -11,6 +11,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { env } from '../config/env.js';
 import { resolveStoragePath } from './storage.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Driver-based blob storage for document/photo/PDF blobs.
@@ -53,6 +54,32 @@ export interface BlobStore {
   getStream(key: string): Promise<Readable | null>;
   exists(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
+}
+
+/**
+ * Brief 2-1 §9.6: every NEW object lives under its tenant —
+ * `tenants/<tenantId>/<key>` — so one tenant's files are one prefix (a
+ * bucket policy, a backup, an export or an erasure can name it) and a key
+ * built from another tenant's ids can never land on top of this one's.
+ *
+ * Objects written before this rule keep their stored key: every row holds
+ * the full key it was written under, and reads always use the stored key,
+ * so nothing is re-keyed on deploy (scripts/rekey-blobs-by-tenant.ts moves
+ * old objects under their tenant when the owner chooses to).
+ */
+export const TENANT_BLOB_PREFIX = 'tenants/';
+
+/** The key a new object is written under: the tenant in context (or `tenantId`) first. Idempotent. */
+export function tenantBlobKey(key: string, tenantId: string = tenantIdForWrite()): string {
+  const rel = key.replace(/^\/+/, '');
+  if (rel.startsWith(TENANT_BLOB_PREFIX)) return rel;
+  return `${TENANT_BLOB_PREFIX}${tenantId}/${rel}`;
+}
+
+/** The tenant a key was written under, or null for a key from before the tenant prefix. */
+export function blobKeyTenant(key: string): string | null {
+  const m = /^tenants\/([0-9a-f-]{36})\//i.exec(key);
+  return m ? m[1]!.toLowerCase() : null;
 }
 
 function isEnoent(err: unknown): boolean {

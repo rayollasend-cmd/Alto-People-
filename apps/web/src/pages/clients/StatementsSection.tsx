@@ -90,6 +90,7 @@ function StatementDetail({ s }: { s: ClientStatement }) {
               <td className="py-1.5 pr-3">
                 Total — {snap.totals.regularHours.toFixed(2)} reg +{' '}
                 {snap.totals.otHours.toFixed(2)} OT
+                {(snap.totals.doubleTimeHours ?? 0) > 0 && ` + ${snap.totals.doubleTimeHours!.toFixed(2)} DT`}
               </td>
               <td className="py-1.5 px-2 text-right">{snap.totals.hours.toFixed(2)}</td>
               <td />

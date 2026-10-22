@@ -2,10 +2,11 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
-import { getBlobStore } from './blobStore.js';
+import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { getBrandingSync } from './branding.js';
 import { hashSignedPdf, renderSignedAgreement } from './esign.js';
 import { RIDE_AUTHORIZATION_VERSION, rideAuthorizationBody, rideAuthorizationTitle, toRideAuthLang, type RideAuthLang } from './rideAuthorizationContent.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Van ride charge authorization (Brief 1A-3).
@@ -52,7 +53,7 @@ export async function rideRateOn(db: Db, on: Date = new Date()): Promise<RideRat
   // settings row, dated so every ride on file falls under it — the same
   // seed the migration wrote.
   if ((await db.transportRate.count()) === 0) {
-    const settings = await db.transportSettings.findUnique({ where: { id: 'default' } });
+    const settings = await db.transportSettings.findUnique({ where: { tenantId: tenantIdForWrite() } });
     const seeded = await db.transportRate.create({
       data: { fareCents: settings?.fareCents ?? 500, noShowFeeCents: settings?.noShowFeeCents ?? 100, effectiveFrom: dateOnly('2024-01-01') },
     });
@@ -81,7 +82,7 @@ export async function setRideRate(db: Db, input: { fareCents: number; noShowFeeC
   }
   // The settings row mirrors the rate in force today so older readers keep working.
   const today = await rideRateOn(db, now);
-  if (today) await db.transportSettings.upsert({ where: { id: 'default' }, create: { id: 'default', fareCents: today.fareCents, noShowFeeCents: today.noShowFeeCents }, update: { fareCents: today.fareCents, noShowFeeCents: today.noShowFeeCents } });
+  if (today) await db.transportSettings.upsert({ where: { tenantId: tenantIdForWrite() }, create: { tenantId: tenantIdForWrite(), fareCents: today.fareCents, noShowFeeCents: today.noShowFeeCents }, update: { fareCents: today.fareCents, noShowFeeCents: today.noShowFeeCents } });
   enqueueAudit({ actorUserId, clientId: null, action: 'transport.rate_set', entityType: 'TransportRate', entityId: row.id, metadata: { fareCents: input.fareCents, noShowFeeCents: input.noShowFeeCents, effectiveFrom: from } }, 'transport');
   return toRate(row);
 }
@@ -191,7 +192,7 @@ export async function signRideAuthorization(
     typedName,
   });
   const pdfHash = hashSignedPdf(pdf);
-  const relativeKey = `esign/ride-authorization/${associate.id}/${pdfHash.slice(0, 16)}.pdf`;
+  const relativeKey = tenantBlobKey(`esign/ride-authorization/${associate.id}/${pdfHash.slice(0, 16)}.pdf`);
   await getBlobStore().put(relativeKey, pdf, 'application/pdf');
 
   let released = { count: 0 };

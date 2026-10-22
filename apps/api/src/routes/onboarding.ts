@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { issuePayNoticeInBackground } from '../lib/payNotices.js';
+import { shiftTimezone } from '../lib/shiftZone.js';
 import { ensureNewHireReport } from '../lib/newHireReporting.js';
 import { openEmployment } from '../lib/employment.js';
 import { getBrandingSync } from '../lib/branding.js';
@@ -61,10 +62,11 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { runStaleNudgeSweep } from '../lib/staleNudge.js';
+import { markApplicationReminded } from '../lib/onboardingReminders.js';
 import { send } from '../lib/notifications.js';
 import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
 import { autoFileOfferLetter } from '../lib/offerLetters.js';
-import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
+import { blobExistsForListing, getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import {
   assertCanModifyApplication,
   effectiveClientIdFilter,
@@ -142,6 +144,7 @@ import { scopeAssociates } from '../lib/scope.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 import { queueScheduleRecompute } from '../lib/payScheduleTriggers.js';
+import { idleDraftsWhere } from '../lib/applicationFilters.js';
 
 export const onboardingRouter = Router();
 
@@ -299,7 +302,7 @@ export async function inviteOneApplicant(
   const emailDueAt = holdSeconds ? new Date(Date.now() + holdSeconds * 1000) : null;
 
   const result = await prisma.$transaction(async (tx) => {
-    let associate = await tx.associate.findUnique({ where: { email } });
+    let associate = await tx.associate.findUnique({ where: { tenantId_email: { tenantId: tenantIdForWrite(), email } } });
     // A tombstoned (offboarded/erased) associate or user occupies the
     // unique email but is invisible to every deletedAt-filtered surface —
     // attaching a fresh invite to it produced a "new hire" that never
@@ -617,6 +620,9 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       statusWhere = { status: { in: ['SUBMITTED', 'IN_REVIEW'] } };
     } else if (status === 'ARCHIVED') {
       statusWhere = { status: { in: ['APPROVED', 'REJECTED', 'CANCELLED'] } };
+    } else if (status === 'IDLE_DRAFTS') {
+      // Drafts nobody has moved in a week — the Inbox's "drafts gone quiet".
+      statusWhere = idleDraftsWhere();
     } else if (status && status !== 'ALL') {
       statusWhere = {
         status: status as Prisma.ApplicationWhereInput['status'],
@@ -790,7 +796,7 @@ export function fetchInFlightApplications(
       client: { select: { name: true } },
       checklist: {
         include: {
-          tasks: { select: { status: true, title: true, order: true } },
+          tasks: { select: { id: true, status: true, title: true, order: true, remindedAt: true } },
         },
       },
     },
@@ -817,13 +823,15 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
   try {
     const where: Prisma.ApplicationWhereInput = scopeApplications(req.user!);
 
-    const [grouped, inFlightRows] = await Promise.all([
+    const [grouped, inFlightRows, idleDrafts] = await Promise.all([
       prisma.application.groupBy({
         by: ['status'],
         where,
         _count: { _all: true },
       }),
       fetchInFlightApplications(req.user!),
+      // The "Idle drafts" chip: the Inbox's "drafts gone quiet".
+      prisma.application.count({ where: { AND: [where, idleDraftsWhere()] } }),
     ]);
 
     // Seeded with EVERY status at 0. The contract types this as a total
@@ -890,6 +898,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       avgPercent,
       staleSamples: stale.slice(0, 3),
       bouncedSamples: bounced.slice(0, 3),
+      idleDrafts,
     });
   } catch (err) {
     next(err);
@@ -1043,7 +1052,7 @@ async function firstDayView(app: Awaited<ReturnType<typeof firstDayApplication>>
   const shift = await prisma.shift.findFirst({
     where: { assignedAssociateId: app.associateId, status: 'ASSIGNED', startsAt: { gte: from } },
     orderBy: { startsAt: 'asc' },
-    select: { id: true, startsAt: true, locationRel: { select: { name: true } }, location: true },
+    select: { id: true, startsAt: true, locationRel: { select: { name: true, timezone: true } }, location: true },
   });
   return {
     startDate: ymdOf(app.startDate),
@@ -1059,7 +1068,7 @@ async function firstDayView(app: Awaited<ReturnType<typeof firstDayApplication>>
       validAtClient: !!pin && (pin.clientId ?? null) === (app.clientId ?? null),
     },
     firstShift: shift
-      ? { id: shift.id, startsAt: shift.startsAt.toISOString(), locationName: shift.locationRel?.name ?? shift.location ?? null }
+      ? { id: shift.id, startsAt: shift.startsAt.toISOString(), locationName: shift.locationRel?.name ?? shift.location ?? null, timezone: shiftTimezone(shift.locationRel) }
       : null,
     i9: {
       section1CompletedAt: i9?.section1CompletedAt?.toISOString() ?? null,
@@ -3755,7 +3764,7 @@ onboardingRouter.post(
       // deleting the duplicate) hard-deleted the blob out from under the
       // VERIFIED row, silently destroying federal I-9 evidence.
       const docId = newDocId();
-      const relativeKey = `i9/${app.associateId}/${docId}-${sha.slice(0, 16)}${sideTag}${ext}`;
+      const relativeKey = tenantBlobKey(`i9/${app.associateId}/${docId}-${sha.slice(0, 16)}${sideTag}${ext}`);
       // Driver put() creates intermediate directories on the local driver.
       await getBlobStore().put(relativeKey, file.buffer, file.mimetype);
 
@@ -4124,7 +4133,7 @@ onboardingRouter.post(
       const pdfHash = hashSignedPdf(pdf);
 
       // Persist to esign/<agreementId>/<hash>.pdf (relative blob key).
-      const relativeKey = `esign/${agreement.id}/${pdfHash.slice(0, 16)}.pdf`;
+      const relativeKey = tenantBlobKey(`esign/${agreement.id}/${pdfHash.slice(0, 16)}.pdf`);
       await getBlobStore().put(relativeKey, pdf, 'application/pdf');
 
       const result = await prisma.$transaction(async (tx) => {
@@ -4917,6 +4926,11 @@ export async function deliverNudge(
     },
   });
 
+  // A nudge that went out is a reminder about every task still open on
+  // this application (lib/onboardingReminders): the automatic sweeps leave
+  // those tasks alone for 3 days — HR just reached out.
+  if (!emailFailed) await markApplicationReminded(app.id, new Date());
+
   await recordOnboardingEvent({
     actorUserId: actor ? actor.userId : null,
     action: 'onboarding.nudge_sent',
@@ -4994,6 +5008,9 @@ export function staleNudgeContent(
   firstName: string,
   percentComplete: number,
   blockedOnTitle: string | null,
+  /** Every task this nudge reminds about (the automatic sweep folds them
+   *  into one email); listed when there is more than the next step. */
+  stillOpen: readonly string[] = [],
 ): { subject: string; body: string } {
   const name = firstName.trim() || 'there';
   const subject = blockedOnTitle
@@ -5005,6 +5022,7 @@ export function staleNudgeContent(
     blockedOnTitle
       ? `Your onboarding is ${percentComplete}% done — the next step is '${blockedOnTitle}'. It only takes a few minutes.`
       : `Your onboarding is ${percentComplete}% done — just a few tasks left, and each only takes a few minutes.`,
+    ...(stillOpen.length > 1 ? ['', 'Still open:', ...stillOpen.map((t) => `  • ${t}`)] : []),
     '',
     "Let us know if you're stuck.",
   ].join('\n');

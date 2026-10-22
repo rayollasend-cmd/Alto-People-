@@ -40,7 +40,8 @@ const clientLimiter = rateLimit({
   limit: isTest ? 100_000 : 600,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: (req: Request) => `v1:client:${req.apiClient?.id ?? 'none'}`,
+  // Brief 2-1 §9.6: the client's bucket leads with its tenant.
+  keyGenerator: (req: Request) => `v1:t:${req.apiClient?.tenantId ?? 'none'}:client:${req.apiClient?.id ?? 'none'}`,
   message: { error: { code: 'rate_limited', message: 'Too many requests for this client. Try again in a minute.' } },
 });
 /** 3,000 a minute per tenant across all its clients. */

@@ -39,12 +39,16 @@ export interface Reasoned {
 }
 
 export interface PenaltyOutcome extends Reasoned {
-  kind: 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS';
+  kind: 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS' | 'SPREAD_OF_HOURS' | 'SPLIT_SHIFT';
   /** The local work date it belongs to. */
   date: string;
   hours: number;
   /** A flat premium in cents, where the law sets one (NYC). */
   cents?: number;
+  /** The hours are paid at this rate (cents an hour), not the person's (spread of hours: the minimum wage). */
+  rateCents?: number;
+  /** The premium shrinks by (person's rate − rateCents) × these hours, never below zero: what the day paid above the minimum (lib/laborRules/hours.penaltyAmount). */
+  offsetHours?: number;
   entryId?: string;
   /** False until every set behind it is signed ACTIVE (decision 8): computed and shown, not paid. */
   payable: boolean;
@@ -71,6 +75,24 @@ export interface TimeOutcome {
   fingerprints: string[];
   /** Whether pay may use this outcome (every contributing set ACTIVE). */
   payable: boolean;
+  /**
+   * Where each entry's hours landed (unrounded): the week's or day's
+   * buckets filled chronologically — regular first, then overtime, then
+   * double time — so the overtime is always the latest hours worked. An
+   * entry with no paid time has no allocation. The totals above are the
+   * pay figures; these split them across entries for per-store, per-client
+   * and per-day views that must add up to the same buckets.
+   */
+  allocations: Map<WorkEntry, EntryAllocation>;
+}
+
+export interface EntryAllocation {
+  /** The local work date the entry counts on (its clock-in, in the site's zone). */
+  date: string;
+  workedHours: number;
+  regularHours: number;
+  overtimeHours: number;
+  doubleTimeHours: number;
 }
 
 export interface TimeContext {
@@ -84,8 +106,17 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const fmt = (h: number) => h.toFixed(2);
 
 /** Local calendar date, hour and weekday of an instant in a zone. */
+const partsFormats = new Map<string, Intl.DateTimeFormat>();
+
 export function localParts(d: Date, timezone: string): { date: string; minutes: number; weekday: number } {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short', hourCycle: 'h23' }).formatToParts(d);
+  // One formatter per zone: building one costs far more than formatting, and
+  // estimators run this over tens of thousands of entries.
+  let f = partsFormats.get(timezone);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short', hourCycle: 'h23' });
+    partsFormats.set(timezone, f);
+  }
+  const parts = f.formatToParts(d);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
   const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
   return { date: `${get('year')}-${get('month')}-${get('day')}`, minutes: Number(get('hour')) * 60 + Number(get('minute')), weekday };
@@ -114,11 +145,51 @@ interface DayAgg {
   date: string;
   ms: number;
   rules: ResolvedRules;
+  /** The day's entries and their paid ms, chronological. */
+  parts: Array<{ e: WorkEntry; ms: number }>;
+}
+
+/**
+ * Fill entries chronologically through the buckets, in order: regular,
+ * overtime, double time. Every paid hour lands in exactly one bucket (float
+ * dust past the last bucket stays with the bucket before it), so the
+ * allocations always add up to the hours worked.
+ */
+function fill(parts: ReadonlyArray<{ e: WorkEntry; ms: number }>, date: string | ((e: WorkEntry) => string), reg: number, ot: number, dt: number, out: Map<WorkEntry, EntryAllocation>): void {
+  let r = Math.max(0, reg);
+  let o = Math.max(0, ot);
+  for (const { e, ms } of parts) {
+    const worked = ms / HOUR;
+    let h = worked;
+    let a = Math.min(h, r);
+    r -= a;
+    h -= a;
+    let b = Math.min(h, o);
+    o -= b;
+    h -= b;
+    let c = 0;
+    if (dt > 0) c = h;
+    else if (ot > 0) b += h;
+    else a += h;
+    out.set(e, { date: typeof date === 'string' ? date : date(e), workedHours: worked, regularHours: a, overtimeHours: b, doubleTimeHours: c });
+  }
+}
+
+/**
+ * A workweek's identity: the local date its first day starts on. Two sites
+ * in different zones share a workweek when it starts on the same local date
+ * (a Destin Monday and a Pensacola Friday of the same Saturday-start week),
+ * so a person's hours at both count toward one 40 — keying by the UTC
+ * instant of each zone's midnight split them into two weeks, each under 40.
+ */
+export function weekKeyOf(weekStart: Date, timezone: string): string {
+  return localParts(weekStart, timezone).date;
 }
 
 export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): TimeOutcome {
   const closed = entries.filter((e) => e.clockOutAt && e.clockOutAt > e.clockInAt).slice().sort((a, b) => a.clockInAt.getTime() - b.clockInAt.getTime());
-  const weeks = new Map<string, { start: Date; days: Map<string, DayAgg>; ms: number; rules: ResolvedRules[] }>();
+  const weeks = new Map<string, { key: string; start: Date; days: Map<string, DayAgg>; ms: number; rules: ResolvedRules[]; parts: Array<{ e: WorkEntry; ms: number; date: string }> }>();
+  const allocations = new Map<WorkEntry, EntryAllocation>();
   const fingerprints = new Set<string>();
   let payable = true;
   let otMult = 0;
@@ -132,18 +203,20 @@ export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): T
     const ms = paidMs(e, paidUpTo);
     if (ms <= 0) continue;
     const counted = ms - paidMs(e);
-    if (counted > 0) breakReasons.push({ weekKey: String(ctx.weekStart(e.clockInAt, e.timezone).getTime()), reason: `Short breaks counted as worked ${date}: ${Math.round(counted / 60_000)} min (≤ ${paidUpTo} min each), ${by(rules, 'breaks.paidUpToMinutes')}` });
+    if (counted > 0) breakReasons.push({ weekKey: weekKeyOf(ctx.weekStart(e.clockInAt, e.timezone), e.timezone), reason: `Short breaks counted as worked ${date}: ${Math.round(counted / 60_000)} min (≤ ${paidUpTo} min each), ${by(rules, 'breaks.paidUpToMinutes')}` });
     fingerprints.add(rules.fingerprint);
     payable &&= rules.payable;
     otMult = Math.max(otMult, rules.params.overtime?.weeklyMultiplier ?? 1.5, rules.params.overtime?.dailyThreshold != null ? (rules.params.overtime?.dailyMultiplier ?? 1.5) : 0);
     dtMult = Math.max(dtMult, rules.params.overtime?.doubleMultiplier ?? 2);
     const start = ctx.weekStart(e.clockInAt, e.timezone);
-    const key = String(start.getTime());
-    const w = weeks.get(key) ?? { start, days: new Map<string, DayAgg>(), ms: 0, rules: [] };
+    const key = weekKeyOf(start, e.timezone);
+    const w = weeks.get(key) ?? { key, start, days: new Map<string, DayAgg>(), ms: 0, rules: [], parts: [] };
     w.ms += ms;
     w.rules.push(rules);
-    const d = w.days.get(date) ?? { date, ms: 0, rules };
+    w.parts.push({ e, ms, date });
+    const d = w.days.get(date) ?? { date, ms: 0, rules, parts: [] };
     d.ms += ms;
+    d.parts.push({ e, ms });
     w.days.set(date, d);
     weeks.set(key, w);
   }
@@ -159,7 +232,7 @@ export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): T
       return t !== null && (acc.t === null || t < acc.t) ? { t, r } : acc;
     }, { t: null, r: null });
     const daily = w.rules.some((r) => r.params.overtime?.dailyThreshold != null || r.params.overtime?.dailyDoubleThreshold != null || r.params.overtime?.seventhDayRule);
-    const reasons: string[] = breakReasons.filter((b) => b.weekKey === String(w.start.getTime())).map((b) => b.reason);
+    const reasons: string[] = breakReasons.filter((b) => b.weekKey === w.key).map((b) => b.reason);
     let wr = 0;
     let wo = 0;
     let wd = 0;
@@ -173,6 +246,8 @@ export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): T
         wo = h - weekly.t;
         reasons.push(`Overtime applied: ${fmt(h)} h > ${weekly.t} (weekly), ${by(weekly.r!, 'overtime.weeklyThreshold')}`);
       }
+      const dateOf = new Map(w.parts.map((p) => [p.e, p.date]));
+      fill(w.parts, (e) => dateOf.get(e)!, wr, wo, 0, allocations);
     } else {
       // Day by day (the California method): daily overtime and double time first, then the weekly
       // threshold converts regular hours past it, so no hour is counted twice.
@@ -209,6 +284,7 @@ export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): T
         wr += dr;
         wo += dO;
         wd += dD;
+        fill(d.parts, d.date, dr, dO, dD, allocations);
       });
     }
     reg += wr;
@@ -227,6 +303,7 @@ export function evaluateTime(entries: readonly WorkEntry[], ctx: TimeContext): T
     penalties: penalties(closed, ctx),
     fingerprints: [...fingerprints],
     payable,
+    allocations,
   };
 }
 
@@ -297,7 +374,59 @@ function penalties(entries: readonly WorkEntry[], ctx: TimeContext): PenaltyOutc
     }
     prev = e;
   }
+  spreadOfHours(entries, ctx, add);
   return out;
+}
+
+/**
+ * Spread of hours and split shifts (NY 12 NYCRR 142-2.4, CA Wage Orders
+ * §4(C)): one premium a day — an hour at the minimum wage — when the day's
+ * spread runs past the threshold or its work isn't consecutive. Days are
+ * the site's local dates (an entry counts on its clock-in date).
+ */
+function spreadOfHours(entries: readonly WorkEntry[], ctx: TimeContext, add: (p: PenaltyOutcome) => void): void {
+  const days = new Map<string, WorkEntry[]>();
+  for (const e of entries) {
+    const { date } = localParts(e.clockInAt, e.timezone);
+    const list = days.get(date) ?? [];
+    list.push(e);
+    days.set(date, list);
+  }
+  for (const [date, list] of days) {
+    const first = list[0]!;
+    const rules = ctx.rulesFor(first, date);
+    const sp = rules.params.spreadOfHours;
+    if (!sp || !(sp.premiumHours && sp.premiumHours > 0) || (sp.thresholdHours == null && sp.splitGapMinutes == null)) continue;
+    const start = Math.min(...list.map((e) => e.clockInAt.getTime()));
+    const end = Math.max(...list.map((e) => e.clockOutAt.getTime()));
+    const spread = (end - start) / HOUR;
+    // The longest time off the clock inside the day: gaps between punches and breaks within them.
+    let longestGapMin = 0;
+    const sorted = [...list].sort((a, b) => a.clockInAt.getTime() - b.clockInAt.getTime());
+    let lastOut = sorted[0]!.clockOutAt.getTime();
+    for (const e of sorted) {
+      longestGapMin = Math.max(longestGapMin, (e.clockInAt.getTime() - lastOut) / 60_000);
+      lastOut = Math.max(lastOut, e.clockOutAt.getTime());
+      for (const b of e.breaks ?? []) longestGapMin = Math.max(longestGapMin, ((b.endedAt ?? e.clockOutAt).getTime() - b.startedAt.getTime()) / 60_000);
+    }
+    const overSpread = sp.thresholdHours != null && spread > sp.thresholdHours;
+    const split = sp.splitGapMinutes != null && longestGapMin > sp.splitGapMinutes;
+    if (!overSpread && !split) continue;
+    const minimum = rules.params.minimumWage?.rateCents;
+    if (minimum == null) continue;
+    const dayHours = list.reduce((a, e) => a + paidMs(e, rules.params.breaks?.paidUpToMinutes ?? null), 0) / HOUR;
+    const why = overSpread ? `${fmt(spread)} h from first punch to last > ${sp.thresholdHours}` : `work split by ${Math.round(longestGapMin)} min off the clock (> ${sp.splitGapMinutes})`;
+    add({
+      kind: overSpread ? 'SPREAD_OF_HOURS' : 'SPLIT_SHIFT',
+      date,
+      hours: sp.premiumHours,
+      rateCents: minimum,
+      ...(sp.offsetAboveMinimum ? { offsetHours: round2(dayHours) } : {}),
+      entryId: first.id,
+      payable: rules.payable,
+      reason: `${overSpread ? 'Spread of hours' : 'Split shift'} ${date}: ${why}, ${sp.premiumHours} h at the minimum wage ($${(minimum / 100).toFixed(2)})${sp.offsetAboveMinimum ? ', less what the day paid above it' : ''}, ${by(rules, sp.thresholdHours != null && overSpread ? 'spreadOfHours.thresholdHours' : 'spreadOfHours.splitGapMinutes')}`,
+    });
+  }
 }
 
 /* ------------------------------------------------------------ schedule */
@@ -355,8 +484,8 @@ export function evaluateSchedule(draft: ScheduleShift, ctx: ScheduleContext): Sc
   const p = ctx.rules.params;
   const sev = (k: 'overtime' | 'restBetweenShifts' | 'predictive'): Severity => p.severity?.[k] ?? 'warn';
   const { date } = localParts(draft.startsAt, draft.timezone);
-  const weekKey = ctx.weekStart(draft.startsAt, draft.timezone).getTime();
-  const sameWeek = ctx.existing.filter((s) => ctx.weekStart(s.startsAt, s.timezone).getTime() === weekKey);
+  const weekKey = weekKeyOf(ctx.weekStart(draft.startsAt, draft.timezone), draft.timezone);
+  const sameWeek = ctx.existing.filter((s) => weekKeyOf(ctx.weekStart(s.startsAt, s.timezone), s.timezone) === weekKey);
   const sameDay = ctx.existing.filter((s) => localParts(s.startsAt, s.timezone).date === date);
   const weekH = sameWeek.reduce((a, s) => a + hoursOf(s), 0) + hoursOf(draft);
   const dayH = sameDay.reduce((a, s) => a + hoursOf(s), 0) + hoursOf(draft);

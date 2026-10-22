@@ -1,14 +1,20 @@
 /**
  * Brief 2-2 — the labor rules engine (docs/labor-rules-investigation.md).
  *
- *   Step 1 (this): rule families, packs in code, resolution, evaluators with
- *   reason lines. Not wired to pay: nothing in the app calls it yet. Step 2
- *   stores the sets (LaborRuleSet), step 3 runs it in shadow beside today's
- *   code, step 4 switches pay per tenant after the owner signs the dry run.
+ *   params/packs/resolve  the rule families, the shipped packs, resolution;
+ *   evaluate              evaluateTime (buckets, premiums, reasons) and
+ *                         evaluateSchedule (the publish gate);
+ *   hours                 splitHours — the ONE split every caller uses: the
+ *                         paycheck, the payroll sheet, the client statement,
+ *                         the estimates and the cost views (audit 2026-10-21
+ *                         #11); payContext loads what pay splits by;
+ *   store/shadow/live     stored sets, the shadow beside each run, and the
+ *                         per-jurisdiction LIVE switch with counsel's sign-off.
  */
 export * from './params.js';
 export * from './packs.js';
 export * from './resolve.js';
 export * from './evaluate.js';
+export * from './hours.js';
 export * from './store.js';
 export * from './shadow.js';

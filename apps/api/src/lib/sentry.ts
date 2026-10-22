@@ -1,6 +1,21 @@
 import * as Sentry from '@sentry/node';
 import { env } from '../config/env.js';
 import { scrubDeep, stripUrlSecrets } from '@alto-people/shared';
+import { tenantContext } from './tenant.js';
+
+/**
+ * Brief 2-1 §9.6: every event carries the tenant it happened for. The
+ * request and job wrappers tag their isolation scope (lib/tenantTelemetry);
+ * this stamps the tag from the live tenant context at send time for
+ * anything captured outside them (an API-key request that switched tenant,
+ * a background promise). A tag already set wins.
+ */
+export function stampTenant<E extends { tags?: Record<string, unknown> }>(event: E): E {
+  const ctx = tenantContext();
+  if (!ctx || event.tags?.tenant) return event;
+  event.tags = { ...event.tags, tenant: ctx.tenantId, tenant_source: ctx.platform ? 'platform' : ctx.source };
+  return event;
+}
 
 /**
  * Sentry initialization. Called once at process boot, BEFORE any other
@@ -73,7 +88,10 @@ export function initSentry(): void {
         event.request.headers = scrubDeep(event.request.headers) as typeof event.request.headers;
       }
       if (event.extra) event.extra = scrubDeep(event.extra) as typeof event.extra;
-      return event;
+      return stampTenant(event);
+    },
+    beforeSendTransaction(event) {
+      return stampTenant(event);
     },
   });
 }

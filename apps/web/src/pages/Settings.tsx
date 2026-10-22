@@ -10,6 +10,7 @@ import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { QR_COLORS } from '@/lib/qrColors';
 import { useAuth, useRoleLabel, useTerm } from '@/lib/auth';
 import { termizeText } from '@/lib/modules';
 import { useConfirm } from '@/lib/confirm';
@@ -454,7 +455,7 @@ function MfaCard() {
       const dataUrl = await QRCode.toDataURL(res.provisioningUri, {
         margin: 1,
         width: 192,
-        color: { dark: '#0f172a', light: '#ffffff' },
+        color: QR_COLORS,
       });
       setQrDataUrl(dataUrl);
     } catch (err) {

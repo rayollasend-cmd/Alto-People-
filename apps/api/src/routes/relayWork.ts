@@ -9,7 +9,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser, trackNotificationWork } from '../lib/notify.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, safeContentDisposition, verifyFileMagic } from '../lib/uploads.js';
 
 /**
@@ -499,7 +499,7 @@ relayWorkRouter.post('/relay/files', STAFF, upload.single('file'), async (req, r
       if (!a) throw new HttpError(404, 'associate_not_found', 'Associate not found.');
     }
     const id = randomUUID();
-    const key = `relay-work/${id}/${name}`;
+    const key = tenantBlobKey(`relay-work/${id}/${name}`);
     await getBlobStore().put(key, req.file.buffer, req.file.mimetype);
     const created = await prisma.relayFile.create({
       data: {

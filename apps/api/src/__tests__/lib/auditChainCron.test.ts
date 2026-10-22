@@ -22,7 +22,7 @@ afterAll(async () => {
 describe('runAuditChainChecks', () => {
   it('records a clean check, then detects a forced edit and alerts the security role once', async () => {
     const { user: admin } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    await prisma.orgSetting.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', securityContactEmail: 'security@example.test' }, update: { securityContactEmail: 'security@example.test' } });
+    await prisma.orgSetting.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { securityContactEmail: 'security@example.test' }, update: { securityContactEmail: 'security@example.test' } });
     await runWithTenant(ALTO_TENANT_ID, 'job', async () => {
       for (let i = 0; i < 4; i += 1) {
         enqueueAudit({ actorUserId: admin.id, clientId: null, tenantId: ALTO_TENANT_ID, action: 'test.step', entityType: 'User', entityId: admin.id, metadata: { i } }, 'test');

@@ -256,7 +256,7 @@ describe('the public careers page', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]).toMatchObject({ to: 'jasmine@example.com', subject: 'We received your application: Overnight Stocker' });
 
-    const c = await prisma.candidate.findUniqueOrThrow({ where: { email: 'jasmine@example.com' } });
+    const c = await prisma.candidate.findFirstOrThrow({ where: { email: 'jasmine@example.com' } });
     // The label the recruiter UI already knows, not a raw constant.
     expect(c.source).toBe('careers-page');
     const events = (await a.get(`/recruiting/candidates/${c.id}/events`)).body.events;

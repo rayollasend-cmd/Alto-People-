@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FilePlus2, FileText } from 'lucide-react';
+import { AlertTriangle, Download, FilePlus2, FileText } from 'lucide-react';
 import {
   amendTaxReturn,
   downloadReturnCsv,
@@ -29,11 +29,55 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
+import { listTaxForms } from '@/lib/payrollTax91Api';
+import { EfileAction } from '@/pages/payrollTax/EfileAction';
+import { FORM_KIND_LABEL, TaxFormsTab } from '@/pages/payrollTax/PayrollTaxHome';
 import { DueBadge, FIGURE_LABEL, ReturnBadge, byColumnOrder, byFigureOrder, dueText, isCountFigure, localToday, quarterName, recentQuarters } from './taxShared';
 
-/** Returns by quarter: what each quarter needs, generate, review, file, amend. */
+/**
+ * Forms an agency sent back: every W-2, W-2c, 1099 (or 941/940) whose e-file
+ * was rejected, with the agency's reason and the way to send it again. The
+ * Inbox's "Tax filings rejected" opens this tab, so the list it counts is
+ * the first thing here.
+ */
+export function RejectedFormsCard() {
+  const q = useQuery({ queryKey: ['payroll-taxes', 'rejected-forms'], queryFn: () => listTaxForms({ efileStatus: 'REJECTED' }) });
+  const rows = q.data?.forms ?? [];
+  if (q.isError) return <QueryError what="the rejected filings" query={q} />;
+  if (q.isLoading || rows.length === 0) return null;
+  return (
+    <Card className="border-alert/40" id="rejected-filings">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-alert" aria-hidden />
+          {`Rejected by the agency (${rows.length})`}
+        </CardTitle>
+        <CardDescription>Fix what the agency named, then send the form again. Until then it isn’t filed.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="divide-y divide-navy-secondary" aria-label="Rejected filings">
+          {rows.map((f) => (
+            <li key={f.id} className="flex flex-wrap items-start gap-x-3 gap-y-2 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-ink">
+                  {`${FORM_KIND_LABEL[f.kind]} · ${f.taxYear}${f.quarter ? ` Q${f.quarter}` : ''}${f.associateName ? ` · ${f.associateName}` : ''}`}
+                </p>
+                <p className="text-xs text-alert">{f.efileRejectionReason ?? 'The agency gave no reason. Check the filing partner’s message.'}</p>
+                {f.efileStatusAt && <p className="text-xs text-ink-muted">{`Rejected ${fmtDateTime(f.efileStatusAt)}`}</p>}
+              </div>
+              <EfileAction formId={f.id} formLabel={FORM_KIND_LABEL[f.kind]} status={f.status} efileStatus={f.efileStatus} onChanged={() => void q.refetch()} />
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Returns by quarter: what each quarter needs, generate, review, file, amend — then the year-end forms. */
 export function ReturnsTab({ provider }: { provider: boolean }) {
   const quarters = recentQuarters();
+  const canManageForms = useAuth().can('process:payroll');
   const [period, setPeriod] = useState(quarters[1] ?? quarters[0]!);
   const [openId, setOpenId] = useState<string | null>(null);
   const qc = useQueryClient();
@@ -60,6 +104,7 @@ export function ReturnsTab({ provider }: { provider: boolean }) {
 
   return (
     <div className="space-y-4">
+      <RejectedFormsCard />
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Quarter" className="w-full sm:w-72">
           {(p) => (
@@ -128,6 +173,14 @@ export function ReturnsTab({ provider }: { provider: boolean }) {
       />
 
       {openId && <ReturnDrawer id={openId} provider={provider} onClose={() => setOpenId(null)} onOpen={setOpenId} />}
+
+      <section aria-labelledby="year-end-forms" className="space-y-3 pt-2">
+        <div>
+          <h2 id="year-end-forms" className="text-base font-semibold text-ink">Year-end forms</h2>
+          <p className="text-sm text-ink-muted">W-2 and 1099 for each person, the 941 and 940 builders, e-file and recipient copies.</p>
+        </div>
+        <TaxFormsTab canManage={canManageForms} />
+      </section>
     </div>
   );
 }

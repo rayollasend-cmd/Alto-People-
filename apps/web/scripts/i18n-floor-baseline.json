@@ -6,8 +6,8 @@
   "src/pages/approvals/ApprovalsHome.tsx": 0,
   "src/pages/SupervisorDashboard.tsx": 0,
   "src/pages/portal/PortalToday.tsx": 0,
-  "src/components/RoleDecisionQueue.tsx": 5,
-  "src/components/attendance/NotInYetCard.tsx": 3,
+  "src/components/RoleDecisionQueue.tsx": 0,
+  "src/components/attendance/NotInYetCard.tsx": 0,
   "src/components/attendance/FillRateTrendCard.tsx": 0,
   "src/components/FloorTeam.tsx": 0,
   "src/components/MyPlanCard.tsx": 0,
@@ -15,7 +15,7 @@
   "src/components/ReadyToScheduleCard.tsx": 0,
   "src/components/floor/CoverShiftCard.tsx": 0,
   "src/components/floor/CoverageGapNotice.tsx": 0,
-  "src/components/floor/CrewTextDialog.tsx": 2,
+  "src/components/floor/CrewTextDialog.tsx": 0,
   "src/components/floor/FloorFlagDialog.tsx": 0,
   "src/components/floor/FloorFlagsCard.tsx": 0,
   "src/components/floor/FloorWeekStrip.tsx": 0,
@@ -23,5 +23,5 @@
   "src/components/floor/IncidentReportDialog.tsx": 0,
   "src/pages/transport/DriverHome.tsx": 0,
   "src/pages/transport/DriverTools.tsx": 0,
-  "src/pages/scheduling/AvailabilityEditor.tsx": 4
+  "src/pages/scheduling/AvailabilityEditor.tsx": 0
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Search, Sparkles, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import { BadgeCheck, Plus, Search, Sparkles, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -12,6 +12,8 @@ import {
   listSkills,
   searchSkills,
   verifyAssociateSkill,
+  listPendingSkillClaims,
+  type PendingSkillClaim,
   type AssociateSkillEntry,
   type SkillCatalogEntry,
   type SkillLevel,
@@ -66,7 +68,10 @@ function distinctCategories(entries: SkillCatalogEntry[]): string[] {
 export function SkillsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [tab, setTab] = useState<'search' | 'people' | 'catalog'>('search');
+  const [tab, setTab] = useState<'search' | 'people' | 'catalog' | 'claims'>('search');
+  // Skills people added themselves, waiting on a verifier (manage:org).
+  const claims = useQuery({ queryKey: ['skills', 'pending-claims'], queryFn: listPendingSkillClaims, enabled: canManage });
+  const claimCount = claims.data?.claims.length ?? 0;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -75,7 +80,7 @@ export function SkillsHome() {
         subtitle="Find people by what they know — or browse the catalog and add new competencies."
         breadcrumbs={[{ label: 'Skills' }]}
     >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'search' | 'people' | 'catalog')}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'search' | 'people' | 'catalog' | 'claims')}>
         <TabsList>
           <TabsTrigger value="search">
             <Search className="mr-2 h-4 w-4" /> Find people
@@ -86,12 +91,63 @@ export function SkillsHome() {
           <TabsTrigger value="catalog">
             <Sparkles className="mr-2 h-4 w-4" /> Catalog
           </TabsTrigger>
+          {canManage && (
+            <TabsTrigger value="claims">
+              <BadgeCheck className="mr-2 h-4 w-4" /> {claimCount > 0 ? `To verify (${claimCount})` : 'To verify'}
+            </TabsTrigger>
+          )}
         </TabsList>
         <TabsContent value="search"><SearchTab canManage={canManage} /></TabsContent>
         <TabsContent value="people"><PersonSkillsTab canManage={canManage} /></TabsContent>
         <TabsContent value="catalog"><CatalogTab canManage={canManage} /></TabsContent>
+        {canManage && (
+          <TabsContent value="claims">
+            <ClaimsTab claims={claims.data?.claims ?? null} loading={claims.isLoading} onChanged={() => void claims.refetch()} />
+          </TabsContent>
+        )}
       </Tabs>
     </ListTemplate>
+  );
+}
+
+/** Self-claims waiting on a verifier: verify each, or open the person to change it. */
+function ClaimsTab({ claims, loading, onChanged }: { claims: PendingSkillClaim[] | null; loading: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const verify = async (c: PendingSkillClaim) => {
+    setBusy(c.id);
+    try {
+      await verifyAssociateSkill(c.id);
+      toast.success(`${c.skillName} verified for ${c.name}.`);
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not verify it.');
+    } finally {
+      setBusy(null);
+    }
+  };
+  if (loading) return <SkeletonRows count={3} />;
+  if (!claims || claims.length === 0) {
+    return <EmptyState icon={BadgeCheck} title="Nothing to verify" description="Skills people add to their own profile wait here until someone checks them." />;
+  }
+  return (
+    <Card>
+      <CardContent>
+        <ul className="divide-y divide-navy-secondary" aria-label="Skills to verify">
+          {claims.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center gap-2 py-2.5">
+              <span className="min-w-0 flex-1 text-sm text-ink">
+                <span className="font-medium">{c.name}</span>
+                {` · ${c.skillName} · ${LEVEL_LABELS[c.level]}${c.yearsExperience !== null ? ` · ${c.yearsExperience} yr` : ''}`}
+                <span className="block text-xs text-ink-muted">{`Added ${fmtDate(c.claimedAt)}`}</span>
+              </span>
+              <Button size="sm" onClick={() => void verify(c)} loading={busy === c.id}>
+                Verify
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -488,6 +544,7 @@ export function PersonSkillsTab({ canManage }: { canManage: boolean }) {
                           {' '}
                           · {LEVEL_LABELS[r.level]}
                           {r.yearsExperience != null ? ` · ${r.yearsExperience} yr` : ''}
+                          {r.selfClaimedAt && !r.verifiedAt ? ` · added by them ${fmtDate(r.selfClaimedAt)}` : ''}
                         </span>
                       </span>
                       {r.verifiedAt ? (

@@ -8,7 +8,8 @@ import { ApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
-import { fmtMoney, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime, fmtTimeTz, fmtWeekday, mapsUrl, parseYmd, zonedDayKey } from '@/lib/format';
+import { fmtMoney, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, fmtTimeTz, fmtWeekday, mapsUrl, parseYmd, zonedDayKey } from '@/lib/format';
+import { fmtPunchTime } from '@/pages/time/punchFormat';
 import { acknowledgeMyShift, getMyShiftDetail } from '@/lib/schedulingApi';
 import { listMyCallOuts, withinADay } from '@/lib/callOutsApi';
 import { CallOutDialog } from '@/components/callouts/CallOutDialog';
@@ -219,7 +220,7 @@ export function MyShiftHero({
             </div>
             <LiveShiftEarnings />
             <p className="mt-1 text-sm text-silver">
-              {t('hero.started', { time: fmtTime(entry.clockInAt) })}
+              {t('hero.started', { time: fmtPunchTime(entry.clockInAt, entry.locationTimezone) })}
               {next && started && (
                 <> · {t('hero.endsAt', { time: fmtTimeTz(next.endsAt, next.timezone) })}</>
               )}

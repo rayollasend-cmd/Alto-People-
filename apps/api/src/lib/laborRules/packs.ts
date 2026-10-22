@@ -125,12 +125,12 @@ export const ALABAMA_PACK: RuleSetDef = {
  * never assumed.
  */
 
-const minWageSteps = (jurisdiction: string, level: 'STATE' | 'CITY', steps: Array<[string, number]>, rest: RuleSetDef['params'], source: string): RuleSetDef[] =>
+const minWageSteps = (jurisdiction: string, level: 'STATE' | 'CITY', steps: Array<[string, number]>, rest: RuleSetDef['params'], source: string, version = 1): RuleSetDef[] =>
   steps.map(([from, cents]) => ({
     jurisdiction,
     level,
     effectiveFrom: from,
-    version: 1,
+    version,
     params: { ...rest, minimumWage: { rateCents: cents } },
     source,
     sourceDate: '2026-10-15',
@@ -138,7 +138,7 @@ const minWageSteps = (jurisdiction: string, level: 'STATE' | 'CITY', steps: Arra
     approvedBy: null,
   }));
 
-export const CALIFORNIA_PACKS: RuleSetDef[] = minWageSteps(
+const CALIFORNIA_V1: RuleSetDef[] = minWageSteps(
   'US-CA',
   'STATE',
   [
@@ -161,7 +161,22 @@ export const CALIFORNIA_PACKS: RuleSetDef[] = minWageSteps(
   'Cal. Lab. Code §510 (daily and seventh-day overtime), §512 and §226.7 (meal and rest premiums), §1182.12 (minimum wage), §1391 (minors); IWC Wage Orders 5 (public housekeeping) and 7 (mercantile); DLSE, https://www.dir.ca.gov/dlse',
 );
 
-export const NEW_YORK_PACKS: RuleSetDef[] = minWageSteps(
+/**
+ * Version 2 of a pack: version 1's rules plus the spread-of-hours / split-
+ * shift premium (lib/laborRules/evaluate spreadOfHours). Shipped DRAFT like
+ * every version: a jurisdiction already LIVE keeps paying the version-1 rows
+ * counsel signed (live.ts pins them) until someone signs version 2.
+ */
+const withSpread = (v1: RuleSetDef[], spreadOfHours: NonNullable<RuleSetDef['params']['spreadOfHours']>, citation: string): RuleSetDef[] =>
+  v1.map((p) => ({ ...p, version: 2, params: { ...p.params, spreadOfHours }, source: `${p.source}; ${citation}`, sourceDate: '2026-10-22' }));
+
+/** California v2: a split shift (work interrupted by more than an hour off the clock) owes an hour at the minimum wage, less what the day paid above it. */
+export const CALIFORNIA_PACKS: RuleSetDef[] = [
+  ...CALIFORNIA_V1,
+  ...withSpread(CALIFORNIA_V1, { thresholdHours: null, splitGapMinutes: 60, premiumHours: 1, offsetAboveMinimum: true }, 'IWC Wage Orders §2 and §4(C) (split shift: one hour at the minimum wage)'),
+];
+
+const NEW_YORK_V1: RuleSetDef[] = minWageSteps(
   'US-NY',
   'STATE',
   [
@@ -181,6 +196,15 @@ export const NEW_YORK_PACKS: RuleSetDef[] = minWageSteps(
   },
   'N.Y. Lab. Law §652 (minimum wage, rest of state), §162 (meal periods), §130–143 (minors); 12 NYCRR Part 142 (overtime, spread of hours, call-in pay) and Part 146 (hospitality); NYS DOL',
 );
+
+/**
+ * New York v2: a day whose spread runs past 10 hours, or a split shift, owes an hour at the minimum wage (12 NYCRR 142-2.4);
+ * outside hospitality the NYS DOL reads it as owed only to the extent the day's pay doesn't already cover it.
+ */
+export const NEW_YORK_PACKS: RuleSetDef[] = [
+  ...NEW_YORK_V1,
+  ...withSpread(NEW_YORK_V1, { thresholdHours: 10, splitGapMinutes: 60, premiumHours: 1, offsetAboveMinimum: true }, '12 NYCRR 142-2.4, 142-2.17, 142-2.18 (spread of hours, split shift)'),
+];
 
 export const NEW_YORK_CITY_PACKS: RuleSetDef[] = minWageSteps(
   'US-NY-NYC',

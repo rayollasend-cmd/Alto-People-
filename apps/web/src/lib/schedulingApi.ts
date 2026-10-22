@@ -490,6 +490,8 @@ export interface UnconfirmedShiftRow {
   position: string;
   clientName: string | null;
   startsAt: string;
+  /** The store's IANA zone (one shift, one time). */
+  timezone?: string | null;
   associateId: string;
   associateName: string;
   phone: string | null;

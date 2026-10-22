@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
-import { getBlobStore } from './blobStore.js';
+import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { hashSignedPdf, renderSignedAgreement } from './esign.js';
 
 /**
@@ -165,7 +165,7 @@ export async function renderSignedOffer(input: {
     userAgent: input.userAgent,
     typedName: input.typedName,
   });
-  const key = `offers/${input.offerId}-signed.pdf`;
+  const key = tenantBlobKey(`offers/${input.offerId}-signed.pdf`);
   await getBlobStore().put(key, pdf, 'application/pdf');
   return { key, hash: hashSignedPdf(pdf), pdf };
 }

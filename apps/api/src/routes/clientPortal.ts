@@ -415,7 +415,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         take: 40,
       }),
       prisma.orgSetting.findUnique({
-        where: { id: 'singleton' },
+        where: { tenantId: tenantIdForWrite() },
         select: { supportEmail: true },
       }),
       prisma.oshaIncident.count({

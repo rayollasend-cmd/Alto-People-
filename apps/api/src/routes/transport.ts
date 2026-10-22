@@ -70,6 +70,8 @@ import {
   rideSelect,
   serviceDateFor,
   toRideView,
+  TRANSPORT_PHOTO_NAME,
+  transportPhotoUrl,
   vanLook,
 } from '../lib/transport.js';
 
@@ -2044,13 +2046,16 @@ transportRouter.get('/plan-map', VIEW, async (req, res) => {
  * Transport walk 9: fuel logged at the pump by the driver — one tap, on
  * the van they drive (theirs, or one they ran today or yesterday). Lands
  * in the van's service log (kind FUEL, with who logged it) and in cost
- * per seat; the odometer moves forward when it's higher.
+ * per seat; the odometer moves forward when it's higher. The receipt
+ * photo is the entry's own column (photoS3Key) — it used to ride inside
+ * the note as "receipt photo: <key>", where nothing could show it.
  */
 const FuelInput = z.object({
   gallons: z.number().min(0).max(500).nullable().optional(),
   costCents: z.number().int().min(0).max(100_000_000),
   odometerMiles: z.number().int().min(0).max(5_000_000).nullable().optional(),
-  photoKey: z.string().trim().max(300).nullable().optional(),
+  // The name POST /transport/photos handed back — anything else could never be shown.
+  photoKey: z.string().trim().regex(TRANSPORT_PHOTO_NAME, 'That receipt photo did not upload. Take it again.').nullable().optional(),
   occurredAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
@@ -2066,18 +2071,18 @@ transportRouter.post('/driver/vans/:id/fuel', DRIVE, async (req, res) => {
     if (!drove) throw new HttpError(403, 'not_your_van', `${van.name} isn't your van.`);
   }
   const occurredAt = input.occurredAt ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
-  const notes = [input.gallons ? `${input.gallons} gal` : null, input.photoKey ? `receipt photo: ${input.photoKey}` : null].filter(Boolean).join(' · ') || null;
+  const notes = input.gallons ? `${input.gallons} gal` : null;
   const entry = await prisma.$transaction(async (tx) => {
     const created = await tx.vanServiceEntry.create({
-      data: { vanId: id, tenantId: tenantIdForWrite(), kind: 'FUEL', occurredAt: new Date(`${occurredAt}T00:00:00Z`), odometerMiles: input.odometerMiles ?? null, costCents: input.costCents, notes, createdById: req.user!.id },
+      data: { vanId: id, tenantId: tenantIdForWrite(), kind: 'FUEL', occurredAt: new Date(`${occurredAt}T00:00:00Z`), odometerMiles: input.odometerMiles ?? null, costCents: input.costCents, notes, photoS3Key: input.photoKey ?? null, createdById: req.user!.id },
     });
     if (input.odometerMiles !== null && input.odometerMiles !== undefined && (van.odometerMiles === null || input.odometerMiles > van.odometerMiles)) {
       await tx.van.update({ where: { id }, data: { odometerMiles: input.odometerMiles } });
     }
     return created;
   });
-  enqueueAudit({ actorUserId: req.user!.id, action: 'transport.fuel_logged', entityType: 'Van', entityId: id, metadata: { entryId: entry.id, costCents: input.costCents, gallons: input.gallons ?? null, odometerMiles: input.odometerMiles ?? null } }, 'transport');
-  res.status(201).json({ entry: { id: entry.id, kind: entry.kind, occurredAt, odometerMiles: entry.odometerMiles, costCents: entry.costCents, notes: entry.notes } });
+  enqueueAudit({ actorUserId: req.user!.id, action: 'transport.fuel_logged', entityType: 'Van', entityId: id, metadata: { entryId: entry.id, costCents: input.costCents, gallons: input.gallons ?? null, odometerMiles: input.odometerMiles ?? null, receiptPhoto: !!entry.photoS3Key } }, 'transport');
+  res.status(201).json({ entry: { id: entry.id, kind: entry.kind, occurredAt, odometerMiles: entry.odometerMiles, costCents: entry.costCents, notes: entry.notes, photoUrl: transportPhotoUrl(entry.photoS3Key) } });
 });
 
 /**
@@ -3753,6 +3758,17 @@ transportRouter.get('/fleet', VIEW, async (req, res) => {
     select: { vanId: true, kind: true, odometerMiles: true },
   });
   const odometers = await prisma.van.findMany({ where: { id: { in: vans.map((v) => v.id) } }, select: { id: true, odometerMiles: true } });
+  // The fleet card's last fill-up, with the driver's receipt photo.
+  const lastFuels = await prisma.vanServiceEntry.findMany({
+    where: { vanId: { in: vans.map((v) => v.id) }, kind: 'FUEL' },
+    orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+    distinct: ['vanId'],
+    select: { vanId: true, occurredAt: true, costCents: true, notes: true, photoS3Key: true },
+  });
+  const lastFuelOf = (vanId: string) => {
+    const f = lastFuels.find((x) => x.vanId === vanId);
+    return f ? { occurredAt: f.occurredAt.toISOString().slice(0, 10), costCents: f.costCents, notes: f.notes, photoUrl: transportPhotoUrl(f.photoS3Key) } : null;
+  };
   const serviceDueOf = (vanId: string) => {
     const last = services.find((s) => s.vanId === vanId && s.kind === 'OIL_CHANGE') ?? services.find((s) => s.vanId === vanId);
     const now = odometers.find((o) => o.id === vanId)?.odometerMiles ?? null;
@@ -3777,6 +3793,7 @@ transportRouter.get('/fleet', VIEW, async (req, res) => {
       return {
         ...toVanView(v),
         serviceDue: serviceDueOf(v.id),
+        lastFuel: lastFuelOf(v.id),
         stats: {
           revenueCents: rides.reduce((n, r) => n + (r.waivedAt ? 0 : r.chargeCents), 0),
           waivedCents: rides.reduce((n, r) => n + (r.waivedAt && r.waiveKind !== 'NOT_AUTHORIZED' ? r.chargeCents : 0), 0),
@@ -4064,8 +4081,8 @@ transportRouter.put('/settings', MANAGE, async (req, res) => {
     .parse(req.body);
   const { fareCents, noShowFeeCents, effectiveFrom, ...rest } = input;
   await prisma.transportSettings.upsert({
-    where: { id: 'default' },
-    create: { id: 'default', ...rest, updatedById: req.user!.id },
+    where: { tenantId: tenantIdForWrite() },
+    create: { tenantId: tenantIdForWrite(), ...rest, updatedById: req.user!.id },
     update: { ...rest, updatedById: req.user!.id },
   });
   const current = await rideRateOn(prisma);

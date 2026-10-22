@@ -27,7 +27,7 @@ import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtRelativeDate, fmtTime, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, fmtShiftSpanTz, ymdLocal } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import {
@@ -840,7 +840,7 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
                   <li key={sh.id} className="flex items-center justify-between gap-2 text-sm">
                     <span className="truncate text-ink">{sh.associateName}</span>
                     <span className="shrink-0 tabular-nums text-ink-muted">
-                      {fmtTime(sh.startsAt)}–{fmtTime(sh.endsAt)}
+                      {fmtShiftSpanTz(sh.startsAt, sh.endsAt, sh.timezone)}
                     </span>
                   </li>
                 ))}

@@ -84,6 +84,9 @@ describe('LaborRulesPage', () => {
     expect(await screen.findByText('Fla. Const. Art. X §24')).toBeTruthy();
     expect(screen.getByText('minimumWage.rateCents')).toBeTruthy();
     expect(screen.getByText(/Not live here yet/)).toBeTruthy();
+    // Spread of hours and split shifts (v2 packs) list with the other rules; Florida has neither.
+    expect(screen.getAllByText('Spread of hours').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Split-shift premium').length).toBeGreaterThan(0);
   });
 
   it('the shadow runs have their own tab', async () => {

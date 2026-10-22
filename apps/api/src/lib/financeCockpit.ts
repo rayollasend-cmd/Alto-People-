@@ -2,6 +2,9 @@ import type { FieldglassStatus } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
 import { netWorkedMinutes, utcInstantOfLocalMidnight, type BreakFacts } from './timeAnomalies.js';
+import { loadLiveRules } from './laborRules/live.js';
+import { payFor, splitByPerson } from './laborRules/hours.js';
+import { tenantIdForWrite } from './tenant.js';
 import { round2 } from './payroll.js';
 import { ageStatements, type AgingBuckets } from './books/aging.js';
 import { buildTimesheetWeek, saturdayWeek, toUsDate } from './timesheetWeek.js';
@@ -19,8 +22,10 @@ import { getNextPayday, getPeriodAfter } from './payrollSchedule.js';
  *                 weeks still unresolved
  *   marginTrend   week by week: approved hours × the client's bill rate
  *                 (revenue) against what payroll pays for them (wages:
- *                 the associate's hourly pay, time and a half past 40 —
- *                 payroll's own rule, its $15 fallback included)
+ *                 the associate's hourly pay split by the labor-rules
+ *                 engine exactly as the paycheck splits it — overtime
+ *                 and double time at its multipliers — payroll's $15
+ *                 fallback included)
  *   receivablesAging  unpaid statements by age, and who owes the most
  */
 
@@ -239,7 +244,7 @@ export async function marginTrend(
       clockInAt: true,
       clockOutAt: true,
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
-      location: { select: { timezone: true } },
+      location: { select: { id: true, state: true, city: true, timezone: true } },
     },
     take: 100_000,
   });
@@ -261,16 +266,26 @@ export async function marginTrend(
   for (const c of comps) if (!payRate.has(c.associateId)) payRate.set(c.associateId, Number(c.amount));
   const billRate = new Map(clients.map((c) => [c.id, c.fieldglassBillRate != null ? Number(c.fieldglassBillRate) : null]));
 
-  // Minutes per week per associate (for overtime) and per client (for revenue).
-  const byWeek = new Map<string, { people: Map<string, number>; clients: Map<string, number> }>();
-  for (const e of entries) {
+  // Wages split by the labor-rules engine (lib/laborRules/hours): each
+  // person's weeks exactly as their paycheck splits them — the federal
+  // weekly 40, or a live jurisdiction's daily and double-time rules — and
+  // each entry's share priced at their rate and the split's multipliers.
+  const rules = await loadLiveRules(prisma, opts.tenantId ?? tenantIdForWrite());
+  const work = entries.map((e) => ({ ...e, site: e.location }));
+  const { byEntry, byPerson } = splitByPerson(rules, work);
+
+  // Minutes per week per client (for revenue), wages per week (for the margin).
+  const byWeek = new Map<string, { people: Map<string, number>; clients: Map<string, number>; wages: number }>();
+  for (const e of work) {
     const ws = saturdayWeek(e.clockInAt, e.location?.timezone ?? DEFAULT_TIMEZONE).weekStart;
     if (!startSet.has(ws)) continue;
-    const min = netWorkedMinutes({ clockInAt: e.clockInAt, clockOutAt: e.clockOutAt! }, e.breaks as BreakFacts[]);
-    const b = byWeek.get(ws) ?? { people: new Map(), clients: new Map() };
+    const share = byEntry.get(e)!;
+    const min = share.workedHours * 60;
+    const b = byWeek.get(ws) ?? { people: new Map(), clients: new Map(), wages: 0 };
     b.people.set(e.associateId, (b.people.get(e.associateId) ?? 0) + min);
     const ck = e.clientId ?? '';
     b.clients.set(ck, (b.clients.get(ck) ?? 0) + min);
+    b.wages += payFor(share, payRate.get(e.associateId) ?? PAYROLL_DEFAULT_RATE, byPerson.get(e.associateId)!);
     byWeek.set(ws, b);
   }
 
@@ -279,7 +294,7 @@ export async function marginTrend(
     const b = byWeek.get(ws);
     let hours = 0;
     let revenue = 0;
-    let wages = 0;
+    let wages = b?.wages ?? 0;
     let unpriced = 0;
     for (const [clientId, min] of b?.clients ?? []) {
       const h = min / 60;
@@ -288,12 +303,8 @@ export async function marginTrend(
       if (rate === null) unpriced += h;
       else revenue += h * rate;
     }
-    for (const [associateId, min] of b?.people ?? []) {
-      const h = min / 60;
-      const rate = payRate.get(associateId);
-      if (rate === undefined) atDefault.add(associateId);
-      const r = rate ?? PAYROLL_DEFAULT_RATE;
-      wages += Math.min(40, h) * r + Math.max(0, h - 40) * r * 1.5;
+    for (const associateId of b?.people.keys() ?? []) {
+      if (!payRate.has(associateId)) atDefault.add(associateId);
     }
     revenue = round2(revenue);
     wages = round2(wages);

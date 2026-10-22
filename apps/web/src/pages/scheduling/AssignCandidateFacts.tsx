@@ -19,7 +19,10 @@ const h = (min: number) => `${Math.round((min / 60) * 10) / 10}h`;
 
 export function AssignCandidateFacts({ c, className }: { c: AutoFillCandidate; className?: string }) {
   const projected = c.projectedWeeklyMinutes;
-  const overForty = projected != null && projected > 40 * 60;
+  // Whether this shift adds overtime is the server's answer — its labor-rules
+  // engine splits the week as the paycheck will (past 40, or a state's daily
+  // rule). Only an older API without it falls back to the 40-hour line.
+  const overForty = c.wouldBeOvertime ?? (projected != null && projected > 40 * 60);
   const top: string[] = [];
   if (c.homeLocationName) top.push(c.homeLocationName);
   const rel = c.reliability;

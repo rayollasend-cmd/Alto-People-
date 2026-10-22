@@ -20,8 +20,8 @@ afterAll(async () => {
 
 async function setPolicy(mfaRequirement: MfaRequirement) {
   await prisma.orgSetting.upsert({
-    where: { id: 'singleton' },
-    create: { id: 'singleton', mfaRequirement },
+    where: { tenantId: '00000000-0000-4000-8000-000000000001' },
+    create: { mfaRequirement },
     update: { mfaRequirement },
   });
 }

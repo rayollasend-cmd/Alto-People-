@@ -142,7 +142,7 @@ export function ShiftLeadsCard({
                 )}
                 {c.floorSupervisors && c.floorSupervisors.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="text-silver/60">Floor supervisors:</span>
+                    <span className="text-silver/60">{t('shiftLeads.floorSupervisors')}</span>
                     {c.floorSupervisors.map((f) => (
                       <button
                         key={f.userId}

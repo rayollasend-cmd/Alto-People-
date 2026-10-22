@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/Drawer';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Textarea } from '@/components/ui/Input';
 
@@ -414,9 +415,7 @@ export function DecisionRoom({
                 Activity
               </div>
               {stream.length === 0 ? (
-                <p className="text-sm text-silver">
-                  Nothing yet — start the conversation below.
-                </p>
+                <EmptyState size="sm" title="Nothing yet — start the conversation below." />
               ) : (
                 <ul className="space-y-2.5">
                   {stream.map((e, i) =>

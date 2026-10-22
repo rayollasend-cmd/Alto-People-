@@ -4,6 +4,9 @@ import {
   minutesToHours,
   type PayrollSheetInputRow,
 } from '../../lib/payrollSheet.js';
+import type { PayRules } from '../../lib/laborRules/hours.js';
+import { SHIPPED_PACKS, jurisdictionsFor } from '../../lib/laborRules/packs.js';
+import { resolveFor } from '../../lib/laborRules/resolve.js';
 
 // 2026-06-15 is a Monday → anchors a clean ISO week (Mon..Sun) in UTC.
 function entry(
@@ -107,6 +110,30 @@ describe('buildPayrollSheet', () => {
     const sheet = buildPayrollSheet([]);
     expect(sheet.associates).toHaveLength(0);
     expect(sheet.totalMinutes).toBe(0);
+  });
+});
+
+describe('buildPayrollSheet splits as the paycheck does (lib/laborRules/hours)', () => {
+  const CA = { id: 'ca', state: 'CA', city: 'Los Angeles', timezone: 'America/Los_Angeles' };
+  const pdt = (ymd: string, h: number) => new Date(new Date(`${ymd}T00:00:00.000Z`).getTime() + (h + 7) * 3_600_000);
+  const caDay = (ymd: string, from: number, to: number): PayrollSheetInputRow => ({ associateId: 'a1', associateName: 'Ann Lee', clockInAt: pdt(ymd, from), clockOutAt: pdt(ymd, to), breaks: [], site: CA });
+  const caLive: PayRules = {
+    any: true,
+    activationFor: (s) => (s?.state === 'CA' ? {} : null),
+    rulesFor: (s, date) => (s?.state === 'CA' ? resolveFor(SHIPPED_PACKS.map((p) => ({ ...p, status: 'ACTIVE' as const })), jurisdictionsFor(s), [], date) : null),
+  };
+
+  it('a California 13-hour day is straight time while California is not live — the old sheet read 5 h overtime off the home state’s table', () => {
+    const a = buildPayrollSheet([caDay('2026-06-15', 6, 19)]).associates[0];
+    expect([a.regularMinutes, a.overtimeMinutes, a.doubleTimeMinutes]).toEqual([13 * 60, 0, 0]);
+  });
+
+  it('live: 8 regular, 4 overtime, 1 double time, the days on the site’s calendar, and the premiums the engine names', () => {
+    const a = buildPayrollSheet([caDay('2026-06-15', 6, 19)], caLive).associates[0];
+    expect([a.regularMinutes, a.overtimeMinutes, a.doubleTimeMinutes, a.totalMinutes]).toEqual([480, 240, 60, 780]);
+    expect(a.days).toEqual([{ date: '2026-06-15', minutes: 780 }]);
+    expect(a.premiums.map((p) => p.kind).sort()).toEqual(['MEAL', 'REST']);
+    expect(a.overtimeMultiplier).toBe(1.5);
   });
 });
 

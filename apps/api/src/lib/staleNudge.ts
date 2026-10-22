@@ -4,6 +4,7 @@ import type { SessionUser } from '../types/express.js';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { computePercent } from './checklist.js';
+import { dueReminderItems, isTaskOpen, markItemsReminded } from './onboardingReminders.js';
 import {
   deliverNudge,
   fetchInFlightApplications,
@@ -27,6 +28,12 @@ import {
  * ones count — HR just reached out), and at most STALE_NUDGE_MAX_AUTO
  * automatic nudges ever (rows with senderUserId null). Only rows that
  * actually sent count, so a provider failure doesn't burn a nudge.
+ *
+ * And the per-task rule every automatic onboarding reminder answers to
+ * (lib/onboardingReminders): an automatic nudge names only tasks not
+ * reminded about in 3 days (by this sweep, the progress sweep or HR),
+ * never a done one, and a person with several stale applications gets
+ * ONE nudge naming all of them.
  *
  * The route/sweep helpers live in routes/onboarding.ts (shared with the
  * stats tile so the staleness rule can never diverge); the import cycle
@@ -104,6 +111,9 @@ export async function runStaleNudgeSweep(
   }
 
   const cooldownMs = STALE_NUDGE_COOLDOWN_HOURS * 60 * 60 * 1000;
+  const ordered = (r: (typeof stale)[number]) => [...(r.checklist?.tasks ?? [])].sort((a, b) => a.order - b.order);
+  // Automatic runs: one nudge per person, however many stale applications.
+  const folded = new Set<string>();
   let nudged = 0;
   let skipped = 0;
   // Serial sends — the email sender already spaces provider calls, and
@@ -114,7 +124,12 @@ export async function runStaleNudgeSweep(
       skipped++;
       continue;
     }
+    const tasks = row.checklist?.tasks ?? [];
+    let blocked = ordered(row).find(isTaskOpen);
+    let due: Array<{ id: string; title: string }> = [];
     if (!actor) {
+      // This person's other stale applications rode on their first nudge.
+      if (folded.has(user.id)) continue;
       const prior = priorByUser.get(user.id);
       if (
         prior &&
@@ -124,15 +139,20 @@ export async function runStaleNudgeSweep(
         skipped++;
         continue;
       }
+      due = stale.filter((r) => r.associateId === row.associateId).flatMap((r) => dueReminderItems(ordered(r), now));
+      // Every open task was reminded about in the last 3 days (or is done).
+      if (due.length === 0) {
+        skipped++;
+        continue;
+      }
+      folded.add(user.id);
+      blocked = ordered(row).find((t) => due.some((d) => d.id === t.id)) ?? blocked;
     }
-    const tasks = row.checklist?.tasks ?? [];
-    const blocked = [...tasks]
-      .sort((a, b) => a.order - b.order)
-      .find((t) => t.status !== 'DONE' && t.status !== 'SKIPPED');
     const { subject, body } = staleNudgeContent(
       row.associate.firstName,
       computePercent(tasks),
       blocked?.title ?? null,
+      due.map((t) => t.title),
     );
     const { emailSent } = await deliverNudge(
       actor,
@@ -142,8 +162,10 @@ export async function runStaleNudgeSweep(
       body,
       actor ? { bulk: true } : { bulk: true, automatic: true },
     );
-    if (emailSent) nudged++;
-    else skipped++;
+    if (emailSent) {
+      nudged++;
+      if (!actor) await markItemsReminded(due.map((t) => t.id), now);
+    } else skipped++;
   }
 
   return { nudged, skipped };

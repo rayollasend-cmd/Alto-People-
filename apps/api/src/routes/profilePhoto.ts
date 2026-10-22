@@ -13,7 +13,7 @@ import {
   requireCapability,
 } from '../middleware/auth.js';
 import { PROFILE_PHOTO_DIR } from '../lib/storage.js';
-import { getBlobStore } from '../lib/blobStore.js';
+import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { profilePhotoUrlFor, userPhotoUrlFor } from '../lib/profilePhotoUrl.js';
@@ -99,7 +99,7 @@ async function savePhoto(
   const ext =
     EXT_BY_MIME[file.mimetype] ?? (extname(cleanName).toLowerCase() || '.bin');
   const prefix = owner.kind === 'user' ? 'user-' : '';
-  const relativeKey = `${PROFILE_PHOTO_DIR}/${prefix}${owner.id}-${randomUUID()}${ext}`;
+  const relativeKey = tenantBlobKey(`${PROFILE_PHOTO_DIR}/${prefix}${owner.id}-${randomUUID()}${ext}`);
   await getBlobStore().put(relativeKey, file.buffer, file.mimetype);
 
   const prior = await readPhotoKey(owner);

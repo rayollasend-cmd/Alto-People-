@@ -303,17 +303,18 @@ describe('California: the fixed week (acceptance line 2)', () => {
     entry('2026-10-09', '08:00', '17:30', [meal('2026-10-09', '12:00', '12:30'), rest('2026-10-09', '10:00', '10:10'), rest('2026-10-09', '14:30', '14:40')]), // 9 h, the seventh day
   ];
 
+  // Version 2 of the pack (spread of hours / split shift) is the newest set in force, so the reasons cite it.
   it('daily overtime, double time past 12, the seventh day and a late meal, each with its reason', () => {
     const out = evaluateTime(week(), { rulesFor: (_e, date) => ca(date), weekStart: startOfWeekForSite });
     // Paid rests are worked time (≤ 20 min): 10 + 13 + 4 + 6 + 4 + 4 + 9 = 50 h.
     // Sat 10: 8 + 2 OT. Sun 13: 8 + 4 OT + 1 DT. Mon–Thu 18 regular (34 so far). Fri, the seventh day: 8 OT + 1 DT.
     expect(out).toMatchObject({ regularHours: 34, overtimeHours: 14, doubleTimeHours: 2, overtimeMultiplier: 1.5, doubleMultiplier: 2 });
     const reasons = out.weeks[0]!.reasons;
-    expect(reasons).toContain('Overtime applied 2026-10-03: 10.00 h > 8 (daily), US-CA 2026-01-01 v1');
-    expect(reasons).toContain('Double time applied 2026-10-04: 13.00 h > 12 (daily), US-CA 2026-01-01 v1');
-    expect(reasons).toContain('Seventh consecutive day 2026-10-09: 8.00 h at overtime, 1.00 h double time, US-CA 2026-01-01 v1');
+    expect(reasons).toContain('Overtime applied 2026-10-03: 10.00 h > 8 (daily), US-CA 2026-01-01 v2');
+    expect(reasons).toContain('Double time applied 2026-10-04: 13.00 h > 12 (daily), US-CA 2026-01-01 v2');
+    expect(reasons).toContain('Seventh consecutive day 2026-10-09: 8.00 h at overtime, 1.00 h double time, US-CA 2026-01-01 v2');
     expect(out.penalties).toEqual([expect.objectContaining({ kind: 'MEAL', date: '2026-10-06', hours: 1, payable: false })]);
-    expect(out.penalties[0]!.reason).toBe('Meal premium 2026-10-06: 6.00 h worked without a 30-minute meal starting by hour 5, 1 h, US-CA 2026-01-01 v1');
+    expect(out.penalties[0]!.reason).toBe('Meal premium 2026-10-06: 6.00 h worked without a 30-minute meal starting by hour 5, 1 h, US-CA 2026-01-01 v2');
   });
 
   it('the minimum wage steps on 1 January', () => {

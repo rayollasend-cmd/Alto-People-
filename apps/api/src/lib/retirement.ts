@@ -169,7 +169,7 @@ export async function setDeferralRate(
     return;
   }
   if (current) await db.benefitsEnrollment.update({ where: { id: current.id }, data: { terminationDate: addDays(d, -1) } });
-  await db.benefitsEnrollment.create({ data: { ...data, tenantId: plan.tenantId, associateId, planId: plan.benefitsPlanId, effectiveDate: d } });
+  await db.benefitsEnrollment.create({ data: { ...data, tenantId: plan.tenantId ?? undefined, associateId, planId: plan.benefitsPlanId, effectiveDate: d } });
 }
 
 /**

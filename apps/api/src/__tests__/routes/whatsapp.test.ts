@@ -248,12 +248,13 @@ describe('the assistant', () => {
     expect(boRow?.body).not.toContain('Server');
     expect(boRow?.language).toBe('en');
 
-    // An unknown number gets no data and no reply.
+    // An unknown number gets no data and no reply — and, with no tenant to
+    // file it under (Brief 2-1 §9.4), no record either.
     const sentBefore = sent.length;
     await webhook(inbound('18505559999', 'what is my schedule'));
     await new Promise((r) => setTimeout(r, 300));
     expect(sent).toHaveLength(sentBefore);
-    expect(await prisma.whatsAppMessage.count({ where: { phone: '18505559999' } })).toBe(1);
+    expect(await prisma.whatsAppMessage.count({ where: { phone: '18505559999' } })).toBe(0);
 
     // Everything else goes to a supervisor as a thread in the app.
     await webhook(inbound('18505550101', 'Can I change my address?'));
@@ -343,5 +344,41 @@ describe('Hugo', () => {
     expect(who.reply).toContain('Alto People');
     expect(who.reply).toContain('No soy una persona');
     await hr.patch('/admin/org/settings').send({ assistantName: 'Hugo' });
+  });
+});
+
+describe('the webhook resolves each item\'s tenant (Brief 2-1 §9.4)', () => {
+  const T2 = '22222222-2222-4222-8222-222222222222';
+
+  it('receipts for two tenants in one body each land on their own row; an unknown receipt is dropped', async () => {
+    await prisma.tenant.create({ data: { id: T2, slug: 'tenant-two', name: 'Tenant Two' } });
+    const one = await createAssociate({ firstName: 'Ana', lastName: 'One' });
+    const two = await createAssociate({ firstName: 'Tom', lastName: 'Two' });
+    await prisma.associate.update({ where: { id: two.id }, data: { tenantId: T2 } });
+    const mine = await prisma.whatsAppMessage.create({ data: { associateId: one.id, phone: '18505550111', direction: 'OUTBOUND', kind: 'TEMPLATE', waMessageId: 'wamid.t1', body: 'Shift reminder', status: 'SENT' } });
+    const theirs = await prisma.whatsAppMessage.create({ data: { tenantId: T2, associateId: two.id, phone: '18505550222', direction: 'OUTBOUND', kind: 'TEMPLATE', waMessageId: 'wamid.t2', body: 'Shift reminder', status: 'SENT' } });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const res = await webhook({
+      entry: [{ changes: [{ value: { statuses: [
+        { id: 'wamid.t1', status: 'delivered', timestamp: ts },
+        { id: 'wamid.t2', status: 'read', timestamp: ts },
+        { id: 'wamid.nobody', status: 'read', timestamp: ts },
+      ] } }] }],
+    });
+    expect(res.status).toBe(200);
+    expect((await prisma.whatsAppMessage.findUniqueOrThrow({ where: { id: mine.id } })).status).toBe('DELIVERED');
+    expect((await prisma.whatsAppMessage.findUniqueOrThrow({ where: { id: theirs.id } })).status).toBe('READ');
+    expect(await prisma.whatsAppMessage.count()).toBe(2);
+  });
+
+  it('an inbound message from a second tenant\'s number is recorded under that tenant', async () => {
+    await prisma.tenant.create({ data: { id: T2, slug: 'tenant-two', name: 'Tenant Two' } });
+    const two = await createAssociate({ firstName: 'Tom', lastName: 'Two' });
+    await prisma.associate.update({ where: { id: two.id }, data: { tenantId: T2 } });
+    await prisma.whatsAppConsent.create({ data: { tenantId: T2, associateId: two.id, phone: '18505550222', status: 'OPTED_IN', source: 'app', optedInAt: new Date() } });
+    await webhook(inbound('18505550222', 'hola', 'wamid.in.t2'));
+    const row = await prisma.whatsAppMessage.findUniqueOrThrow({ where: { waMessageId: 'wamid.in.t2' } });
+    expect(row).toMatchObject({ tenantId: T2, associateId: two.id, direction: 'INBOUND' });
+    expect((await prisma.whatsAppConsent.findUniqueOrThrow({ where: { associateId: two.id } })).lastInboundAt).not.toBeNull();
   });
 });

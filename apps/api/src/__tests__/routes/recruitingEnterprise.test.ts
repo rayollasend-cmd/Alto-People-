@@ -220,7 +220,7 @@ describe('job-board syndication', () => {
     const r = await request(app()).get('/careers/feed.xml?board=<script>');
     expect(r.text).toContain('?source=job-board');
     await request(app()).post(`/careers/${p.slug}/apply`).send({ firstName: 'Kim', lastName: 'Phan', email: 'kim@example.com', source: 'indeed' });
-    const c = await prisma.candidate.findUniqueOrThrow({ where: { email: 'kim@example.com' } });
+    const c = await prisma.candidate.findFirstOrThrow({ where: { email: 'kim@example.com' } });
     expect(c).toMatchObject({ source: 'indeed', jobPostingId: p.id });
   });
 

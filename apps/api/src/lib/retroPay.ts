@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { round2, sumApprovedHours } from './payroll.js';
 import { findInChunks } from './chunkedIn.js';
+import { payFor } from './laborRules/hours.js';
 
 /**
  * Retroactive pay.
@@ -82,7 +83,7 @@ export async function computeRetroPay(
       hourlyRate: true,
       hoursWorked: true,
       payrollRun: { select: { id: true, periodStart: true, periodEnd: true, finalizedAt: true } },
-      earnings: { select: { kind: true, hours: true } },
+      earnings: { select: { kind: true, hours: true, rate: true, notes: true } },
     },
   }));
   if (items.length === 0) return out;
@@ -128,15 +129,29 @@ export async function computeRetroPay(
       const prior = existingByPair.get(key);
       if (prior && prior.status === 'PAID' && prior.paidRunId !== input.runId) continue;
 
+      // The hours as the run paid them (the labor-rules engine's split): the
+      // raise reaches each at the multiplier it was paid at — overtime 1.5×
+      // (or a live rule's), and double time (the engine's "Double time"
+      // line, kept with the overtime hours on the record) at 2×.
       let regular = 0;
       let overtime = 0;
+      let doubleTime = 0;
+      let otMult = 1.5;
+      let dtMult = 2;
       for (const e of item.earnings) {
         if (e.hours === null) continue;
+        const paidMult = e.rate !== null && oldRate > 0 ? Number(e.rate) / oldRate : null;
         if (e.kind === 'REGULAR') regular += Number(e.hours);
-        else if (e.kind === 'OVERTIME') overtime += Number(e.hours);
+        else if (e.kind === 'OVERTIME') {
+          overtime += Number(e.hours);
+          if (paidMult && paidMult > 1) otMult = Math.round(paidMult * 100) / 100;
+        } else if (e.kind === 'DOUBLE_TIME' && e.notes === 'Double time') {
+          doubleTime += Number(e.hours);
+          if (paidMult && paidMult > 1) dtMult = Math.round(paidMult * 100) / 100;
+        }
       }
-      if (regular + overtime === 0) regular = Number(item.hoursWorked);
-      const paidHours = regular + overtime;
+      if (regular + overtime + doubleTime === 0) regular = Number(item.hoursWorked);
+      const paidHours = regular + overtime + doubleTime;
       if (paidHours <= 0) continue;
 
       // Whole period at the new rate, or only the hours on and after the
@@ -154,9 +169,10 @@ export async function computeRetroPay(
         const share = inWindow / paidHours;
         regular = round2(regular * share);
         overtime = round2(overtime * share);
+        doubleTime = round2(doubleTime * share);
       }
       const delta = newRate - oldRate;
-      const amount = round2(regular * delta + overtime * delta * 1.5);
+      const amount = round2(payFor({ regularHours: regular, overtimeHours: overtime, doubleTimeHours: doubleTime }, delta, { overtimeMultiplier: otMult, doubleMultiplier: dtMult }));
       if (amount < 0.01) continue;
 
       const list = out.get(item.associateId) ?? [];
@@ -168,7 +184,7 @@ export async function computeRetroPay(
         sourcePeriodEnd: ymd(run.periodEnd),
         effectiveFrom: ymd(comp.effectiveFrom),
         regularHours: regular,
-        overtimeHours: overtime,
+        overtimeHours: round2(overtime + doubleTime),
         oldRate,
         newRate,
         amount,

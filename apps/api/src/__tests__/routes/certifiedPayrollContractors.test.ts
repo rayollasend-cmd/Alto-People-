@@ -180,7 +180,7 @@ describe('certified payroll', () => {
 
   it('flags apprentices over the ratio and renders a WH-347 grid', async () => {
     const project = {
-      id: 'p', tenantId: null, name: 'Bridge', contractNumber: null, agency: null, awardingBody: null, wageDeterminationNumber: null, dirProjectId: null, siteId: 's', clientId: null,
+      id: 'p', tenantId: '00000000-0000-4000-8000-000000000001', name: 'Bridge', contractNumber: null, agency: null, awardingBody: null, wageDeterminationNumber: null, dirProjectId: null, siteId: 's', clientId: null,
       addressLine1: null, city: null, county: null, state: 'OR', zip: null, startDate: new Date('2026-01-01'), endDate: null, weekEndsOn: 6, fringeMode: 'PLAN',
       payrollOfficerName: null, payrollOfficerTitle: null, status: 'ACTIVE', createdById: null, createdAt: new Date(), updatedAt: new Date(),
     };
@@ -190,8 +190,8 @@ describe('certified payroll', () => {
     for (const a of [a1, a2]) {
       await prisma.timeEntry.create({ data: { associateId: a.id, locationId: site.id, clockInAt: new Date('2026-08-31T15:00:00Z'), clockOutAt: new Date('2026-08-31T23:00:00Z'), status: 'APPROVED' } });
     }
-    const rate = { id: 'r', tenantId: null, projectId: 'p', classification: 'Laborer', baseRate: 30 as never, fringeRate: 8 as never, apprenticesPerJourneyman: 1 as never, effectiveFrom: new Date('2026-01-01T00:00:00Z'), effectiveTo: null, createdAt: new Date() };
-    const worker = (id: string) => ({ id, tenantId: null, projectId: 'p', associateId: id, classification: 'Laborer', isApprentice: true, apprenticeRegistration: 'OR-1', apprenticeLevelPercent: 60 as never, startedOn: new Date('2026-01-01T00:00:00Z'), endedOn: null, createdAt: new Date() });
+    const rate = { id: 'r', tenantId: '00000000-0000-4000-8000-000000000001', projectId: 'p', classification: 'Laborer', baseRate: 30 as never, fringeRate: 8 as never, apprenticesPerJourneyman: 1 as never, effectiveFrom: new Date('2026-01-01T00:00:00Z'), effectiveTo: null, createdAt: new Date() };
+    const worker = (id: string) => ({ id, tenantId: '00000000-0000-4000-8000-000000000001', projectId: 'p', associateId: id, classification: 'Laborer', isApprentice: true, apprenticeRegistration: 'OR-1', apprenticeLevelPercent: 60 as never, startedOn: new Date('2026-01-01T00:00:00Z'), endedOn: null, createdAt: new Date() });
     const week = await computeCertifiedWeek(prisma, { ...project, siteId: site.id, rates: [rate], workers: [worker(a1.id), worker(a2.id)], site: { timezone: 'America/Los_Angeles' } }, WEEK);
     const ratio = week.exceptions.find((e) => e.kind === 'APPRENTICE_RATIO');
     expect(ratio?.associateIds?.sort()).toEqual([a1.id, a2.id].sort());

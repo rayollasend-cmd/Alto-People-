@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { PayChangeContextPanel } from '@/components/payroll/PayChangeContextPanel';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { SavedViewsMenu } from '@/components/SavedViewsMenu';
@@ -1031,6 +1031,10 @@ const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
 // The page owns search (server-side, across every page) and the full
 // export; the grid sorts, hides columns and stacks cards for the rows on
 // screen.
+// The one broadcast composer, with the picked people as its list ("Message
+// selected"): loaded on first use so the directory stays light.
+const BroadcastDrawer = lazy(() => import('@/pages/dirComms/BroadcastDrawer').then((m) => ({ default: m.BroadcastDrawer })));
+
 function DirectoryTable({
   rows,
   onSelect,
@@ -1041,6 +1045,7 @@ function DirectoryTable({
   const term = useTerm();
   const { can } = useAuth();
   const navigate = useNavigate();
+  const [messaging, setMessaging] = useState<Array<{ id: string; name: string }> | null>(null);
   const hasClients = useTenant().moduleOn('clientPortal');
   const directoryColumns = useMemo(
     () =>
@@ -1088,6 +1093,17 @@ function DirectoryTable({
                   Mass update
                 </Button>
               )}
+              {can('manage:communications') && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setMessaging(rows.filter((r) => ids.includes(r.id)).map((r) => ({ id: r.id, name: `${r.firstName} ${r.lastName}`.trim() })))
+                  }
+                >
+                  Message selected
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={() => exportChosen(ids)}>
                 Export selected
               </Button>
@@ -1095,6 +1111,11 @@ function DirectoryTable({
           ),
         }}
       />
+      {messaging && (
+        <Suspense fallback={null}>
+          <BroadcastDrawer broadcast={null} recipients={messaging} onClose={() => setMessaging(null)} onSaved={() => setMessaging(null)} />
+        </Suspense>
+      )}
     </Card>
   );
 }
@@ -2295,7 +2316,7 @@ function DepartmentField({
         </div>
         <div className="flex-1 min-w-0 flex items-center gap-1">
           {departments === null ? (
-            <span className="text-xs text-silver pt-2">Loading…</span>
+            <Skeleton className="h-9 flex-1" />
           ) : (
             <Select
               size="sm"
@@ -2820,9 +2841,7 @@ export function CompensationTab({ associate: a }: { associate: DirectoryEntry })
         )}
         {!records && !error && <SkeletonRows count={3} rowHeight="h-9" />}
         {records && records.length === 0 && !error && (
-          <div className="text-sm text-silver py-4">
-            No compensation records yet.
-          </div>
+          <EmptyState size="sm" title="No compensation records yet." />
         )}
         {records && records.length > 0 && (
           <DataGrid<NonNullable<typeof records>[number]>

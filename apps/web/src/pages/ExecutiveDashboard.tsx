@@ -32,6 +32,7 @@ import { AgentRoiTile } from '@/pages/executive/AgentRoiTile';
 import { MoneyBand } from '@/pages/executive/MoneyBand';
 import { ClientNpsCard } from '@/pages/executive/ClientNpsCard';
 import { WhatIfClientCard } from '@/pages/executive/WhatIfClientCard';
+import { rateWhatIfAnnualMargin } from '@/lib/execWhatIf';
 
 /**
  * The Executive/Chairman command center — the numbers, their direction,
@@ -46,7 +47,10 @@ interface ExecWeek {
   start: string;
   end: string;
   workedHours: number;
+  /** Overtime plus double time, as the paycheck splits the hours (the server's labor-rules engine). */
   otHours: number;
+  /** What the multipliers add, in straight-time hours (absent from an older API). */
+  premiumHours?: number;
   headsWorked: number;
   estBilled: number;
   estLaborCost: number;
@@ -599,13 +603,8 @@ function RateCalculator({
     recent.length > 0 ? recent.reduce((n, w) => n + w.workedHours, 0) / recent.length : 0;
   const weeklyOt =
     recent.length > 0 ? recent.reduce((n, w) => n + w.otHours, 0) / recent.length : 0;
-  const annualMargin = (b: number, p: number) => {
-    const billed = weeklyHours * b + weeklyOt * b * 0.5;
-    const cost =
-      (weeklyHours * p + weeklyOt * p * 0.5) * (1 + rates.burdenPct / 100) +
-      weeklyHours * rates.overheadPerHour;
-    return (billed - cost) * 52;
-  };
+  // Overtime priced as the server's engine priced it (lib/execWhatIf).
+  const annualMargin = (b: number, p: number) => rateWhatIfAnnualMargin(recent, b, p, rates);
   const current = annualMargin(rates.billRate, rates.payRate);
   const adjusted = annualMargin(bill, pay);
   const delta = adjusted - current;

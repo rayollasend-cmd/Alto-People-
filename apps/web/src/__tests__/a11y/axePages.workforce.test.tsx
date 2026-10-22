@@ -189,6 +189,8 @@ vi.mock('@/lib/skills111Api', () => ({
   deleteSkill: vi.fn(),
   listSkills: vi.fn().mockResolvedValue({ skills: [] }),
   searchSkills: vi.fn(),
+  // The "To verify" tab's self-claims (wave 2).
+  listPendingSkillClaims: vi.fn().mockResolvedValue({ claims: [] }),
 }));
 
 vi.mock('@/lib/celebrations107Api', () => ({

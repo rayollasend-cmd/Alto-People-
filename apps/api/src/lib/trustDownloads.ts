@@ -4,7 +4,7 @@ import { TRUST_DOCUMENT_LABELS, type TrustDocumentKind, type TrustDocumentSummar
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
-import { getBlobStore } from './blobStore.js';
+import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { getBrandingSync } from './branding.js';
 import { publicBaseUrl } from './emailLayout.js';
 import { genericNotificationTemplate } from './emailTemplates.js';
@@ -91,7 +91,7 @@ export async function putTrustDocument(db: Db, input: { kind: TrustDocumentKind;
   if (!DOCUMENT_MIMES.has(input.contentType)) throw new HttpError(400, 'invalid_mime', 'Trust documents are PDFs.');
   if (input.content.byteLength === 0 || input.content.byteLength > MAX_DOCUMENT_BYTES) throw new HttpError(400, 'invalid_size', 'The file must be under 25 MB.');
   const tenantId = tenantIdForWrite();
-  const s3Key = `trust/${tenantId}/${input.kind.toLowerCase()}-${Date.now()}.pdf`;
+  const s3Key = tenantBlobKey(`trust/${input.kind.toLowerCase()}-${Date.now()}.pdf`, tenantId);
   await getBlobStore().put(s3Key, input.content, input.contentType);
   const previous = await db.trustDocument.findUnique({ where: { tenantId_kind: { tenantId, kind: input.kind } }, select: { s3Key: true } });
   const row = await db.trustDocument.upsert({

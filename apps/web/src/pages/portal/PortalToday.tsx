@@ -25,6 +25,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { groupWaves, waveName, wavePresent, type Wave, type WaveName, type WaveRow } from './waves';
 import { ServiceReportDialog } from './ServiceReportDialog';
@@ -400,10 +401,12 @@ function OffScheduleCard({
   return (
     <Card className="border-success/30">
       <CardContent>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h2 className="text-sm font-medium text-white">{t('portal.offSchedule')}</h2>
-          <span className="text-sm font-semibold tabular-nums text-white">{people.length}</span>
-        </div>
+        <SectionTitle
+          size="sm"
+          className="mb-0"
+          title={t('portal.offSchedule')}
+          trailing={<span className="text-sm font-semibold tabular-nums text-ink">{people.length}</span>}
+        />
         <ul className="mt-3 flex flex-wrap gap-2" role="list">
           {people.map((e) => {
             const isSel = selected === e.associateId;
@@ -734,36 +737,43 @@ function WaveCard({
   );
 
   const header = (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-      <h2 className={cn('text-sm font-medium', w.phase === 'finished' ? 'text-silver' : 'text-white')}>
-        <span className="text-gold">{win ? win.label : t(WAVE_KEY[waveName(w.startsAt, w.timezone)])}</span> · {range}
-        {w.phase === 'live' && (
-          <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">{t('portal.live')}</span>
-        )}
-        {win && win.leads.length > 0 && (
-          <span className="mt-0.5 block text-xs font-normal text-silver/70">
-            {t('portal.waveLead', { names: win.leads.join(', ') })}
-          </span>
-        )}
-      </h2>
-      <span className="flex items-center gap-2">
-        {/* One text to everyone on this shift, from its header (floor 20). */}
-        {canReach && crew.length > 0 && w.phase !== 'finished' && (
-          <Button size="sm" variant="outline" className="h-8 print:hidden" onClick={() => setCrewTextOpen(true)}>
-            <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            {t('portal.textShift', { n: crew.length })}
-          </Button>
-        )}
-        <span
-          className={cn(
-            'text-sm font-semibold tabular-nums',
-            short ? 'text-warning' : missedSome ? 'text-alert' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+    <SectionTitle
+      size="sm"
+      wrap
+      className="mb-0"
+      title={
+        <span className={w.phase === 'finished' ? 'text-silver' : undefined}>
+          <span className="text-gold">{win ? win.label : t(WAVE_KEY[waveName(w.startsAt, w.timezone)])}</span> · {range}
+          {w.phase === 'live' && (
+            <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">{t('portal.live')}</span>
           )}
-        >
-          {headline}
+          {win && win.leads.length > 0 && (
+            <span className="mt-0.5 block text-xs font-normal text-silver/70">
+              {t('portal.waveLead', { names: win.leads.join(', ') })}
+            </span>
+          )}
         </span>
-      </span>
-    </div>
+      }
+      trailing={
+        <span className="flex items-center gap-2">
+          {/* One text to everyone on this shift, from its header (floor 20). */}
+          {canReach && crew.length > 0 && w.phase !== 'finished' && (
+            <Button size="sm" variant="outline" className="h-8 print:hidden" onClick={() => setCrewTextOpen(true)}>
+              <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('portal.textShift', { n: crew.length })}
+            </Button>
+          )}
+          <span
+            className={cn(
+              'text-sm font-semibold tabular-nums',
+              short ? 'text-warning' : missedSome ? 'text-alert' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+            )}
+          >
+            {headline}
+          </span>
+        </span>
+      }
+    />
   );
   const meter = w.phase !== 'upcoming' && w.expected > 0 && (
     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">

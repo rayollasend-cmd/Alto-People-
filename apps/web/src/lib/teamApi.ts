@@ -60,6 +60,8 @@ export interface TeamTimeEntry {
   notes: string | null;
   rejectionReason: string | null;
   payRate: number | null;
+  /** The site's IANA zone: punches are read on its clock. */
+  locationTimezone?: string | null;
 }
 
 export interface TeamTimeOffRequest {
@@ -176,7 +178,8 @@ export interface TeamHome {
     pips: Array<TeamHomePerson & { id: string; endDate: string }>;
   };
   today: {
-    shifts: Array<TeamHomePerson & { id: string; startsAt: string; endsAt: string; position: string; location: string | null }>;
+    /** `timezone`: the store's clock — the shift is shown on it (fmtShiftTz). */
+    shifts: Array<TeamHomePerson & { id: string; startsAt: string; endsAt: string; position: string; location: string | null; timezone?: string | null }>;
     onClock: Array<TeamHomePerson & { since: string }>;
     out: Array<TeamHomePerson & { category: string; until: string }>;
     celebrations: Array<TeamHomePerson & { kind: 'BIRTHDAY' | 'ANNIVERSARY'; years: number | null }>;

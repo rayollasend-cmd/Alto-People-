@@ -349,6 +349,8 @@ export interface KioskPinDiagnosis {
     clockInAt: string;
     clientId: string | null;
     locationId: string | null;
+    /** The site's IANA zone: the punch is read on its clock. */
+    locationTimezone?: string | null;
   } | null;
   clientsMatch?: boolean;
   devicesAtPinClient?: {

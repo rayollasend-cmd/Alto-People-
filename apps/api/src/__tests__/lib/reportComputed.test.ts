@@ -1,0 +1,170 @@
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { agent, loginAs } from '../../../test/http.js';
+import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
+import { resolvePeriodWindow, runReport, type ReportSpec } from '../../lib/reportRun.js';
+import { rowMatches, runSpecOverRows } from '../../lib/reportComputed.js';
+import type { SessionUser } from '../../types/express.js';
+
+/**
+ * The report engine's new columns (HR walk 17, wave 2), so the gallery's
+ * templates answer the question they name: terminations last quarter (date
+ * presets), headcount by store, pay changes from the compensation records,
+ * time to fill from posting to hire, and overtime by store from the labor
+ * engine's split.
+ */
+
+beforeEach(async () => {
+  await truncateAll();
+});
+afterAll(async () => {
+  await prisma.$disconnect();
+});
+
+const NOW = new Date('2026-10-22T16:00:00Z');
+const run = (entity: string, spec: Partial<ReportSpec>, user: SessionUser) =>
+  runWithTenant(ALTO_TENANT_ID, 'job', () =>
+    runReport(entity, { columns: [], filters: [], sort: [], limit: 1000, ...spec } as ReportSpec, user, prisma, NOW),
+  ) as Promise<Array<Record<string, unknown>>>;
+
+async function hrUser(): Promise<SessionUser> {
+  const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+  return { ...user, primaryRole: user.role, availableRoles: [user.role], locationId: null, regionId: null, tokenVersion: 0, firstName: null, lastName: null, photoUrl: null, timezone: null } as unknown as SessionUser;
+}
+
+async function placeAt(associateId: string, locationId: string) {
+  await prisma.associateAssignment.create({ data: { associateId, locationId, startedAt: new Date('2026-01-01') } });
+}
+
+describe('date-range presets', () => {
+  it('last quarter and quarter to date are calendar quarters in the company zone', () => {
+    const lq = resolvePeriodWindow('last-quarter', NOW);
+    expect(lq.start.toISOString()).toBe('2026-07-01T04:00:00.000Z');
+    expect(lq.end.toISOString()).toBe('2026-10-01T04:00:00.000Z');
+    expect(resolvePeriodWindow('quarter-to-date', NOW).start.toISOString()).toBe('2026-10-01T04:00:00.000Z');
+    expect(resolvePeriodWindow('last-year', NOW).start.toISOString()).toBe('2025-01-01T05:00:00.000Z');
+    expect(resolvePeriodWindow('last-90-days', NOW).start.getTime()).toBe(NOW.getTime() - 90 * 86_400_000);
+    // January's last quarter is the previous year's fourth.
+    expect(resolvePeriodWindow('last-quarter', new Date('2026-01-15T12:00:00Z')).start.toISOString()).toBe('2025-10-01T04:00:00.000Z');
+  });
+
+  it('terminations last quarter, by reason', async () => {
+    const hr = await hrUser();
+    for (const [day, reason] of [['2026-08-03', 'VOLUNTARY_PERSONAL'], ['2026-09-30', 'VOLUNTARY_PERSONAL'], ['2026-07-15', 'INVOLUNTARY_LAYOFF'], ['2026-10-05', 'VOLUNTARY_PERSONAL']] as const) {
+      const p = await createAssociate();
+      await prisma.separation.create({ data: { associateId: p.id, reason, lastDayWorked: new Date(day) } });
+    }
+    const rows = await run('SEPARATION', { columns: ['reason'], filters: [{ column: 'lastDayWorked', op: 'period', value: 'last-quarter' }], groupBy: ['reason'], aggregates: [{ fn: 'count', column: null, alias: 'count' }] }, hr);
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(expect.arrayContaining([
+      { reason: 'INVOLUNTARY_LAYOFF', count: 1 },
+      { reason: 'VOLUNTARY_PERSONAL', count: 2 },
+    ]));
+  });
+});
+
+describe('headcount by store', () => {
+  it('counts the people working now by the store they are placed at', async () => {
+    const hr = await hrUser();
+    const client = await createClient('Coastal');
+    const a = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    await prisma.site.update({ where: { id: a.id }, data: { name: 'Front Beach' } });
+    const b = await prisma.site.create({ data: { clientId: client.id, name: 'Harbor' } });
+    for (const [site, separated] of [[a.id, false], [a.id, false], [b.id, false], [b.id, true]] as const) {
+      const p = await createAssociate();
+      await placeAt(p.id, site);
+      if (separated) await prisma.associate.update({ where: { id: p.id }, data: { separatedAt: new Date('2026-09-01') } });
+    }
+    const rows = await run('ASSOCIATE', { columns: ['store'], filters: [{ column: 'active', op: 'eq', value: true }], groupBy: ['store'], aggregates: [{ fn: 'count', column: null, alias: 'count' }] }, hr);
+    expect(rows).toEqual([
+      { store: 'Front Beach', count: 2 },
+      { store: 'Harbor', count: 1 },
+    ]);
+    // A list with the store beside the name, through the API with the builder's own validation.
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const http = await loginAs(agent(), user.email);
+    const r = await http.post('/reports/preview').send({ name: 'x', entity: 'ASSOCIATE', spec: { columns: ['firstName', 'store', 'client'], filters: [{ column: 'store', op: 'eq', value: 'Harbor' }], sort: [], limit: 50 } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.rows).toHaveLength(2);
+    expect(r.body.rows[0]).toMatchObject({ store: 'Harbor', client: 'Coastal' });
+  });
+});
+
+describe('pay changes', () => {
+  it('each change with the rate before it and the change, from the compensation records', async () => {
+    const hr = await hrUser();
+    const p = await createAssociate({ firstName: 'Ana', lastName: 'Ruiz' });
+    await prisma.compensationRecord.create({ data: { associateId: p.id, effectiveFrom: new Date('2026-01-05T00:00:00Z'), effectiveTo: new Date('2026-09-14T00:00:00Z'), payType: 'HOURLY', amount: 16, reason: 'HIRE' } });
+    await prisma.compensationRecord.create({ data: { associateId: p.id, effectiveFrom: new Date('2026-09-14T00:00:00Z'), payType: 'HOURLY', amount: 17.5, reason: 'MERIT' } });
+    const rows = await run('PAY_CHANGE', { columns: ['name', 'effectiveFrom', 'previousAmount', 'amount', 'change', 'changePct', 'reason'], filters: [{ column: 'effectiveFrom', op: 'period', value: 'last-90-days' }], sort: [{ column: 'effectiveFrom', direction: 'desc' }] }, hr);
+    expect(rows).toEqual([expect.objectContaining({ name: 'Ana Ruiz', previousAmount: 16, amount: 17.5, change: 1.5, changePct: 9.4, reason: 'MERIT' })]);
+
+    // Pay is view:comp — a recruiter can't run it.
+    const { user } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    const http = await loginAs(agent(), user.email);
+    const r = await http.post('/reports/preview').send({ name: 'x', entity: 'PAY_CHANGE', spec: { columns: ['name'], filters: [], sort: [], limit: 50 } });
+    expect(r.status).toBe(403);
+  });
+});
+
+describe('time to fill', () => {
+  it('days from the posting opening to the hire, averaged per posting', async () => {
+    const hr = await hrUser();
+    const posting = await prisma.jobPosting.create({ data: { title: 'Housekeeper — Front Beach', description: 'x', slug: 'hk-fb', status: 'OPEN', openedAt: new Date('2026-09-01T12:00:00Z') } });
+    await prisma.candidate.create({ data: { firstName: 'A', lastName: 'One', email: 'a1@example.com', stage: 'HIRED', hiredAt: new Date('2026-09-15T12:00:00Z'), jobPostingId: posting.id } });
+    await prisma.candidate.create({ data: { firstName: 'B', lastName: 'Two', email: 'b2@example.com', stage: 'HIRED', hiredAt: new Date('2026-09-21T12:00:00Z'), jobPostingId: posting.id } });
+    await prisma.candidate.create({ data: { firstName: 'C', lastName: 'Three', email: 'c3@example.com', stage: 'INTERVIEW', jobPostingId: posting.id } });
+    const rows = await run('TIME_TO_FILL', { columns: ['posting'], filters: [{ column: 'hiredAt', op: 'period', value: 'year-to-date' }], groupBy: ['posting'], aggregates: [{ fn: 'avg', column: 'daysToFill', alias: 'avgDays' }, { fn: 'count', column: null, alias: 'hires' }] }, hr);
+    expect(rows).toEqual([{ posting: 'Housekeeper — Front Beach', avgDays: 17, hires: 2 }]);
+  });
+});
+
+describe('overtime by store', () => {
+  it('the week’s hours past 40, by the store they were worked at (the latest hours are the overtime)', async () => {
+    const hr = await hrUser();
+    const client = await createClient('Coastal');
+    const a = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    await prisma.site.update({ where: { id: a.id }, data: { name: 'Front Beach', timezone: 'America/New_York', state: 'FL' } });
+    const b = await prisma.site.create({ data: { clientId: client.id, name: 'Harbor', timezone: 'America/New_York', state: 'FL' } });
+    const p = await createAssociate({ firstName: 'Lee', lastName: 'Park' });
+    // Monday to Thursday last week (one week whichever day the company week
+    // starts): 45 hours at Front Beach, then 5 at Harbor — 50, 10 over.
+    const H = 3_600_000;
+    const shifts: Array<[string, string, number]> = [
+      [a.id, '2026-10-12T12:00:00Z', 12.5],
+      [a.id, '2026-10-13T12:00:00Z', 12.5],
+      [a.id, '2026-10-14T12:00:00Z', 12.5],
+      [a.id, '2026-10-15T12:00:00Z', 7.5],
+      [b.id, '2026-10-15T20:00:00Z', 5],
+    ];
+    for (const [site, at, hours] of shifts) {
+      const start = new Date(at);
+      await prisma.timeEntry.create({ data: { associateId: p.id, clientId: client.id, locationId: site, clockInAt: start, clockOutAt: new Date(start.getTime() + hours * H), status: 'APPROVED', anomalies: [] } });
+    }
+
+    const rows = await run('OVERTIME', { columns: ['store'], filters: [], groupBy: ['store'], aggregates: [{ fn: 'sum', column: 'overtimeHours', alias: 'overtimeHours' }, { fn: 'sum', column: 'workedHours', alias: 'workedHours' }] }, hr);
+    const total = rows.reduce((s, r) => s + Number(r.overtimeHours), 0);
+    expect(total).toBe(10);
+    expect(rows.find((r) => r.store === 'Harbor')).toMatchObject({ overtimeHours: 5, workedHours: 5 });
+    expect(rows.find((r) => r.store === 'Front Beach')).toMatchObject({ overtimeHours: 5, workedHours: 45 });
+  });
+});
+
+describe('the in-memory operators', () => {
+  it('filters, sorts, groups and rolls up like the database path', () => {
+    const rows = [
+      { s: 'A', n: 2, d: new Date('2026-10-01T00:00:00Z'), ok: true },
+      { s: 'B', n: 5, d: new Date('2026-10-05T00:00:00Z'), ok: false },
+      { s: 'A', n: 4, d: new Date('2026-09-20T00:00:00Z'), ok: true },
+    ];
+    expect(rowMatches(rows[0]!, { ok: 'true' })).toBe(true);
+    expect(rowMatches(rows[1]!, { s: { in: ['A'] } })).toBe(false);
+    expect(rowMatches(rows[1]!, { d: { gte: new Date('2026-10-02T00:00:00Z'), lt: new Date('2026-10-09T00:00:00Z') } })).toBe(true);
+    expect(rowMatches(rows[2]!, { n: { gt: '3' } })).toBe(true);
+    expect(runSpecOverRows(rows, { columns: ['s'], sort: [], limit: 10, groupBy: ['s'], aggregates: [{ fn: 'sum', column: 'n', alias: 't' }, { fn: 'max', column: 'n', alias: 'm' }] }, {})).toEqual([
+      { s: 'A', t: 6, m: 4 },
+      { s: 'B', t: 5, m: 5 },
+    ]);
+    expect(runSpecOverRows(rows, { columns: ['n'], sort: [{ column: 'd', direction: 'asc' }], limit: 2 }, {})).toEqual([{ n: 4 }, { n: 2 }]);
+  });
+});

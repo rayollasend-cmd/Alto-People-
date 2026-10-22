@@ -5,6 +5,7 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { QueryError } from '@/components/ui/QueryError';
+import { SkeletonRows } from '@/components/ui/Skeleton';
 
 /**
  * Brief 2-6 step 3 — an agent's compliance record: what each capability
@@ -45,17 +46,27 @@ export function decisionRecordQuery(agentId: string) {
 export function AgentDecisionRecordTab({ agentId, canManage }: { agentId: string; canManage: boolean }) {
   const qc = useQueryClient();
   const q = useQuery(decisionRecordQuery(agentId));
-  const mark = async (id: string, event: 'notice_given' | 'explanation_sent') => {
+  // No channel: the product sends it (the bell for someone with a login, the
+  // email on their application otherwise) and records it only when it went
+  // out. A channel: a person gave it by hand, recorded as such.
+  const mark = async (id: string, event: 'notice_given' | 'explanation_sent', channel?: 'PAPER') => {
     try {
-      await apiFetch(`/agents/decisions/${id}/events`, { method: 'POST', body: { event } });
+      const r = await apiFetch<{ delivered: boolean; delivery: { channel: string; status: string; to: string | null } | null }>(`/agents/decisions/${id}/events`, {
+        method: 'POST',
+        body: channel ? { event, channel } : { event },
+      });
       void qc.invalidateQueries({ queryKey: ['agents', 'decision-record', agentId] });
+      if (r.delivery?.status === 'BY_HAND') toast.success('Recorded as given by hand.');
+      else if (r.delivery?.to) toast.success(`Emailed to ${r.delivery.to}.`);
+      else if (r.delivered) toast.success('Sent to their inbox.');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not record it.');
+      const notSent = err instanceof ApiError && (err.code === 'notice_not_sent' || err.code === 'no_address');
+      toast.error(err instanceof ApiError ? err.message : 'Could not record it.', notSent ? { action: { label: 'Given on paper', onClick: () => void mark(id, event, 'PAPER') } } : undefined);
     }
   };
   if (q.isError) return <QueryError what="the compliance record" query={q} />;
   const d = q.data;
-  if (!d) return <p className="text-sm text-silver">Loading…</p>;
+  if (!d) return <SkeletonRows count={3} rowHeight="h-10" />;
   const deciding = d.profiles.filter((p) => p.decisionTypes.length);
 
   return (
@@ -135,12 +146,12 @@ export function AgentDecisionRecordTab({ agentId, canManage }: { agentId: string
                   <div className="flex gap-2">
                     {!x.noticeGivenAt && (
                       <Button size="sm" variant="ghost" onClick={() => void mark(x.id, 'notice_given')}>
-                        Notice given
+                        Send the notice
                       </Button>
                     )}
                     {x.outcome === 'ADVERSE' && !x.explanationSentAt && (
                       <Button size="sm" variant="ghost" onClick={() => void mark(x.id, 'explanation_sent')}>
-                        Explanation sent
+                        Send the explanation
                       </Button>
                     )}
                   </div>

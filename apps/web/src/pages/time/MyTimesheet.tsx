@@ -13,12 +13,12 @@ import {
   fmtHours,
   fmtMoney,
   fmtMoneyEst,
-  fmtTime,
   fmtWeekdayTz,
   ymdLocal,
   ymdToIsoEndExclusive,
   ymdToIsoStart,
 } from '@/lib/format';
+import { fmtPunchTime } from './punchFormat';
 import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
 import {
@@ -70,7 +70,16 @@ const STATUS_KEY: Record<TimeEntry['status'], MessageKey> = {
   REJECTED: 'time.status.REJECTED',
 };
 
-const WEEK_REGULAR_CAP_MIN = 40 * 60;
+/**
+ * What an entry pays at a rate: its share of the server's labor-rules split
+ * (regular, overtime and double time at their multipliers — the paycheck's
+ * arithmetic), else straight time on an older server.
+ */
+function entryPay(e: TimeEntry, rate: number): number {
+  const h = e.hours;
+  if (!h) return ((e.netMinutes ?? e.minutesElapsed) / 60) * rate;
+  return ((h.regularMinutes + h.overtimeMinutes * h.overtimeMultiplier + h.doubleTimeMinutes * h.doubleMultiplier) / 60) * rate;
+}
 
 function daysAgoYmd(days: number): string {
   const d = new Date();
@@ -88,9 +97,10 @@ function weekStartMs(input: string | Date): number {
 // export, not an associate's phone.
 const fmtH = (minutes: number) => fmtHours(minutes / 60);
 
-/** "Wed, Jul 2" — house weekday+date formatting (browser-local). */
-function fmtEntryDay(iso: string): string {
-  return `${fmtWeekdayTz(iso)}, ${fmtDateTz(iso)}`;
+/** "Wed, Jul 2" — the punch's day on its site's clock (display zone when
+ *  the entry has no site), so the day and the times below it agree. */
+function fmtEntryDay(iso: string, tz?: string | null): string {
+  return `${fmtWeekdayTz(iso, tz)}, ${fmtDateTz(iso, tz)}`;
 }
 
 type Preset = 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
@@ -180,7 +190,7 @@ export function MyTimesheet() {
     let approved = 0;
     let pending = 0;
     let gross: number | null = 0;
-    const byWeek = new Map<number, { entries: TimeEntry[]; workedMin: number }>();
+    const byWeek = new Map<number, { entries: TimeEntry[]; workedMin: number; overtimeMin: number; doubleTimeMin: number }>();
     for (const e of list) {
       const net = e.netMinutes ?? e.minutesElapsed;
       if (e.status === 'APPROVED') {
@@ -188,14 +198,19 @@ export function MyTimesheet() {
         // Gross estimate only when EVERY approved entry has a rate — a
         // partial sum would silently understate the number.
         if (gross !== null) {
-          gross = e.payRate != null ? gross + (net / 60) * e.payRate : null;
+          gross = e.payRate != null ? gross + entryPay(e, e.payRate) : null;
         }
       }
       if (e.status === 'COMPLETED' || e.status === 'ACTIVE') pending += net;
       const wk = weekStartMs(e.clockInAt);
-      const bucket = byWeek.get(wk) ?? { entries: [], workedMin: 0 };
+      const bucket = byWeek.get(wk) ?? { entries: [], workedMin: 0, overtimeMin: 0, doubleTimeMin: 0 };
       bucket.entries.push(e);
-      if (e.status !== 'REJECTED') bucket.workedMin += net;
+      if (e.status !== 'REJECTED') {
+        bucket.workedMin += net;
+        // The server's split (the labor rules pay uses) — never workedMin − 40h here.
+        bucket.overtimeMin += e.hours?.overtimeMinutes ?? 0;
+        bucket.doubleTimeMin += e.hours?.doubleTimeMinutes ?? 0;
+      }
       byWeek.set(wk, bucket);
     }
     const weeksSorted = [...byWeek.entries()].sort((a, b) => b[0] - a[0]);
@@ -363,7 +378,8 @@ export function MyTimesheet() {
         {entries && entries.length > 0 && (
           <div className="space-y-6">
             {weeks.map(([weekMs, bucket]) => {
-              const overtimeMin = Math.max(0, bucket.workedMin - WEEK_REGULAR_CAP_MIN);
+              const overtimeMin = Math.round(bucket.overtimeMin);
+              const doubleTimeMin = Math.round(bucket.doubleTimeMin);
               // The week as a payday line — worth shown when every counted
               // entry carries a rate (the same honesty gate as the hero).
               const counted = bucket.entries.filter((e) => e.status !== 'REJECTED');
@@ -371,9 +387,7 @@ export function MyTimesheet() {
                 counted.length > 0 && counted.every((e) => e.payRate != null)
                   ? counted.reduce(
                       (s, e) =>
-                        s +
-                        ((e.netMinutes ?? e.minutesElapsed) / 60) *
-                          (e.payRate as number),
+                        s + entryPay(e, e.payRate as number),
                       0,
                     )
                   : null;
@@ -404,6 +418,11 @@ export function MyTimesheet() {
                           {t('time.weekOvertime', { hours: fmtH(overtimeMin) })}
                         </span>
                       )}
+                      {doubleTimeMin > 0 && (
+                        <Badge variant="destructive" withDot={false}>
+                          {t('time.weekDoubleTime', { hours: fmtH(doubleTimeMin) })}
+                        </Badge>
+                      )}
                     </span>
                   </div>
                   <ul className="divide-y divide-navy-secondary/60">
@@ -433,12 +452,12 @@ export function MyTimesheet() {
                                     aria-hidden="true"
                                   />
                                 )}
-                                {fmtEntryDay(e.clockInAt)}
+                                {fmtEntryDay(e.clockInAt, e.locationTimezone)}
                               </div>
                               <div className="text-xs text-silver mt-0.5 tabular-nums">
-                                {fmtTime(e.clockInAt)}
+                                {fmtPunchTime(e.clockInAt, e.locationTimezone)}
                                 {' – '}
-                                {e.clockOutAt ? fmtTime(e.clockOutAt) : t('time.stillOn')}
+                                {e.clockOutAt ? fmtPunchTime(e.clockOutAt, e.locationTimezone) : t('time.stillOn')}
                                 {breakMin > 0 &&
                                   // Shared hours dialect like every other duration.
                                   ` · ${t('time.breakMinutes', { minutes: fmtH(breakMin) })}`}
@@ -446,7 +465,7 @@ export function MyTimesheet() {
                               {e.shiftStartsAt && e.shiftEndsAt && (
                                 <div className="text-xs2 text-silver/60 mt-0.5 tabular-nums">
                                   {t('time.scheduled', {
-                                    range: `${fmtTime(e.shiftStartsAt)}–${fmtTime(e.shiftEndsAt)}`,
+                                    range: `${fmtPunchTime(e.shiftStartsAt, e.locationTimezone)}–${fmtPunchTime(e.shiftEndsAt, e.locationTimezone)}`,
                                   })}
                                   {e.shiftPosition && ` · ${e.shiftPosition}`}
                                 </div>
@@ -538,9 +557,9 @@ function DisputeDialog({
     }
     setSubmitting(true);
     try {
-      const day = fmtEntryDay(target.clockInAt);
-      const range = `${fmtTime(target.clockInAt)}–${
-        target.clockOutAt ? fmtTime(target.clockOutAt) : '…'
+      const day = fmtEntryDay(target.clockInAt, target.locationTimezone);
+      const range = `${fmtPunchTime(target.clockInAt, target.locationTimezone)}–${
+        target.clockOutAt ? fmtPunchTime(target.clockOutAt, target.locationTimezone) : '…'
       }`;
       await fileCase({
         category: 'PAYROLL',
@@ -578,9 +597,9 @@ function DisputeDialog({
         </DialogHeader>
         {target && (
           <p className="text-xs text-silver tabular-nums">
-            {fmtEntryDay(target.clockInAt)} · {fmtTime(target.clockInAt)}
+            {fmtEntryDay(target.clockInAt, target.locationTimezone)} · {fmtPunchTime(target.clockInAt, target.locationTimezone)}
             {' – '}
-            {target.clockOutAt ? fmtTime(target.clockOutAt) : t('time.stillOn')}
+            {target.clockOutAt ? fmtPunchTime(target.clockOutAt, target.locationTimezone) : t('time.stillOn')}
           </p>
         )}
         <div

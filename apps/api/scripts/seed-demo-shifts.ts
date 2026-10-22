@@ -10,7 +10,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const maria = await prisma.associate.findUnique({
+  const maria = await prisma.associate.findFirst({
     where: { email: 'maria.lopez@example.com' },
   });
   if (!maria) throw new Error('Run prisma/seed.ts first (maria missing).');
@@ -30,7 +30,7 @@ async function main() {
 
   // Teammate for the "Working with you" panel.
   const teammate = await prisma.associate.upsert({
-    where: { email: 'pat.nguyen@example.com' },
+    where: { tenantId_email: { tenantId: '00000000-0000-4000-8000-000000000001', email: 'pat.nguyen@example.com' } },
     update: {},
     create: { firstName: 'Pat', lastName: 'Nguyen', email: 'pat.nguyen@example.com' },
   });

@@ -1,5 +1,6 @@
 import pino from 'pino';
 import { env } from '../config/env.js';
+import { tenantContext } from './tenant.js';
 
 /**
  * Process-wide structured logger.
@@ -9,7 +10,7 @@ import { env } from '../config/env.js';
  * `requestId` field on the object turns "find every log for that
  * trace" into a `requestId="…"` filter instead of a grep dance.
  *
- * Shape: `{ level, time, msg, requestId?, userId?, ...context }`.
+ * Shape: `{ level, time, msg, requestId?, userId?, tenantId?, ...context }`.
  *
  * Levels:
  *   - dev: 'debug' (verbose, pretty-printed via pino-pretty if available)
@@ -37,6 +38,14 @@ export const logger = pino({
   // Strip default `pid` and `hostname` — Railway already tags those at
   // the platform layer, and they add noise to every line.
   base: { service: 'alto-people-api' },
+  // Brief 2-1 §9.6: every line written inside a request or a job carries
+  // its tenant, read from the live tenant context when the line is written
+  // (a request's tenant is only known after attachUser, so it can't be
+  // bound when req.log is made).
+  mixin() {
+    const ctx = tenantContext();
+    return ctx ? { tenantId: ctx.tenantId } : {};
+  },
   // Belt-and-braces redaction. Nothing deliberately logs a secret today,
   // but this app handles SSNs, bank details and kiosk PINs — a single
   // future `req.log.info({ body })` would otherwise ship them to the

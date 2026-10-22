@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { associatesOfClient } from './scope.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Portal readiness — the setup the store site depends on, with guardrails.
@@ -63,7 +64,7 @@ export async function computePortalReadiness(
       take: 5000,
     }),
     prisma.orgSetting.findUnique({
-      where: { id: 'singleton' },
+      where: { tenantId: tenantIdForWrite() },
       select: { supportEmail: true, mfaRequirement: true },
     }),
   ]);

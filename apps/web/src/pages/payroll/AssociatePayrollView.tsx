@@ -621,7 +621,7 @@ function W4Card() {
               type="checkbox"
               checked={form.multipleJobs}
               onChange={(e) => setForm({ ...form, multipleJobs: e.target.checked })}
-              className="h-4 w-4 coarse:h-5 coarse:w-5 accent-[#C9A24C]"
+              className="h-4 w-4 coarse:h-5 coarse:w-5 accent-gold"
             />
             {t('pay.w4MultipleJobs')}
           </label>

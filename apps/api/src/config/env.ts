@@ -524,6 +524,10 @@ const EnvSchema = z.object({
   // Every tenant table is narrowed to the caller's tenant (lib/tenantGuard). `observe` is the
   // emergency fallback; the cross-tenant and site-scope suites pass under enforce.
   TENANCY_MODE: z.enum(['off', 'observe', 'enforce']).default('enforce'),
+  // Brief 2-1 step four, the database wall (lib/tenantRls): `on` makes every query tell
+  // Postgres its tenant (set_config per transaction) so row-level security can refuse
+  // another tenant's rows. Turn on together with the non-owner role: docs/runbooks/tenancy-rls-cutover.md.
+  TENANCY_RLS: z.enum(['on', 'off']).default('off'),
   // Required when STORAGE_DRIVER=s3 (fail-loud guard below); ignored for
   // local. ENDPOINT only for non-AWS providers. Credentials are optional —
   // when unset, the SDK default provider chain (IAM role / env) applies;

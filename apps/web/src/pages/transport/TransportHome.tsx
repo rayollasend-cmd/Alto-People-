@@ -28,7 +28,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
-import { STUCK_RUN_MINUTES, fmtDateTime, fmtMinutes, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
+import { STUCK_RUN_MINUTES, fmtDate, fmtDateTime, fmtMinutes, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
 import { useMinWidth } from '@/lib/useViewport';
 import { useChargesRange } from '@/lib/transportRange';
 import { useTransportKeyboard } from '@/lib/transportKeyboard';
@@ -108,7 +108,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { ListTemplate } from '@/components/templates';
-import { CostsSection, DriversTab, FeedbackSection, IncidentsSection, SosBanner, TransportNeedsYou, VanRecordDrawer } from './TransportDesk';
+import { CostsSection, DriversTab, FeedbackSection, IncidentsSection, ReceiptThumb, SosBanner, TransportNeedsYou, VanRecordDrawer } from './TransportDesk';
 import { TransportTrends } from './TransportTrends';
 import {
   Dialog,
@@ -2654,7 +2654,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-white">{v.name}</span>
                         {v.plate && (
-                          <span className="rounded border border-silver/40 bg-white px-1.5 font-mono text-2xs font-bold tracking-wider text-[#0B1832]">{v.plate}</span>
+                          <span className="rounded border border-silver/40 bg-white px-1.5 font-mono text-2xs font-bold tracking-wider text-on-accent">{v.plate}</span>
                         )}
                         <Badge size="sm" variant={v.now ? 'success' : v.isActive && !v.outOfService ? 'default' : 'destructive'}>
                           {status}
@@ -2676,6 +2676,16 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
                       {v.now && (
                         <div className="text-xs text-success">
                           {v.now.driver} · {v.now.lastSeenAt ? `seen ${ago(v.now.lastSeenAt, now)}` : 'no signal yet'}
+                        </div>
+                      )}
+                      {v.lastFuel && (
+                        <div className="mt-1 flex items-center gap-2 text-xs text-silver" data-testid="fleet-last-fuel">
+                          {v.lastFuel.photoUrl && <ReceiptThumb url={v.lastFuel.photoUrl} label={`${v.name} fuel receipt`} />}
+                          <span>
+                            Last fuel {fmtDate(v.lastFuel.occurredAt)} · {cents(v.lastFuel.costCents)}
+                            {v.lastFuel.notes ? ` · ${v.lastFuel.notes}` : ''}
+                            {!v.lastFuel.photoUrl && ' · no receipt photo'}
+                          </span>
                         </div>
                       )}
                     </div>

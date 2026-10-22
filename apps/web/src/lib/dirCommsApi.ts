@@ -58,6 +58,8 @@ export interface Broadcast {
   clientId: string | null;
   departmentId: string | null;
   costCenterId: string | null;
+  /** "Message selected" on People: the explicit list (targeting unused when set). */
+  recipientAssociateIds?: string[];
   scheduledFor: string | null;
   sentAt: string | null;
   receiptCount: number;
@@ -144,7 +146,7 @@ export const listBroadcasts = () =>
   apiFetch<{ broadcasts: Broadcast[] }>('/broadcasts');
 export const listBroadcastTemplates = () =>
   apiFetch<{ broadcasts: Broadcast[] }>('/broadcasts?templates=1');
-export const broadcastAudienceCount = (t: { clientId?: string | null; departmentId?: string | null; costCenterId?: string | null }) =>
+export const broadcastAudienceCount = (t: { clientId?: string | null; departmentId?: string | null; costCenterId?: string | null; recipientAssociateIds?: string[] }) =>
   apiFetch<BroadcastAudience>('/broadcasts/audience-count', { method: 'POST', body: t });
 export const savedBroadcastAudience = (id: string) => apiFetch<BroadcastAudience>(`/broadcasts/${id}/audience-count`);
 export const duplicateBroadcast = (id: string) => apiFetch<{ id: string }>(`/broadcasts/${id}/duplicate`, { method: 'POST', body: {} });
@@ -159,6 +161,7 @@ export const createBroadcast = (input: {
   departmentId?: string | null;
   costCenterId?: string | null;
   scheduledFor?: string | null;
+  recipientAssociateIds?: string[];
 }) => apiFetch<{ id: string }>('/broadcasts', { method: 'POST', body: input });
 export const updateBroadcast = (
   id: string,
@@ -170,6 +173,7 @@ export const updateBroadcast = (
     departmentId: string | null;
     costCenterId: string | null;
     scheduledFor: string | null;
+    recipientAssociateIds: string[];
   }>,
 ) =>
   apiFetch<{ ok: true }>(`/broadcasts/${id}`, { method: 'PUT', body: input });

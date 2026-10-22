@@ -1,11 +1,28 @@
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import type { Request } from 'express';
 import { env } from '../config/env.js';
+import { currentTenantId } from '../lib/tenant.js';
 
 // express-rate-limit 8: an IP fallback must go through ipKeyGenerator so an
 // IPv6 client is keyed by its /56 subnet (one device with rotating addresses
 // counts once) and the library's ERR_ERL_KEY_GEN_IPV6 validation passes.
 const ipKey = (req: Request): string => `ip:${req.ip ? ipKeyGenerator(req.ip) : 'unknown'}`;
+
+/**
+ * Brief 2-1 §9.6: an authenticated caller's bucket leads with its tenant —
+ * `t:<tenantId>:user:<id>` — so two tenants never share a counter and a
+ * store (or a dump of one) reads per tenant. The tenant is the session
+ * user's, else the request's context (an API key or agent credential runs
+ * its request inside its own tenant).
+ *
+ * Pre-authentication limiters keep their keys on purpose: an IP, a sign-in
+ * email (platform-unique, decision 1), an MFA-pending subject or a public
+ * link carries no tenant yet — nothing has been resolved when they run.
+ */
+export function tenantRateKey(req: Request, key: string): string {
+  const tenantId = req.user?.tenantId ?? currentTenantId();
+  return tenantId ? `t:${tenantId}:${key}` : key;
+}
 
 // In test runs the entire suite shares 127.0.0.1, which would trip the
 // IP limiter across unrelated tests. The per-email limiter still enforces
@@ -117,7 +134,7 @@ export const changePasswordLimiter = rateLimit({
     // requireAuth runs before this limiter, so req.user is set. Falling back
     // to IP for safety if it isn't (e.g., misconfigured route).
     const userId = req.user?.id;
-    return userId ? `user:${userId}` : ipKey(req);
+    return userId ? tenantRateKey(req, `user:${userId}`) : ipKey(req);
   },
   message: {
     error: {
@@ -223,7 +240,7 @@ export const mfaEnrollConfirmLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: Request) => {
     const userId = req.user?.id;
-    return userId ? `user:${userId}` : ipKey(req);
+    return userId ? tenantRateKey(req, `user:${userId}`) : ipKey(req);
   },
   message: {
     error: {
@@ -293,7 +310,7 @@ export const adminForcePasswordResetLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: Request) => {
     const userId = req.user?.id;
-    return userId ? `user:${userId}` : ipKey(req);
+    return userId ? tenantRateKey(req, `user:${userId}`) : ipKey(req);
   },
   message: {
     error: {
@@ -321,7 +338,7 @@ export const integrationsApiKeyLimiter = rateLimit({
     // Falling back to IP for safety if the limiter is somehow mounted
     // before the auth middleware (misconfiguration).
     const id = req.apiKey?.id;
-    return id ? `apiKey:${id}` : ipKey(req);
+    return id ? tenantRateKey(req, `apiKey:${id}`) : ipKey(req);
   },
   message: {
     error: {
@@ -350,7 +367,7 @@ const PII_REVEAL_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 30;
 const BULK_EXPORT_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : env.BULK_PII_EXPORTS_PER_HOUR;
 
 const perActorKey = (req: Request) =>
-  req.user?.id ? `user:${req.user.id}` : ipKey(req);
+  req.user?.id ? tenantRateKey(req, `user:${req.user.id}`) : ipKey(req);
 
 /**
  * 30 single-record PII reveals / hour / actor. Covers the decrypted-SSN
@@ -483,7 +500,7 @@ export const defaultApiLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   skip: (req: Request) => !req.user || req.method === 'OPTIONS',
-  keyGenerator: (req: Request) => `user:${req.user!.id}`,
+  keyGenerator: (req: Request) => tenantRateKey(req, `user:${req.user!.id}`),
   message: {
     error: {
       code: 'rate_limited',

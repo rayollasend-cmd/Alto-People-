@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { DetailsTable, HoursChart, RingMeter, StatTile, WeekFillChart } from './portalCharts';
@@ -417,10 +418,12 @@ export function PortalHistory() {
           {data.stores.length > 0 && (
             <Card>
               <CardContent>
-                <div className="flex items-baseline justify-between gap-3">
-                  <h2 className="text-sm font-medium text-white">{t('portal.storesRanked')}</h2>
-                  <span className="text-xs text-silver/60">{t('portal.storesRankedSub')}</span>
-                </div>
+                <SectionTitle
+                  size="sm"
+                  className="mb-0"
+                  title={t('portal.storesRanked')}
+                  trailing={<span className="text-xs text-silver/60">{t('portal.storesRankedSub')}</span>}
+                />
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -470,7 +473,7 @@ export function PortalHistory() {
             {/* ---- Fill per day ------------------------------------------ */}
             <Card className="xl:col-span-7">
               <CardContent>
-                <h2 className="text-sm font-medium text-white">{t('portal.histFillTitle')}</h2>
+                <SectionTitle size="sm" className="mb-0" title={t('portal.histFillTitle')} />
                 <div className="mt-3">
                   <WeekFillChart
                     days={days}
@@ -501,7 +504,7 @@ export function PortalHistory() {
             {/* ---- Hours scheduled vs delivered --------------------------- */}
             <Card className="xl:col-span-5">
               <CardContent>
-                <h2 className="text-sm font-medium text-white">{t('portal.histHoursTitle')}</h2>
+                <SectionTitle size="sm" className="mb-0" title={t('portal.histHoursTitle')} />
                 <div className="mt-3">
                   <HoursChart
                     days={days}
@@ -526,7 +529,7 @@ export function PortalHistory() {
             {/* ---- Checklist evidence ------------------------------------- */}
             <Card className="xl:col-span-4">
               <CardContent>
-                <h2 className="text-sm font-medium text-white">{t('portal.histOpsTitle')}</h2>
+                <SectionTitle size="sm" className="mb-0" title={t('portal.histOpsTitle')} />
                 {!data.ops ? (
                   <p className="mt-3 text-sm text-silver/60">{t('portal.opsNone')}</p>
                 ) : (
@@ -569,7 +572,7 @@ export function PortalHistory() {
             {/* ---- Safety --------------------------------------------------- */}
             <Card className="xl:col-span-4">
               <CardContent>
-                <h2 className="text-sm font-medium text-white">{t('portal.safety')}</h2>
+                <SectionTitle size="sm" className="mb-0" title={t('portal.safety')} />
                 <div className="mt-2 text-4xl font-bold tracking-tight text-white">
                   {data.safety.incidents}
                   <span className="ml-2 text-base font-normal text-silver">{t('portal.safetyInRange')}</span>
@@ -587,7 +590,7 @@ export function PortalHistory() {
             {/* ---- Statements + service reports ----------------------------- */}
             <Card className="xl:col-span-4">
               <CardContent>
-                <h2 className="text-sm font-medium text-white">{t('portal.histDocs')}</h2>
+                <SectionTitle size="sm" className="mb-0" title={t('portal.histDocs')} />
                 {data.statements.length === 0 && data.serviceReports.length === 0 ? (
                   <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>
                 ) : (

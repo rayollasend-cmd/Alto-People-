@@ -5,6 +5,7 @@
 export * from './AssociateLink';
 export * from './AssociatePicker';
 export * from './Avatar';
+export * from './AuthHeading';
 export * from './Badge';
 export * from './Breadcrumb';
 export * from './Button';

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -155,13 +156,18 @@ export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: Requ
   return (
     <Card className="animate-enter print:hidden" id="requests">
       <CardContent>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-medium text-white">{t('portal.reqTitle')}</h2>
-          <Button size="md" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
-            <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-            {t('portal.reqNew')}
-          </Button>
-        </div>
+        <SectionTitle
+          size="sm"
+          wrap
+          className="mb-0"
+          title={t('portal.reqTitle')}
+          trailing={
+            <Button size="md" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
+              <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              {t('portal.reqNew')}
+            </Button>
+          }
+        />
         {query.isError && !query.data ? (
           <div className="mt-3">
             <ErrorBanner

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Apple, Smartphone, Share, MoreVertical, Plus, Download, ChevronRight, ShieldCheck } from 'lucide-react';
 import { Logo } from '@/components/Logo';
+import { AuthHero } from '@/components/ui/AuthHeading';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 
 type Platform = 'ios' | 'android' | 'desktop';
 
@@ -40,7 +42,7 @@ export function Install() {
       <Page>
         <div className="text-center">
           <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-          <h1 className="font-display text-3xl text-white mb-2">You're all set</h1>
+          <AuthHero title="You're all set" size="sm" tone="ink" className="sm:text-3xl" />
           <p className="text-silver mb-6">Alto People is already installed on this device.</p>
           <Link
             to="/"
@@ -57,9 +59,7 @@ export function Install() {
     <Page>
       <header className="text-center mb-8">
         <Logo size="xl" className="mx-auto mb-4 rounded-2xl" alt="Alto People" />
-        <h1 className="font-display text-3xl sm:text-4xl text-white mb-2">
-          Install Alto People
-        </h1>
+        <AuthHero title="Install Alto People" size="sm" tone="ink" />
         <p className="text-silver text-sm sm:text-base max-w-md mx-auto">
           Add Alto People to your home screen for one-tap access — your schedule,
           pay stubs, time off, and onboarding tasks, always a tap away.
@@ -175,10 +175,7 @@ function Section({
 }) {
   return (
     <section className="rounded-xl border border-navy-secondary bg-navy-secondary/20 p-5">
-      <div className="flex items-center gap-2 mb-4">
-        <Icon className="h-5 w-5 text-gold" />
-        <h2 className="text-white font-medium">{title}</h2>
-      </div>
+      <SectionTitle icon={Icon} title={title} className="mb-4" />
       <ol className="space-y-4">{children}</ol>
     </section>
   );

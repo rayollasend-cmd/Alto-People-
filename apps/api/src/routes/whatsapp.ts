@@ -9,6 +9,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { applyWhatsAppStatus, normalizePhone, verifyWhatsAppSignature, whatsappConfigured } from '../lib/whatsapp.js';
 import { handleInbound } from '../lib/whatsappAssistant.js';
+import { adoptTenant, runWithTenant, withIdentityScope } from '../lib/tenant.js';
 
 /**
  * WhatsApp (Brief 1C-4).
@@ -136,6 +137,28 @@ whatsappWebhookRouter.post('/', raw({ type: '*/*', limit: '512kb' }), async (req
   void trackNotificationWork(processWebhook(payload));
 });
 
+/**
+ * Brief 2-1 §9.4: one webhook body can carry receipts and messages of
+ * several tenants (the WhatsApp number is the platform's), so each item
+ * resolves its own tenant from the row it names — the outbound message a
+ * receipt is for, the consent of the number a message came from — and runs
+ * as that tenant alone. An item that resolves to no tenant is logged and
+ * dropped: nothing is written for it.
+ */
+export async function asTenantOf(find: () => Promise<string | null | undefined>, what: string, fn: () => Promise<unknown>): Promise<boolean> {
+  const tenantId = await withIdentityScope(find);
+  if (!tenantId) {
+    console.warn(`[whatsapp] ${what}: no tenant on file; dropped`);
+    return false;
+  }
+  // Bound like an anonymous request that adopted its tenant (lib/tenant.ts).
+  await runWithTenant(tenantId, 'default', async () => {
+    adoptTenant(tenantId);
+    await fn();
+  });
+  return true;
+}
+
 async function processWebhook(payload: WebhookPayload): Promise<void> {
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -145,12 +168,22 @@ async function processWebhook(payload: WebhookPayload): Promise<void> {
         const status = s.status as 'sent' | 'delivered' | 'read' | 'failed';
         if (!['sent', 'delivered', 'read', 'failed'].includes(status)) continue;
         const at = s.timestamp ? new Date(Number(s.timestamp) * 1000) : new Date();
-        await applyWhatsAppStatus(prisma, s.id, status, at, s.errors?.[0]?.message ?? s.errors?.[0]?.title ?? null).catch(() => undefined);
+        await asTenantOf(
+          async () => (await prisma.whatsAppMessage.findUnique({ where: { waMessageId: s.id }, select: { tenantId: true } }))?.tenantId,
+          `receipt ${s.id}`,
+          () => applyWhatsAppStatus(prisma, s.id, status, at, s.errors?.[0]?.message ?? s.errors?.[0]?.title ?? null),
+        ).catch(() => undefined);
       }
       for (const m of v.messages ?? []) {
         if (m.type !== 'text' || !m.text?.body) continue;
         const at = m.timestamp ? new Date(Number(m.timestamp) * 1000) : new Date();
-        await handleInbound({ from: m.from, waMessageId: m.id, text: m.text.body, timestamp: at }, prisma).catch((err) => {
+        // The number's consent names the tenant (the newest, as handleInbound reads it).
+        const phone = m.from.replace(/\D/g, '');
+        await asTenantOf(
+          async () => (await prisma.whatsAppConsent.findFirst({ where: { phone }, orderBy: { updatedAt: 'desc' }, select: { tenantId: true } }))?.tenantId,
+          `inbound ${m.id} from …${phone.slice(-4)}`,
+          () => handleInbound({ from: m.from, waMessageId: m.id, text: m.text!.body, timestamp: at }, prisma),
+        ).catch((err) => {
           console.warn('[whatsapp] inbound failed:', err instanceof Error ? err.message : err);
         });
       }

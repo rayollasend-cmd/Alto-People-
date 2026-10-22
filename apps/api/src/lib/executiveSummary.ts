@@ -13,8 +13,10 @@ import { env } from '../config/env.js';
 import { activeBreakdown } from './activeDefinition.js';
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
+import { loadLiveRules } from './laborRules/live.js';
+import { payFor, splitByPerson, type EntryHours, type HoursSplit, type LaborSite } from './laborRules/hours.js';
+import { tenantIdForWrite } from './tenant.js';
 
-const WEEKLY_OT_THRESHOLD_MIN = 40 * 60;
 const DAY_MS = 24 * 3600_000;
 /** Complete org weeks in the trend series (newest last = last week). */
 const TREND_WEEKS = 8;
@@ -25,7 +27,16 @@ export interface ExecutiveWeek {
   /** Exclusive end used for the aggregation (week end, or "now" for the current partial week). */
   end: string;
   workedHours: number;
+  /** Hours paid above straight time: overtime plus double time, split by the labor-rules engine exactly as pay splits them. */
   otHours: number;
+  /** The double-time part of otHours (a live jurisdiction's daily rule; 0 elsewhere). */
+  doubleTimeHours?: number;
+  /**
+   * What the multipliers add, in straight-time hours: half an hour per
+   * overtime hour at 1.5×, a whole one per double-time hour at 2×. A rate
+   * what-if prices the week as (workedHours + premiumHours) × rate.
+   */
+  premiumHours?: number;
   headsWorked: number;
   estBilled: number;
   estLaborCost: number;
@@ -67,8 +78,9 @@ export interface ExecutiveSummary {
     overheadPerHour: number;
   };
   /** Store profitability league — last 4 complete org weeks, best margin
-   *  first. OT is allocated to stores proportionally to hours within
-   *  each associate-week. */
+   *  first. Each store wears the overtime of the hours worked there: the
+   *  engine fills a person's week chronologically, so the store whose
+   *  shift ran past the line carries it. */
   league: Array<{
     clientId: string;
     clientName: string;
@@ -94,51 +106,60 @@ interface EntryRow {
   clockInAt: Date;
   clockOutAt: Date | null;
   breaks: Array<{ startedAt: Date; endedAt: Date | null }>;
+  site: LaborSite | null;
 }
 
-function netMinutes(e: EntryRow): number {
-  if (!e.clockOutAt) return 0;
-  const end = e.clockOutAt.getTime();
-  let ms = end - e.clockInAt.getTime();
-  for (const b of e.breaks) {
-    const bEnd = b.endedAt ? b.endedAt.getTime() : end;
-    ms -= Math.max(0, bEnd - b.startedAt.getTime());
-  }
-  return Math.max(0, Math.round(ms / 60_000));
+/** Each entry's hours as pay splits them (lib/laborRules/hours), and the person's multipliers. */
+interface Split {
+  byEntry: Map<EntryRow, EntryHours>;
+  byPerson: Map<string, HoursSplit>;
+}
+
+/** Est. billed and est. labor cost for a share of hours, at the standard rates and the split's multipliers. */
+function priceShare(share: Pick<EntryHours, 'workedHours' | 'regularHours' | 'overtimeHours' | 'doubleTimeHours'>, m: HoursSplit): { billed: number; cost: number } {
+  const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
+  return {
+    billed: payFor(share, env.DEFAULT_ASSOCIATE_BILL_RATE, m),
+    cost: payFor(share, env.DEFAULT_ASSOCIATE_PAY_RATE, m) * burden + share.workedHours * env.LABOR_OVERHEAD_PER_HOUR,
+  };
 }
 
 function aggregateWeek(
   entries: EntryRow[],
+  split: Split,
   start: Date,
   end: Date,
 ): ExecutiveWeek {
-  const byAssociate = new Map<string, number>();
+  const heads = new Set<string>();
+  let workedHours = 0;
+  let otHours = 0;
+  let dtHours = 0;
+  let premiumHours = 0;
+  // Overtime and double time are billed and paid at the engine's multipliers on both sides of the ledger.
+  let estBilled = 0;
+  let estLaborCost = 0;
   for (const e of entries) {
     if (e.clockInAt < start || e.clockInAt >= end) continue;
-    byAssociate.set(e.associateId, (byAssociate.get(e.associateId) ?? 0) + netMinutes(e));
+    const share = split.byEntry.get(e);
+    if (!share || share.workedHours <= 0) continue;
+    heads.add(e.associateId);
+    workedHours += share.workedHours;
+    otHours += share.overtimeHours + share.doubleTimeHours;
+    dtHours += share.doubleTimeHours;
+    const m = split.byPerson.get(e.associateId)!;
+    premiumHours += share.overtimeHours * (m.overtimeMultiplier - 1) + share.doubleTimeHours * (m.doubleMultiplier - 1);
+    const p = priceShare(share, m);
+    estBilled += p.billed;
+    estLaborCost += p.cost;
   }
-  let workedMin = 0;
-  let otMin = 0;
-  for (const mins of byAssociate.values()) {
-    workedMin += mins;
-    otMin += Math.max(0, mins - WEEKLY_OT_THRESHOLD_MIN);
-  }
-  const workedHours = workedMin / 60;
-  const otHours = otMin / 60;
-  const bill = env.DEFAULT_ASSOCIATE_BILL_RATE;
-  const pay = env.DEFAULT_ASSOCIATE_PAY_RATE;
-  const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
-  // OT adds the 0.5× premium on both sides of the ledger.
-  const estBilled = workedHours * bill + otHours * bill * 0.5;
-  const estLaborCost =
-    (workedHours * pay + otHours * pay * 0.5) * burden +
-    workedHours * env.LABOR_OVERHEAD_PER_HOUR;
   return {
     start: start.toISOString(),
     end: end.toISOString(),
     workedHours: Math.round(workedHours * 100) / 100,
     otHours: Math.round(otHours * 100) / 100,
-    headsWorked: byAssociate.size,
+    ...(dtHours > 0 ? { doubleTimeHours: Math.round(dtHours * 100) / 100 } : {}),
+    premiumHours: Math.round(premiumHours * 100) / 100,
+    headsWorked: heads.size,
     estBilled: Math.round(estBilled * 100) / 100,
     estLaborCost: Math.round(estLaborCost * 100) / 100,
     estMargin: Math.round((estBilled - estLaborCost) * 100) / 100,
@@ -167,7 +188,7 @@ export async function computeExecutiveSummary(
   const thirtyAgo = new Date(now.getTime() - 30 * DAY_MS);
 
   const [
-    entries,
+    rawEntries,
     active,
     deactivated,
     hires30d,
@@ -190,6 +211,7 @@ export async function computeExecutiveSummary(
         clockInAt: true,
         clockOutAt: true,
         breaks: { select: { startedAt: true, endedAt: true } },
+        location: { select: { id: true, state: true, city: true, timezone: true } },
       },
       take: 50_000,
     }),
@@ -234,6 +256,12 @@ export async function computeExecutiveSummary(
     }),
   ]);
 
+  // Every person's hours split once, the way their paycheck splits them
+  // (lib/laborRules/hours): the federal weekly 40, or a live jurisdiction's
+  // daily and double-time rules. Each entry carries its share.
+  const entries: EntryRow[] = rawEntries.map(({ location, ...e }) => ({ ...e, site: location }));
+  const split: Split = splitByPerson(await loadLiveRules(prisma, opts.tenantId ?? tenantIdForWrite()), entries);
+
   // Per client: the active associates placed there (the one definition), not open assignments.
   const byClient = new Map<string, { clientName: string; activeAssociates: number }>();
   for (const c of openAssignments) {
@@ -244,37 +272,29 @@ export async function computeExecutiveSummary(
   // Oldest → newest: window i runs weekStarts[i+1] → weekStarts[i].
   const trend: ExecutiveWeek[] = [];
   for (let i = TREND_WEEKS - 1; i >= 0; i--) {
-    trend.push(aggregateWeek(entries, weekStarts[i + 1], weekStarts[i]));
+    trend.push(aggregateWeek(entries, split, weekStarts[i + 1], weekStarts[i]));
   }
 
   // ----- Store league + client concentration (last 4 complete weeks) -----
-  // OT is a per-associate-per-week property; allocate each associate-
-  // week's OT minutes back to the stores they worked, proportional to
-  // hours there, so a store that drove someone past 40h wears the cost.
+  // Each store's hours, overtime and dollars from its entries' shares of
+  // their people's weeks: the engine puts a week's overtime on its latest
+  // hours, so the store whose shift pushed someone past the line wears it.
   const leagueStart = weekStarts[Math.min(4, TREND_WEEKS)];
   const leagueEnd = thisWeekStart;
-  const byAssocWeek = new Map<string, { total: number; perLoc: Map<string, number> }>();
+  const perLocation = new Map<string, { hours: number; otHours: number; billed: number; cost: number }>();
   for (const e of entries) {
     if (e.clockInAt < leagueStart || e.clockInAt >= leagueEnd) continue;
     if (!e.locationId || !e.clientId) continue;
-    const wk = startOfWeekUTC(e.clockInAt).getTime();
-    const key = `${e.associateId}:${wk}`;
-    const rec = byAssocWeek.get(key) ?? { total: 0, perLoc: new Map<string, number>() };
-    const mins = netMinutes(e);
-    rec.total += mins;
+    const share = split.byEntry.get(e);
+    if (!share || share.workedHours <= 0) continue;
     const locKey = `${e.clientId}:${e.locationId}`;
-    rec.perLoc.set(locKey, (rec.perLoc.get(locKey) ?? 0) + mins);
-    byAssocWeek.set(key, rec);
-  }
-  const perLocation = new Map<string, { minutes: number; otMinutes: number }>();
-  for (const rec of byAssocWeek.values()) {
-    const ot = Math.max(0, rec.total - WEEKLY_OT_THRESHOLD_MIN);
-    for (const [locKey, mins] of rec.perLoc) {
-      const agg = perLocation.get(locKey) ?? { minutes: 0, otMinutes: 0 };
-      agg.minutes += mins;
-      agg.otMinutes += rec.total > 0 ? (ot * mins) / rec.total : 0;
-      perLocation.set(locKey, agg);
-    }
+    const agg = perLocation.get(locKey) ?? { hours: 0, otHours: 0, billed: 0, cost: 0 };
+    const p = priceShare(share, split.byPerson.get(e.associateId)!);
+    agg.hours += share.workedHours;
+    agg.otHours += share.overtimeHours + share.doubleTimeHours;
+    agg.billed += p.billed;
+    agg.cost += p.cost;
+    perLocation.set(locKey, agg);
   }
   const locationIds = [...new Set([...perLocation.keys()].map((k) => k.split(':')[1]))];
   const locMeta =
@@ -290,19 +310,11 @@ export async function computeExecutiveSummary(
           },
         });
   const locById = new Map(locMeta.map((l) => [l.id, l]));
-  const bill = env.DEFAULT_ASSOCIATE_BILL_RATE;
-  const pay = env.DEFAULT_ASSOCIATE_PAY_RATE;
-  const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
   const league = [...perLocation.entries()]
     .map(([locKey, agg]) => {
       const [clientId, locationId] = locKey.split(':');
       const meta = locById.get(locationId);
-      const hours = agg.minutes / 60;
-      const otHours = agg.otMinutes / 60;
-      const estBilled = hours * bill + otHours * bill * 0.5;
-      const estCost =
-        (hours * pay + otHours * pay * 0.5) * burden +
-        hours * env.LABOR_OVERHEAD_PER_HOUR;
+      const { hours, otHours, billed: estBilled, cost: estCost } = agg;
       return {
         clientId,
         clientName: meta?.client?.name ?? 'Unknown client',
@@ -333,8 +345,8 @@ export async function computeExecutiveSummary(
   return {
     generatedAt: now.toISOString(),
     workforce: { active: active.total, deactivated, hires30d, separations30d, onboardingInFlight },
-    lastWeek: aggregateWeek(entries, lastWeekStart, thisWeekStart),
-    thisWeek: aggregateWeek(entries, thisWeekStart, now),
+    lastWeek: aggregateWeek(entries, split, lastWeekStart, thisWeekStart),
+    thisWeek: aggregateWeek(entries, split, thisWeekStart, now),
     trend,
     newHires30d: newHireRows.map((a) => ({
       id: a.id,

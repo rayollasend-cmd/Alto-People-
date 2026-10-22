@@ -115,8 +115,8 @@ const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)}h`;
  * light/dark theme at paint time with no re-render (same idiom as
  * DonutChart). Two categorical series, fixed assignment (never re-ordered):
  * Scheduled = gold, Worked = steel. Palette validated with the dataviz
- * six-check script against both surfaces: light (#B8860B/#2563EB on white)
- * passes all six; dark (#D9B967/#60A5FA on #0B1832) passes chroma, CVD
+ * six-check script against both surfaces: light (deep gold and blue on
+ * white) passes all six; dark (soft gold and sky blue on navy) passes chroma, CVD
  * (ΔE 24), normal-vision (ΔE 26) and contrast — the brand tokens sit a
  * step above the generic dark lightness band on purpose (this navy is far
  * darker than a typical dark surface), and the legend + direct labels +
@@ -413,8 +413,9 @@ const hhmmToMinute = (s: string): number | null => {
 
 /**
  * OT outlook — the names behind the floor board's "OT risk" chips: every
- * associate projected past 40h this week (worked + remaining scheduled,
- * cross-client), with the estimated 1.5× billed cost. Quiet when clean.
+ * associate whose week lands in overtime (worked + remaining scheduled,
+ * cross-client), split and priced by the server's labor-rules engine as
+ * payroll will pay it. Quiet when clean.
  */
 function OtOutlookCard() {
   const hasClients = useTenant().moduleOn('clientPortal');
@@ -551,8 +552,8 @@ function OtOutlookCard() {
                 {money(topContributor.estOtBilled ?? 0)}).
               </>
             )}{' '}
-            Worked so far plus remaining scheduled shifts crosses 40 hours.
-            Trimming or reassigning a shift on the{' '}
+            Worked so far plus remaining scheduled shifts lands in overtime,
+            split the way payroll will pay it. Trimming or reassigning a shift on the{' '}
             <Link to="/scheduling" className="text-gold hover:underline">
               schedule
             </Link>{' '}

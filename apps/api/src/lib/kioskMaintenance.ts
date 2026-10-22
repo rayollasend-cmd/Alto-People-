@@ -7,6 +7,7 @@ import { env } from '../config/env.js';
 import { send } from './notifications.js';
 import { isEmailMuted } from './notify.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Hourly kiosk maintenance sweep.
@@ -97,7 +98,7 @@ export async function closeForgottenClockOuts(
           "anomalies" = v."anomalies",
           "updatedAt" = NOW()
       FROM (VALUES ${values}) AS v(id, "clockOutAt", "anomalies")
-      WHERE t."id" = v.id`;
+      WHERE t."id" = v.id AND t."tenantId" = ${tenantIdForWrite()}::uuid`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     for (const entry of stuck) {

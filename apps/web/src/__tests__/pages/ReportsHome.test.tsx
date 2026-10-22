@@ -124,7 +124,7 @@ describe('<ReportsHome> — templates (HR walk 17)', () => {
     await user.click(within(gallery).getByRole('button', { name: /Terminations by reason/ }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getAllByRole('textbox')[0]).toHaveValue('Terminations by reason');
+    expect(within(dialog).getAllByRole('textbox')[0]).toHaveValue('Terminations by reason, last quarter');
     expect(within(dialog).getAllByRole('combobox')[0]).toHaveValue('SEPARATION');
     expect(within(dialog).getByRole('checkbox', { name: 'Summarize' })).toBeChecked();
     // Nothing saved by opening a template.

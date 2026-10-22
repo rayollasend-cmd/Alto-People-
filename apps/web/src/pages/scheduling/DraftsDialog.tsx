@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/Dialog';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -93,7 +94,7 @@ export function DraftsDialog({
         {summary.isLoading ? (
           <Skeleton className="h-28" />
         ) : total === 0 ? (
-          <p className="text-sm text-success">Nothing unpublished. Every shift is live.</p>
+          <EmptyState size="sm" title="Nothing unpublished." description="Every shift is live." />
         ) : (
           <div className="space-y-3">
             <div className="rounded-lg border border-navy-secondary p-3">

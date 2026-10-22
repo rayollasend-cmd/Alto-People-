@@ -23,7 +23,7 @@ afterAll(async () => {
 
 describe('the Trust Center', () => {
   it('the public summary needs no account and leaks nothing', async () => {
-    await prisma.orgSetting.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', securityContactEmail: 'security@altohr.com' }, update: { securityContactEmail: 'security@altohr.com' } });
+    await prisma.orgSetting.upsert({ where: { tenantId: '00000000-0000-4000-8000-000000000001' }, create: { securityContactEmail: 'security@altohr.com' }, update: { securityContactEmail: 'security@altohr.com' } });
     const res = await request(createApp()).get('/trust/public');
     expect(res.status).toBe(200);
     expect(res.body.controls.total).toBeGreaterThan(5);

@@ -2,6 +2,7 @@ import type { NewHireReport, Prisma, PrismaClient } from '@prisma/client';
 import { decryptString } from './crypto.js';
 import { employerFor } from './employment.js';
 import { workStateOf } from './payNotices.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * New-hire reporting to the state directory, per hire and per state.
@@ -55,7 +56,7 @@ export function dueDateFor(state: string, hireDate: Date): Date {
 
 /** Where a hire is reported: the multistate state when one is set, else where they work. */
 export async function reportingStateFor(db: Db, associateId: string): Promise<string | null> {
-  const setting = await db.orgSetting.findFirst({ select: { newHireMultistateState: true } });
+  const setting = await db.orgSetting.findFirst({ where: { tenantId: tenantIdForWrite() }, select: { newHireMultistateState: true } });
   if (setting?.newHireMultistateState) return setting.newHireMultistateState.toUpperCase();
   return workStateOf(db, associateId);
 }

@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { scopeAssociates, scopeWhere } from '../lib/scope.js';
+import { shiftTimezone } from '../lib/shiftZone.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ATTESTATION_TEXT, CORRECTION_KINDS, breakQuestionsFor, decideCorrection, submitCorrection } from '../lib/timeCorrections.js';
@@ -45,7 +46,7 @@ function ownAssociate(req: { user?: { associateId?: string | null } }): string {
   return id;
 }
 
-const shape = (r: Prisma.TimeCorrectionRequestGetPayload<{ include: { associate: { select: { firstName: true; lastName: true } } } }>, sites: Map<string, string>, names: Map<string, string>) => ({
+const shape = (r: Prisma.TimeCorrectionRequestGetPayload<{ include: { associate: { select: { firstName: true; lastName: true } } } }>, sites: SiteMap, names: Map<string, string>) => ({
   id: r.id,
   associateId: r.associateId,
   name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
@@ -53,6 +54,8 @@ const shape = (r: Prisma.TimeCorrectionRequestGetPayload<{ include: { associate:
   status: r.status,
   workDate: r.workDate?.toISOString().slice(0, 10) ?? null,
   siteName: r.siteId ? sites.get(r.siteId) ?? null : null,
+  // The site's clock: the proposed punches are read the way the site reads them.
+  timezone: r.siteId ? sites.zoneOf(r.siteId) : null,
   timeEntryId: r.timeEntryId,
   proposedClockIn: r.proposedClockIn?.toISOString() ?? null,
   proposedClockOut: r.proposedClockOut?.toISOString() ?? null,
@@ -67,10 +70,13 @@ const shape = (r: Prisma.TimeCorrectionRequestGetPayload<{ include: { associate:
   createdAt: r.createdAt.toISOString(),
 });
 
-async function siteNames(ids: Array<string | null>): Promise<Map<string, string>> {
+/** Site names, and each site's zone (one punch, one time: lib/shiftZone). */
+type SiteMap = Map<string, string> & { zoneOf: (id: string) => string | null };
+async function siteNames(ids: Array<string | null>): Promise<SiteMap> {
   const want = [...new Set(ids.filter((x): x is string => !!x))];
-  if (!want.length) return new Map();
-  return new Map((await prisma.site.findMany({ where: { id: { in: want } }, select: { id: true, name: true } })).map((s) => [s.id, s.name]));
+  const rows = want.length ? await prisma.site.findMany({ where: { id: { in: want } }, select: { id: true, name: true, timezone: true } }) : [];
+  const zones = new Map(rows.map((s) => [s.id, s.timezone]));
+  return Object.assign(new Map(rows.map((s) => [s.id, s.name])), { zoneOf: (id: string) => (zones.has(id) ? shiftTimezone({ timezone: zones.get(id) ?? null }) : null) });
 }
 async function userNames(ids: Array<string | null>): Promise<Map<string, string>> {
   const want = [...new Set(ids.filter((x): x is string => !!x))];
@@ -94,7 +100,7 @@ timeCorrectionsRouter.get('/mine', async (req, res) => {
   res.json({
     attestation: ATTESTATION_TEXT,
     requests: rows.map((r) => shape(r, sites, names)),
-    entries: entries.map((e) => ({ id: e.id, clockInAt: e.clockInAt.toISOString(), clockOutAt: e.clockOutAt?.toISOString() ?? null, status: e.status, siteName: e.locationId ? sites.get(e.locationId) ?? null : null })),
+    entries: entries.map((e) => ({ id: e.id, clockInAt: e.clockInAt.toISOString(), clockOutAt: e.clockOutAt?.toISOString() ?? null, status: e.status, siteName: e.locationId ? sites.get(e.locationId) ?? null : null, timezone: e.locationId ? sites.zoneOf(e.locationId) : null })),
     sites: placements.map((p) => ({ id: p.locationId, name: sites.get(p.locationId) ?? 'Site' })),
   });
 });
@@ -171,7 +177,7 @@ timeCorrectionsRouter.get('/break-flags', MANAGE, async (req, res) => {
     truncated: rows.length > 100,
     flags: rows.slice(0, 100).map((r) => {
       const e = entries.get(r.timeEntryId);
-      return { id: r.id, associateId: r.associateId, name: `${r.associate.firstName} ${r.associate.lastName}`.trim(), meal: r.meal, rest: r.rest, note: r.note, clockInAt: e?.clockInAt.toISOString() ?? null, clockOutAt: e?.clockOutAt?.toISOString() ?? null, siteName: e?.locationId ? sites.get(e.locationId) ?? null : null, createdAt: r.createdAt.toISOString() };
+      return { id: r.id, associateId: r.associateId, name: `${r.associate.firstName} ${r.associate.lastName}`.trim(), meal: r.meal, rest: r.rest, note: r.note, clockInAt: e?.clockInAt.toISOString() ?? null, clockOutAt: e?.clockOutAt?.toISOString() ?? null, siteName: e?.locationId ? sites.get(e.locationId) ?? null : null, timezone: e?.locationId ? sites.zoneOf(e.locationId) : null, createdAt: r.createdAt.toISOString() };
     }),
   });
 });
