@@ -27,6 +27,13 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     }) as MediaQueryList;
 }
 
+// jsdom has no scrollIntoView. Pages that scroll a section into view on the
+// next animation frame (Settings' folds) otherwise throw after the test that
+// opened them has finished, and the run fails on an unhandled error.
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => undefined;
+}
+
 // Node 25 ships its own `localStorage` global — an empty object with no
 // methods unless node runs with --localstorage-file — and it shadows
 // jsdom's. Code under test then threw "localStorage.clear is not a
