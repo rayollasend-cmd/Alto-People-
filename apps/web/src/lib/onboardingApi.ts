@@ -629,7 +629,8 @@ export interface FirstDay {
   /** The stores the hire could be placed at (the client's, or the company's own). */
   stores: { id: string; name: string }[];
   manager: { id: string; name: string } | null;
-  employeeNumber: { issued: boolean; clientId: string | null; validAtClient: boolean };
+  /** `number`: the clock-in number itself, so the desk can hand it to the hire (null when none or unreadable). */
+  employeeNumber: { issued: boolean; clientId: string | null; validAtClient: boolean; number: string | null };
   /** `timezone`: the store's clock (one shift, one time). */
   firstShift: { id: string; startsAt: string; locationName: string | null; timezone?: string | null } | null;
   i9: { section1CompletedAt: string | null; section2CompletedAt: string | null; section2DueBy: string | null };

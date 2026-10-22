@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { encryptString } from '../../lib/crypto.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
@@ -59,12 +60,23 @@ describe('first day', () => {
       startDate: '2026-11-06',
       store: null,
       manager: null,
-      employeeNumber: { issued: true, clientId: other.id, validAtClient: false },
+      // No readable plaintext on this row: the number reads null, never a guess.
+      employeeNumber: { issued: true, clientId: other.id, validAtClient: false, number: null },
       firstShift: null,
       // Friday + 3 business days skips the weekend.
       i9: { section1CompletedAt: null, section2CompletedAt: null, section2DueBy: '2026-11-11' },
     });
     expect(r.body.stores.map((s: { id: string }) => s.id).sort()).toEqual([store.id, second.id].sort());
+  });
+
+  it('reads the clock-in number itself once it is filed for this client, so the desk can hand it over', async () => {
+    const { a, app, client } = await setup();
+    await prisma.kioskPin.create({
+      data: { associateId: app.associateId, clientId: client.id, pinHmac: randomBytes(32), pinEncrypted: encryptString('4821') },
+    });
+    const r = await a.get(`/onboarding/applications/${app.id}/first-day`);
+    expect(r.status).toBe(200);
+    expect(r.body.employeeNumber).toEqual({ issued: true, clientId: client.id, validAtClient: true, number: '4821' });
   });
 
   it('finds the first booked shift from the start date', async () => {

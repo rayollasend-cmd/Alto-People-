@@ -76,10 +76,23 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
     }
   };
 
+  // The number the desk just issued, shown on the line until the refetch
+  // carries it (the toast alone disappeared, and HR went to People for it).
+  const [justIssued, setJustIssued] = useState<string | null>(null);
+  const copyNumber = async (n: string) => {
+    try {
+      await navigator.clipboard.writeText(n);
+      toast.success('Clock-in number copied.');
+    } catch {
+      toast.error('Could not copy — read it from the line.');
+    }
+  };
+
   const issueNumber = async () => {
     setSaving('number');
     try {
       const r = await assignKioskPin({ associateId, clientId });
+      setJustIssued(r.employeeNumber);
       toast.success(`Clock-in number ${r.employeeNumber} issued for this client.`);
       void q.refetch();
     } catch (err) {
@@ -101,6 +114,7 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
       );
     }
     const numberOk = fd.employeeNumber.issued && fd.employeeNumber.validAtClient;
+    const shownNumber = fd.employeeNumber.number ?? justIssued;
     return (
       <ul className="divide-y divide-line">
         <Line done={!!fd.startDate} label="Start date">
@@ -149,7 +163,26 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
         </Line>
         <Line done={numberOk} label="Clock-in number">
           {numberOk ? (
-            <span>Issued, and it works at this client’s kiosks.</span>
+            <>
+              {/* The number itself, not just "issued": the desk reads it to the
+                  hire. A toast alone vanished and sent HR to People to find it. */}
+              <span>
+                {shownNumber ? (
+                  <>
+                    <span className="font-mono text-base tabular-nums text-ink">{shownNumber}</span>
+                    {' '}
+                    <span className="text-ink-muted">· works at this client’s kiosks.</span>
+                  </>
+                ) : (
+                  'Issued, and it works at this client’s kiosks.'
+                )}
+              </span>
+              {shownNumber && (
+                <Button size="sm" variant="ghost" onClick={() => void copyNumber(shownNumber)}>
+                  Copy
+                </Button>
+              )}
+            </>
           ) : !clientId ? (
             <span className="text-ink-muted">Issued from the kiosk tools for a direct hire.</span>
           ) : !approved ? (

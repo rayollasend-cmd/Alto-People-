@@ -1453,6 +1453,19 @@ function ApprovedCelebration({
             </div>
 
             <div className="mt-7 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              {/* The approved person leaves the Active list, so "Back to
+                  applications" lost them — the desk went hunting in People
+                  for the kiosk code (reported 2026-10-22). Their record is
+                  one tap from here. */}
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  onOpenChange(false);
+                  navigate(`/people?associateId=${associateId}`);
+                }}
+              >
+                Open their profile
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => {

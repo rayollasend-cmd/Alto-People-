@@ -1044,7 +1044,7 @@ async function firstDayView(app: Awaited<ReturnType<typeof firstDayApplication>>
       orderBy: { name: 'asc' },
       take: 200,
     }),
-    prisma.kioskPin.findUnique({ where: { associateId: app.associateId }, select: { clientId: true } }),
+    prisma.kioskPin.findUnique({ where: { associateId: app.associateId }, select: { clientId: true, pinEncrypted: true } }),
     prisma.i9Verification.findUnique({
       where: { associateId: app.associateId },
       select: { section1CompletedAt: true, section2CompletedAt: true },
@@ -1069,6 +1069,9 @@ async function firstDayView(app: Awaited<ReturnType<typeof firstDayApplication>>
       clientId: pin?.clientId ?? null,
       // The kiosk refuses a number filed under another client.
       validAtClient: !!pin && (pin.clientId ?? null) === (app.clientId ?? null),
+      // The number itself, so the desk can hand it to the hire without a
+      // trip to People (reported 2026-10-22). Null when none or unreadable.
+      number: pin?.pinEncrypted ? tryDecryptString(pin.pinEncrypted) : null,
     },
     firstShift: shift
       ? { id: shift.id, startsAt: shift.startsAt.toISOString(), locationName: shift.locationRel?.name ?? shift.location ?? null, timezone: shiftTimezone(shift.locationRel) }

@@ -44,7 +44,7 @@ const FIRST_DAY: FirstDay = {
     { id: 's2', name: 'Bayside' },
   ],
   manager: null,
-  employeeNumber: { issued: true, clientId: 'other-client', validAtClient: false },
+  employeeNumber: { issued: true, clientId: 'other-client', validAtClient: false, number: null },
   firstShift: null,
   i9: { section1CompletedAt: '2026-10-20T12:00:00.000Z', section2CompletedAt: null, section2DueBy: '2026-10-29' },
 };
@@ -75,9 +75,14 @@ describe('<FirstDayCard> (HR 11)', () => {
     await userEvent.selectOptions(screen.getByLabelText('Store'), 's2');
     await waitFor(() => expect(patchFirstDay).toHaveBeenCalledWith('app1', { locationId: 's2' }));
 
-    // A number filed under another client is re-issued for this one.
+    // A number filed under another client is re-issued for this one — and
+    // the new number stays on the line for the desk to hand over (the
+    // refetch answers with it; a toast alone vanished).
+    vi.mocked(getFirstDay).mockResolvedValue({ ...FIRST_DAY, employeeNumber: { issued: true, clientId: 'c1', validAtClient: true, number: '4821' } });
     await userEvent.click(screen.getByRole('button', { name: 'Re-issue for this client' }));
     await waitFor(() => expect(assignKioskPin).toHaveBeenCalledWith({ associateId: 'a1', clientId: 'c1' }));
+    expect(await screen.findByText('4821')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
 
     // No first shift yet: the open shifts at their store, one tap each.
     await userEvent.click(screen.getByRole('button', { name: 'Book one' }));
@@ -85,7 +90,7 @@ describe('<FirstDayCard> (HR 11)', () => {
   });
 
   it('before approval it says what waits for approval instead of offering a dead button', async () => {
-    vi.mocked(getFirstDay).mockResolvedValue({ ...FIRST_DAY, employeeNumber: { issued: false, clientId: null, validAtClient: false } });
+    vi.mocked(getFirstDay).mockResolvedValue({ ...FIRST_DAY, employeeNumber: { issued: false, clientId: null, validAtClient: false, number: null } });
     renderAs('HR_ADMINISTRATOR', <FirstDayCard applicationId="app1" associateId="a1" clientId="c1" status="SUBMITTED" payScheduleName={null} />);
     expect(await screen.findByText('Issued once the application is approved.')).toBeInTheDocument();
     expect(screen.getByText('Booked once the application is approved.')).toBeInTheDocument();
