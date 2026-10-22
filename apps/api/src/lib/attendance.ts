@@ -39,7 +39,9 @@ export const ATTENDANCE_THRESHOLDS: Array<{ score: number; step: string }> = [
 const TIME_ADMIN_ROLES = (
   Object.entries(ROLE_CAPABILITIES) as Array<[Role, ReadonlySet<string>]>
 )
-  .filter(([role, caps]) => caps.has('manage:time') && role !== 'SHIFT_SUPERVISOR')
+  // The recruiter holds manage:time only for the kiosk code (owner 2026-10-22);
+  // attendance warnings are the time desk's, not the hiring desk's.
+  .filter(([role, caps]) => caps.has('manage:time') && role !== 'SHIFT_SUPERVISOR' && role !== 'INTERNAL_RECRUITER')
   .map(([role]) => role);
 
 export function windowStart(asOf = new Date()): Date {

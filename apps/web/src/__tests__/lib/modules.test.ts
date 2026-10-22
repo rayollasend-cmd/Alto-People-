@@ -48,6 +48,8 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
         // The staffing plan — heads required vs placed per store and week —
         // is the demand a recruiter hires against.
         'headcount-plan',
+        // The kiosk code is the last step of the onboarding desk (2026-10-22).
+        'kiosk',
       ]),
     );
   });

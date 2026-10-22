@@ -176,15 +176,14 @@ describe('GET /me/decisions', () => {
     });
     await prisma.$executeRaw`UPDATE "Application" SET "updatedAt" = NOW() - INTERVAL '10 days' WHERE "associateId" = ${candidate.id}::uuid`;
 
-    // Recruiter: its own charter since audit #16 (no manage:onboarding, no
-    // money). The stuck application is the HR review desk's item, not the
-    // recruiter's — its hiring work (offers out, interviews, onboarding not
-    // started) lives on the recruiter home — and money items never reach it.
+    // Recruiter: its own charter since audit #16, corrected 2026-10-22 — the
+    // recruiter IS the onboarding desk (manage:onboarding), so the stuck
+    // application is their item too; money items never reach them.
     const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });
     const rq = await (await loginAs(recruiter.email)).get('/me/decisions');
     expect(rq.status).toBe(200);
     const rKeys = (rq.body.decisions as Item[]).map((d) => d.key);
-    expect(rKeys.some((k) => k === 'onboarding:stuck')).toBe(false);
+    expect(rKeys.some((k) => k === 'onboarding:stuck')).toBe(true);
     expect(rKeys.some((k) => k.startsWith('receivable:'))).toBe(false);
     // ...and the desk that does review it still gets it.
     const { user: hrDesk } = await createUser({ role: 'HR_ADMINISTRATOR' });

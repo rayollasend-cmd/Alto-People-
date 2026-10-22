@@ -63,19 +63,26 @@ describe('hasCapability', () => {
     expect(hasCapability(role, 'view:audit')).toBe(true);
   });
 
-  it('INTERNAL_RECRUITER holds the recruiting charter, not an admin clone (audit #16)', () => {
-    // The funnel end to end, the hand-off into onboarding, and reads of the
-    // people, documents and compliance a hire depends on.
+  it('INTERNAL_RECRUITER holds the recruiting charter and the onboarding desk, not an admin clone (audit #16, owner 2026-10-22)', () => {
+    // The funnel end to end, the whole onboarding desk (invite → document
+    // approval → compliance → kiosk code), and reads of the people a hire
+    // depends on.
     expect([...ROLE_CAPABILITIES.INTERNAL_RECRUITER].sort()).toEqual(
       [
         'view:dashboard',
         'view:recruiting',
         'manage:recruiting',
         'view:onboarding',
+        'manage:onboarding',
         'invite:onboarding',
         'view:org',
         'view:documents',
+        'manage:documents',
         'view:compliance',
+        'manage:compliance',
+        'view:time',
+        'manage:time',
+        'view:time-live',
         'view:communications',
         'view:analytics',
         'view:marketing',
@@ -83,11 +90,10 @@ describe('hasCapability', () => {
     );
     // What a URL used to reach: SSN reveal (process:payroll), role and user
     // changes (manage:org), API keys (manage:integrations), the admin lists
-    // and the audit log.
+    // and the audit log. These stay out.
     for (const c of [
       'process:payroll',
       'manage:org',
-      'manage:onboarding',
       'manage:integrations',
       'view:integrations',
       'view:hr-admin',
@@ -95,7 +101,8 @@ describe('hasCapability', () => {
       'view:payroll',
       'manage:comp',
       'export:payroll-pii',
-      'manage:compliance',
+      'manage:scheduling',
+      'manage:communications',
     ] as const) {
       expect(hasCapability('INTERNAL_RECRUITER', c), c).toBe(false);
     }

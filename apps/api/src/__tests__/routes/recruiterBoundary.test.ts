@@ -6,8 +6,9 @@ import { createAssociate, createUser, prisma, truncateAll } from '../../../test/
  * System audit #16: the Internal Recruiter held the full admin capability
  * set, so its curated menu hid SSN reveal, role changes and API keys that a
  * typed URL still reached. It now has its own charter — the hiring funnel,
- * the hand-off into onboarding, reads of people — and the server refuses
- * everything else. These are the URLs the audit named.
+ * the whole onboarding desk (invite, document approval, compliance, kiosk
+ * code — the owner's correction of 2026-10-22), reads of people — and the
+ * server refuses everything else. These are the URLs the audit named.
  */
 
 beforeEach(async () => {
@@ -46,10 +47,20 @@ describe('the recruiter is refused outside recruiting', () => {
     expect(await prisma.apiKey.count()).toBe(0);
   });
 
-  it('cannot approve onboarding or run payroll', async () => {
+  it('cannot run payroll or read the audit log', async () => {
     const a = await recruiter();
     expect((await a.get('/payroll/runs')).status).toBe(403);
     expect((await a.get('/audit')).status).toBe(403);
+  });
+});
+
+describe('the recruiter runs the onboarding desk', () => {
+  it('reads the document review queue and the kiosk codes (manage:documents, manage:time)', async () => {
+    const a = await recruiter();
+    for (const path of ['/documents/admin', '/kiosk-pins']) {
+      const r = await a.get(path);
+      expect(r.status, path).toBe(200);
+    }
   });
 });
 

@@ -47,7 +47,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   CLIENT_PORTAL: 'Read-only access scoped to one client account',
   FINANCE_ACCOUNTANT: 'Time, scheduling, and payroll only — runs pay cycles, no HR data',
   INTERNAL_RECRUITER:
-    'Hire to file: the pipeline, interviews, offers, the candidate portal and onboarding handoffs, on the full admin surface (no payroll void / PII export); lands on the recruiter’s day',
+    'Hire to file: the pipeline, interviews, offers, and the whole onboarding desk — invites, document approval, I-9, compliance and the kiosk code. No payroll, no user or role changes, no settings; lands on the recruiter’s day',
   MANAGER:
     'Full org-wide access (no payroll void / PII export); lands on the team dashboard — direct reports, approvals, timesheets',
   WORKFORCE_MANAGER:
@@ -436,21 +436,38 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // gated behind manage:communications, which finance does not have.
     'view:communications',
   ]),
-  // The recruiter's own charter (system audit 2026-10-21, #16). It used to be
-  // FULL_ADMIN with a curated menu, so SSN reveal, role changes and API keys
-  // were one typed URL away. Now: the funnel end to end — candidates,
-  // postings, interviews, offers — the hand-off into onboarding (invite, not
-  // review), and READ access to people, documents and compliance to check a
-  // hire's status. No org writes, no payroll, no admin lists, no keys.
+  // The recruiter's own charter (system audit 2026-10-21, #16; the owner's
+  // correction 2026-10-22). It used to be FULL_ADMIN with a curated menu, so
+  // SSN reveal, role changes and API keys were one typed URL away. The audit
+  // first cut it to "invite, not review" — but at Alto the recruiter IS the
+  // onboarding desk: from the first invite through document inspection and
+  // approval, I-9 Section 2, the hire's compliance, and the kiosk code that
+  // puts them on the floor. So: the funnel end to end — candidates, postings,
+  // interviews, offers — plus the whole onboarding desk, with the audit's
+  // exclusions kept: no org writes (users, roles, the person's record), no
+  // payroll or SSN reveal, no admin lists, no keys, no audit log.
   INTERNAL_RECRUITER: new Set<Capability>([
     'view:dashboard',
     'view:recruiting',
     'manage:recruiting',
+    // The onboarding desk: New application, approve/reject, I-9 Section 2,
+    // templates, analytics — and the invite surface that rides under it.
     'view:onboarding',
+    'manage:onboarding',
     'invite:onboarding',
     'view:org',
+    // Document inspection and approval for the hire's file.
     'view:documents',
+    'manage:documents',
+    // The hire's compliance: credentials, E-Verify, program paperwork.
     'view:compliance',
+    'manage:compliance',
+    // Kiosk code generation (POST /kiosk-pins) rides on manage:time — the
+    // one capability the kiosk routes accept. It carries the timesheet desk
+    // too; a narrower issue:kiosk-pin would need its own route change.
+    'view:time',
+    'manage:time',
+    'view:time-live',
     'view:communications',
     'view:analytics',
     // The careers-site funnel and source of hire it recruits against.
