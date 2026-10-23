@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -70,6 +71,12 @@ interface ReasonProps extends BaseProps {
   reasonLabel?: string;
   reasonPlaceholder?: string;
   reasonMaxLength?: number;
+  /**
+   * One-tap reasons above the field (the common cases). Tapping one fills
+   * the field, which stays editable — a routine decision should not cost
+   * typing; only the law's words need typing.
+   */
+  reasonPresets?: readonly string[];
   onConfirm: (reason: string) => void | Promise<void>;
 }
 
@@ -178,6 +185,26 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
                 {reasonProps?.reasonLabel ??
                   (reasonOptional ? t('confirm.notesOptional') : t('confirm.reason'))}
               </label>
+              {reasonProps?.reasonPresets && reasonProps.reasonPresets.length > 0 && (
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('confirm.commonReasons')}>
+                  {reasonProps.reasonPresets.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setReason(preset)}
+                      aria-pressed={reason === preset}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-xs transition-colors coarse:min-h-9',
+                        reason === preset
+                          ? 'border-gold bg-gold/15 text-gold-bright'
+                          : 'border-navy-secondary text-silver hover:border-gold/50 hover:text-white',
+                      )}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              )}
               <Textarea
                 id={reasonFieldId}
                 autoFocus
@@ -186,7 +213,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={reasonProps?.reasonPlaceholder}
                 maxLength={reasonProps?.reasonMaxLength ?? 500}
-                rows={4}
+                rows={reasonProps?.reasonPresets?.length ? 2 : 4}
               />
             </div>
           )}

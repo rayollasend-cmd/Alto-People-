@@ -43,6 +43,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'queryError.detail': 'İstek ulaşmadı.',
   'confirm.reason': 'Neden',
   'confirm.notesOptional': 'Notlar (isteğe bağlı)',
+  'confirm.commonReasons': 'Sık kullanılan nedenler',
   'confirm.value': 'Değer',
   'picker.searchNoun': '{noun} ara…',
   'picker.clearNoun': '{noun} seçimini kaldır',

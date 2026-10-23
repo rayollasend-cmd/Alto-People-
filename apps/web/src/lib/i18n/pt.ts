@@ -2115,6 +2115,7 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'rmb.createDraft': 'Criar rascunho',
   'rmb.descriptionLabel': 'Descrição',
   'rmb.draftCreated': 'Rascunho criado.',
+  'rmb.defaultTitle': 'Despesas',
   'rmb.emptyDesc': 'Envie seu primeiro relatório de despesas para começar.',
   'rmb.emptyTitle': 'Sem reembolsos',
   'rmb.failed': 'Falhou.',

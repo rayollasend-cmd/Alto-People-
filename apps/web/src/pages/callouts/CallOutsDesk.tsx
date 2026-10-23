@@ -196,6 +196,14 @@ function RecordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
     enabled: open && !!person,
   });
   const theirs = (shifts.data?.shifts ?? []).filter((s) => s.assignedAssociateId === person?.id && new Date(s.startsAt).getTime() > Date.now());
+  // The shift they are calling out of is almost always their next one:
+  // pick it, and the select stays there to change it.
+  const nextShiftId = theirs.length > 0 ? [...theirs].sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0]!.id : '';
+  useEffect(() => {
+    if (open && person && !shiftId && nextShiftId) setShiftId(nextShiftId);
+    // Runs when the person's shifts arrive; a shift the user cleared stays cleared until they change person.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, person?.id, nextShiftId]);
   const save = useMutation({
     mutationFn: () => recordCallOutFor({ associateId: person!.id, shiftId, reason, note: note.trim() || undefined }),
     onSuccess: () => {

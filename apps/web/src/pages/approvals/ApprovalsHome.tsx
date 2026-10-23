@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
+import { NEGATIVE_BALANCE_PRESETS } from '@/lib/reasonPresets';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -1213,6 +1214,7 @@ function PendingTimeOffPanel({
                 `${fmtHours(d.requestedMinutes)}. Approving anyway takes the balance negative — ` +
                 'say why, and it goes on the ledger beside it.',
               reasonLabel: 'Why this is approved anyway',
+              reasonPresets: NEGATIVE_BALANCE_PRESETS,
               reasonPlaceholder: 'e.g. Unpaid day, agreed with Ops',
               confirmLabel: 'Approve anyway',
             })

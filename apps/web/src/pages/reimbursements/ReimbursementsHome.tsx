@@ -6,7 +6,7 @@ import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Plus, Receipt, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtMonthYearTz, parseYmd, ymdLocal } from '@/lib/format';
 import {
   addExpenseLine,
   createReimbursement,
@@ -166,6 +166,8 @@ export function ReimbursementsHome() {
     return s && REIMBURSEMENT_STATUSES.includes(s as ReimbursementStatus) ? (s as ReimbursementStatus) : 'ALL';
   });
   const openedFromUrl = useRef(false);
+  // The report just created: opened (into Add line) once the list carries it.
+  const [openAfterCreate, setOpenAfterCreate] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -185,6 +187,11 @@ export function ReimbursementsHome() {
       setActive(r);
     }
   }, [params, rows]);
+  useEffect(() => {
+    if (!openAfterCreate || !rows) return;
+    const r = rows.find((x) => x.id === openAfterCreate);
+    if (r) setActive(r);
+  }, [openAfterCreate, rows]);
   useEffect(() => {
     const r = refreshQuery.data;
     if (r === undefined) return;
@@ -373,8 +380,12 @@ export function ReimbursementsHome() {
       {showNew && (
         <NewReportDrawer
           onClose={() => setShowNew(false)}
-          onSaved={() => {
+          onSaved={(id) => {
             setShowNew(false);
+            // Open the report just created straight into its first line —
+            // it used to close to the list, where the person had to find it,
+            // open it and press "Add line" (four clicks before any expense).
+            setOpenAfterCreate(id);
             refresh();
           }}
         />
@@ -389,6 +400,7 @@ export function ReimbursementsHome() {
           // The next report in the same state, in list order (an approver's
           // afternoon is a run of these); closes when none is left.
           onDecided={() => setActive(nextInQueue(visible, active.id, (r) => r.status === active.status))}
+          openAddLine={active.id === openAfterCreate}
         />
       )}
     </ListTemplate>
@@ -400,10 +412,12 @@ function NewReportDrawer({
   onSaved,
 }: {
   onClose: () => void;
-  onSaved: () => void;
+  /** The new report's id, so the list opens it. */
+  onSaved: (id: string) => void;
 }) {
   const { t } = useI18n();
-  const [title, setTitle] = useState('');
+  // "Expenses – October 2026": the title almost everyone types anyway.
+  const [title, setTitle] = useState(() => `${t('rmb.defaultTitle')} – ${fmtMonthYearTz(new Date())}`);
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -414,12 +428,12 @@ function NewReportDrawer({
     }
     setSaving(true);
     try {
-      await createReimbursement({
+      const created = await createReimbursement({
         title: title.trim(),
         description: description.trim() || null,
       });
       toast.success(t('rmb.draftCreated'));
-      onSaved();
+      onSaved(created.id);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     } finally {
@@ -469,6 +483,7 @@ function ReimbursementDrawer({
   onClose,
   onChanged,
   onDecided,
+  openAddLine = false,
 }: {
   summary: ReimbursementSummary;
   canApprove: boolean;
@@ -477,12 +492,14 @@ function ReimbursementDrawer({
   onChanged: () => void;
   /** After approve / reject: the parent moves to the next report waiting. */
   onDecided?: () => void;
+  /** A report just created opens straight into its first line. */
+  openAddLine?: boolean;
 }) {
   const { t } = useI18n();
   const prompt = usePrompt();
   const confirm = useConfirm();
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [showAddLine, setShowAddLine] = useState(false);
+  const [showAddLine, setShowAddLine] = useState(openAddLine);
   const [showSettle, setShowSettle] = useState(false);
 
   const refreshQuery = useQuery({

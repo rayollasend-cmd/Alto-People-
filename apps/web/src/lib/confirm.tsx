@@ -32,6 +32,8 @@ export interface PromptOptions extends ConfirmOptions {
   reasonLabel?: string;
   reasonPlaceholder?: string;
   reasonMaxLength?: number;
+  /** One-tap reasons above the field; tapping fills it (see ConfirmDialog). */
+  reasonPresets?: readonly string[];
   /** When true, an empty reason can't be submitted. Defaults to true. */
   required?: boolean;
 }
@@ -122,6 +124,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           reasonLabel={pending.options.reasonLabel}
           reasonPlaceholder={pending.options.reasonPlaceholder}
           reasonMaxLength={pending.options.reasonMaxLength}
+          reasonPresets={pending.options.reasonPresets}
           onConfirm={handlePromptConfirm}
         />
       ) : (

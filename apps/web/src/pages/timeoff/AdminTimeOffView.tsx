@@ -44,6 +44,7 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { nextInQueue } from '@/lib/queueNext';
+import { NEGATIVE_BALANCE_PRESETS } from '@/lib/reasonPresets';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Field } from '@/components/ui/Field';
@@ -216,6 +217,8 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
           `${fmtHours(details.requestedMinutes)}. Approving anyway takes the balance negative — ` +
           'say why, and it goes on the ledger beside it.',
         reasonLabel: 'Why this is approved anyway',
+        // The common case, not the exception: most people have no balance.
+        reasonPresets: NEGATIVE_BALANCE_PRESETS,
         reasonPlaceholder: 'e.g. Unpaid day, agreed with Ops',
         confirmLabel: 'Approve anyway',
       })

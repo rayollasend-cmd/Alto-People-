@@ -162,6 +162,7 @@ const en = {
 
   // ConfirmDialog — the shared confirm/prompt
   'confirm.reason': 'Reason',
+  'confirm.commonReasons': 'Common reasons',
   'confirm.notesOptional': 'Notes (optional)',
   'confirm.value': 'Value',
 
@@ -2092,6 +2093,7 @@ const en = {
   'rmb.descriptionLabel': 'Description',
   'rmb.titleRequired': 'Title required.',
   'rmb.draftCreated': 'Draft created.',
+  'rmb.defaultTitle': 'Expenses',
   'rmb.createDraft': 'Create draft',
   'rmb.submittedToast': 'Submitted for approval.',
   'rmb.totalLabel': 'Total:',

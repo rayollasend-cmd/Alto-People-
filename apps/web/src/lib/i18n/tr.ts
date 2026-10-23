@@ -2114,6 +2114,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'rmb.createDraft': 'Taslak oluştur',
   'rmb.descriptionLabel': 'Açıklama',
   'rmb.draftCreated': 'Taslak oluşturuldu.',
+  'rmb.defaultTitle': 'Masraflar',
   'rmb.emptyDesc': 'Başlamak için ilk harcama raporunuzu gönderin.',
   'rmb.emptyTitle': 'Geri ödeme yok',
   'rmb.failed': 'Başarısız oldu.',

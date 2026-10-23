@@ -1,5 +1,6 @@
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { PayChangeContextPanel } from '@/components/payroll/PayChangeContextPanel';
+import { RejectDocumentDialog } from '@/components/RejectDocumentDialog';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { SavedViewsMenu } from '@/components/SavedViewsMenu';
 import { ProgramSection } from './ProgramSection';
@@ -80,7 +81,6 @@ import {
   downloadAllDocumentsUrl,
   downloadDocumentUrl,
   getDocumentVault,
-  rejectDocument,
   requestDocumentReupload,
   uploadAdminDocument,
   verifyDocument,
@@ -5349,21 +5349,6 @@ export function DocumentsTab({ associateId }: { associateId: string }) {
     }
   }
 
-  async function handleReject(reason: string) {
-    if (!rejectTarget || actingId) return;
-    const id = rejectTarget.id;
-    setActingId(id);
-    try {
-      const updated = await rejectDocument(id, { reason });
-      replaceDoc(updated);
-      toast.success('Document rejected.');
-      setRejectTarget(null);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not reject.');
-    } finally {
-      setActingId(null);
-    }
-  }
 
   if (error) {
     return <ErrorBanner>{error}</ErrorBanner>;
@@ -5622,22 +5607,13 @@ export function DocumentsTab({ associateId }: { associateId: string }) {
         )}
       </div>
 
-      <ConfirmDialog
-        open={rejectTarget !== null}
-        onOpenChange={(o) => !o && setRejectTarget(null)}
-        title="Reject document"
-        description={
-          rejectTarget
-            ? `${DOCUMENT_KIND_LABEL[rejectTarget.kind] ?? rejectTarget.kind} — ${rejectTarget.filename}`
-            : ''
-        }
-        requireReason
-        reasonLabel="Reason for rejection"
-        reasonPlaceholder="What's missing or wrong with this document?"
-        confirmLabel={actingId === rejectTarget?.id ? 'Rejecting…' : 'Reject'}
-        destructive
-        busy={actingId === rejectTarget?.id}
-        onConfirm={handleReject}
+      {/* The vault's reject dialog, presets and all — this used to be a bare
+          typed-reason prompt while the documents queue offered one-tap reasons
+          for the very same act. */}
+      <RejectDocumentDialog
+        doc={rejectTarget}
+        onClose={() => setRejectTarget(null)}
+        onRejected={() => void queryClient.invalidateQueries({ queryKey: ['associate-vault', associateId] })}
       />
 
       <DocumentPreview

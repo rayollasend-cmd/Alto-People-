@@ -2115,6 +2115,7 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'rmb.createDraft': 'Kreye bouyon',
   'rmb.descriptionLabel': 'Deskripsyon',
   'rmb.draftCreated': 'Bouyon kreye.',
+  'rmb.defaultTitle': 'Depans',
   'rmb.emptyDesc': 'Soumèt premye rapò depans ou pou kòmanse.',
   'rmb.emptyTitle': 'Pa gen ranbousman',
   'rmb.failed': 'Sa pa mache.',

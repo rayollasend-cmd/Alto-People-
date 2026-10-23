@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CANDIDATE_REJECT_PRESETS, CANDIDATE_WITHDRAW_PRESETS } from '@/lib/reasonPresets';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -1099,6 +1100,7 @@ export function RecruitingHome() {
         confirmLabel="Reject candidates"
         destructive
         requireReason
+        reasonPresets={CANDIDATE_REJECT_PRESETS}
         reasonPlaceholder="e.g., Position filled — no openings remain this season."
         busy={bulkBusy}
         onConfirm={bulkReject}
@@ -1129,6 +1131,7 @@ export function RecruitingHome() {
         confirmLabel="Reject candidate"
         destructive
         requireReason
+        reasonPresets={CANDIDATE_REJECT_PRESETS}
         reasonPlaceholder="e.g., Not a fit for the role at this time."
         busy={pendingId !== null}
         onConfirm={onConfirmReject}
@@ -1145,6 +1148,7 @@ export function RecruitingHome() {
         description="Use this when the candidate has dropped out of the process on their own."
         confirmLabel="Mark withdrawn"
         requireReason
+        reasonPresets={CANDIDATE_WITHDRAW_PRESETS}
         reasonPlaceholder="e.g., Accepted another offer."
         busy={pendingId !== null}
         onConfirm={onConfirmWithdraw}

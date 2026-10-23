@@ -876,6 +876,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         confirmLabel="Skip task"
         requireReason
         reasonLabel="Reason"
+        reasonPresets={['Completed on paper — filed in the vault', '1099 contractor — not applicable', 'Done in person at the kiosk', 'Returning hire — already on file']}
         reasonPlaceholder="e.g. 1099 contractor — W-4 withholding not applicable"
         onConfirm={handleSkipWithReason}
       />

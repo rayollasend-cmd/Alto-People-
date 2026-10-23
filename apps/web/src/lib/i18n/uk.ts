@@ -2115,6 +2115,7 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'rmb.createDraft': 'Створити чернетку',
   'rmb.descriptionLabel': 'Опис',
   'rmb.draftCreated': 'Чернетку створено.',
+  'rmb.defaultTitle': 'Витрати',
   'rmb.emptyDesc': 'Подайте свій перший звіт про витрати, щоб почати.',
   'rmb.emptyTitle': 'Відшкодувань немає',
   'rmb.failed': 'Не вдалося.',
